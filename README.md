@@ -170,7 +170,7 @@ Together with the embedded capabilities-driven NMOS Controller, the streaming en
 | TR | Role |
 |---|---|
 | **TR-10-13** Privacy Encryption Protocol | Per-flow AES-CTR encryption, key derivation, RTP adaptation. UDP, SRT, RTSP protocol adaptation also supported. |
-| **TR-10-14** USB-over-IP and Capability Sets | USB protocol adaptation, capability/constraint sets |
+| **TR-10-14** USB-over-IP | USB protocol adaptation |
 
 ### Matrox NMOS extensions ([NMOS-MatroxOnly](https://github.com/alabou/NMOS-MatroxOnly))
 
