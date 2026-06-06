@@ -6,7 +6,7 @@ It aims to provide a typed, testable, and open-source-friendly implementation of
 
 ## Compliance Boundary
 
-This repository must not be described as "fully compliant with everything under `specs/`".
+This repository must not be described as "fully compliant with everything under the `NMOS-MatroxOnly/` repository".
 
-The `specs/` directory is the broader Matrox documentation corpus. The Python implementation intentionally supports only part of that corpus today.
+The `NMOS-MatroxOnly/` repository is the broader Matrox documentation corpus. The Python implementation intentionally supports only part of that corpus today.
 
