@@ -1,0 +1,340 @@
+{
+  "description": "Config 7faudio: FFmpeg audio-only (SRT)",
+  "senders": [
+    {
+      "label": "FFmpeg Stream 0 Audio 0",
+      "format": "urn:x-nmos:format:audio",
+      "transport": "urn:x-matrox:transport:srt.rtp",
+      "natural_group_index": 0,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native Audio",
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/L24"
+            ]
+          },
+          "urn:x-nmos:cap:format:sample_rate": {
+            "enum": [
+              {
+                "numerator": 48000
+              }
+            ]
+          },
+          "urn:x-nmos:cap:format:channel_count": {
+            "enum": [
+              2
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "PCM constraints",
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/L24"
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "AAC constraints",
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/aac"
+            ]
+          }
+        }
+      ],
+      "privacy_keys": [
+        {
+          "key_id": "0001020304050607",
+          "psk": "000102030405060708090a0b0c0d0e0f"
+        }
+      ]
+    },
+    {
+      "label": "FFmpeg Stream MPEG2-TS 0",
+      "format": "urn:x-nmos:format:mux",
+      "transport": "urn:x-matrox:transport:srt",
+      "natural_group_index": 0,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native Mux",
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "application/mp2t"
+            ]
+          },
+          "urn:x-matrox:cap:format:video_layers": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "urn:x-matrox:cap:format:audio_layers": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "urn:x-matrox:cap:format:data_layers": {
+            "minimum": 0,
+            "maximum": 0
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "Mux constraints",
+          "urn:x-nmos:cap:meta:preference": 1,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "application/mp2t"
+            ]
+          },
+          "urn:x-matrox:cap:format:video_layers": {
+            "minimum": 0,
+            "maximum": 1
+          },
+          "urn:x-matrox:cap:format:audio_layers": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "urn:x-matrox:cap:format:data_layers": {
+            "minimum": 0,
+            "maximum": 0
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "Native Audio sub",
+          "urn:x-nmos:cap:meta:enabled": false,
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-matrox:cap:meta:layer_enabled": true,
+          "urn:x-matrox:cap:meta:format": "urn:x-nmos:format:audio",
+          "urn:x-matrox:cap:meta:layer": 0,
+          "urn:x-matrox:cap:meta:layer_compatibility_groups": [
+            0
+          ],
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/L24"
+            ]
+          },
+          "urn:x-nmos:cap:format:sample_rate": {
+            "enum": [
+              {
+                "numerator": 48000
+              }
+            ]
+          },
+          "urn:x-nmos:cap:format:channel_count": {
+            "enum": [
+              2
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "PCM sub",
+          "urn:x-nmos:cap:meta:enabled": false,
+          "urn:x-matrox:cap:meta:layer_enabled": true,
+          "urn:x-matrox:cap:meta:format": "urn:x-nmos:format:audio",
+          "urn:x-matrox:cap:meta:layer": 0,
+          "urn:x-matrox:cap:meta:layer_compatibility_groups": [
+            0
+          ],
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/L24"
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "AAC sub",
+          "urn:x-nmos:cap:meta:enabled": false,
+          "urn:x-matrox:cap:meta:layer_enabled": true,
+          "urn:x-matrox:cap:meta:format": "urn:x-nmos:format:audio",
+          "urn:x-matrox:cap:meta:layer": 0,
+          "urn:x-matrox:cap:meta:layer_compatibility_groups": [
+            0
+          ],
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/aac"
+            ]
+          }
+        }
+      ],
+      "privacy_keys": [
+        {
+          "key_id": "0001020304050607",
+          "psk": "000102030405060708090a0b0c0d0e0f"
+        }
+      ]
+    }
+  ],
+  "receivers": [
+    {
+      "label": "FFmpeg Stream Mux 0",
+      "format": "urn:x-nmos:format:mux",
+      "transport": "urn:x-matrox:transport:srt",
+      "natural_group_index": 0,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native Mux",
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "application/mp2t"
+            ]
+          },
+          "urn:x-matrox:cap:format:video_layers": {
+            "minimum": 0,
+            "maximum": 1
+          },
+          "urn:x-matrox:cap:format:audio_layers": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "urn:x-matrox:cap:format:data_layers": {
+            "minimum": 0,
+            "maximum": 0
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "Mux constraints",
+          "urn:x-nmos:cap:meta:preference": 1,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "application/mp2t"
+            ]
+          },
+          "urn:x-matrox:cap:format:video_layers": {
+            "minimum": 0,
+            "maximum": 1
+          },
+          "urn:x-matrox:cap:format:audio_layers": {
+            "minimum": 0,
+            "maximum": 1
+          },
+          "urn:x-matrox:cap:format:data_layers": {
+            "minimum": 0,
+            "maximum": 0
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "PCM sub",
+          "urn:x-nmos:cap:meta:enabled": false,
+          "urn:x-matrox:cap:meta:layer_enabled": true,
+          "urn:x-matrox:cap:meta:format": "urn:x-nmos:format:audio",
+          "urn:x-matrox:cap:meta:layer": 0,
+          "urn:x-matrox:cap:meta:layer_compatibility_groups": [
+            0
+          ],
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/L24"
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "AAC sub",
+          "urn:x-nmos:cap:meta:enabled": false,
+          "urn:x-matrox:cap:meta:layer_enabled": true,
+          "urn:x-matrox:cap:meta:format": "urn:x-nmos:format:audio",
+          "urn:x-matrox:cap:meta:layer": 0,
+          "urn:x-matrox:cap:meta:layer_compatibility_groups": [
+            0
+          ],
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/aac"
+            ]
+          }
+        }
+      ],
+      "privacy_keys": [
+        {
+          "key_id": "0001020304050607",
+          "psk": "000102030405060708090a0b0c0d0e0f"
+        },
+        {
+          "key_id": "0000000000000000",
+          "psk": "000100030005000700090f0f0f0f0f0f"
+        }
+      ]
+    },
+    {
+      "label": "FFmpeg Stream 0 Audio 0",
+      "format": "urn:x-nmos:format:audio",
+      "transport": "urn:x-matrox:transport:srt.rtp",
+      "natural_group_index": 0,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native Audio",
+          "urn:x-nmos:cap:meta:enabled": true,
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/aac"
+            ]
+          },
+          "urn:x-nmos:cap:format:sample_rate": {
+            "enum": [
+              {
+                "numerator": 48000
+              }
+            ]
+          },
+          "urn:x-nmos:cap:format:channel_count": {
+            "enum": [
+              2
+            ]
+          },
+          "urn:x-nmos:cap:format:profile": {
+            "enum": [
+              "AAC"
+            ]
+          },
+          "urn:x-nmos:cap:format:level": {
+            "enum": [
+              "2"
+            ]
+          },
+          "urn:x-nmos:cap:format:bit_rate": {
+            "enum": [
+              128
+            ]
+          },
+          "urn:x-nmos:cap:format:constant_bit_rate": {
+            "enum": [
+              true
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "PCM constraints",
+          "urn:x-nmos:cap:meta:preference": 0,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/L24"
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "AAC constraints",
+          "urn:x-nmos:cap:meta:preference": 0,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/aac"
+            ]
+          }
+        }
+      ],
+      "privacy_keys": [
+        {
+          "key_id": "0001020304050607",
+          "psk": "000102030405060708090a0b0c0d0e0f"
+        },
+        {
+          "key_id": "0000000000000000",
+          "psk": "000100030005000700090f0f0f0f0f0f"
+        }
+      ]
+    }
+  ]
+}

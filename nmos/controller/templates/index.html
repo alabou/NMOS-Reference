@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}NMOS Controller &middot; Home{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-md-8 mx-auto">
+    <div class="card">
+      <div class="card-body">
+        <h4 class="card-title">NMOS Controller</h4>
+        <p class="text-muted small mb-0">
+          Capability-aware configuration and connection tool for the
+          NMOS resources visible to this Node's registry. Choose a view
+          to begin.
+        </p>
+      </div>
+    </div>
+
+    <div class="card mt-4">
+      <div class="card-body">
+        <h4 class="card-title">Go to</h4>
+        <a href="/controller/senders"
+           class="btn btn-outline-dark mr-2">Senders</a>
+        <a href="/controller/receivers"
+           class="btn btn-outline-dark">Receivers</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

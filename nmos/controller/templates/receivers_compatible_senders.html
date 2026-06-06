@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}Compatible senders{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-12">
+    <h3 class="mb-2">Compatible senders</h3>
+
+    {% set receiver_count = receivers | length %}
+    <p class="text-muted small mb-3">
+      Mode:
+      <strong>
+        {% if mode == 'group' %}
+          group of receivers — pick one sender group whose shape
+          matches the receiver group.
+        {% elif mode == 'subset' %}
+          subset of receiver group — each candidate sender group
+          below carries legs matching the subset
+          ({{ subset_leaves_label }}); pick one matching set
+          ({{ receiver_count }} sender{% if receiver_count != 1 %}s{% endif %}).
+        {% else %}
+          single / multi-receiver — pick exactly
+          {{ receiver_count }} sender{% if receiver_count != 1 %}s{% endif %},
+          one per selected receiver.
+        {% endif %}
+      </strong>
+    </p>
+
+    {% if not devices %}
+      <div class="alert alert-warning">
+        {% if mode == 'group' %}
+          No sender natural groups match the receiver group's shape and
+          per-role caps.
+        {% elif mode == 'subset' %}
+          No sender groups have legs covering the receiver subset
+          ({{ subset_leaves_label }}).
+        {% else %}
+          No senders are compatible with the selected receiver(s).
+        {% endif %}
+      </div>
+      <a href="/controller/receivers" class="btn btn-link">Back to receivers</a>
+    {% else %}
+
+      <form id="compatible-senders-form"
+            method="get" action="/controller/receivers/caps">
+        <input type="hidden" name="receiver_ids" value="{{ receiver_ids_csv }}">
+        <input type="hidden" name="sender_ids" id="sender_ids" value="">
+        {# Propagate the mode into ``receivers/caps`` so its pairing
+           rule (identity vs URL-order) matches the selection that
+           produced this page. Single mode permits cross-role
+           pairing; group/subset keep strict role_index matching. #}
+        <input type="hidden" name="mode" value="{{ mode }}">
+
+        {# Same table skeleton as /senders so column widths line up.
+           ``group_only`` collapses per-member rows on the group-of-
+           receivers branch — the operator picks the matching sender
+           group as a whole. #}
+        <table class="devices-table">
+          <colgroup>
+            <col class="col-group-select" style="width:1.75rem">
+            <col class="col-role-select"  style="width:2.1rem">
+            <col class="col-role-name"    style="width:7rem">
+            <col class="col-label">
+            <col class="col-status"       style="width:5rem">
+            <col class="col-dot"          style="width:3rem">
+            <col class="col-dot"          style="width:3rem">
+            <col class="col-dot"          style="width:3rem">
+            <col class="col-dot"          style="width:3rem">
+          </colgroup>
+          <thead>
+            <tr class="devices-header-row">
+              <th class="col-group-select"></th>
+              <th class="col-role-select"></th>
+              <th class="col-role-name"></th>
+              <th class="col-label">label</th>
+              <th class="col-status">status</th>
+              <th class="col-dot">link</th>
+              <th class="col-dot">sync</th>
+              <th class="col-dot">conn</th>
+              <th class="col-dot">media</th>
+            </tr>
+          </thead>
+          {% set group_only = (mode == 'group') %}
+          {% for dev in devices %}
+            {% include "partials/device_block.html" with context %}
+          {% endfor %}
+        </table>
+
+        <div class="sticky-bottom bg-light p-2 border-top">
+          {# In single / multi-receiver mode (and subset mode) the
+             fourth arg ``requiredCount`` pins the sender count to the
+             receiver count — the operator can pick N individual
+             senders OR a group whose shape is exactly N senders. In
+             group-of-receivers mode the shape filter on the server
+             already narrowed the list to shape-matching groups, so
+             no client-side count constraint is needed.
+
+             In subset mode the server has already restricted each
+             rendered group to only its matched legs, so clicking the
+             group radio submits exactly ``receiver_count`` senders. #}
+          <button type="submit" class="btn btn-primary"
+                  onclick="return controller.submitSelection(
+                    'compatible-senders-form', 'sender_ids', null,
+                    {% if mode == 'group' %}0{% else %}{{ receiver_count }}{% endif %});">
+            Configure capabilities →
+          </button>
+          <a href="/controller/receivers" class="btn btn-link">Back</a>
+        </div>
+      </form>
+
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  controller.initSelection('compatible-senders-form');
+  controller.initStatusStream();
+</script>
+{% endblock %}

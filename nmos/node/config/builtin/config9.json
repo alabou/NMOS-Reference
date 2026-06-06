@@ -1,0 +1,274 @@
+{
+  "description": "Config 9: AES3 audio (AM824) + data mux",
+  "senders": [
+    {
+      "label": "Net Stream 0 Audio 0",
+      "format": "urn:x-nmos:format:audio",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "natural_group_index": 0,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native AM824",
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/AM824"
+            ]
+          },
+          "urn:x-nmos:cap:format:sample_rate": {
+            "enum": [
+              {
+                "numerator": 48000
+              }
+            ]
+          },
+          "urn:x-nmos:cap:format:channel_count": {
+            "enum": [
+              2
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "AM824 constraints",
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/AM824"
+            ]
+          }
+        }
+      ],
+      "privacy_keys": [
+        {
+          "key_id": "0001020304050607",
+          "psk": "000102030405060708090a0b0c0d0e0f"
+        }
+      ]
+    },
+    {
+      "label": "Net Stream AM824 Mux 0",
+      "format": "urn:x-nmos:format:mux",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "natural_group_index": 0,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native Mux",
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "application/AM824"
+            ]
+          },
+          "urn:x-matrox:cap:format:video_layers": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "urn:x-matrox:cap:format:audio_layers": {
+            "minimum": 1,
+            "maximum": 2
+          },
+          "urn:x-matrox:cap:format:data_layers": {
+            "minimum": 0,
+            "maximum": 0
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "Mux constraints",
+          "urn:x-nmos:cap:meta:preference": 1,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "application/AM824"
+            ]
+          },
+          "urn:x-matrox:cap:format:video_layers": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "urn:x-matrox:cap:format:audio_layers": {
+            "minimum": 1,
+            "maximum": 2
+          },
+          "urn:x-matrox:cap:format:data_layers": {
+            "minimum": 0,
+            "maximum": 0
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "AM824 sub 0",
+          "urn:x-nmos:cap:meta:enabled": false,
+          "urn:x-matrox:cap:meta:layer_enabled": true,
+          "urn:x-matrox:cap:meta:format": "urn:x-nmos:format:audio",
+          "urn:x-matrox:cap:meta:layer": 0,
+          "urn:x-matrox:cap:meta:layer_compatibility_groups": [
+            0
+          ],
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/AM824"
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "AM824 sub 1",
+          "urn:x-nmos:cap:meta:enabled": false,
+          "urn:x-matrox:cap:meta:layer_enabled": true,
+          "urn:x-matrox:cap:meta:format": "urn:x-nmos:format:audio",
+          "urn:x-matrox:cap:meta:layer": 1,
+          "urn:x-matrox:cap:meta:layer_compatibility_groups": [
+            0
+          ],
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/AM824"
+            ]
+          }
+        }
+      ],
+      "privacy_keys": [
+        {
+          "key_id": "0001020304050607",
+          "psk": "000102030405060708090a0b0c0d0e0f"
+        }
+      ]
+    }
+  ],
+  "receivers": [
+    {
+      "label": "Net Stream AM824 Mux 0",
+      "format": "urn:x-nmos:format:mux",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "natural_group_index": 0,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native Mux",
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "application/AM824"
+            ]
+          },
+          "urn:x-matrox:cap:format:video_layers": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "urn:x-matrox:cap:format:audio_layers": {
+            "minimum": 1,
+            "maximum": 2
+          },
+          "urn:x-matrox:cap:format:data_layers": {
+            "minimum": 0,
+            "maximum": 0
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "Mux constraints",
+          "urn:x-nmos:cap:meta:preference": 1,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "application/AM824"
+            ]
+          },
+          "urn:x-matrox:cap:format:video_layers": {
+            "minimum": 0,
+            "maximum": 0
+          },
+          "urn:x-matrox:cap:format:audio_layers": {
+            "minimum": 1,
+            "maximum": 2
+          },
+          "urn:x-matrox:cap:format:data_layers": {
+            "minimum": 0,
+            "maximum": 0
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "AM824 sub 0",
+          "urn:x-nmos:cap:meta:enabled": false,
+          "urn:x-matrox:cap:meta:layer_enabled": true,
+          "urn:x-matrox:cap:meta:format": "urn:x-nmos:format:audio",
+          "urn:x-matrox:cap:meta:layer": 0,
+          "urn:x-matrox:cap:meta:layer_compatibility_groups": [
+            0
+          ],
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/AM824"
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "AM824 sub 1",
+          "urn:x-nmos:cap:meta:enabled": false,
+          "urn:x-matrox:cap:meta:layer_enabled": true,
+          "urn:x-matrox:cap:meta:format": "urn:x-nmos:format:audio",
+          "urn:x-matrox:cap:meta:layer": 1,
+          "urn:x-matrox:cap:meta:layer_compatibility_groups": [
+            0
+          ],
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/AM824"
+            ]
+          }
+        }
+      ],
+      "privacy_keys": [
+        {
+          "key_id": "0001020304050607",
+          "psk": "000102030405060708090a0b0c0d0e0f"
+        },
+        {
+          "key_id": "0000000000000000",
+          "psk": "000100030005000700090f0f0f0f0f0f"
+        }
+      ]
+    },
+    {
+      "label": "Net Stream 0 Audio 0",
+      "format": "urn:x-nmos:format:audio",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "natural_group_index": 0,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native Audio",
+          "urn:x-nmos:cap:meta:enabled": true,
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/AM824"
+            ]
+          },
+          "urn:x-nmos:cap:format:sample_rate": {
+            "enum": [
+              {
+                "numerator": 48000
+              }
+            ]
+          },
+          "urn:x-nmos:cap:format:channel_count": {
+            "enum": [
+              2
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/AM824"
+            ]
+          },
+          "urn:x-nmos:cap:meta:preference": 0
+        }
+      ],
+      "privacy_keys": [
+        {
+          "key_id": "0001020304050607",
+          "psk": "000102030405060708090a0b0c0d0e0f"
+        },
+        {
+          "key_id": "0000000000000000",
+          "psk": "000100030005000700090f0f0f0f0f0f"
+        }
+      ]
+    }
+  ]
+}

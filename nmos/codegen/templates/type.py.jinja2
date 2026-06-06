@@ -1,0 +1,944 @@
+"""Generated NMOS type: {{ t.name }}. DO NOT EDIT."""
+
+from __future__ import annotations
+
+from typing import Any, TYPE_CHECKING
+
+from nmos.enums import EnumId, EnumRegistry
+from nmos.errors import InvalidData, InvalidObject, NotAvailable, NotMatching
+from nmos.json.engine import JsonEngine
+{# Determine type category early — needed for import logic #}
+{% set is_polymorphic = t.poly_types | length > 0 %}
+{% set is_pointer = t.is_value and not is_polymorphic and not t.is_array and t.members | length == 1 and t.members[0].type_name.endswith("Value") %}
+{% set is_map = t.is_value and not is_polymorphic and not t.is_array and t.members | length == 1 and t.members[0].type_name.startswith("dict[") %}
+{% set is_simple_value = t.is_value and not is_polymorphic and not is_pointer and not is_map and not t.is_array %}
+{% set base_types = ["NString", "NInt", "NFloat", "NBool", "NEnum", "NNull", "NNullString", "NHyperlink", "NUrl", "NTime", "NTags", "NGeneric", "NArrayOfString", "NArrayOfInt", "NArrayOfFloat", "NArrayOfBool", "NArrayOfEnum", "NArrayOfNull", "NArrayOfNullString", "NArrayOfHyperlink", "NArrayOfUrl", "NArrayOfTime", "NArrayOfGeneric"] %}
+{% set builtin_types = ["object", "str", "int", "float", "bool", "dict", "list", "tuple", "datetime", "EnumId"] %}
+{% set needed_base = [] %}
+{% set needed_gen = [] %}
+{# Pointer and map types use Any internally — skip member imports to avoid circular deps #}
+{% if not is_pointer and not is_map %}
+{# Collect imports from members #}
+{% for m in t.members %}
+{% if m.type_name in base_types and m.type_name not in needed_base %}
+{% if needed_base.append(m.type_name) %}{% endif %}
+{% elif m.type_name.startswith("list[") %}
+{% set elem_type = m.type_name.replace("list[", "").replace("]", "") %}
+{% if elem_type not in needed_gen and elem_type not in base_types and elem_type not in builtin_types %}
+{% if needed_gen.append(elem_type) %}{% endif %}
+{% endif %}
+{% elif m.type_name.startswith("dict[") %}
+{% set dict_parts = m.type_name[5:-1].split(",") %}
+{% for dict_type in dict_parts %}
+{% set dict_type_name = dict_type | trim %}
+{% if dict_type_name not in needed_gen and dict_type_name not in base_types and dict_type_name not in builtin_types %}
+{% if needed_gen.append(dict_type_name) %}{% endif %}
+{% endif %}
+{% endfor %}
+{% elif m.type_name not in base_types and m.type_name not in needed_gen and m.type_name not in builtin_types and not m.type_name.startswith("dict[") %}
+{% if needed_gen.append(m.type_name) %}{% endif %}
+{% endif %}
+{% endfor %}
+{% endif %}
+{# Collect imports from poly_types #}
+{% for pt in t.poly_types %}
+{% if pt not in needed_gen %}
+{% if needed_gen.append(pt) %}{% endif %}
+{% endif %}
+{% endfor %}
+{% if needed_base %}
+from nmos.json.types import {{ needed_base | join(", ") }}
+{% endif %}
+{% for gen_type in needed_gen %}
+{% if gen_type.endswith("Value") %}
+{% set mod_type = gen_type[:-5] %}
+from nmos.types.generated.{{ mod_type | to_snake }} import {{ gen_type }}
+{% else %}
+from nmos.types.generated.{{ gen_type | to_snake }} import {{ gen_type }}, {{ gen_type }}Value
+{% endif %}
+{% endfor %}
+{% for imp in t.imports %}
+{{ imp }}
+{% endfor %}
+{% set has_assertions = [] %}
+{% for m in t.members %}
+{% if m.assertion %}
+{% if has_assertions.append(m.assertion) %}{% endif %}
+{% endif %}
+{% endfor %}
+{% if has_assertions %}
+from nmos.validators import {{ has_assertions | unique | join(", ") }}
+{% endif %}
+
+{% if not is_polymorphic and not is_pointer and not is_map and not t.is_array and not is_simple_value %}
+def _assign_value(field: Any, value: Any) -> None:
+    if hasattr(field, "set_value"):
+        field.set_value(value)
+    else:
+        field.value = value
+
+{% endif %}
+
+{# ================================================================== #}
+{# Enum constants                                                     #}
+{# ================================================================== #}
+{% if not t.is_value and not t.is_array %}
+class {{ t.name }}Enums:
+    """JSON property name enums for {{ t.name }}."""
+{% for m in t.members %}
+{% if m.json_key != "-" and not m.embedded %}
+    {{ m.name }} = EnumRegistry.get("{{ m.json_key }}")
+{% endif %}
+{% endfor %}
+    pass
+{% endif %}
+
+{# ================================================================== #}
+{# POLYMORPHIC VALUE TYPE                                             #}
+{# Mirrors Go's TypePredicate pattern: predicates inspect the dict    #}
+{# to determine which concrete type matches, then decode that type.   #}
+{# Predicates are tried in the SAME ORDER as Go's T field.            #}
+{# ================================================================== #}
+{% if is_polymorphic %}
+
+# --- Type predicates (ported from Go TypePredicate* functions) ---
+
+{% for pt in t.poly_types %}
+{% if pt in t.predicates %}
+def _predicate_{{ pt }}(data: dict[str, Any]) -> bool:
+    """Check if data matches {{ pt }}."""
+{% for json_key, expected, comparison in t.predicates[pt] %}
+{% if comparison == "eq" %}
+{% if expected.isdigit() or (expected.startswith("-") and expected[1:].isdigit()) %}
+    if data.get("{{ json_key }}") != {{ expected }}:
+        return False
+{% else %}
+    if data.get("{{ json_key }}") != "{{ expected }}":
+        return False
+{% endif %}
+{% elif comparison == "neq" %}
+    if data.get("{{ json_key }}") == "{{ expected }}":
+        return False
+    if "{{ json_key }}" not in data:
+        return False
+{% elif comparison == "in" %}
+    if data.get("{{ json_key }}") not in {
+{% for val in expected.split(",") %}
+        "{{ val }}",
+{% endfor %}
+    }:
+        return False
+{% elif comparison == "notin" %}
+    if data.get("{{ json_key }}") in {
+{% for val in expected.split(",") %}
+        "{{ val }}",
+{% endfor %}
+    }:
+        return False
+    if "{{ json_key }}" not in data:
+        return False
+{% elif comparison == "type_bool" %}
+    _enum_val = data.get("enum")
+    if isinstance(_enum_val, list) and _enum_val:
+        if not isinstance(_enum_val[0], bool):
+            return False
+    else:
+        return False
+{% elif comparison == "type_int" %}
+    _v = data.get("enum", data.get("minimum", data.get("maximum")))
+    if isinstance(_v, list) and _v:
+        if not isinstance(_v[0], int) or isinstance(_v[0], bool):
+            return False
+    elif isinstance(_v, int) and not isinstance(_v, bool):
+        pass
+    else:
+        return False
+{% elif comparison == "type_float" %}
+    _v = data.get("enum", data.get("minimum", data.get("maximum")))
+    if isinstance(_v, list) and _v:
+        if not isinstance(_v[0], float):
+            return False
+    elif isinstance(_v, float):
+        pass
+    else:
+        return False
+{% elif comparison == "type_str" %}
+    _enum_val = data.get("enum")
+    if isinstance(_enum_val, list) and _enum_val:
+        if not isinstance(_enum_val[0], str):
+            return False
+    else:
+        return False
+{% elif comparison == "fallback" %}
+    pass  # fallback always matches
+{% endif %}
+{% endfor %}
+    return True
+
+{% else %}
+def _predicate_{{ pt }}(data: dict[str, Any]) -> bool:
+    """No predicate defined for {{ pt }} — always matches (fallback)."""
+    return True
+
+{% endif %}
+{% endfor %}
+
+class {{ t.name }}Value:
+    """Polymorphic value for {{ t.name }}. Holds one of: {{ t.poly_types | join(", ") }}."""
+
+    __slots__ = ("_inner",)
+
+    def __init__(self) -> None:
+        self._inner: Any = None
+
+    def get(self) -> Any:
+        return self._inner
+
+    def set(self, v: Any) -> None:
+        self._inner = v
+
+    def clone(self) -> {{ t.name }}Value:
+        o = {{ t.name }}Value()
+        if self._inner is not None and hasattr(self._inner, "clone"):
+            o._inner = self._inner.clone()
+        else:
+            o._inner = self._inner
+        return o
+
+    def encode(self, engine: JsonEngine, name: EnumId | None) -> None:
+        if self._inner is None:
+            return
+        # Type-switch: delegate to concrete type's encode
+{% for pt in t.poly_types %}
+        if isinstance(self._inner, {{ pt }}):
+            self._inner.encode(engine, name)
+            return
+{% endfor %}
+
+    def decode(self, engine: JsonEngine, data: Any) -> None:
+        """Polymorphic decode using predicates (mirrors Go TypePredicate pattern).
+
+        Predicates are checked in the same order as Go's T field.
+        First matching predicate determines the concrete type to decode.
+        """
+        if not isinstance(data, dict):
+            raise InvalidData("expected JSON object for polymorphic {{ t.name }}")
+
+{% for pt in t.poly_types %}
+        if _predicate_{{ pt }}(data):
+            obj_{{ loop.index0 }} = {{ pt }}()
+            obj_{{ loop.index0 }}.decode(engine, data)
+            self._inner = obj_{{ loop.index0 }}
+            return
+{% endfor %}
+        raise InvalidData("no matching type for polymorphic {{ t.name }}")
+
+    def decode_value(self, data: Any) -> None:
+        self.decode(JsonEngine(), data)
+
+
+class {{ t.name }}:
+    """Polymorphic type: {{ t.name }}. Wraps one of {{ t.poly_types | join(", ") }}."""
+
+    __slots__ = ("_defined", "_value")
+
+    def __init__(self) -> None:
+        self._defined: bool = False
+        self._value: {{ t.name }}Value = {{ t.name }}Value()
+
+    @property
+    def defined(self) -> bool:
+        return self._defined
+
+    @property
+    def value(self) -> Any:
+        if not self._defined:
+            raise NotAvailable("undefined value")
+        return self._value.get()
+
+    @value.setter
+    def value(self, v: Any) -> None:
+        self._defined = True
+        self._value.set(v)
+
+    def get(self, default: Any = None) -> Any:
+        return self._value.get() if self._defined else default
+
+    def set_to_default(self) -> None:
+        self._defined = True
+
+    def set_to_zero(self) -> None:
+        self._defined = False
+        self._value = {{ t.name }}Value()
+
+    def clone(self) -> {{ t.name }}:
+        o = {{ t.name }}()
+        o._defined = self._defined
+        o._value = self._value.clone()
+        return o
+
+    def encode(self, engine: JsonEngine, name: EnumId | None) -> None:
+        if self._defined:
+            self._value.encode(engine, name)
+
+    def decode(self, engine: JsonEngine, data: Any) -> None:
+        self._value.decode(engine, data)
+        self._defined = True
+
+    def decode_value(self, data: Any) -> None:
+        self._value.decode(JsonEngine(), data)
+        self._defined = True
+
+    def __repr__(self) -> str:
+        if self._defined:
+            inner = self._value.get()
+            return f"{{ t.name }}({type(inner).__name__})"
+        return "{{ t.name }}(<undefined>)"
+
+
+def make_{{ t.name | lower }}(v: Any) -> {{ t.name }}:
+    """Factory: create a defined {{ t.name }} with the given concrete value."""
+    o = {{ t.name }}()
+    o.value = v
+    return o
+
+{# ================================================================== #}
+{# POINTER VALUE TYPE                                                 #}
+{# ================================================================== #}
+{% elif is_pointer %}
+{% set inner_type = t.members[0].type_name %}
+{# Pointer types use Any to avoid circular imports -- the inner type
+   is always a Value class from another module that may depend on us. #}
+
+class {{ t.name }}Value:
+    """Pointer value for {{ t.name }}. Holds a reference to {{ inner_type }}."""
+
+    __slots__ = ("_inner",)
+
+    def __init__(self) -> None:
+        self._inner: Any = None
+
+    def get(self) -> Any:
+        return self._inner
+
+    def set(self, v: Any) -> None:
+        self._inner = v
+
+    def clone(self) -> {{ t.name }}Value:
+        o = {{ t.name }}Value()
+        o._inner = self._inner  # pointer: shared reference (not deep copy)
+        return o
+
+
+class {{ t.name }}:
+    """Pointer type: {{ t.name }}. Wraps a reference to {{ inner_type }}."""
+
+    __slots__ = ("_defined", "_value")
+
+    def __init__(self) -> None:
+        self._defined: bool = False
+        self._value: {{ t.name }}Value = {{ t.name }}Value()
+
+    @property
+    def defined(self) -> bool:
+        return self._defined
+
+    @property
+    def value(self) -> Any:
+        if not self._defined:
+            raise NotAvailable("undefined value")
+        return self._value.get()
+
+    @value.setter
+    def value(self, v: Any) -> None:
+        self._defined = True
+        self._value.set(v)
+
+    def get(self, default: Any = None) -> Any:
+        return self._value.get() if self._defined else default
+
+    def set_to_default(self) -> None:
+        self._defined = True
+        self._value.set(None)
+
+    def set_to_zero(self) -> None:
+        self._defined = False
+        self._value = {{ t.name }}Value()
+
+    def clone(self) -> {{ t.name }}:
+        o = {{ t.name }}()
+        o._defined = self._defined
+        o._value = self._value.clone()
+        return o
+
+    def encode(self, engine: JsonEngine, name: EnumId | None) -> None:
+        pass  # Pointer types are internal; not serialized to JSON
+
+    def decode_value(self, data: Any) -> None:
+        pass  # Pointer types are internal; not decoded from JSON
+
+    def __repr__(self) -> str:
+        if self._defined and self._value.get() is not None:
+            return f"{{ t.name }}(->{{ inner_type }})"
+        return "{{ t.name }}(None)"
+
+
+def make_{{ t.name | lower }}(v: Any) -> {{ t.name }}:
+    """Factory: create a defined {{ t.name }} pointing to v."""
+    o = {{ t.name }}()
+    o.value = v
+    return o
+
+{# ================================================================== #}
+{# MAP VALUE TYPE                                                     #}
+{# ================================================================== #}
+{% elif is_map %}
+{% set inner_type = t.members[0].type_name %}
+{% set dict_parts = inner_type[5:-1].split(",") %}
+
+{% if dict_parts %}
+if TYPE_CHECKING:
+{% for dict_type in dict_parts %}
+{% set dict_type_name = dict_type | trim %}
+{% if dict_type_name.endswith("Value") %}
+{% set mod_type = dict_type_name[:-5] %}
+    from nmos.types.generated.{{ mod_type | to_snake }} import {{ dict_type_name }}
+{% elif dict_type_name not in base_types and dict_type_name not in builtin_types %}
+    from nmos.types.generated.{{ dict_type_name | to_snake }} import {{ dict_type_name }}, {{ dict_type_name }}Value
+{% endif %}
+{% endfor %}
+
+{% endif %}
+
+class {{ t.name }}Value:
+    """Map value for {{ t.name }}."""
+
+    __slots__ = ("_inner",)
+
+    def __init__(self) -> None:
+        self._inner: {{ inner_type }} = {}
+
+    def get(self) -> {{ inner_type }}:
+        return self._inner
+
+    def set(self, v: {{ inner_type }}) -> None:
+        self._inner = v
+
+    def clone(self) -> {{ t.name }}Value:
+        o = {{ t.name }}Value()
+        o._inner = dict(self._inner)  # shallow copy of map
+        return o
+
+
+class {{ t.name }}:
+    """Map type: {{ t.name }}."""
+
+    __slots__ = ("_defined", "_value")
+
+    def __init__(self) -> None:
+        self._defined: bool = False
+        self._value: {{ t.name }}Value = {{ t.name }}Value()
+
+    @property
+    def defined(self) -> bool:
+        return self._defined
+
+    @property
+    def value(self) -> {{ inner_type }}:
+        if not self._defined:
+            raise NotAvailable("undefined value")
+        return self._value.get()
+
+    @value.setter
+    def value(self, v: {{ inner_type }}) -> None:
+        self._defined = True
+        self._value.set(v)
+
+    def get(self, default: {{ inner_type }} | None = None) -> {{ inner_type }} | None:
+        return self._value.get() if self._defined else default
+
+    def set_to_default(self) -> None:
+        self._defined = True
+        self._value.set({})
+
+    def set_to_zero(self) -> None:
+        self._defined = False
+        self._value = {{ t.name }}Value()
+
+    def clone(self) -> {{ t.name }}:
+        o = {{ t.name }}()
+        o._defined = self._defined
+        o._value = self._value.clone()
+        return o
+
+    def encode(self, engine: JsonEngine, name: EnumId | None) -> None:
+        pass  # Map types are internal; not serialized to JSON
+
+    def decode_value(self, data: Any) -> None:
+        pass  # Map types are internal; not decoded from JSON
+
+    def __repr__(self) -> str:
+        if self._defined:
+            return f"{{ t.name }}({len(self._value.get())} entries)"
+        return "{{ t.name }}(<undefined>)"
+
+
+def make_{{ t.name | lower }}(v: {{ inner_type }}) -> {{ t.name }}:
+    """Factory: create a defined {{ t.name }} with the given map."""
+    o = {{ t.name }}()
+    o.value = v
+    return o
+
+{# ================================================================== #}
+{# ARRAY TYPE                                                         #}
+{# ================================================================== #}
+{% elif t.is_array %}
+{% set inner_type = t.members[0].type_name %}
+
+class {{ t.name }}Value:
+    """Array value for {{ t.name }}."""
+
+    __slots__ = ("_inner",)
+
+    def __init__(self) -> None:
+        self._inner: {{ inner_type }} = []
+
+    def get(self) -> {{ inner_type }}:
+        return self._inner
+
+    def set(self, v: {{ inner_type }}) -> None:
+        self._inner = v
+
+    def append(self, v: {{ inner_type }}) -> None:
+        self._inner = self._inner + v
+
+    def clone(self) -> {{ t.name }}Value:
+        o = {{ t.name }}Value()
+        o._inner = [item.clone() for item in self._inner]
+        return o
+
+    def encode(self, engine: JsonEngine, name: EnumId | None) -> None:
+        engine.open_array(name)
+        for item in self._inner:
+            item.encode(engine, None)
+        engine.close_array()
+
+    def decode_value(self, data: Any) -> None:
+        if not isinstance(data, list):
+            raise InvalidData("expected array for {{ t.name }}")
+        self._inner = []
+        {% set element_type = inner_type.replace("list[", "").replace("]", "") %}
+        for item_data in data:
+            elem = {{ element_type }}()
+            elem.decode(JsonEngine(), item_data)
+            self._inner.append(elem)
+
+
+class {{ t.name }}:
+    """Array type: {{ t.name }}."""
+
+    __slots__ = ("_defined", "_value")
+
+    def __init__(self) -> None:
+        self._defined: bool = False
+        self._value: {{ t.name }}Value = {{ t.name }}Value()
+
+    @property
+    def defined(self) -> bool:
+        return self._defined
+
+    @property
+    def value(self) -> {{ inner_type }}:
+        if not self._defined:
+            raise NotAvailable("undefined value")
+        return self._value.get()
+
+    @value.setter
+    def value(self, v: {{ inner_type }}) -> None:
+        self._defined = True
+        self._value.set(v)
+
+    def get(self, default: {{ inner_type }} | None = None) -> {{ inner_type }} | None:
+        return self._value.get() if self._defined else default
+
+    def set_to_default(self) -> None:
+        self._defined = True
+        self._value.set([])
+
+    def set_to_zero(self) -> None:
+        self._defined = False
+        self._value = {{ t.name }}Value()
+
+    def clone(self) -> {{ t.name }}:
+        o = {{ t.name }}()
+        o._defined = self._defined
+        o._value = self._value.clone()
+        return o
+
+    def encode(self, engine: JsonEngine, name: EnumId | None) -> None:
+        if not self._defined:
+            return
+        self._value.encode(engine, name)
+
+    def decode_value(self, data: Any) -> None:
+        self._value.decode_value(data)
+        self._defined = True
+
+    def __repr__(self) -> str:
+        if self._defined:
+            return f"{{ t.name }}({len(self._value.get())} items)"
+        return "{{ t.name }}(<undefined>)"
+
+
+def make_{{ t.name | lower }}(v: {{ inner_type }}) -> {{ t.name }}:
+    """Factory: create a defined {{ t.name }} with the given list."""
+    o = {{ t.name }}()
+    o.value = v
+    return o
+
+{# ================================================================== #}
+{# SIMPLE VALUE TYPE (V=true, non-polymorphic, non-pointer, non-map)  #}
+{# ================================================================== #}
+{% elif is_simple_value %}
+{% set inner_type = t.members[0].type_name %}
+
+class {{ t.name }}Value:
+    """Simple value for {{ t.name }}."""
+
+    __slots__ = ("_inner",)
+
+    def __init__(self) -> None:
+{% if t.is_base %}
+        self._inner: {{ inner_type }} = {{ inner_type }}()
+{% else %}
+        self._inner: {{ inner_type }} = {{ inner_type }}()
+{% endif %}
+
+    def get(self) -> {{ inner_type }}:
+        return self._inner
+
+    def set(self, v: {{ inner_type }}) -> None:
+{% if t.members[0].casting %}
+        v = {{ t.members[0].casting }}(v)
+{% endif %}
+        self._inner = v
+
+    def clone(self) -> {{ t.name }}Value:
+        o = {{ t.name }}Value()
+        o._inner = self._inner
+        return o
+
+    def encode(self, engine: JsonEngine, name: EnumId | None) -> None:
+        inner: Any = self._inner
+        if hasattr(inner, "encode"):
+            inner.encode(engine, name)
+        elif inner is None:
+            engine.write_null(name)
+        elif isinstance(inner, bool):
+            engine.write_bool(name, inner)
+        elif isinstance(inner, int):
+            engine.write_int(name, inner)
+        elif isinstance(inner, float):
+            engine.write_float(name, inner)
+        elif isinstance(inner, str):
+            engine.write_string(name, inner)
+
+    def decode_value(self, data: Any) -> None:
+        self._inner = data
+
+
+class {{ t.name }}:
+    """Simple value type: {{ t.name }}."""
+
+    __slots__ = ("_defined", "_value")
+
+    def __init__(self) -> None:
+        self._defined: bool = False
+        self._value: {{ t.name }}Value = {{ t.name }}Value()
+
+    @property
+    def defined(self) -> bool:
+        return self._defined
+
+    @property
+    def value(self) -> {{ inner_type }}:
+        if not self._defined:
+            raise NotAvailable("undefined value")
+        return self._value.get()
+
+    @value.setter
+    def value(self, v: {{ inner_type }}) -> None:
+        self._defined = True
+        self._value.set(v)
+
+    def get(self, default: {{ inner_type }} | None = None) -> {{ inner_type }} | None:
+        return self._value.get() if self._defined else default
+
+    def set_to_default(self) -> None:
+        self._defined = True
+{% if t.members[0].default %}
+        self._value.set({{ t.members[0].default }})
+{% elif not t.is_base %}
+        self._value.set({{ inner_type }}())
+{% endif %}
+
+    def set_to_zero(self) -> None:
+        self._defined = False
+        self._value = {{ t.name }}Value()
+
+    def clone(self) -> {{ t.name }}:
+        o = {{ t.name }}()
+        o._defined = self._defined
+        o._value = self._value.clone()
+        return o
+
+    def encode(self, engine: JsonEngine, name: EnumId | None) -> None:
+        if not self._defined:
+            return
+        self._value.encode(engine, name)
+
+    def decode_value(self, data: Any) -> None:
+        self._value.decode_value(data)
+        self._defined = True
+
+    def __repr__(self) -> str:
+        if self._defined:
+            return f"{{ t.name }}({self._value.get()!r})"
+        return "{{ t.name }}(<undefined>)"
+
+
+def make_{{ t.name | lower }}(v: {{ inner_type }}) -> {{ t.name }}:
+    """Factory: create a defined {{ t.name }} with the given value."""
+    o = {{ t.name }}()
+    o.value = v
+    return o
+
+{# ================================================================== #}
+{# OBJECT TYPE (default)                                              #}
+{# ================================================================== #}
+{% else %}
+
+class {{ t.name }}Value:
+    """Inner value struct for {{ t.name }}."""
+
+    __slots__ = (
+{% for m in t.members %}
+        "{{ m.name }}",
+{% endfor %}
+    )
+
+    def __init__(self) -> None:
+{% for m in t.members %}
+{% if m.embedded %}
+        self.{{ m.name }}: {{ m.type_name }}Value = {{ m.type_name }}Value()
+{% else %}
+        self.{{ m.name }}: {{ m.type_name }} = {{ m.type_name }}()
+{% endif %}
+{% endfor %}
+{% if not t.members %}
+        pass
+{% endif %}
+
+    def set_to_default(self) -> None:
+{% for m in t.members %}
+{% if m.default %}
+        _assign_value(self.{{ m.name }}, {{ m.default }})
+{% elif not m.optional %}
+{% if m.embedded %}
+        self.{{ m.name }} = {{ m.type_name }}Value()
+        self.{{ m.name }}.set_to_default()
+{% else %}
+        self.{{ m.name }}.set_to_default()
+{% endif %}
+{% endif %}
+{% endfor %}
+        pass  # may have no members
+
+    def set_optional_to_default(self) -> None:
+{% for m in t.members %}
+{% if m.optional and m.default %}
+        if not self.{{ m.name }}.defined:
+            _assign_value(self.{{ m.name }}, {{ m.default }})
+{% endif %}
+{% endfor %}
+        pass  # ensure method body is not empty
+
+    def assert_valid(self) -> None:
+{% for m in t.members %}
+{% if not m.optional and not m.embedded and m.json_key != "-" %}
+        if not self.{{ m.name }}.defined:
+            raise InvalidObject("missing required member {{ m.name }}")
+{% endif %}
+{% endfor %}
+{% for m in t.members %}
+{% if m.assertion and not m.embedded %}
+        if self.{{ m.name }}.defined:
+            {{ m.assertion }}(self.{{ m.name }})
+{% endif %}
+{% endfor %}
+{% for m in t.members %}
+{% if m.embedded %}
+        self.{{ m.name }}.assert_valid()
+{% endif %}
+{% endfor %}
+        pass  # may have no validations
+
+    def encode(self, engine: JsonEngine, name: EnumId | None) -> None:
+        self.assert_valid()
+{% if not t.is_embedded %}
+        engine.open_struct(name, False)
+{% endif %}
+{% for m in t.members %}
+{% if m.json_key != "-" %}
+{% if m.embedded %}
+        self.{{ m.name }}.encode(engine, None)
+{% else %}
+        self.{{ m.name }}.encode(engine, {{ t.name }}Enums.{{ m.name }})
+{% endif %}
+{% endif %}
+{% endfor %}
+{% if not t.is_embedded %}
+        engine.close_struct()
+{% endif %}
+
+    def decode(self, engine: JsonEngine, data: Any) -> None:
+        if not isinstance(data, dict):
+            raise InvalidData("expected JSON object for {{ t.name }}")
+
+{% for m in t.members %}
+{% if m.embedded %}
+        self.{{ m.name }}.decode(engine, data)
+{% elif m.json_key != "-" %}
+        if {{ t.name }}Enums.{{ m.name }}.s in data:
+            self.{{ m.name }}.decode_value(data[{{ t.name }}Enums.{{ m.name }}.s])
+{% endif %}
+{% endfor %}
+{% if t.is_sealed %}
+
+        # Sealed type: reject unknown keys
+        _known_keys = {
+{% for m in t.members %}
+{% if m.json_key != "-" and not m.embedded %}
+            {{ t.name }}Enums.{{ m.name }}.s,
+{% endif %}
+{% endfor %}
+        }
+        for key in data:
+            if key not in _known_keys:
+                raise InvalidData(f"unknown property '{key}' in sealed type {{ t.name }}")
+{% endif %}
+
+        self.set_optional_to_default()
+        self.assert_valid()
+
+    def clone(self) -> {{ t.name }}Value:
+        o = {{ t.name }}Value()
+{% for m in t.members %}
+        o.{{ m.name }} = self.{{ m.name }}.clone()
+{% endfor %}
+        return o
+
+
+class {{ t.name }}:
+    """Optional object type: {{ t.name }}."""
+
+    __slots__ = ("_defined", "_value")
+
+    def __init__(self) -> None:
+        self._defined: bool = False
+        self._value: {{ t.name }}Value = {{ t.name }}Value()
+
+    @property
+    def defined(self) -> bool:
+        return self._defined
+
+    @property
+    def value(self) -> {{ t.name }}Value:
+        if not self._defined:
+            raise NotAvailable("undefined value")
+        return self._value
+
+    def set_value(self, v: {{ t.name }}Value) -> None:
+        self._defined = True
+        self._value = v.clone()  # copy to match Go's value semantics
+        self._value.set_optional_to_default()
+
+    def get(self, default: {{ t.name }}Value | None = None) -> {{ t.name }}Value | None:
+        return self._value if self._defined else default
+
+    # --- Per-field convenience accessors ---
+{% for m in t.members %}
+{% if not m.embedded and m.json_key != "-" %}
+    def get_{{ m.name }}(self) -> {{ m.type_name }}:
+        if not self._defined:
+            raise NotAvailable("undefined value")
+        return self._value.{{ m.name }}
+
+    def set_{{ m.name }}(self, v: Any) -> None:
+        assert self._defined, "{{ t.name }} must be defined before setting {{ m.name }}"
+        _assign_value(self._value.{{ m.name }}, v)
+
+{% endif %}
+{% if m.embedded %}
+    def get_{{ m.name }}(self) -> {{ m.type_name }}Value:
+        if not self._defined:
+            raise NotAvailable("undefined value")
+        return self._value.{{ m.name }}
+
+    def set_{{ m.name }}(self, v: {{ m.type_name }}Value) -> None:
+        assert self._defined, "{{ t.name }} must be defined before setting {{ m.name }}"
+        self._value.{{ m.name }} = v.clone()  # copy to match Go's value semantics
+
+{% endif %}
+{% endfor %}
+
+    def set_to_default(self) -> None:
+        self._defined = True
+        self._value.set_to_default()
+
+    def set_to_zero(self) -> None:
+        self._defined = False
+        self._value = {{ t.name }}Value()
+
+    def clone(self) -> {{ t.name }}:
+        o = {{ t.name }}()
+        o._defined = self._defined
+        o._value = self._value.clone()
+        return o
+
+    def encode(self, engine: JsonEngine, name: EnumId | None) -> None:
+        if self._defined:
+            self._value.encode(engine, name)
+
+    def decode(self, engine: JsonEngine, data: Any) -> None:
+        self._value.decode(engine, data)
+        self._defined = True
+
+    def decode_value(self, data: Any) -> None:
+        """Decode from a parent dict value. Creates minimal engine context."""
+        self._value.decode(JsonEngine(), data)
+        self._defined = True
+
+    def __repr__(self) -> str:
+        if self._defined:
+            return f"{{ t.name }}(defined)"
+        return "{{ t.name }}(<undefined>)"
+
+
+def make_{{ t.name | lower }}_value(v: {{ t.name }}Value) -> {{ t.name }}Value:
+    """Factory: create a {{ t.name }}Value with optional defaults applied."""
+    v.set_optional_to_default()
+    return v
+
+
+def make_{{ t.name | lower }}(v: {{ t.name }}Value) -> {{ t.name }}:
+    """Factory: create a defined {{ t.name }} from a {{ t.name }}Value."""
+    o = {{ t.name }}()
+    o.set_value(v)
+    return o
+
+{% endif %}
+{# Additional functions #}
+{% for func in t.functions %}
+{{ func }}
+{% endfor %}

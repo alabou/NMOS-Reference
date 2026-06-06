@@ -1,0 +1,179 @@
+{# Render one device's tbodys for the outer devices-table.
+
+   This partial intentionally does NOT open its own <table> — the
+   enclosing list page owns the single cross-device table so that
+   colgroup widths align across every device, every group, every
+   sender. What we emit here is:
+
+     <tbody class="device-title-tbody">  device title row
+     <tbody class="group-tbody">          group header + member rows
+     ...
+
+   The first <td> of each group-header-row uses ``rowspan`` so the
+   blue left strip visually covers the whole group.
+
+   Arguments:
+     dev        — DeviceView
+     group_only — optional bool (default false). When true, only the
+                  group header row is rendered (with the group-select
+                  radio) — individual members are hidden. Used by the
+                  receivers-compatible-senders page in group-of-
+                  receivers mode, where the operator picks a matching
+                  sender group as a whole (the members are implied
+                  by the group shape that matched the receiver group).
+#}
+{% set group_only = group_only|default(false) %}
+{# Phase 5 capability painting: device_capability[device_id] carries
+   the per-Device tls_secure flag + read/write inaccessible_reasons.
+   When ``read`` is non-empty we paint every tbody belonging to this
+   Device with the ``device-inaccessible`` class (light-red wash via
+   controller.css); the lock icon next to the serial number flips
+   based on tls_secure. The dict may be absent on pages that haven't
+   wired it through yet — fall back to safe defaults. #}
+{% set _cap = (device_capability or {}).get(dev.device_id, {}) %}
+{% set _tls_secure = _cap.get('tls_secure', false) %}
+{% set _reasons = _cap.get('inaccessible_reasons', {'read': [], 'write': []}) %}
+{% set _read_blocked = _reasons.get('read') | length > 0 %}
+{% set _write_blocked = _reasons.get('write') | length > 0 %}
+{% set _device_class = 'device-inaccessible' if _read_blocked else '' %}
+<tbody class="device-title-tbody {{ _device_class }}">
+  <tr class="device-title-row">
+    <td colspan="9" class="device-title">
+      <strong class="device-serial">
+        {% if dev.device_serial %}
+          {{ dev.device_serial }}
+        {% else %}
+          <span class="text-muted">(no serial)</span>
+        {% endif %}
+      </strong>
+      {% if _tls_secure %}
+        <i class="bi bi-lock-fill device-cap-lock lock-tls-secure"
+           title="TLS verified — every control on this device uses https://"></i>
+      {% else %}
+        <i class="bi bi-unlock-fill device-cap-lock lock-tls-insecure"
+           title="No end-to-end TLS — this device exposes at least one control over plain HTTP"></i>
+      {% endif %}
+      {% if _read_blocked %}
+        <i class="bi bi-exclamation-triangle-fill device-cap-lock text-danger"
+           title="{{ _reasons.read[0] }}"></i>
+      {% elif _write_blocked %}
+        <i class="bi bi-exclamation-triangle-fill device-cap-lock text-warning"
+           title="writes blocked: {{ _reasons.write[0] }}"></i>
+      {% else %}
+        <i class="bi bi-check-circle-fill device-cap-lock text-success"
+           title="Authorized — controller can read and write to this device"></i>
+      {% endif %}
+      {% if dev.device_address %}
+        <span class="device-address ml-3 text-muted">{{ dev.device_address }}</span>
+      {% endif %}
+      {% if dev.transports %}
+        <span class="device-transports ml-3 text-muted small">
+          {{ dev.transports | join(' · ') }}
+        </span>
+      {% endif %}
+    </td>
+  </tr>
+</tbody>
+
+{% for group in dev.groups %}
+  {% set span = 1 if group_only else group.members | length + 1 %}
+  {% set ids = group.members | map(attribute='id') | join(',') %}
+  <tbody class="group-tbody {{ _device_class }}">
+    <tr class="group-header-row">
+      <td rowspan="{{ span }}" class="group-select">
+        <label class="m-0 w-100 h-100 d-flex align-items-center justify-content-center"
+               title="Select the whole group">
+          <input type="radio" name="_group"
+                 data-ids="{{ ids }}">
+        </label>
+      </td>
+      <td colspan="8" class="group-name">
+        {{ group.display_name }}
+        {% if group_only %}
+          {# Summarise the member roles next to the group name so
+             the operator can tell matching groups apart at a glance
+             without seeing every row. #}
+          <span class="text-muted small ml-2">
+            ({% for m in group.members -%}
+              {{ m.label }}{% if not loop.last %}, {% endif %}
+            {%- endfor %})
+          </span>
+        {% endif %}
+      </td>
+    </tr>
+    {% if not group_only %}
+    {% for m in group.members %}
+      {% set overall = m.status.get('overall', 'inactive') %}
+      <tr class="member-row" data-resource-id="{{ m.id }}">
+        <td class="role-select">
+          <label class="m-0">
+            <input type="checkbox" class="member-check"
+                   data-ids="{{ m.id }}">
+          </label>
+        </td>
+        <td class="role-name">
+          {% if m.hint %}
+            {{ m.hint.format }} {{ m.hint.role }}
+          {% else %}
+            <span class="text-muted">—</span>
+          {% endif %}
+        </td>
+        <td class="sender-label">{{ m.label }}</td>
+        <td class="overall-status">
+          <span class="status-badge is-{{ overall }}"
+                data-resource-id="{{ m.id }}"
+                data-kind="overall">
+            {% if overall in ('inactive', 'not-used') %}idle{% endif %}
+          </span>
+        </td>
+        {% for facet in ('link', 'sync', 'conn', 'media') %}
+          {% set fv = m.status.get(facet, 'inactive') %}
+          <td class="col-dot">
+            <span class="status-dot is-{{ fv }}"
+                  data-resource-id="{{ m.id }}"
+                  data-kind="{{ facet }}"></span>
+          </td>
+        {% endfor %}
+      </tr>
+    {% endfor %}
+    {% endif %}
+  </tbody>
+{% endfor %}
+
+{% if dev.ungrouped and not group_only %}
+  {% set span = dev.ungrouped | length + 1 %}
+  <tbody class="group-tbody group-tbody-ungrouped {{ _device_class }}">
+    <tr class="group-header-row">
+      <td rowspan="{{ span }}" class="group-select group-select-empty"></td>
+      <td colspan="8" class="group-name">Ungrouped</td>
+    </tr>
+    {% for m in dev.ungrouped %}
+      {% set overall = m.status.get('overall', 'inactive') %}
+      <tr class="member-row" data-resource-id="{{ m.id }}">
+        <td class="role-select">
+          <label class="m-0">
+            <input type="checkbox" class="member-check"
+                   data-ids="{{ m.id }}">
+          </label>
+        </td>
+        <td class="role-name"><span class="text-muted">—</span></td>
+        <td class="sender-label">{{ m.label }}</td>
+        <td class="overall-status">
+          <span class="status-badge is-{{ overall }}"
+                data-resource-id="{{ m.id }}"
+                data-kind="overall">
+            {% if overall in ('inactive', 'not-used') %}idle{% endif %}
+          </span>
+        </td>
+        {% for facet in ('link', 'sync', 'conn', 'media') %}
+          {% set fv = m.status.get(facet, 'inactive') %}
+          <td class="col-dot">
+            <span class="status-dot is-{{ fv }}"
+                  data-resource-id="{{ m.id }}"
+                  data-kind="{{ facet }}"></span>
+          </td>
+        {% endfor %}
+      </tr>
+    {% endfor %}
+  </tbody>
+{% endif %}

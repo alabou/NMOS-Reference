@@ -1,0 +1,82 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nmos-reference"
+version = "0.1.0"
+description = "Python reference implementation of NMOS/AMWA + VSF IPMX with mTLS, OAuth 2.0, and a typed JSON serialization layer"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Alain Bouchard" },
+]
+requires-python = ">=3.12"
+keywords = [
+    "nmos", "amwa", "ipmx", "tr-10-sec",
+    "oauth2", "mtls",
+    "is-04", "is-05", "is-08", "is-10", "is-11", "is-12",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia",
+    "Topic :: System :: Networking",
+    "Framework :: AsyncIO",
+]
+dependencies = [
+    "aiohttp",
+    "jinja2",
+    "cryptography",
+    "pyOpenSSL",
+    "PyJWT",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "mypy"]
+
+[project.urls]
+Homepage = "https://github.com/alabou/NMOS-Reference"
+Repository = "https://github.com/alabou/NMOS-Reference"
+Issues = "https://github.com/alabou/NMOS-Reference/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["nmos*", "caps*", "sdp*", "pep*"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+files = ["nmos"]
+exclude = '''(?x)(
+    ^nmos/.*/tests/
+)'''
+
+[[tool.mypy.overrides]]
+module = ["caps.*", "sdp.*"]
+follow_imports = "skip"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = ["netifaces"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["ipmx_pep"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = [
+    "caps/tests",
+    "nmos",
+]
+addopts = "-m \"not e2e and not slow\""
+markers = [
+    "integration: in-process integration tests that exercise multiple modules but remain in the default gate",
+    "e2e: end-to-end tests that exercise full protocol/application flows and are excluded from the default gate",
+    "slow: long-running tests excluded from the default gate",
+]
+asyncio_mode = "auto"

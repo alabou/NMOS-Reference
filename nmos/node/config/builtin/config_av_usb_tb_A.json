@@ -1,0 +1,88 @@
+{
+  "description": "Track D test fixture — Node A: forward-direction A/V senders, reverse-direction USB + TB receivers. Pair with config_av_usb_tb_B.json on the other Node to exercise the cross-direction navigation buttons on the receivers configure page.",
+  "__track_d_notes": [
+    "A/V/D forward: Node A sends video + audio → Node B.",
+    "USB reverse: Node B sends USB → Node A receives USB (natural_group_index 1). USB detected by transport URN.",
+    "TB reverse: Node B sends TB audio → Node A receives TB audio (natural_group_index 2). TB detected by shape: an audio resource alone in its natural group on its Node (no other same-direction resources share the (transport, group_index) key).",
+    "Tie-break when a Node hosts multiple USB or TB candidates: smallest natural_group_index wins."
+  ],
+  "senders": [
+    {
+      "label": "Node A Video 0",
+      "description": "Forward-direction video sender",
+      "format": "urn:x-nmos:format:video",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "natural_group_index": 0,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native Video",
+          "urn:x-nmos:cap:meta:enabled": true,
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": { "enum": ["video/raw"] },
+          "urn:x-nmos:cap:format:frame_width": { "enum": [1920] },
+          "urn:x-nmos:cap:format:frame_height": { "enum": [1080] },
+          "urn:x-nmos:cap:format:grain_rate": { "enum": [{"numerator": 60, "denominator": 1}] },
+          "urn:x-nmos:cap:format:component_depth": { "enum": [10] },
+          "urn:x-nmos:cap:format:colorspace": { "enum": ["BT709"] },
+          "urn:x-nmos:cap:format:color_sampling": { "enum": ["YCbCr-4:2:2"] },
+          "urn:x-nmos:cap:format:transfer_characteristic": { "enum": ["SDR"] },
+          "urn:x-nmos:cap:format:interlace_mode": { "enum": ["progressive"] }
+        }
+      ]
+    },
+    {
+      "label": "Node A Audio 0",
+      "description": "Forward-direction audio sender",
+      "format": "urn:x-nmos:format:audio",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "natural_group_index": 0,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native Audio",
+          "urn:x-nmos:cap:meta:enabled": true,
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": { "enum": ["audio/L24"] },
+          "urn:x-nmos:cap:format:sample_rate": { "enum": [{"numerator": 48000}] },
+          "urn:x-nmos:cap:format:channel_count": { "enum": [2] },
+          "urn:x-nmos:cap:format:sample_depth": { "enum": [24] }
+        }
+      ]
+    }
+  ],
+  "receivers": [
+    {
+      "label": "Node A USB 0 (reverse)",
+      "description": "Reverse-direction USB receiver — paired with Node B's USB sender",
+      "format": "urn:x-nmos:format:data",
+      "transport": "urn:x-nmos:transport:usb",
+      "natural_group_index": 1,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native USB",
+          "urn:x-nmos:cap:meta:enabled": true,
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": { "enum": ["application/usb"] },
+          "urn:x-nmos:cap:transport:usb_class": { "enum": [3] }
+        }
+      ]
+    },
+    {
+      "label": "Node A TB Audio 0 (reverse)",
+      "description": "Reverse-direction Talk-Back audio receiver — paired with Node B's TB sender",
+      "format": "urn:x-nmos:format:audio",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "natural_group_index": 2,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native TB Audio",
+          "urn:x-nmos:cap:meta:enabled": true,
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": { "enum": ["audio/L24"] },
+          "urn:x-nmos:cap:format:sample_rate": { "enum": [{"numerator": 48000}] },
+          "urn:x-nmos:cap:format:channel_count": { "enum": [1] },
+          "urn:x-nmos:cap:format:sample_depth": { "enum": [24] }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% block title %}Receiver capabilities{% endblock %}
+{% block content %}
+{# View-only capabilities page for receivers — identical layout to
+   /senders/caps, minus the form/radio selection (nothing to submit).
+   Filter-link URL preserves the receiver_ids selection. #}
+{% macro filter_url(receiver_ids, by_format, by_layer, by_compatibility) -%}
+/controller/receivers/view-caps?receiver_ids={{ receiver_ids }}
+{%- if by_format %}&byFormat={{ by_format }}{% endif %}
+{%- if by_layer != '' %}&byLayer={{ by_layer }}{% endif %}
+{%- if by_compatibility != '' %}&byCompatibility={{ by_compatibility }}{% endif %}
+{%- endmacro %}
+
+<div class="row">
+  <div class="col-12">
+    <h3 class="mb-3">Receiver capabilities</h3>
+
+    {% if not caps_view.senders %}
+      <div class="alert alert-warning">No receivers selected.</div>
+      <a href="/controller/receivers" class="btn btn-link">Back to receivers</a>
+    {% else %}
+
+      {# --------- Filter dropdowns (format / layer / compatibility) --------- #}
+      <div class="caps-filters btn-group mb-3" role="group">
+        <span class="mr-2 align-self-center text-muted">Filter by</span>
+
+        <div class="dropdown mr-1">
+          <button class="btn btn-outline-secondary dropdown-toggle" type="button"
+                  data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+            {% if filters.by_format %}Format: <strong>{{ filters.by_format }}</strong>
+            {% else %}Format{% endif %}
+          </button>
+          <div class="dropdown-menu">
+            {% for f in caps_view.has_formats %}
+              <a class="dropdown-item {% if filters.by_format == f %}active{% endif %}"
+                 href="{{ filter_url(receiver_ids_csv, f, filters.by_layer, filters.by_compatibility) }}">{{ f }}</a>
+            {% else %}
+              <span class="dropdown-item-text text-muted small">no formats</span>
+            {% endfor %}
+            {% if filters.by_format %}
+              <div class="dropdown-divider"></div>
+              <a class="dropdown-item"
+                 href="{{ filter_url(receiver_ids_csv, '', filters.by_layer, filters.by_compatibility) }}">clear</a>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="dropdown mr-1">
+          <button class="btn btn-outline-secondary dropdown-toggle" type="button"
+                  data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+            {% if filters.by_layer != '' %}Layer: <strong>{{ filters.by_layer }}</strong>
+            {% else %}Layer{% endif %}
+          </button>
+          <div class="dropdown-menu">
+            {% for l in caps_view.has_layers %}
+              <a class="dropdown-item {% if filters.by_layer == l|string %}active{% endif %}"
+                 href="{{ filter_url(receiver_ids_csv, filters.by_format, l|string, filters.by_compatibility) }}">{{ l }}</a>
+            {% else %}
+              <span class="dropdown-item-text text-muted small">no layers</span>
+            {% endfor %}
+            {% if filters.by_layer != '' %}
+              <div class="dropdown-divider"></div>
+              <a class="dropdown-item"
+                 href="{{ filter_url(receiver_ids_csv, filters.by_format, '', filters.by_compatibility) }}">clear</a>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="dropdown mr-1">
+          <button class="btn btn-outline-secondary dropdown-toggle" type="button"
+                  data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+            {% if filters.by_compatibility != '' %}Compatibility: <strong>{{ filters.by_compatibility }}</strong>
+            {% else %}Compatibility{% endif %}
+          </button>
+          <div class="dropdown-menu">
+            {% for c in caps_view.has_compatibilities %}
+              <a class="dropdown-item {% if filters.by_compatibility == c|string %}active{% endif %}"
+                 href="{{ filter_url(receiver_ids_csv, filters.by_format, filters.by_layer, c|string) }}">{{ c }}</a>
+            {% else %}
+              <span class="dropdown-item-text text-muted small">no groups</span>
+            {% endfor %}
+            {% if filters.by_compatibility != '' %}
+              <div class="dropdown-divider"></div>
+              <a class="dropdown-item"
+                 href="{{ filter_url(receiver_ids_csv, filters.by_format, filters.by_layer, '') }}">clear</a>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <p class="text-muted small">
+        One row per constraint set. Disabled sets are hidden. Click a
+        row to expand its parameter list. This view is read-only — no
+        selection or configuration is applied from this page.
+      </p>
+
+      {# Same table skeleton as senders_caps.html — ``_build_caps_view``
+         treats senders and receivers uniformly (both carry
+         ``caps.constraint_sets``), so the row/column layout matches
+         exactly. The radio column is gone (view-only). #}
+      <table class="devices-table caps-table"
+             style="--caps-name-width: {{ (caps_view.max_param_name_len or 0) + 1 }}ch">
+        <colgroup>
+          <col style="width:4rem">
+          <col>
+          <col style="width:12rem">
+          <col style="width:5rem">
+          <col style="width:5rem">
+          <col style="width:6rem">
+        </colgroup>
+        <thead>
+          <tr class="devices-header-row">
+            <th>set</th>
+            <th>label</th>
+            <th>media&nbsp;type</th>
+            <th>format</th>
+            <th>layer</th>
+            <th>preference</th>
+          </tr>
+        </thead>
+
+        {# ``_build_caps_view`` names the collection ``senders`` — here
+           each entry is actually a receiver. The data shape is
+           identical; just the label is misleading for this view. #}
+        {% for receiver in caps_view.senders %}
+          <tbody class="device-title-tbody">
+            <tr class="device-title-row">
+              <td colspan="6" class="device-title">
+                {% if receiver.role %}
+                  <strong class="device-serial">{{ receiver.role }}</strong>
+                {% endif %}
+                <span class="ml-3">{{ receiver.label }}</span>
+                {% if receiver.device_serial or receiver.device_address %}
+                  <span class="ml-3 text-muted small">
+                    {% if receiver.device_serial %}{{ receiver.device_serial }}{% endif %}
+                    {% if receiver.device_address %} · {{ receiver.device_address }}{% endif %}
+                  </span>
+                {% endif %}
+              </td>
+            </tr>
+          </tbody>
+          <tbody class="caps-tbody">
+            {% if receiver.constraint_sets %}
+              {% for cs in receiver.constraint_sets %}
+                <tr class="caps-row"
+                    data-caps-row="{{ receiver.id }}-{{ cs.index }}">
+                  <td class="caps-set-cell">
+                    <span class="caps-toggle">▸</span>
+                    <code>#{{ cs.index }}</code>
+                  </td>
+                  <td>{{ cs.label }}</td>
+                  <td class="caps-summary">{{ cs.media_type or '—' }}</td>
+                  <td>{{ cs.meta_format or '—' }}</td>
+                  <td class="text-right">{{ cs.meta_layer if cs.meta_layer != '' else '—' }}</td>
+                  <td class="text-right">{{ cs.preference }}</td>
+                </tr>
+                <tr class="caps-details-row"
+                    data-caps-details-for="{{ receiver.id }}-{{ cs.index }}"
+                    hidden>
+                  <td colspan="6" class="caps-details-cell">
+                    {% if cs.meta_compat or cs.params %}
+                      <table class="caps-params">
+                        <tbody>
+                          {% if cs.meta_compat %}
+                            <tr>
+                              <td class="caps-detail-name">layer_compatibility_groups</td>
+                              <td class="caps-detail-value">{{ cs.meta_compat | join(', ') }}</td>
+                            </tr>
+                          {% endif %}
+                          {% for p in cs.params %}
+                            <tr>
+                              <td class="caps-detail-name">{{ p.name }}</td>
+                              <td class="caps-detail-value">{{ p.value }}</td>
+                            </tr>
+                          {% endfor %}
+                        </tbody>
+                      </table>
+                    {% else %}
+                      <div class="text-muted small">
+                        No parameter constraints declared (unconstrained).
+                      </div>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            {% else %}
+              <tr>
+                <td colspan="6" class="text-muted small px-3 py-2">
+                  No constraint sets match the current filter.
+                </td>
+              </tr>
+            {% endif %}
+          </tbody>
+        {% endfor %}
+      </table>
+
+      <div class="sticky-bottom bg-light p-2 border-top mt-3">
+        <a href="/controller/receivers" class="btn btn-link">Back to receivers</a>
+      </div>
+
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  controller.initCapsRowClick();
+</script>
+{% endblock %}

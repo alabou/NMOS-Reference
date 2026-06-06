@@ -1,0 +1,169 @@
+{
+  "description": "Config 2: Video Raw + JXSV Coded (RTP Multicast)",
+  "senders": [
+    {
+      "label": "Net Stream Video 0",
+      "description": "This is the Net Stream Video 0",
+      "format": "urn:x-nmos:format:video",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "natural_group_index": 0,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native Video constraints",
+          "urn:x-nmos:cap:meta:enabled": true,
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "video/raw"
+            ]
+          },
+          "urn:x-nmos:cap:format:frame_width": {
+            "enum": [
+              1920
+            ]
+          },
+          "urn:x-nmos:cap:format:frame_height": {
+            "enum": [
+              1080
+            ]
+          },
+          "urn:x-nmos:cap:format:component_depth": {
+            "enum": [
+              10
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "General constraints",
+          "urn:x-nmos:cap:meta:enabled": true,
+          "urn:x-nmos:cap:meta:preference": 0,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "video/raw",
+              "video/jxsv"
+            ]
+          }
+        }
+      ],
+      "privacy_keys": [
+        {
+          "key_id": "0001020304050607",
+          "psk": "000102030405060708090a0b0c0d0e0f"
+        }
+      ]
+    }
+  ],
+  "receivers": [
+    {
+      "label": "Net Stream Video 0",
+      "description": "This is the Net Stream Video 0",
+      "format": "urn:x-nmos:format:video",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "natural_group_index": 0,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native Video",
+          "urn:x-nmos:cap:meta:enabled": true,
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "video/raw"
+            ]
+          },
+          "urn:x-nmos:cap:format:frame_width": {
+            "enum": [
+              1920
+            ]
+          },
+          "urn:x-nmos:cap:format:frame_height": {
+            "enum": [
+              1080
+            ]
+          },
+          "urn:x-nmos:cap:format:grain_rate": {
+            "enum": [
+              {
+                "numerator": 60
+              }
+            ]
+          },
+          "urn:x-nmos:cap:format:component_depth": {
+            "enum": [
+              10
+            ]
+          },
+          "urn:x-nmos:cap:format:colorspace": {
+            "enum": [
+              "BT709"
+            ]
+          },
+          "urn:x-nmos:cap:format:color_sampling": {
+            "enum": [
+              "YCbCr-4:2:2"
+            ]
+          },
+          "urn:x-nmos:cap:format:transfer_characteristic": {
+            "enum": [
+              "SDR"
+            ]
+          },
+          "urn:x-nmos:cap:format:interlace_mode": {
+            "enum": [
+              "progressive"
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "Raw constraints",
+          "urn:x-nmos:cap:meta:enabled": true,
+          "urn:x-nmos:cap:meta:preference": 0,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "video/raw"
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "Jxsv constraints",
+          "urn:x-nmos:cap:meta:enabled": true,
+          "urn:x-nmos:cap:meta:preference": 0,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "video/jxsv"
+            ]
+          },
+          "urn:x-nmos:cap:format:profile": {
+            "enum": [
+              "High 4:4:4 12-bit",
+              "Main 4:4:4 12-bit"
+            ]
+          },
+          "urn:x-nmos:cap:format:level": {
+            "enum": [
+              "4k-2",
+              "4k-1",
+              "2k-1",
+              "1k-1"
+            ]
+          },
+          "urn:x-nmos:cap:format:sublevel": {},
+          "urn:x-nmos:cap:transport:packet_transmission_mode": {
+            "enum": [
+              "codestream"
+            ]
+          }
+        }
+      ],
+      "privacy_keys": [
+        {
+          "key_id": "0001020304050607",
+          "psk": "000102030405060708090a0b0c0d0e0f"
+        },
+        {
+          "key_id": "0000000000000000",
+          "psk": "000100030005000700090f0f0f0f0f0f"
+        }
+      ]
+    }
+  ]
+}

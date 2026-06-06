@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en"{% if debug_enabled %} data-debug="1"{% endif %}>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}NMOS Controller{% endblock %}</title>
+  <link rel="stylesheet"
+        href="https://stackpath.bootstrapcdn.com/bootstrap/4.2.1/css/bootstrap.min.css">
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+  <link rel="stylesheet"
+        href="/controller/static/controller.css?v=41">
+</head>
+<body class="bg-light">
+  <nav class="navbar navbar-dark bg-dark mb-4">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="/controller/">
+        NMOS Controller
+      </a>
+      <ul class="navbar-nav flex-row">
+        <li class="nav-item mx-2">
+          <a class="nav-link {% if active == 'senders' %}active{% endif %}"
+             href="/controller/senders">Senders</a>
+        </li>
+        <li class="nav-item mx-2">
+          <a class="nav-link {% if active == 'receivers' %}active{% endif %}"
+             href="/controller/receivers">Receivers</a>
+        </li>
+        <li class="nav-item mx-2">
+          <a class="nav-link" href="/controller/logout">Sign&nbsp;out</a>
+        </li>
+      </ul>
+    </div>
+  </nav>
+
+  <main class="container-fluid">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="text-center text-muted small mt-5 mb-3">
+    <div>NMOS Node Controller &middot; /controller/</div>
+  </footer>
+
+  {# Bootstrap JS bundle (popper + collapse + dropdown). Loaded here so
+     every page has dropdowns/collapse available; CSS is already in head. #}
+  <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js"></script>
+  <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.2.1/js/bootstrap.bundle.min.js"></script>
+  <script src="/controller/static/controller.js?v=41"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

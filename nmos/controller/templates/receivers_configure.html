@@ -1,0 +1,447 @@
+{% extends "base.html" %}
+{% block title %}Configure receivers{% endblock %}
+{% block content %}
+
+{# Filter-link URL preserving the other filters — same pattern as
+   senders_configure.html, but with receiver_ids + sender_ids threaded
+   through so every filter click stays on the receivers flow. #}
+{% macro filter_url(receiver_ids, sender_ids, conset_qs, by_format, by_layer, by_compatibility) -%}
+/controller/receivers/configure?receiver_ids={{ receiver_ids }}&sender_ids={{ sender_ids }}&mode={{ mode }}{{ conset_qs }}
+{%- if by_format %}&byFormat={{ by_format }}{% endif %}
+{%- if by_layer != '' %}&byLayer={{ by_layer }}{% endif %}
+{%- if by_compatibility != '' %}&byCompatibility={{ by_compatibility }}{% endif %}
+{%- endmacro %}
+
+{# conset_{id}=<idx> fragment so filter links preserve per-sender CS
+   picks. #}
+{% set conset_qs %}
+{%- for sid, idx in conset_by_sender.items() -%}&conset_{{ sid }}={{ idx }}{%- endfor -%}
+{% endset %}
+
+<div class="row">
+  <div class="col-12">
+    <h3 class="mb-3">Configuration</h3>
+
+    {% if not config_view.senders %}
+      <div class="alert alert-warning">No senders selected.</div>
+      <a href="/controller/receivers" class="btn btn-link">Back to receivers</a>
+    {% else %}
+
+      {# Privacy panel — see partials/privacy_section.html for the
+         context shape. Absent ``privacy_view`` yields no markup. #}
+      {% include "partials/privacy_section.html" %}
+
+      {# ---------- Action toggles + Reset ----------
+         Senders row mirrors /senders/configure exactly. Receivers row
+         adds one extra toggle that the JS drives pair-by-index
+         (sender[i] → receiver[i]) against
+         /api/receivers/{id}/activate (or deactivate). #}
+      {# Toggles reflect the live state at page render — any-wise OR
+         so green means "at least one resource is already in that
+         state". See senders_configure.html for the rationale. #}
+      {# Phase 5: this configure page sets up the sender ↔ receiver
+         pair end-to-end. If EITHER side is on a Device the current
+         admin can't read+write, NONE of the master toggles can do
+         anything useful — Constrain on the sender alone is moot if
+         the receiver can't accept the resulting stream, and Sender
+         Activate without the paired receiver Activate produces an
+         orphan flow. So all three toggles gate on ``_both_writable``.
+         Operators wanting to act on just the sender half can fall
+         back to /controller/senders/configure (which gates only on
+         sender-side accessibility). #}
+      {% set _s_writable = all_senders_writable %}
+      {% set _r_writable = all_receivers_writable %}
+      {% set _both_writable = _s_writable and _r_writable %}
+      {% set _block_reason %}
+        {%- if not _s_writable and not _r_writable -%}
+          A selected sender AND a selected receiver are on devices not writable for this admin.
+        {%- elif not _s_writable -%}
+          A selected sender's device is not writable for this admin (OAuth2 grants or client cert missing).
+        {%- else -%}
+          A selected receiver's device is not writable for this admin (OAuth2 grants or client cert missing).
+        {%- endif -%}
+      {% endset %}
+      <div class="config-actions mb-3" role="group">
+        <span class="mr-2 align-self-center text-muted">Senders</span>
+        <button type="button"
+                class="btn btn-toggle {% if any_constrained %}btn-toggle-on{% else %}btn-toggle-off{% endif %}"
+                data-action="constrain"
+                aria-pressed="{{ 'true' if any_constrained else 'false' }}"
+                title="{% if not _both_writable %}{{ _block_reason }}{% elif not all_is11_supported %}At least one paired sender's device does not expose the IS-11 stream-compatibility API — constraining is not available for this selection.{% else %}Apply the active constraint sets to every paired sender (IS-11).{% endif %}"
+                {% if not all_is11_supported or not _both_writable %}disabled{% endif %}>
+          Constrain
+        </button>
+        <button type="button"
+                class="btn btn-toggle ml-2 {% if any_sender_active %}btn-toggle-on{% else %}btn-toggle-off{% endif %}"
+                data-action="activate"
+                aria-pressed="{{ 'true' if any_sender_active else 'false' }}"
+                title="{% if not _both_writable %}{{ _block_reason }}{% else %}Toggle the activation state of every paired sender.{% endif %}"
+                {% if not _both_writable %}disabled{% endif %}>
+          Activate
+        </button>
+
+        <span class="mx-3 text-muted">·</span>
+
+        <span class="mr-2 align-self-center text-muted">Receivers</span>
+        <button type="button"
+                class="btn btn-toggle {% if any_receiver_active %}btn-toggle-on{% else %}btn-toggle-off{% endif %}"
+                data-action="activate_receivers"
+                aria-pressed="{{ 'true' if any_receiver_active else 'false' }}"
+                title="{% if not _both_writable %}{{ _block_reason }}{% else %}Toggle the activation state of every selected receiver (and its paired sender).{% endif %}"
+                {% if not _both_writable %}disabled{% endif %}>
+          Activate
+        </button>
+
+        <button type="button" class="btn btn-outline-secondary ml-3 btn-reset"
+                title="Discard your edits for the senders on this page and revert to the constraint-set defaults.">
+          Reset
+        </button>
+      </div>
+
+      {# ---------- Filter dropdowns ---------- #}
+      <div class="caps-filters btn-group mb-3" role="group">
+        <span class="mr-2 align-self-center text-muted">Filter by</span>
+
+        <div class="dropdown mr-1">
+          <button class="btn btn-outline-secondary dropdown-toggle" type="button"
+                  data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+            {% if filters.by_format %}Format: <strong>{{ filters.by_format }}</strong>
+            {% else %}Format{% endif %}
+          </button>
+          <div class="dropdown-menu">
+            {% for f in config_view.has_formats %}
+              <a class="dropdown-item {% if filters.by_format == f %}active{% endif %}"
+                 href="{{ filter_url(receiver_ids_csv, sender_ids_csv, conset_qs, f, filters.by_layer, filters.by_compatibility) }}">{{ f }}</a>
+            {% else %}
+              <span class="dropdown-item-text text-muted small">no formats</span>
+            {% endfor %}
+            {% if filters.by_format %}
+              <div class="dropdown-divider"></div>
+              <a class="dropdown-item"
+                 href="{{ filter_url(receiver_ids_csv, sender_ids_csv, conset_qs, '', filters.by_layer, filters.by_compatibility) }}">clear</a>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="dropdown mr-1">
+          <button class="btn btn-outline-secondary dropdown-toggle" type="button"
+                  data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+            {% if filters.by_layer != '' %}Layer: <strong>{{ filters.by_layer }}</strong>
+            {% else %}Layer{% endif %}
+          </button>
+          <div class="dropdown-menu">
+            {% for l in config_view.has_layers %}
+              <a class="dropdown-item {% if filters.by_layer == l|string %}active{% endif %}"
+                 href="{{ filter_url(receiver_ids_csv, sender_ids_csv, conset_qs, filters.by_format, l|string, filters.by_compatibility) }}">{{ l }}</a>
+            {% else %}
+              <span class="dropdown-item-text text-muted small">no layers</span>
+            {% endfor %}
+            {% if filters.by_layer != '' %}
+              <div class="dropdown-divider"></div>
+              <a class="dropdown-item"
+                 href="{{ filter_url(receiver_ids_csv, sender_ids_csv, conset_qs, filters.by_format, '', filters.by_compatibility) }}">clear</a>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="dropdown mr-1">
+          <button class="btn btn-outline-secondary dropdown-toggle" type="button"
+                  data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+            {% if filters.by_compatibility != '' %}Compatibility: <strong>{{ filters.by_compatibility }}</strong>
+            {% else %}Compatibility{% endif %}
+          </button>
+          <div class="dropdown-menu">
+            {% for c in config_view.has_compatibilities %}
+              <a class="dropdown-item {% if filters.by_compatibility == c|string %}active{% endif %}"
+                 href="{{ filter_url(receiver_ids_csv, sender_ids_csv, conset_qs, filters.by_format, filters.by_layer, c|string) }}">{{ c }}</a>
+            {% else %}
+              <span class="dropdown-item-text text-muted small">no groups</span>
+            {% endfor %}
+            {% if filters.by_compatibility != '' %}
+              <div class="dropdown-divider"></div>
+              <a class="dropdown-item"
+                 href="{{ filter_url(receiver_ids_csv, sender_ids_csv, conset_qs, filters.by_format, filters.by_layer, '') }}">clear</a>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <p class="text-muted small">
+        One section per sender showing the constraint set you chose.
+        Edit parameter values to narrow the active constraints, then
+        toggle <strong>Constrain</strong> on; toggle sender
+        <strong>Activate</strong> on to take the senders live, then
+        receiver <strong>Activate</strong> on to route each sender to
+        its paired receiver (sender&thinsp;i → receiver&thinsp;i).
+        The toggles apply to all pairs on this page.
+      </p>
+
+      {# ``data-receiver-ids`` + ``data-sender-ids`` let the
+         receivers-activate toggle pair each sender with its receiver
+         by index without re-parsing the DOM. #}
+      <form id="configure-form"
+            data-receiver-ids="{{ receiver_ids_csv }}"
+            data-sender-ids="{{ sender_ids_csv }}">
+        <input type="hidden" name="sender_ids" value="{{ sender_ids_csv }}">
+        <input type="hidden" name="receiver_ids" value="{{ receiver_ids_csv }}">
+
+        {# One extra column vs the senders-only page: a dedicated
+           "receiver" result cell so the sender-side and receiver-
+           side outcomes don't overwrite each other. The paired
+           receiver's label is also surfaced in the device-title
+           row (under the sender's line) so the operator always
+           knows which receiver each sender's actions are driving. #}
+        <table class="devices-table caps-table"
+               style="--caps-name-width: {{ (config_view.max_param_name_len or 0) + 1 }}ch">
+          <colgroup>
+            <col style="width:4rem">
+            <col style="width:14rem">
+            <col style="width:10rem">
+            <col style="width:5rem">
+            <col style="width:5rem">
+            <col style="width:6rem">
+            <col style="width:8rem">
+            <col style="width:8rem">
+          </colgroup>
+          <thead>
+            <tr class="devices-header-row">
+              <th>set</th>
+              <th>label</th>
+              <th>media&nbsp;type</th>
+              <th>format</th>
+              <th>layer</th>
+              <th>preference</th>
+              <th>sender</th>
+              <th>receiver</th>
+            </tr>
+          </thead>
+
+          {% for sender in config_view.senders %}
+            {% set paired_receiver = pair_by_sender.get(sender.id) %}
+            <tbody class="device-title-tbody">
+              <tr class="device-title-row">
+                <td colspan="8" class="device-title"
+                    data-sender-id="{{ sender.id }}">
+                  {% if sender.role %}
+                    <strong class="device-serial">{{ sender.role }}</strong>
+                  {% endif %}
+                  <span class="ml-3">{{ sender.label }}</span>
+                  {% if sender.device_serial or sender.device_address %}
+                    <span class="ml-3 text-muted small">
+                      {% if sender.device_serial %}{{ sender.device_serial }}{% endif %}
+                      {% if sender.device_address %} · {{ sender.device_address }}{% endif %}
+                    </span>
+                  {% endif %}
+                  {% if paired_receiver %}
+                    {# Identify the paired receiver by its node's
+                       serial and ``host:port`` rather than the raw
+                       receiver label — labels like "Net Stream
+                       Audio 0" are generic and repeat across
+                       devices, while serial + address uniquely
+                       identifies the physical target. #}
+                    <div class="text-muted small ml-4"
+                         data-receiver-id="{{ paired_receiver.id }}">
+                      &rarr; receiver:
+                      {%- if paired_receiver.device_serial %} {{ paired_receiver.device_serial }}{%- endif %}
+                      {%- if paired_receiver.device_address %} {{ paired_receiver.device_address }}{%- endif %}
+                      {%- if not (paired_receiver.device_serial or paired_receiver.device_address) %}
+                        {{ paired_receiver.label or paired_receiver.id[:8] + '…' }}
+                      {%- endif %}
+                    </div>
+                  {% endif %}
+                </td>
+              </tr>
+            </tbody>
+
+            {% if sender.constraint_set %}
+              {% set cs = sender.constraint_set %}
+              <tbody class="caps-tbody">
+                <tr class="caps-row is-expanded"
+                    data-caps-row="{{ sender.id }}-{{ cs.index }}"
+                    data-sender-id="{{ sender.id }}"
+                    data-conset-index="{{ cs.index }}"
+                    data-conset-hash="{{ cs.hash }}"
+                    {# meta-format / meta-layer drive the IS-11 constraint_set
+                       meta on PUT — see senders_configure.html for the rule. #}
+                    {# ``actual_meta_*`` only — see senders_configure
+                       for the rationale. JS body builder relies on
+                       these to detect trunk vs sub-layer CSes; using
+                       the display fallback here causes the Node to
+                       reject the constraint with 422. #}
+                    data-cs-meta-format="{{ cs.actual_meta_format or '' }}"
+                    data-cs-meta-layer="{{ cs.actual_meta_layer if cs.actual_meta_layer != '' else '' }}">
+                  <td class="caps-set-cell">
+                    <span class="caps-toggle">▾</span>
+                    <code>#{{ cs.index }}</code>
+                  </td>
+                  <td>{{ cs.label }}</td>
+                  <td class="caps-summary">{{ cs.media_type or '—' }}</td>
+                  <td>{{ cs.meta_format or '—' }}</td>
+                  <td class="text-right">{{ cs.meta_layer if cs.meta_layer != '' else '—' }}</td>
+                  <td class="text-right">{{ cs.preference }}</td>
+                  {# Both cells pre-fill with the live registry /
+                     IS-11 state the handler probed. Action handlers
+                     overwrite on the first toggle press. #}
+                  {% set ss = sender_state.get(sender.id, {}) %}
+                  <td class="result-cell text-muted small"
+                      data-result-for="{{ sender.id }}"
+                      data-live-active="{{ 'true' if ss.active else 'false' }}">
+                    {%- if ss.active and ss.constrained -%}
+                      active · constrained
+                    {%- elif ss.active -%}
+                      active
+                    {%- elif ss.constrained -%}
+                      constrained
+                    {%- else -%}
+                      idle
+                    {%- endif -%}
+                  </td>
+                  {% set rs = receiver_state.get(paired_receiver.id, {}) if paired_receiver else {} %}
+                  <td class="result-cell text-muted small"
+                      data-result-for-receiver="{{ paired_receiver.id if paired_receiver else '' }}"
+                      data-live-active="{{ 'true' if (paired_receiver and rs.active) else 'false' }}">
+                    {%- if not paired_receiver -%}
+                      —
+                    {%- elif rs.active -%}
+                      active
+                    {%- else -%}
+                      idle
+                    {%- endif -%}
+                  </td>
+                </tr>
+                <tr class="caps-details-row"
+                    data-caps-details-for="{{ sender.id }}-{{ cs.index }}">
+                  <td colspan="8" class="caps-details-cell">
+                    {% if cs.params %}
+                      <table class="caps-params">
+                        <tbody>
+                          {% for p in cs.params %}
+                            <tr>
+                              <td class="caps-detail-name">{{ p.name }}</td>
+                              <td class="caps-detail-value">
+                                {%- set w = p.widget -%}
+                                {% if w.kind == 'multiselect' %}
+                                  <select class="form-control form-control-sm param-input"
+                                          multiple
+                                          size="{{ w.options|length if w.options|length < 8 else 8 }}"
+                                          data-sender-id="{{ sender.id }}"
+                                          data-param-urn="{{ p.urn }}"
+                                          {% if w.disabled %}disabled{% endif %}>
+                                    {% for opt in w.options %}
+                                      <option value="{{ opt.value }}"
+                                              {% if opt.display in w.selected %}selected{% endif %}>{{ opt.display }}</option>
+                                    {% endfor %}
+                                  </select>
+                                {% elif w.kind == 'range' %}
+                                  <div class="d-flex align-items-center">
+                                    <input type="range"
+                                           class="custom-range flex-grow-1 mr-2 param-range"
+                                           min="{{ w.min }}" max="{{ w.max }}" step="1"
+                                           value="{{ w.value }}"
+                                           data-sender-id="{{ sender.id }}"
+                                           data-param-urn="{{ p.urn }}"
+                                           {% if w.disabled %}disabled{% endif %}>
+                                    <input type="text"
+                                           class="form-control form-control-sm param-input param-range-value"
+                                           style="width:6rem"
+                                           value="{{ w.value }}"
+                                           data-sender-id="{{ sender.id }}"
+                                           data-param-urn="{{ p.urn }}"
+                                           readonly>
+                                  </div>
+                                  <small class="text-muted">{{ w.min }} … {{ w.max }}</small>
+                                {% else %}
+                                  <input type="text"
+                                         class="form-control form-control-sm"
+                                         value="{{ w.display }}" readonly>
+                                {% endif %}
+                              </td>
+                            </tr>
+                          {% endfor %}
+                          {% if cs.meta_compat %}
+                            <tr>
+                              <td class="caps-detail-name">layer_compatibility_groups</td>
+                              <td class="caps-detail-value">{{ cs.meta_compat | join(', ') }}</td>
+                            </tr>
+                          {% endif %}
+                        </tbody>
+                      </table>
+                    {% else %}
+                      <div class="text-muted small">
+                        No editable parameters in this constraint set.
+                      </div>
+                    {% endif %}
+                  </td>
+                </tr>
+              </tbody>
+            {% else %}
+              <tbody>
+                <tr>
+                  <td colspan="8" class="text-muted small">
+                    No constraint set selected (or the chosen set was
+                    filtered out / disabled).
+                  </td>
+                </tr>
+              </tbody>
+            {% endif %}
+          {% endfor %}
+        </table>
+
+        <div class="sticky-bottom bg-light p-2 border-top mt-3">
+          <a href="/controller/receivers" class="btn btn-link">Back to receivers</a>
+        </div>
+      </form>
+
+      {# ---------- Reverse-direction navigation ----------
+         Once the current-direction flow (A/V/D, USB, or TB) is
+         configured between two Nodes, the operator often wants to
+         jump to the OPPOSITE direction's configure page — Node B's
+         USB/TB receivers ↔ Node A's USB/TB senders. The handler
+         pre-resolves the reverse-group receiver/sender pair and
+         builds the link href; if the pair can't be found (the target
+         group has 0 or >1 members on either Node per the user's
+         cardinality rule) the button renders disabled with a
+         tooltip explaining why. #}
+      {% if reverse_links %}
+      <div class="reverse-links mt-4 pt-3 border-top
+                  d-flex flex-wrap align-items-center"
+           role="group" aria-label="Reverse-direction setup">
+        <span class="text-muted small mr-3">Reverse-direction setup:</span>
+        {% for link in reverse_links %}
+          {% if link.disabled %}
+            <button type="button"
+                    class="btn btn-outline-secondary btn-sm mr-2"
+                    data-reverse-group="{{ link.group }}"
+                    disabled
+                    title="{{ link.tooltip }}">
+              {{ link.label }}
+            </button>
+          {% else %}
+            <a href="{{ link.href }}"
+               class="btn btn-outline-secondary btn-sm mr-2"
+               data-reverse-group="{{ link.group }}"
+               title="{{ link.tooltip }}">
+              {{ link.label }}
+            </a>
+          {% endif %}
+        {% endfor %}
+      </div>
+      {% endif %}
+
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  controller.initConfigureToggles('configure-form');
+  controller.initCapsRowClick();
+  // Privacy panel — dropdown change-handlers + Exclusivity toggle
+  // wiring. No-op when the partial didn't render (non-PEP selection).
+  controller.initPrivacyPanel();
+  // Live status via SSE. Sender + receiver ``subscription.active``
+  // pushes update their state cells and the top-row toggles in real
+  // time. Constrained state isn't pushed — it stays action-tracked.
+  controller.initStatusStream();
+</script>
+{% endblock %}

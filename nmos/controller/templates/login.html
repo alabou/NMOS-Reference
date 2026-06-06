@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NMOS Controller &middot; Sign in</title>
+  <link rel="stylesheet"
+        href="https://stackpath.bootstrapcdn.com/bootstrap/4.2.1/css/bootstrap.min.css">
+  <link rel="stylesheet"
+        href="/controller/static/controller.css">
+</head>
+<body class="bg-light">
+  <nav class="navbar navbar-dark bg-dark mb-4">
+    <div class="container-fluid">
+      <span class="navbar-brand mb-0">NMOS Controller</span>
+    </div>
+  </nav>
+
+  <main class="container">
+    <div class="row">
+      <div class="col-md-6 col-lg-4 mx-auto">
+        <div class="card">
+          <div class="card-body">
+            <h4 class="card-title">Administrator sign-in</h4>
+            <p class="text-muted small">
+              Enter the admin password configured with
+              <code>--controllerAdminPassword</code> on the Node command
+              line.
+            </p>
+
+            {% if error %}
+              <div class="alert alert-danger" role="alert">
+                {{ error }}
+              </div>
+            {% endif %}
+
+            <form method="post" action="/controller/login" autocomplete="off">
+              <input type="hidden" name="next" value="{{ next_url }}">
+              <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password"
+                       class="form-control" autocomplete="current-password"
+                       autofocus required>
+              </div>
+              <button type="submit" class="btn btn-primary w-100">
+                Sign in
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

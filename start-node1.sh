@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# Configuration C (mTLS + OAuth 2.0) — TR-10-SEC §12.3 RAAM=2.
+#
+# IPMX security validator launch contract:
+#   start-node1.sh <as-host> <as-port> [<rds-host> <rds-port>] \
+#                  [--nap=N] [--rap=R] [--oaim=O] [--tct=T]
+#
+# Positional args:
+#   $1 = OAuth 2.0 authorization server host (default: MTX-MTX00000)
+#   $2 = OAuth 2.0 authorization server port (default: 9443)
+#   $3 = Registry host (default: 127.0.0.1)
+#   $4 = Registry registration port (default: 8444; query port = $4-1)
+#
+# Named args:
+#   --nap=N    Node Access Policy. Config C pins NAP=2 per §9.2.
+#   --rap=R    Registry Access Policy: 0=HTTP, 1=server-TLS, 2=mTLS.
+#   --oaim=O   OAuth2 Audience ID Mode: 0=serial, 1=cert, 2=either.
+#   --tct=T    TLS Cert Type: 0=RSA, 1=ECDSA, 2=both (dual-stack TODO).
+
+set -e
+
+AS_HOST="${1:-MTX-MTX00000}"
+AS_PORT="${2:-9443}"
+RDS_HOST="${3:-127.0.0.1}"
+RDS_REG_PORT="${4:-8444}"
+RDS_QUERY_PORT=$((RDS_REG_PORT - 1))
+shift $(( $# < 4 ? $# : 4 ))
+
+NAP=2
+RAP=0
+OAIM=0
+TCT=0
+for arg in "$@"; do
+  case "$arg" in
+    --nap=*)  NAP="${arg#*=}" ;;
+    --rap=*)  RAP="${arg#*=}" ;;
+    --oaim=*) OAIM="${arg#*=}" ;;
+    --tct=*)  TCT="${arg#*=}" ;;
+    *) echo "start-node1.sh: unknown arg $arg" >&2; exit 64 ;;
+  esac
+done
+
+if [ "$NAP" != "2" ]; then
+  echo "start-node1.sh: Config C (RAAM=2) pins NAP=2; got --nap=$NAP" >&2
+  exit 64
+fi
+
+CERTS=/home/alain/Projects/IPMX/Certificates/build
+
+CA_BUNDLE="/tmp/MatroxRootCA-bundle.pem"
+cat "$CERTS/MatroxRootCA.pem" "$CERTS/MatroxRootCA.ec.pem" > "$CA_BUNDLE"
+CA="$CA_BUNDLE"
+
+case "$TCT" in
+  0|2) NODE_CERT="$CERTS/pem/MatroxDeviceServer.MTX.MTX00001.chain.pem"
+       NODE_KEY="$CERTS/key/MatroxDeviceServer.MTX.MTX00001.key" ;;
+  1)   NODE_CERT="$CERTS/pem/MatroxDeviceServer.MTX.MTX00001.chain.ec.pem"
+       NODE_KEY="$CERTS/key/MatroxDeviceServer.MTX.MTX00001.ec.key" ;;
+  *)   echo "start-node1.sh: unsupported --tct=$TCT" >&2; exit 64 ;;
+esac
+
+case "$OAIM" in
+  0) OAIM_FLAG="serial" ;;
+  1) OAIM_FLAG="cert" ;;
+  2) OAIM_FLAG="either" ;;
+  *) echo "start-node1.sh: unsupported --oaim=$OAIM" >&2; exit 64 ;;
+esac
+
+case "$RAP" in
+  0) RDS_FLAGS=(--rdsDisableTLS) ;;
+  1) RDS_FLAGS=() ;;
+  2) RDS_FLAGS=(
+       --rdsClientCertificate "$CERTS/pem/MatroxDeviceClient.MTX.MTX00001.chain.pem"
+       --rdsClientKey         "$CERTS/key/MatroxDeviceClient.MTX.MTX00001.key"
+     ) ;;
+  *) echo "start-node1.sh: unsupported --rap=$RAP" >&2; exit 64 ;;
+esac
+
+exec python3 nmos_node.py \
+  --nodeSerialNumber MTX00001 \
+  --nodeAddr MTX-MTX00001 \
+  --nodePort 7051 \
+  --nodeCertificate "$NODE_CERT" \
+  --nodeKey         "$NODE_KEY" \
+  --nodeTrustedRootCA "$CA" \
+  --nodeControlPort 5050 \
+  --controllerAdminPassword admin \
+  --oauth2 \
+  --oauth2Host "${AS_HOST}" \
+  --oauth2Port "${AS_PORT}" \
+  --oauth2TrustedRootCA "$CA" \
+  --oauth2ClientSecret secret \
+  --oauth2ApiSelector realms/TR-10-SEC \
+  --oauth2AudienceMode "${OAIM_FLAG}" \
+  --rdsHost "${RDS_HOST}" \
+  --rdsRegistrationPort "${RDS_REG_PORT}" \
+  --rdsQueryPort        "${RDS_QUERY_PORT}" \
+  "${RDS_FLAGS[@]}" \
+  --trustedRootCA "$CA" \
+  --debug-in-depth

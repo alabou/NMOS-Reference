@@ -1,0 +1,146 @@
+{
+  "description": "Config 1: Video Raw + PCM Audio (RTP Multicast)",
+  "senders": [
+    {
+      "label": "Net Stream Video 0",
+      "description": "This is the Net Stream Video 0",
+      "format": "urn:x-nmos:format:video",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "natural_group_index": 0,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native Video",
+          "urn:x-nmos:cap:meta:enabled": true,
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": { "enum": ["video/raw"] },
+          "urn:x-nmos:cap:format:frame_width": { "enum": [1920] },
+          "urn:x-nmos:cap:format:frame_height": { "enum": [1080] },
+          "urn:x-nmos:cap:format:grain_rate": { "enum": [{"numerator": 60, "denominator": 1}] },
+          "urn:x-nmos:cap:format:component_depth": { "enum": [10] },
+          "urn:x-nmos:cap:format:colorspace": { "enum": ["BT709"] },
+          "urn:x-nmos:cap:format:color_sampling": { "enum": ["YCbCr-4:2:2"] },
+          "urn:x-nmos:cap:format:transfer_characteristic": { "enum": ["SDR"] },
+          "urn:x-nmos:cap:format:interlace_mode": { "enum": ["progressive"] }
+        }
+      ],
+      "privacy_keys": [
+        { "key_id": "0001020304050607", "psk": "000102030405060708090a0b0c0d0e0f" }
+      ]
+    },
+    {
+      "label": "Net Stream Audio 0",
+      "description": "This is the Net Stream Audio 0",
+      "format": "urn:x-nmos:format:audio",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "natural_group_index": 0,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native Audio",
+          "urn:x-nmos:cap:meta:enabled": true,
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": { "enum": ["audio/L24"] },
+          "urn:x-nmos:cap:format:sample_rate": { "enum": [{"numerator": 48000}] },
+          "urn:x-nmos:cap:format:channel_count": { "enum": [2] },
+          "urn:x-nmos:cap:format:sample_depth": { "enum": [24] }
+        }
+      ],
+      "privacy_keys": [
+        { "key_id": "0001020304050607", "psk": "000102030405060708090a0b0c0d0e0f" }
+      ]
+    },
+    {
+      "label": "Net Stream Audio 1",
+      "description": "This is the Net Stream Audio 1",
+      "format": "urn:x-nmos:format:audio",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "natural_group_index": 0,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native Audio",
+          "urn:x-nmos:cap:meta:enabled": true,
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": { "enum": ["audio/L24"] },
+          "urn:x-nmos:cap:format:sample_rate": { "enum": [{"numerator": 48000}] },
+          "urn:x-nmos:cap:format:channel_count": { "enum": [2] },
+          "urn:x-nmos:cap:format:sample_depth": { "enum": [24] }
+        }
+      ],
+      "privacy_keys": [
+        { "key_id": "0001020304050607", "psk": "000102030405060708090a0b0c0d0e0f" }
+      ]
+    }
+  ],
+  "receivers": [
+    {
+      "label": "Net Stream Video 0",
+      "description": "This is the Net Stream Video 0",
+      "format": "urn:x-nmos:format:video",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "natural_group_index": 0,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native Video",
+          "urn:x-nmos:cap:meta:enabled": true,
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": { "enum": ["video/raw"] },
+          "urn:x-nmos:cap:format:frame_width": { "enum": [1920] },
+          "urn:x-nmos:cap:format:frame_height": { "enum": [1080] },
+          "urn:x-nmos:cap:format:grain_rate": { "enum": [{"numerator": 60}] },
+          "urn:x-nmos:cap:format:component_depth": { "enum": [10] },
+          "urn:x-nmos:cap:format:colorspace": { "enum": ["BT709"] },
+          "urn:x-nmos:cap:format:color_sampling": { "enum": ["YCbCr-4:2:2"] },
+          "urn:x-nmos:cap:format:transfer_characteristic": { "enum": ["SDR"] },
+          "urn:x-nmos:cap:format:interlace_mode": { "enum": ["progressive"] }
+        }
+      ],
+      "privacy_keys": [
+        { "key_id": "0001020304050607", "psk": "000102030405060708090a0b0c0d0e0f" },
+        { "key_id": "0000000000000000", "psk": "000100030005000700090f0f0f0f0f0f" }
+      ]
+    },
+    {
+      "label": "Net Stream Audio 0",
+      "description": "This is the Net Stream Audio 0",
+      "format": "urn:x-nmos:format:audio",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "natural_group_index": 0,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native Audio",
+          "urn:x-nmos:cap:meta:enabled": true,
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": { "enum": ["audio/L24"] },
+          "urn:x-nmos:cap:format:sample_rate": { "enum": [{"numerator": 48000}] },
+          "urn:x-nmos:cap:format:channel_count": { "enum": [2] },
+          "urn:x-nmos:cap:format:sample_depth": { "enum": [24] }
+        }
+      ],
+      "privacy_keys": [
+        { "key_id": "0001020304050607", "psk": "000102030405060708090a0b0c0d0e0f" },
+        { "key_id": "0000000000000000", "psk": "000100030005000700090f0f0f0f0f0f" }
+      ]
+    },
+    {
+      "label": "Net Stream Audio 1",
+      "description": "This is the Net Stream Audio 1",
+      "format": "urn:x-nmos:format:audio",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "natural_group_index": 0,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native Audio",
+          "urn:x-nmos:cap:meta:enabled": true,
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": { "enum": ["audio/L24"] },
+          "urn:x-nmos:cap:format:sample_rate": { "enum": [{"numerator": 48000}] },
+          "urn:x-nmos:cap:format:channel_count": { "enum": [2] },
+          "urn:x-nmos:cap:format:sample_depth": { "enum": [24] }
+        }
+      ],
+      "privacy_keys": [
+        { "key_id": "0001020304050607", "psk": "000102030405060708090a0b0c0d0e0f" },
+        { "key_id": "0000000000000000", "psk": "000100030005000700090f0f0f0f0f0f" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Receivers{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-12">
+    <h3 class="mb-3">Receivers</h3>
+
+    {% if not devices %}
+      <div class="alert alert-warning">
+        No receivers in the registry yet.
+      </div>
+    {% endif %}
+
+    <form id="receivers-form" method="get"
+          action="/controller/receivers/compatible-senders">
+      <input type="hidden" name="receiver_ids" id="receiver_ids" value="">
+      <input type="hidden" name="mode" id="selection_mode" value="single">
+
+      {% if devices %}
+        <table class="devices-table">
+          <colgroup>
+            <col class="col-group-select" style="width:1.75rem">
+            <col class="col-role-select"  style="width:2.1rem">
+            <col class="col-role-name"    style="width:7rem">
+            <col class="col-label">
+            <col class="col-status"       style="width:5rem">
+            <col class="col-dot"          style="width:3rem">
+            <col class="col-dot"          style="width:3rem">
+            <col class="col-dot"          style="width:3rem">
+            <col class="col-dot"          style="width:3rem">
+          </colgroup>
+          <thead>
+            <tr class="devices-header-row">
+              <th class="col-group-select"></th>
+              <th class="col-role-select"></th>
+              <th class="col-role-name"></th>
+              <th class="col-label">label</th>
+              <th class="col-status">status</th>
+              <th class="col-dot">link</th>
+              <th class="col-dot">sync</th>
+              <th class="col-dot">conn</th>
+              <th class="col-dot">media</th>
+            </tr>
+          </thead>
+          {% for dev in devices %}
+            {% include "partials/device_block.html" with context %}
+          {% endfor %}
+        </table>
+
+        <div class="sticky-bottom bg-light p-2 border-top">
+          <button type="submit" class="btn btn-primary"
+                  onclick="return controller.submitSelection('receivers-form', 'receiver_ids', 'selection_mode');">
+            Find compatible senders →
+          </button>
+          {# Secondary: view the selected receivers' own capabilities
+             without routing through the sender-intersection flow.
+             ``formaction`` overrides the form's action attribute just
+             for this button — reuses the same selection machinery. #}
+          <button type="submit"
+                  class="btn btn-outline-secondary ml-2"
+                  formaction="/controller/receivers/view-caps"
+                  onclick="return controller.submitSelection('receivers-form', 'receiver_ids', 'selection_mode');">
+            View capabilities →
+          </button>
+          <span class="ml-3 text-muted small">
+            Select one group or one or more individual receivers.
+          </span>
+        </div>
+      {% endif %}
+    </form>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  controller.initSelection('receivers-form');
+  controller.initStatusStream();
+</script>
+{% endblock %}

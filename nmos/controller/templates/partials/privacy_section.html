@@ -1,0 +1,267 @@
+{# Privacy Encryption + Node Reservation panel.
+
+   Rendered at the top of the configure page on both the senders and
+   receivers paths. The panel shows:
+
+   * A dark "security card" with dropdowns for the negotiated
+     Protocol / Mode / Curve across the selected senders + receivers.
+     Values are the common denominator of each resource's IS-05
+     transport-parameter constraints.
+   * Two independent indicators in the header, one per axis:
+       - A status-dot chip (green "Encrypted" / red "Blocked") for
+         PEP negotiability. PEP without Reservation is already a
+         fully-secure operating mode, so the dot is green whenever
+         a common Protocol+Mode exists — red only means the
+         selection can't agree on a common PEP.
+       - A padlock icon (open/grey / closed/green) for Node
+         Reservation. Open is the neutral default — reservation is
+         only required when multiple controllers compete for the
+         Nodes. Closed+pulsing means the current admin holds a
+         session on every Node in the selection.
+   * An "Exclusivity" checkbox driving the Node Reservation session
+     lifecycle. Disabled when any device in the selection lacks the
+     ``urn:x-matrox:service:exclusive/v1.0`` service.
+
+   When the intersection is empty, the panel replaces the dropdowns
+   with a red "cannot negotiate" alert.
+
+   Required context:
+     privacy_view = {
+       pep_available:    bool,        # protocols + modes non-empty
+       protocols:        list[str],
+       modes:            list[str],
+       curves:           list[str],
+       has_ecdh_modes:   bool,        # any Mode starts with "ECDH_"
+       exclusivity_ok:   bool,        # every NODE advertises the service
+       any_active:       bool,        # one+ selected resource currently active
+       node_ids:         list[str],   # unique node ids in selection
+       resource_summary: str,         # human-readable selection label
+     }
+
+   ``any_active`` locks the whole interactive surface — Protocol /
+   Mode / Curve dropdowns AND the Exclusivity toggle — because PEP
+   parameters and the reservation's exclusive_key are only mixed
+   into the encryption key at ``master_enable=true`` activation time.
+   Toggling them on a running stream would be a no-op that looks
+   effective. Operator must deactivate, change, then reactivate.
+
+   Reservation is scoped per-Node: the Matrox exclusive-session
+   service lives on ``node.services`` (not ``device.controls``) and
+   covers every sender/receiver on the Node. ``data-node-ids`` is
+   the CSV the JS posts to /api/privacy/acquire|release.
+#}
+{% if privacy_view is defined and privacy_view %}
+<div class="privacy-panel mb-4"
+     data-node-ids="{{ privacy_view.node_ids | join(',') }}"
+     {# ``exclusivity-available`` stays constant for the page's
+        lifetime — it reflects whether every Node in the selection
+        even advertises the reservation service. The live-lock JS
+        reads it so it doesn't re-enable Exclusivity on an
+        inactivity event when the real reason it was disabled was
+        "no service advertised". #}
+     data-exclusivity-available="{{ '1' if privacy_view.exclusivity_ok else '0' }}">
+  <div class="privacy-panel-header d-flex align-items-center">
+    <strong>Privacy Encryption</strong>
+    <div class="privacy-indicators ml-auto d-flex align-items-center">
+      {# PEP axis: green dot + "Encrypted" when negotiable, red dot +
+         "Blocked" when the selection has no common Protocol/Mode. #}
+      <span class="privacy-pep-indicator
+                   {% if privacy_view.pep_available %}is-ok{% else %}is-blocked{% endif %}"
+            data-role="privacy-pep-indicator"
+            title="{% if privacy_view.pep_available %}Encryption parameters negotiable across this selection{% else %}No common Privacy Encryption Protocol + Mode across this selection{% endif %}"
+            aria-live="polite">
+        <span class="status-dot"></span>
+        <span class="privacy-indicator-label">
+          {% if privacy_view.pep_available %}Encrypted{% else %}Blocked{% endif %}
+        </span>
+      </span>
+      {# Reservation axis: open padlock (grey, neutral) by default,
+         closed padlock (green, pulsing) when a session is held on
+         every Node in the selection. Toggled by the JS on acquire
+         / release via the ``is-reserved`` class on the panel. #}
+      <span class="privacy-lock-indicator"
+            data-role="privacy-lock-indicator"
+            title="Reservation: not held — other controllers may change this Node's configuration"
+            aria-label="Reservation status">
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+          <rect class="pl-body"
+                x="3" y="8" width="10" height="7" rx="1.2"
+                fill="currentColor"/>
+          {# Closed shackle: full U resting on the body. Shown only
+             when the panel carries the ``is-reserved`` class. #}
+          <path class="pl-shackle pl-shackle-closed"
+                d="M5 8 V5.2 a3 2.8 0 0 1 6 0 V8"
+                fill="none" stroke="currentColor"
+                stroke-width="1.7" stroke-linecap="round"/>
+          {# Open shackle: arch rises off the body and hangs to the
+             side (right leg detached). Shown by default. #}
+          <path class="pl-shackle pl-shackle-open"
+                d="M5 8 V5.2 a3 2.8 0 0 1 6 0"
+                fill="none" stroke="currentColor"
+                stroke-width="1.7" stroke-linecap="round"/>
+        </svg>
+      </span>
+    </div>
+  </div>
+
+  <div class="privacy-panel-body">
+
+    {% if privacy_view.fetch_failed %}
+      {# Distinguish three failure modes — the right diagnostic
+         depends on the HTTP status the IS-05 fetch came back with:
+         * 0   — transport / TLS error (no HTTP exchange happened);
+                 typically a missing ``--trustedRootCA`` on the
+                 controller, an unreachable host, or a cert-SAN mismatch.
+         * 401 — auth missing (no bearer accepted by the remote).
+         * 403 — auth insufficient (token's grants don't cover this Node).
+         * other — opaque server error. #}
+      {% set _has_transport = privacy_view.fetch_failed
+            | selectattr('status', 'equalto', '0') | list | length > 0 %}
+      {% set _has_auth = privacy_view.fetch_failed
+            | rejectattr('status', 'equalto', '0') | list | length > 0 %}
+      <div class="alert alert-warning mb-0 mt-2" role="alert">
+        <strong>PEP compliance unknown.</strong>
+        The controller could not read transport parameters from
+        {{ privacy_view.fetch_failed | length }} device(s).
+        {% if _has_transport and not _has_auth %}
+          The outbound HTTPS call failed before any HTTP exchange —
+          usually because <code>--trustedRootCA</code> is missing on the
+          Node command line so the Matrox-issued cert can't be verified.
+        {% elif _has_auth and not _has_transport %}
+          The remote rejected the request — usually because the current
+          admin's OAuth2 token does not carry grants for the owning Node.
+        {% else %}
+          Mixed failure modes (some transport, some auth).
+        {% endif %}
+        Affected devices:
+        {% for fd in privacy_view.fetch_failed %}
+          <code>{{ fd.device_serial or fd.device_id[:8] }}</code>
+          ({% if fd.status == '0' %}transport{% else %}HTTP {{ fd.status }}{% endif %})
+          {%- if not loop.last %}, {% endif %}
+        {% endfor %}.
+      </div>
+    {% elif not privacy_view.pep_available %}
+      <div class="alert alert-danger mb-0 mt-2" role="alert">
+        <strong>PEP cannot be negotiated.</strong>
+        These devices have no common
+        {% if not privacy_view.protocols %}<code>ext_privacy_protocol</code>{% endif %}
+        {% if not privacy_view.protocols and not privacy_view.modes %} / {% endif %}
+        {% if not privacy_view.modes %}<code>ext_privacy_mode</code>{% endif %}
+        value — they cannot interoperate. Pick a different
+        sender/receiver selection.
+      </div>
+    {% else %}
+      {# When any resource in the selection is already active, lock
+         every interactive control. The dropdowns and the switch are
+         rendered but disabled; a single help line explains the
+         reason. Re-using the same ``disabled`` attribute Bootstrap
+         already styles — no extra CSS required. #}
+      {% set lock_all = privacy_view.any_active %}
+      <form class="privacy-form form-inline mt-3" id="privacy-form"
+            data-privacy-locked="{{ '1' if lock_all else '0' }}"
+            onsubmit="return false;">
+
+        <div class="form-group mr-3">
+          <label class="text-muted small mr-2" for="privacy-protocol">
+            Protocol
+          </label>
+          <select class="custom-select custom-select-sm"
+                  id="privacy-protocol"
+                  data-role="privacy-protocol"
+                  {% if lock_all %}disabled{% endif %}
+                  title="{% if lock_all %}Deactivate the selection to change — PEP parameters are only applied at activation{% else %}Privacy Encryption Protocol{% endif %}">
+            {% for p in privacy_view.protocols %}
+              <option value="{{ p }}">{{ p }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="form-group mr-3">
+          <label class="text-muted small mr-2" for="privacy-mode">
+            Mode
+          </label>
+          <select class="custom-select custom-select-sm"
+                  id="privacy-mode"
+                  data-role="privacy-mode"
+                  {% if lock_all %}disabled{% endif %}
+                  title="{% if lock_all %}Deactivate the selection to change — PEP parameters are only applied at activation{% else %}Privacy Encryption Mode{% endif %}">
+            {% for m in privacy_view.modes %}
+              <option value="{{ m }}">{{ m }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        {% if privacy_view.has_ecdh_modes and privacy_view.curves %}
+        <div class="form-group mr-3"
+             id="privacy-curve-group"
+             data-role="privacy-curve-group">
+          <label class="text-muted small mr-2" for="privacy-curve">
+            Curve
+          </label>
+          <select class="custom-select custom-select-sm"
+                  id="privacy-curve"
+                  data-role="privacy-curve"
+                  {% if lock_all %}disabled{% endif %}
+                  title="{% if lock_all %}Deactivate the selection to change — PEP parameters are only applied at activation{% else %}ECDH curve{% endif %}">
+            {% for c in privacy_view.curves %}
+              <option value="{{ c }}">{{ c }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% endif %}
+
+        {# Exclusivity can be locked for TWO independent reasons:
+             * any resource is active (the new rule — takes priority
+               since it's an actionable instruction); or
+             * some Node in the selection doesn't advertise the
+               reservation service at all. #}
+        {% set excl_locked = lock_all or (not privacy_view.exclusivity_ok) %}
+        <div class="form-group ml-auto privacy-exclusivity">
+          <label class="custom-control custom-switch m-0"
+                 title="{% if lock_all %}Deactivate the selection to change — the exclusive key is only mixed into the encryption key at activation{% elif not privacy_view.exclusivity_ok %}At least one Node in the selection does not advertise the reservation service.{% else %}Reserve every Node in the selection so no other controller can change its configuration while we drive activation.{% endif %}">
+            <input type="checkbox"
+                   class="custom-control-input"
+                   id="privacy-exclusivity"
+                   data-role="privacy-exclusivity"
+                   {% if excl_locked %}disabled{% endif %}>
+            <span class="custom-control-label">
+              Exclusivity
+              {# The only label variant is the fixed "(not available)"
+                 when no Node advertises the service — ``exclusivity_ok``
+                 is a property of the selection, not of activity state,
+                 so it never flips at runtime. The "locked while active"
+                 state is communicated by the footer notice + the
+                 tooltip above to avoid a horizontal layout shift on
+                 every status event. #}
+              {% if not privacy_view.exclusivity_ok %}
+                <span class="text-muted small ml-1">(not available)</span>
+              {% endif %}
+            </span>
+          </label>
+        </div>
+      </form>
+
+      {# Footer carries two children on the same line — the negotiated
+         summary on the left, the "Locked while active" notice on the
+         right. The notice uses the HTML ``hidden`` attribute so
+         showing/hiding it (via the live reconciler) doesn't reflow
+         the panel — the row height stays constant whether or not the
+         notice is visible. Full explanation lives in the ``title``
+         tooltip so the line doesn't wrap on normal widths. #}
+      <div class="privacy-footer text-muted small mt-2
+                  d-flex align-items-center justify-content-between">
+        <span>
+          Negotiated across {{ privacy_view.resource_summary }}.
+          <span data-role="privacy-reservation-status"></span>
+        </span>
+        <span class="privacy-locked-inline"
+              data-role="privacy-locked-note"
+              title="PEP parameters and the reservation's exclusive key only take effect at the next activation — changing them now would not alter the running stream. Deactivate the selection to edit, then re-activate."
+              {% if not lock_all %}hidden{% endif %}>
+          <strong>Locked while active.</strong>
+        </span>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}

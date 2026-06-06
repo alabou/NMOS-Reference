@@ -1,0 +1,367 @@
+{% extends "base.html" %}
+{% block title %}Configure senders{% endblock %}
+{% block content %}
+
+{# Filter-link URL preserving the other filters. #}
+{% macro filter_url(sender_ids, conset_qs, by_format, by_layer, by_compatibility) -%}
+/controller/senders/configure?sender_ids={{ sender_ids }}{{ conset_qs }}
+{%- if by_format %}&byFormat={{ by_format }}{% endif %}
+{%- if by_layer != '' %}&byLayer={{ by_layer }}{% endif %}
+{%- if by_compatibility != '' %}&byCompatibility={{ by_compatibility }}{% endif %}
+{%- endmacro %}
+
+{# Precompute the conset_{id}=<idx> query-string fragment so the filter
+   links keep the operator's caps-page selection intact. #}
+{% set conset_qs %}
+{%- for sid, idx in conset_by_sender.items() -%}&conset_{{ sid }}={{ idx }}{%- endfor -%}
+{% endset %}
+
+<div class="row">
+  <div class="col-12">
+    <h3 class="mb-3">Configuration</h3>
+
+    {% if not config_view.senders %}
+      <div class="alert alert-warning">No senders selected.</div>
+      <a href="/controller/senders" class="btn btn-link">Back to senders</a>
+    {% else %}
+
+      {# Privacy panel — Jinja renders nothing when ``privacy_view`` is
+         undefined or has ``pep_available=False``-and-empty setup, so
+         non-PEP selections see no panel at all. #}
+      {% include "partials/privacy_section.html" %}
+
+      {# ---------- Action toggles + Reset ----------
+         Toggle initial state reflects the live state read from the
+         cache + IS-11 at page render: any-wise OR, so green means
+         "at least one sender is already in that state". Pressing the
+         button off then uniformly drives every sender off, which is
+         always a safe and meaningful operation. #}
+      {# Phase 5: master toggles disabled when any selected sender's
+         Device is not writable for the current admin (no OAuth2 grant
+         or client cert required for writes). Pointless to fire an
+         action guaranteed to 401/403 on at least one sender. #}
+      {% set _writable = all_senders_writable %}
+      <div class="config-actions mb-3" role="group">
+        <span class="mr-2 align-self-center text-muted">Senders</span>
+        <button type="button"
+                class="btn btn-toggle {% if any_constrained %}btn-toggle-on{% else %}btn-toggle-off{% endif %}"
+                data-action="constrain"
+                aria-pressed="{{ 'true' if any_constrained else 'false' }}"
+                title="{% if not _writable %}At least one selected sender's device is not writable for this admin (OAuth2 grants or client cert missing).{% elif not all_is11_supported %}At least one selected sender's device does not expose the IS-11 stream-compatibility API — constraining is not available for this selection.{% else %}Apply the active constraint sets to every selected sender (IS-11).{% endif %}"
+                {% if not all_is11_supported or not _writable %}disabled{% endif %}>
+          Constrain
+        </button>
+        <button type="button"
+                class="btn btn-toggle ml-2 {% if any_sender_active %}btn-toggle-on{% else %}btn-toggle-off{% endif %}"
+                data-action="activate"
+                aria-pressed="{{ 'true' if any_sender_active else 'false' }}"
+                title="{% if not _writable %}At least one selected sender's device is not writable for this admin (OAuth2 grants or client cert missing).{% else %}Toggle the activation state of every selected sender.{% endif %}"
+                {% if not _writable %}disabled{% endif %}>
+          Activate
+        </button>
+        <button type="button" class="btn btn-outline-secondary ml-3 btn-reset"
+                title="Discard your edits for the senders on this page and revert to the constraint-set defaults.">
+          Reset
+        </button>
+      </div>
+
+      {# ---------- Filter dropdowns ---------- #}
+      <div class="caps-filters btn-group mb-3" role="group">
+        <span class="mr-2 align-self-center text-muted">Filter by</span>
+
+        <div class="dropdown mr-1">
+          <button class="btn btn-outline-secondary dropdown-toggle" type="button"
+                  data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+            {% if filters.by_format %}Format: <strong>{{ filters.by_format }}</strong>
+            {% else %}Format{% endif %}
+          </button>
+          <div class="dropdown-menu">
+            {% for f in config_view.has_formats %}
+              <a class="dropdown-item {% if filters.by_format == f %}active{% endif %}"
+                 href="{{ filter_url(sender_ids_csv, conset_qs, f, filters.by_layer, filters.by_compatibility) }}">{{ f }}</a>
+            {% else %}
+              <span class="dropdown-item-text text-muted small">no formats</span>
+            {% endfor %}
+            {% if filters.by_format %}
+              <div class="dropdown-divider"></div>
+              <a class="dropdown-item"
+                 href="{{ filter_url(sender_ids_csv, conset_qs, '', filters.by_layer, filters.by_compatibility) }}">clear</a>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="dropdown mr-1">
+          <button class="btn btn-outline-secondary dropdown-toggle" type="button"
+                  data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+            {% if filters.by_layer != '' %}Layer: <strong>{{ filters.by_layer }}</strong>
+            {% else %}Layer{% endif %}
+          </button>
+          <div class="dropdown-menu">
+            {% for l in config_view.has_layers %}
+              <a class="dropdown-item {% if filters.by_layer == l|string %}active{% endif %}"
+                 href="{{ filter_url(sender_ids_csv, conset_qs, filters.by_format, l|string, filters.by_compatibility) }}">{{ l }}</a>
+            {% else %}
+              <span class="dropdown-item-text text-muted small">no layers</span>
+            {% endfor %}
+            {% if filters.by_layer != '' %}
+              <div class="dropdown-divider"></div>
+              <a class="dropdown-item"
+                 href="{{ filter_url(sender_ids_csv, conset_qs, filters.by_format, '', filters.by_compatibility) }}">clear</a>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="dropdown mr-1">
+          <button class="btn btn-outline-secondary dropdown-toggle" type="button"
+                  data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+            {% if filters.by_compatibility != '' %}Compatibility: <strong>{{ filters.by_compatibility }}</strong>
+            {% else %}Compatibility{% endif %}
+          </button>
+          <div class="dropdown-menu">
+            {% for c in config_view.has_compatibilities %}
+              <a class="dropdown-item {% if filters.by_compatibility == c|string %}active{% endif %}"
+                 href="{{ filter_url(sender_ids_csv, conset_qs, filters.by_format, filters.by_layer, c|string) }}">{{ c }}</a>
+            {% else %}
+              <span class="dropdown-item-text text-muted small">no groups</span>
+            {% endfor %}
+            {% if filters.by_compatibility != '' %}
+              <div class="dropdown-divider"></div>
+              <a class="dropdown-item"
+                 href="{{ filter_url(sender_ids_csv, conset_qs, filters.by_format, filters.by_layer, '') }}">clear</a>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <p class="text-muted small">
+        One section per sender showing the constraint set you chose.
+        Edit parameter values to narrow the active constraints, then
+        toggle <strong>Constrain</strong> on; toggle
+        <strong>Activate</strong> on to take the sender live. The
+        toggles apply to all senders on this page.
+      </p>
+
+      <form id="configure-form">
+        <input type="hidden" name="sender_ids" value="{{ sender_ids_csv }}">
+
+        {# ``--caps-name-width`` drives the ``name`` column of every
+           nested params table below, so alignment stays consistent
+           across all senders on the page. +1ch padding past the widest
+           name keeps things from touching the value column. #}
+        <table class="devices-table caps-table"
+               style="--caps-name-width: {{ (config_view.max_param_name_len or 0) + 1 }}ch">
+          <colgroup>
+            <col style="width:4rem">
+            <col style="width:14rem">
+            <col style="width:10rem">
+            <col style="width:5rem">
+            <col style="width:5rem">
+            <col style="width:6rem">
+            <col>
+          </colgroup>
+          <thead>
+            <tr class="devices-header-row">
+              <th>set</th>
+              <th>label</th>
+              <th>media&nbsp;type</th>
+              <th>format</th>
+              <th>layer</th>
+              <th>preference</th>
+              <th>sender</th>
+            </tr>
+          </thead>
+
+          {% for sender in config_view.senders %}
+            <tbody class="device-title-tbody">
+              <tr class="device-title-row">
+                <td colspan="7" class="device-title"
+                    data-sender-id="{{ sender.id }}">
+                  {% if sender.role %}
+                    <strong class="device-serial">{{ sender.role }}</strong>
+                  {% endif %}
+                  <span class="ml-3">{{ sender.label }}</span>
+                  {% if sender.device_serial or sender.device_address %}
+                    <span class="ml-3 text-muted small">
+                      {% if sender.device_serial %}{{ sender.device_serial }}{% endif %}
+                      {% if sender.device_address %} · {{ sender.device_address }}{% endif %}
+                    </span>
+                  {% endif %}
+                </td>
+              </tr>
+            </tbody>
+
+            {% if sender.constraint_set %}
+              {% set cs = sender.constraint_set %}
+              <tbody class="caps-tbody">
+                {# ``data-conset-hash`` is the key for localStorage edit
+                   persistence — content-addressed, so a dynamic CS
+                   change on the device invalidates stale records
+                   automatically. ``data-conset-index`` is kept for
+                   display; ``data-caps-row`` links the summary to
+                   its expanded details row so ``initCapsRowClick``
+                   can toggle it just like on the capabilities page.
+                   Configure page defaults to ``is-expanded`` — the
+                   operator is here to edit, and can collapse a
+                   section once they're done with it. #}
+                <tr class="caps-row is-expanded"
+                    data-caps-row="{{ sender.id }}-{{ cs.index }}"
+                    data-sender-id="{{ sender.id }}"
+                    data-conset-index="{{ cs.index }}"
+                    data-conset-hash="{{ cs.hash }}"
+                    {# meta-format / meta-layer drive the IS-11 constraint_set
+                       meta on PUT — trunk CSs emit ``enabled=true``; sub-layer
+                       CSs emit ``layer_enabled=true`` + format + layer. Missing
+                       these caused the Node's fix-the-flow path to silently
+                       skip the conset (pref<=0). #}
+                    {# ``actual_meta_*`` carry ONLY what the CS itself
+                       declares — used by the JS body builder to decide
+                       whether the constraint is a trunk CS (no markers)
+                       or a sub-layer CS. ``meta_format`` / ``meta_layer``
+                       below are display-side values with the natural-
+                       group fallback baked in; using them here would
+                       fabricate hierarchical markers on a non-hier CS
+                       and cause the Node to reject with 422. #}
+                    data-cs-meta-format="{{ cs.actual_meta_format or '' }}"
+                    data-cs-meta-layer="{{ cs.actual_meta_layer if cs.actual_meta_layer != '' else '' }}">
+                  <td class="caps-set-cell">
+                    <span class="caps-toggle">▾</span>
+                    <code>#{{ cs.index }}</code>
+                  </td>
+                  <td>{{ cs.label }}</td>
+                  <td class="caps-summary">{{ cs.media_type or '—' }}</td>
+                  <td>{{ cs.meta_format or '—' }}</td>
+                  <td class="text-right">{{ cs.meta_layer if cs.meta_layer != '' else '—' }}</td>
+                  <td class="text-right">{{ cs.preference }}</td>
+                  {# Initial content reflects live state from the cache
+                     + IS-11 probe. Action handlers in controller.js
+                     overwrite this cell with OK/error on each toggle
+                     press, so the pre-filled state only shows until
+                     the first action. #}
+                  {% set st = sender_state.get(sender.id, {}) %}
+                  <td class="result-cell text-muted small"
+                      data-result-for="{{ sender.id }}"
+                      data-live-active="{{ 'true' if st.active else 'false' }}">
+                    {%- if st.active and st.constrained -%}
+                      active · constrained
+                    {%- elif st.active -%}
+                      active
+                    {%- elif st.constrained -%}
+                      constrained
+                    {%- else -%}
+                      idle
+                    {%- endif -%}
+                  </td>
+                </tr>
+                <tr class="caps-details-row"
+                    data-caps-details-for="{{ sender.id }}-{{ cs.index }}">
+                  <td colspan="7" class="caps-details-cell">
+                    {% if cs.params %}
+                      <table class="caps-params">
+                        <tbody>
+                          {% for p in cs.params %}
+                            <tr>
+                              <td class="caps-detail-name">{{ p.name }}</td>
+                              <td class="caps-detail-value">
+                                {%- set w = p.widget -%}
+                                {% if w.kind == 'multiselect' %}
+                                  {# ``size`` makes the box exactly as tall as
+                                     the option count (capped at 8) — without
+                                     it the browser picks a default (often 4),
+                                     which leaves blank rows below a 2-option
+                                     boolean like ``transport:synchronous_media``. #}
+                                  <select class="form-control form-control-sm param-input"
+                                          multiple
+                                          size="{{ w.options|length if w.options|length < 8 else 8 }}"
+                                          data-sender-id="{{ sender.id }}"
+                                          data-param-urn="{{ p.urn }}"
+                                          {% if w.disabled %}disabled{% endif %}>
+                                    {# ``value`` is the JSON-encoded raw
+                                       typed value (bool, int, string,
+                                       rational, …). ``display`` is the
+                                       human-readable text. The browser
+                                       JSON.parses the selected values
+                                       when building the IS-11 PUT body
+                                       so booleans stay booleans,
+                                       numbers stay numbers, etc. #}
+                                    {% for opt in w.options %}
+                                      <option value="{{ opt.value }}"
+                                              {% if opt.display in w.selected %}selected{% endif %}>{{ opt.display }}</option>
+                                    {% endfor %}
+                                  </select>
+                                {% elif w.kind == 'range' %}
+                                  <div class="d-flex align-items-center">
+                                    <input type="range"
+                                           class="custom-range flex-grow-1 mr-2 param-range"
+                                           min="{{ w.min }}" max="{{ w.max }}" step="1"
+                                           value="{{ w.value }}"
+                                           data-sender-id="{{ sender.id }}"
+                                           data-param-urn="{{ p.urn }}"
+                                           {% if w.disabled %}disabled{% endif %}>
+                                    <input type="text"
+                                           class="form-control form-control-sm param-input param-range-value"
+                                           style="width:6rem"
+                                           value="{{ w.value }}"
+                                           data-sender-id="{{ sender.id }}"
+                                           data-param-urn="{{ p.urn }}"
+                                           readonly>
+                                  </div>
+                                  <small class="text-muted">{{ w.min }} … {{ w.max }}</small>
+                                {% else %}
+                                  <input type="text"
+                                         class="form-control form-control-sm"
+                                         value="{{ w.display }}" readonly>
+                                {% endif %}
+                              </td>
+                            </tr>
+                          {% endfor %}
+                          {% if cs.meta_compat %}
+                            <tr>
+                              <td class="caps-detail-name">layer_compatibility_groups</td>
+                              <td class="caps-detail-value">{{ cs.meta_compat | join(', ') }}</td>
+                            </tr>
+                          {% endif %}
+                        </tbody>
+                      </table>
+                    {% else %}
+                      <div class="text-muted small">
+                        No editable parameters in this constraint set.
+                      </div>
+                    {% endif %}
+                  </td>
+                </tr>
+              </tbody>
+            {% else %}
+              <tbody>
+                <tr>
+                  <td colspan="7" class="text-muted small">
+                    No constraint set selected (or the chosen set was
+                    filtered out / disabled).
+                  </td>
+                </tr>
+              </tbody>
+            {% endif %}
+          {% endfor %}
+        </table>
+
+        <div class="sticky-bottom bg-light p-2 border-top mt-3">
+          <a href="/controller/senders" class="btn btn-link">Back to senders</a>
+        </div>
+      </form>
+
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  controller.initConfigureToggles('configure-form');
+  controller.initCapsRowClick();
+  // Privacy panel — dropdown change-handlers + Exclusivity toggle
+  // wiring. No-op when the partial didn't render (non-PEP selection).
+  controller.initPrivacyPanel();
+  // Live status via SSE. Any ``subscription.active`` change on the
+  // selected senders pushes here and updates their state cells + the
+  // top-row Activate toggle in real time.
+  controller.initStatusStream();
+</script>
+{% endblock %}
