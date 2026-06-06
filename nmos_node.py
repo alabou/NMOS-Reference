@@ -326,6 +326,36 @@ def build_server_ssl_context(args: argparse.Namespace) -> ssl.SSLContext | None:
     return ctx
 
 
+def build_controller_ui_ssl_context(
+    args: argparse.Namespace,
+) -> ssl.SSLContext | None:
+    """Build SSL context for the embedded Controller UI listener
+    (``--nodeControlPort``).
+
+    **Rule: mTLS → TLS for the Controller UI.** The Controller UI is
+    a browser-facing admin endpoint, not part of the IPMX protocol
+    surface (Node API, IS-05/IS-08/IS-11) that TR-10-SEC's mTLS
+    requirement covers. Under Configuration C the Node listener runs
+    mTLS; this listener takes that same TLS context and **downgrades
+    it to plain server-TLS** by forcing ``verify_mode=CERT_NONE``,
+    so a browser without a client cert can still reach
+    ``https://<host>:<nodeControlPort>/controller/``. Admin
+    authentication on the UI is handled at the application layer via
+    OAuth 2.0 (Config B/C) or the local-admin password.
+
+    Returns ``None`` when TLS is disabled.
+    """
+    ctx = build_server_ssl_context(args)
+    if ctx is None:
+        return None
+    # Apply the mTLS-to-TLS conversion rule. The Node listener's
+    # ``verify_mode`` may be CERT_REQUIRED (Config A/C) or
+    # CERT_OPTIONAL (NAP=1 under Config A); both downgrade to
+    # CERT_NONE on the Controller UI.
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
 def build_control_server_ssl_context(
     args: argparse.Namespace,
 ) -> ssl.SSLContext | None:
@@ -674,14 +704,16 @@ async def go_controller_server(
         oauth2_config=oauth2_config,
     )
 
-    # Controller HTTPS server reuses the Node's server TLS context so
-    # one-cert-per-node is sufficient. ``shutdown_timeout=2.0`` keeps
-    # Ctrl-C responsive — the controller's SSE stream
-    # (/controller/api/status-events) is the main thing the browser
-    # holds open across page reloads, and 60 s of grace would block
-    # process exit until either the SSE handler returned or the
-    # operator hit Ctrl-C a second time.
-    server_ssl = build_server_ssl_context(args)
+    # Controller UI server runs server-TLS-only (no mTLS) even under
+    # Configuration C — the UI is a browser endpoint, not part of the
+    # IPMX protocol surface that TR-10-SEC's mTLS requirement covers.
+    # See ``build_controller_ui_ssl_context`` for the rationale.
+    # ``shutdown_timeout=2.0`` keeps Ctrl-C responsive — the
+    # controller's SSE stream (/controller/api/status-events) is the
+    # main thing the browser holds open across page reloads, and
+    # 60 s of grace would block process exit until either the SSE
+    # handler returned or the operator hit Ctrl-C a second time.
+    server_ssl = build_controller_ui_ssl_context(args)
     runner = web.AppRunner(app, shutdown_timeout=2.0)
     await runner.setup()
 
