@@ -196,9 +196,7 @@ code {
  * possibility of a missing-var collapse to 0. */
 
 .status-badge {
-  display: inline-flex !important;
-  align-items: center;
-  justify-content: center;
+  display: inline-block !important;
   width: 4rem;
   height: 1.4rem;
   padding: 0 0.5rem;
@@ -208,7 +206,9 @@ code {
   border-radius: 3px;
   color: #fff;
   background: #6c757d;
-  line-height: 1;
+  line-height: 1.4rem;
+  text-align: center;
+  vertical-align: middle;
   box-sizing: border-box;
 }
 

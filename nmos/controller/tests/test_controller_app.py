@@ -2451,24 +2451,37 @@ class TestSse:
 
         task = asyncio.create_task(trigger())
 
+        # The SSE handler sends a current-state snapshot for every
+        # subscribed id BEFORE the change-event loop, so the first
+        # event will reflect the initial (active=False) state. Drain
+        # events until we see the active=True one delivered by the
+        # ``trigger()`` task.
         received: bytes = b""
+        active_true_seen = False
         try:
             async for chunk in resp.content.iter_any():
                 received += chunk
-                if b"event: status" in received and b"\n\n" in received:
+                for line in received.decode("utf-8", errors="replace").splitlines():
+                    if not line.startswith("data: "):
+                        continue
+                    try:
+                        payload = json.loads(line[len("data: "):])
+                    except json.JSONDecodeError:
+                        continue
+                    if (payload.get("id") == sid
+                            and payload.get("status", {}).get("active") is True):
+                        active_true_seen = True
+                        break
+                if active_true_seen:
                     break
         finally:
             task.cancel()
             resp.close()
 
-        text = received.decode("utf-8", errors="replace")
-        assert "event: status" in text
-        payload_line = next(
-            line for line in text.splitlines() if line.startswith("data: ")
+        assert active_true_seen, (
+            "expected an active=True status event for the upserted sender; "
+            f"raw stream was: {received!r}"
         )
-        payload = json.loads(payload_line[len("data: "):])
-        assert payload["id"] == sid
-        assert payload["status"]["active"] is True
 
 
 # ---------------------------------------------------------------------------

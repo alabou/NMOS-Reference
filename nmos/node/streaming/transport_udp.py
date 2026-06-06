@@ -38,6 +38,28 @@ MAX_LATE_ARRIVAL_S = 0.1           # 100ms in seconds
 SOCKET_TIMEOUT_S = 3.0
 
 
+def _to_numeric(addr: str, family: int) -> str:
+    """Return a numeric form of ``addr`` for the given socket family.
+
+    Accepts either a literal IP (returned verbatim) or a DNS name
+    (resolved via ``getaddrinfo``). Required because transport params
+    carry hostnames such as ``XYZ-SNX00001`` whenever TLS is enabled,
+    and ``socket.inet_aton`` / ``socket.inet_pton`` reject anything
+    that isn't already a numeric address.
+    """
+    try:
+        if family == socket.AF_INET6:
+            socket.inet_pton(socket.AF_INET6, addr)
+        else:
+            socket.inet_aton(addr)
+        return addr
+    except OSError:
+        infos = socket.getaddrinfo(addr, None, family=family, type=socket.SOCK_DGRAM)
+        resolved = infos[0][4][0]
+        assert isinstance(resolved, str)
+        return resolved
+
+
 # ---------------------------------------------------------------------------
 # Sender
 # ---------------------------------------------------------------------------
@@ -96,13 +118,13 @@ async def udp_sender(
             # Set multicast interface
             if ":" in source_ip:
                 # IPv6: IPV6_MULTICAST_IF
-                idx = _get_interface_index(source_ip)
+                idx = _get_interface_index(_to_numeric(source_ip, socket.AF_INET6))
                 sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_IF, idx)
             else:
                 # IPv4: IP_MULTICAST_IF
                 sock.setsockopt(
                     socket.IPPROTO_IP, socket.IP_MULTICAST_IF,
-                    socket.inet_aton(source_ip),
+                    socket.inet_aton(_to_numeric(source_ip, socket.AF_INET)),
                 )
             # TTL = 255 (MulticastTTL)
             sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 255)
@@ -192,6 +214,17 @@ async def udp_receiver(
     """
     is_multicast = _is_multicast(multicast_ip) if multicast_ip else False
 
+    # Source-filter compares numeric IPs from ``recvfrom`` against
+    # ``source_ip``; resolve any hostname (e.g. ``XYZ-SNX00001`` under
+    # TLS-enabled configs) to its numeric form once up-front so every
+    # packet's source address matches as the spec expects.
+    if source_ip:
+        family = socket.AF_INET6 if ":" in source_ip else socket.AF_INET
+        try:
+            source_ip = _to_numeric(source_ip, family)
+        except OSError:
+            pass  # leave as-is; comparison will then never match
+
     emit_activate(event_queue, receiver_id, interface_name, is_sender=False)
 
     try:
@@ -210,14 +243,19 @@ async def udp_receiver(
             sock.bind((multicast_ip, dest_port))
             # Join multicast group
             if ":" in multicast_ip:
-                idx = _get_interface_index(interface_ip)
-                mreq = struct.pack("16sI", socket.inet_pton(socket.AF_INET6, multicast_ip), idx)
+                iface_num = _to_numeric(interface_ip, socket.AF_INET6)
+                idx = _get_interface_index(iface_num)
+                mreq = struct.pack(
+                    "16sI",
+                    socket.inet_pton(socket.AF_INET6, _to_numeric(multicast_ip, socket.AF_INET6)),
+                    idx,
+                )
                 sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_JOIN_GROUP, mreq)
             else:
                 mreq = struct.pack(
                     "4s4s",
-                    socket.inet_aton(multicast_ip),
-                    socket.inet_aton(interface_ip),
+                    socket.inet_aton(_to_numeric(multicast_ip, socket.AF_INET)),
+                    socket.inet_aton(_to_numeric(interface_ip, socket.AF_INET)),
                 )
                 sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
         else:
@@ -381,14 +419,19 @@ async def udp_receiver(
         if is_multicast:
             try:
                 if ":" in multicast_ip:
-                    idx = _get_interface_index(interface_ip)
-                    mreq = struct.pack("16sI", socket.inet_pton(socket.AF_INET6, multicast_ip), idx)
+                    iface_num = _to_numeric(interface_ip, socket.AF_INET6)
+                    idx = _get_interface_index(iface_num)
+                    mreq = struct.pack(
+                        "16sI",
+                        socket.inet_pton(socket.AF_INET6, _to_numeric(multicast_ip, socket.AF_INET6)),
+                        idx,
+                    )
                     sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_LEAVE_GROUP, mreq)
                 else:
                     mreq = struct.pack(
                         "4s4s",
-                        socket.inet_aton(multicast_ip),
-                        socket.inet_aton(interface_ip),
+                        socket.inet_aton(_to_numeric(multicast_ip, socket.AF_INET)),
+                        socket.inet_aton(_to_numeric(interface_ip, socket.AF_INET)),
                     )
                     sock.setsockopt(socket.IPPROTO_IP, socket.IP_DROP_MEMBERSHIP, mreq)
             except OSError:

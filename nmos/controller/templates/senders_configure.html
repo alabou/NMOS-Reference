@@ -230,8 +230,8 @@
                   <td>{{ cs.label }}</td>
                   <td class="caps-summary">{{ cs.media_type or '—' }}</td>
                   <td>{{ cs.meta_format or '—' }}</td>
-                  <td class="text-right">{{ cs.meta_layer if cs.meta_layer != '' else '—' }}</td>
-                  <td class="text-right">{{ cs.preference }}</td>
+                  <td>{{ cs.meta_layer if cs.meta_layer != '' else '—' }}</td>
+                  <td>{{ cs.preference }}</td>
                   {# Initial content reflects live state from the cache
                      + IS-11 probe. Action handlers in controller.js
                      overwrite this cell with OK/error on each toggle

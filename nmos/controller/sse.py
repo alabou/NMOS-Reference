@@ -65,6 +65,31 @@ async def status_events_handler(request: web.Request) -> web.StreamResponse:
 
     stream = StatusEventStream(cache, filter_ids)
 
+    # Initial snapshot — push the current status for every subscribed
+    # id BEFORE entering the change-event loop. Without this, anything
+    # that changed between page render and SSE connect (or any drop +
+    # reconnect) would be lost until the next change, leaving the
+    # badges / dots stale until the user pressed F5. Listener is
+    # already registered in StatusEventStream.__init__, so events
+    # fired during the snapshot are enqueued and replayed below;
+    # the queue draining last guarantees the latest state wins.
+    if filter_ids:
+        snapshot_ids = set(filter_ids)
+    else:
+        snapshot_ids = {s["id"] for s in cache.all_senders() if s.get("id")}
+        snapshot_ids |= {r["id"] for r in cache.all_receivers() if r.get("id")}
+    for rid in snapshot_ids:
+        status = cache.get_status(rid)
+        if not status:
+            continue
+        payload = {"id": rid, "kind": "", "status": status}
+        frame = f"event: status\ndata: {json.dumps(payload)}\n\n"
+        try:
+            await response.write(frame.encode("utf-8"))
+        except (ConnectionResetError, asyncio.CancelledError):
+            stream.close()
+            return response
+
     # Keepalive pings so the connection isn't killed by intermediaries.
     keepalive_task = asyncio.create_task(_keepalive_loop(response))
 

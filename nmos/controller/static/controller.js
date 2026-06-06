@@ -1045,10 +1045,12 @@
     );
     if (badge) {
       _setStatusClass(badge, overall);
-      // Only the idle (and not-used) states carry text; coloured states
-      // render as empty bars per the BCP-008 indicator convention.
+      // Idle / not-used states render as "idle"; every other state
+      // renders as "active". The badge always carries text so the
+      // inline-block baseline stays aligned with the .status-dot
+      // siblings — see device_block.html for the matching template.
       badge.textContent =
-        (overall === "inactive" || overall === "not-used") ? "idle" : "";
+        (overall === "inactive" || overall === "not-used") ? "idle" : "active";
     }
 
     for (const facet of FACETS) {

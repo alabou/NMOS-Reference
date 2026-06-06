@@ -119,11 +119,11 @@
           {% endif %}
         </td>
         <td class="sender-label">{{ m.label }}</td>
-        <td class="overall-status">
+        <td class="col-status overall-status">
           <span class="status-badge is-{{ overall }}"
                 data-resource-id="{{ m.id }}"
                 data-kind="overall">
-            {% if overall in ('inactive', 'not-used') %}idle{% endif %}
+            {% if overall in ('inactive', 'not-used') %}idle{% else %}active{% endif %}
           </span>
         </td>
         {% for facet in ('link', 'sync', 'conn', 'media') %}
@@ -158,11 +158,11 @@
         </td>
         <td class="role-name"><span class="text-muted">—</span></td>
         <td class="sender-label">{{ m.label }}</td>
-        <td class="overall-status">
+        <td class="col-status overall-status">
           <span class="status-badge is-{{ overall }}"
                 data-resource-id="{{ m.id }}"
                 data-kind="overall">
-            {% if overall in ('inactive', 'not-used') %}idle{% endif %}
+            {% if overall in ('inactive', 'not-used') %}idle{% else %}active{% endif %}
           </span>
         </td>
         {% for facet in ('link', 'sync', 'conn', 'media') %}

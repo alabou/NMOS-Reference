@@ -170,8 +170,8 @@
                     <td>{{ cs.label }}</td>
                     <td class="caps-summary">{{ cs.media_type or '—' }}</td>
                     <td>{{ cs.meta_format or '—' }}</td>
-                    <td class="text-right">{{ cs.meta_layer if cs.meta_layer != '' else '—' }}</td>
-                    <td class="text-right">{{ cs.preference }}</td>
+                    <td>{{ cs.meta_layer if cs.meta_layer != '' else '—' }}</td>
+                    <td>{{ cs.preference }}</td>
                   </tr>
                   <tr class="caps-details-row"
                       data-caps-details-for="{{ sender.id }}-{{ cs.index }}"

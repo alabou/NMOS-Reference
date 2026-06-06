@@ -277,8 +277,8 @@
                   <td>{{ cs.label }}</td>
                   <td class="caps-summary">{{ cs.media_type or '—' }}</td>
                   <td>{{ cs.meta_format or '—' }}</td>
-                  <td class="text-right">{{ cs.meta_layer if cs.meta_layer != '' else '—' }}</td>
-                  <td class="text-right">{{ cs.preference }}</td>
+                  <td>{{ cs.meta_layer if cs.meta_layer != '' else '—' }}</td>
+                  <td>{{ cs.preference }}</td>
                   {# Both cells pre-fill with the live registry /
                      IS-11 state the handler probed. Action handlers
                      overwrite on the first toggle press. #}
