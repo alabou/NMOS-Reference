@@ -84,7 +84,7 @@ class TestBase62Decode:
             assert decode(encode(ch)) == ch
 
     def test_roundtrip_multi(self) -> None:
-        cases = ["AB", "0A", "00", "ABC123", "zzzzzzzzzz", "MTX12345"]
+        cases = ["AB", "0A", "00", "ABC123", "zzzzzzzzzz", "SNX12345"]
         for s in cases:
             assert decode(encode(s)) == s, f"roundtrip failed for {s!r}"
 
@@ -153,11 +153,11 @@ class TestResourceUuidSet:
 
     def test_basic(self) -> None:
         u = ResourceUuid()
-        u.set(ResourceType.DEVICE, ResourceSubType.NONE, 10, "MTX12345", 0, False)
+        u.set(ResourceType.DEVICE, ResourceSubType.NONE, 10, "SNX12345", 0, False)
         assert u.resource_type == ResourceType.DEVICE
         assert u.resource_sub_type == ResourceSubType.NONE
         assert u.index == 10
-        assert u.serial_number == "MTX12345"
+        assert u.serial_number == "SNX12345"
         assert u.on_demand is False
 
     def test_all_resource_types(self) -> None:
@@ -217,7 +217,7 @@ class TestNmosCompliance:
         assert _NMOS_UUID_RE.match(s), f"on_demand: {s}"
 
     def test_various_serials(self) -> None:
-        serials = ["A", "AB", "ABC", "MTX12345", "ABCDEFGHIJKL", "0123456789"]
+        serials = ["A", "AB", "ABC", "SNX12345", "ABCDEFGHIJKL", "0123456789"]
         for sn in serials:
             s = self._make(sn=sn)
             assert _NMOS_UUID_RE.match(s), f"sn={sn!r}: {s}"
@@ -275,7 +275,7 @@ class TestRoundtrip:
         self._roundtrip(ResourceType.SENDER, ResourceSubType.NONE, 3, "A123456", 0x12345678, False)
 
     def test_matrox_8_char(self) -> None:
-        self._roundtrip(ResourceType.FLOW, ResourceSubType.NONE, 0, "MTX12345", 0xABCDEF01, False)
+        self._roundtrip(ResourceType.FLOW, ResourceSubType.NONE, 0, "SNX12345", 0xABCDEF01, False)
 
     def test_12_char_max(self) -> None:
         self._roundtrip(ResourceType.SOURCE, ResourceSubType.SENDER_MONITOR, 255, "ABCDEFGHIJ12", 0xFFFFFFFF, True)
@@ -312,9 +312,9 @@ class TestVisualIdentification:
     """Last 4 hex chars of UUID show last 2 S/N chars as char-'0'."""
 
     def test_digits_at_end(self) -> None:
-        """S/N 'MTX12345' → last 2 chars '4','5' → 04,05 → hex '0405'."""
+        """S/N 'SNX12345' → last 2 chars '4','5' → 04,05 → hex '0405'."""
         u = ResourceUuid()
-        u.set(ResourceType.DEVICE, ResourceSubType.NONE, 0, "MTX12345", 0, False)
+        u.set(ResourceType.DEVICE, ResourceSubType.NONE, 0, "SNX12345", 0, False)
         uuid_str = str(u)
         assert uuid_str.endswith("0405"), f"expected ...0405, got {uuid_str}"
 
@@ -471,7 +471,7 @@ class TestUpdateUniqueId:
 
     def test_preserves_rest(self) -> None:
         u = ResourceUuid()
-        u.set(ResourceType.SENDER, ResourceSubType.NONE, 5, "MTX12345", 100, False)
+        u.set(ResourceType.SENDER, ResourceSubType.NONE, 5, "SNX12345", 100, False)
         original = str(u)
 
         updated = update_resource_unique_id(original, 999)
@@ -480,14 +480,14 @@ class TestUpdateUniqueId:
 
     def test_roundtrip(self) -> None:
         u = ResourceUuid()
-        u.set(ResourceType.SENDER, ResourceSubType.NONE, 5, "MTX12345", 100, False)
+        u.set(ResourceType.SENDER, ResourceSubType.NONE, 5, "SNX12345", 100, False)
         original = str(u)
 
         updated = update_resource_unique_id(original, 0xDEADBEEF)
         u2 = ResourceUuid()
         u2.set_from_string(updated)
         assert u2.unique_id == 0xDEADBEEF
-        assert u2.serial_number == "MTX12345"
+        assert u2.serial_number == "SNX12345"
 
 
 # ===================================================================

@@ -64,9 +64,9 @@ def _ns(**overrides) -> Namespace:
 def test_config_a_full_restricted_rw() -> None:
     """A typical Configuration A: TLS + mTLS, no OAuth2, default OAIM, RSA cert."""
     args = _ns(
-        nodeCertificate="/p/MatroxDeviceServer.MTX.MTX00001.chain.pem",
-        nodeKey="/p/MatroxDeviceServer.MTX.MTX00001.key",
-        nodeTrustedRootCA=["/p/MatroxRootCA.pem"],
+        nodeCertificate="/p/ExampleDeviceServer.ABC.SNX00001.chain.pem",
+        nodeKey="/p/ExampleDeviceServer.ABC.SNX00001.key",
+        nodeTrustedRootCA=["/p/ExampleRootCA.pem"],
     )
     cfg = compute_security_tags(args)
     assert cfg == SecurityConfig(
@@ -81,9 +81,9 @@ def test_config_a_full_restricted_rw() -> None:
 def test_config_a_unrestricted_ro_via_optional_client_auth() -> None:
     """Configuration A + --nodeOptionalClientAuth → NAP=1 (reads truly open)."""
     args = _ns(
-        nodeCertificate="/p/MatroxDeviceServer.MTX.MTX00001.chain.pem",
-        nodeKey="/p/MatroxDeviceServer.MTX.MTX00001.key",
-        nodeTrustedRootCA=["/p/MatroxRootCA.pem"],
+        nodeCertificate="/p/ExampleDeviceServer.ABC.SNX00001.chain.pem",
+        nodeKey="/p/ExampleDeviceServer.ABC.SNX00001.key",
+        nodeTrustedRootCA=["/p/ExampleRootCA.pem"],
         nodeOptionalClientAuth=True,
     )
     assert compute_security_tags(args).nap is NAP.UNRESTRICTED_RO
@@ -91,9 +91,9 @@ def test_config_a_unrestricted_ro_via_optional_client_auth() -> None:
 
 def test_config_a_ecdsa_cert_emits_tct_ecdsa() -> None:
     args = _ns(
-        nodeCertificate="/p/MatroxDeviceServer.MTX.MTX00001.chain.ec.pem",
-        nodeKey="/p/MatroxDeviceServer.MTX.MTX00001.ec.key",
-        nodeTrustedRootCA=["/p/MatroxRootCA.ec.pem"],
+        nodeCertificate="/p/ExampleDeviceServer.ABC.SNX00001.chain.ec.pem",
+        nodeKey="/p/ExampleDeviceServer.ABC.SNX00001.ec.key",
+        nodeTrustedRootCA=["/p/ExampleRootCA.ec.pem"],
     )
     assert compute_security_tags(args).tct is TCT.ECDSA
 
@@ -104,8 +104,8 @@ def test_config_a_ecdsa_cert_emits_tct_ecdsa() -> None:
 
 def test_config_b_oauth2_only_no_mtls() -> None:
     args = _ns(
-        nodeCertificate="/p/MatroxDeviceServer.MTX.MTX00001.chain.pem",
-        nodeKey="/p/MatroxDeviceServer.MTX.MTX00001.key",
+        nodeCertificate="/p/ExampleDeviceServer.ABC.SNX00001.chain.pem",
+        nodeKey="/p/ExampleDeviceServer.ABC.SNX00001.key",
         # nodeTrustedRootCA absent — no client-cert verification on inbound
         oauth2=True,
         oauth2AudienceMode="serial",
@@ -122,8 +122,8 @@ def test_config_b_optional_client_auth_collapses_to_nap_2() -> None:
     token on every request, so reads are NOT truly open. We emit NAP=2 to
     honestly reflect what the device does."""
     args = _ns(
-        nodeCertificate="/p/MatroxDeviceServer.MTX.MTX00001.chain.pem",
-        nodeKey="/p/MatroxDeviceServer.MTX.MTX00001.key",
+        nodeCertificate="/p/ExampleDeviceServer.ABC.SNX00001.chain.pem",
+        nodeKey="/p/ExampleDeviceServer.ABC.SNX00001.key",
         oauth2=True,
         nodeOptionalClientAuth=True,
     )
@@ -132,8 +132,8 @@ def test_config_b_optional_client_auth_collapses_to_nap_2() -> None:
 
 def test_config_b_oaim_cert_mode() -> None:
     args = _ns(
-        nodeCertificate="/p/MatroxDeviceServer.MTX.MTX00001.chain.pem",
-        nodeKey="/p/MatroxDeviceServer.MTX.MTX00001.key",
+        nodeCertificate="/p/ExampleDeviceServer.ABC.SNX00001.chain.pem",
+        nodeKey="/p/ExampleDeviceServer.ABC.SNX00001.key",
         oauth2=True,
         oauth2AudienceMode="cert",
     )
@@ -142,8 +142,8 @@ def test_config_b_oaim_cert_mode() -> None:
 
 def test_config_b_oaim_either_mode() -> None:
     args = _ns(
-        nodeCertificate="/p/MatroxDeviceServer.MTX.MTX00001.chain.pem",
-        nodeKey="/p/MatroxDeviceServer.MTX.MTX00001.key",
+        nodeCertificate="/p/ExampleDeviceServer.ABC.SNX00001.chain.pem",
+        nodeKey="/p/ExampleDeviceServer.ABC.SNX00001.key",
         oauth2=True,
         oauth2AudienceMode="either",
     )
@@ -156,9 +156,9 @@ def test_config_b_oaim_either_mode() -> None:
 
 def test_config_c_both_mtls_and_oauth2() -> None:
     args = _ns(
-        nodeCertificate="/p/MatroxDeviceServer.MTX.MTX00001.chain.pem",
-        nodeKey="/p/MatroxDeviceServer.MTX.MTX00001.key",
-        nodeTrustedRootCA=["/p/MatroxRootCA.pem"],
+        nodeCertificate="/p/ExampleDeviceServer.ABC.SNX00001.chain.pem",
+        nodeKey="/p/ExampleDeviceServer.ABC.SNX00001.key",
+        nodeTrustedRootCA=["/p/ExampleRootCA.pem"],
         oauth2=True,
     )
     cfg = compute_security_tags(args)
@@ -177,8 +177,8 @@ def test_no_cert_yields_nap_0() -> None:
 
 def test_explicit_disable_tls_yields_nap_0() -> None:
     args = _ns(
-        nodeCertificate="/p/MatroxDeviceServer.MTX.MTX00001.chain.pem",
-        nodeKey="/p/MatroxDeviceServer.MTX.MTX00001.key",
+        nodeCertificate="/p/ExampleDeviceServer.ABC.SNX00001.chain.pem",
+        nodeKey="/p/ExampleDeviceServer.ABC.SNX00001.key",
         nodeDisableTLS=True,
     )
     assert compute_security_tags(args).nap is NAP.UNRESTRICTED_RW
@@ -195,8 +195,8 @@ def test_rap_http_when_disabled() -> None:
 
 def test_rap_mtls_when_client_cert_provided() -> None:
     args = _ns(
-        rdsClientCertificate="/p/MatroxDeviceClient.MTX.MTX00001.chain.pem",
-        rdsClientKey="/p/MatroxDeviceClient.MTX.MTX00001.key",
+        rdsClientCertificate="/p/ExampleDeviceClient.ABC.SNX00001.chain.pem",
+        rdsClientKey="/p/ExampleDeviceClient.ABC.SNX00001.key",
     )
     assert compute_security_tags(args).rap is RAP.RESTRICTED_MTLS
 

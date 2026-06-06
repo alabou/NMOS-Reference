@@ -218,9 +218,9 @@ def _compute_oaim(args: Any) -> OAIM:
 def _compute_tct(args: Any) -> TCT:
     """Infer TCT from the cert-file flavor.
 
-    The Certificates/build/ workspace uses two filename conventions for
-    server certs: ``MatroxDeviceServer.MTX.<serial>.chain.pem`` for RSA
-    and ``MatroxDeviceServer.MTX.<serial>.chain.ec.pem`` for ECDSA.
+    The Certificates/build.0/ workspace uses two filename conventions for
+    server certs: ``ExampleDeviceServer.ABC.<serial>.chain.pem`` for RSA
+    and ``ExampleDeviceServer.ABC.<serial>.chain.ec.pem`` for ECDSA.
     Reference-node currently accepts a single cert/key pair, so TCT
     reflects which flavor is mounted. TCT=2 (Both simultaneously) is a
     deferred feature — see Phase 0b item 3 in the plan; until it lands,

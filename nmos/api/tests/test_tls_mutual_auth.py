@@ -28,6 +28,7 @@ from nmos.crypto import ExclusiveSession
 from nmos.node import Node
 
 from nmos.api.tests._tls_helpers import (
+    CERTS_DIR,
     PKI_AVAILABLE,
     build_client_ssl_context,
     build_server_ssl_context,
@@ -36,11 +37,11 @@ from nmos.api.tests._tls_helpers import (
 
 pytestmark = pytest.mark.skipif(
     not PKI_AVAILABLE,
-    reason="pre-generated TLS PKI not present at /home/alain/Projects/IPMX/Certificates/build",
+    reason=f"pre-generated TLS PKI not present at {CERTS_DIR}",
 )
 
 
-SERIAL = "MTX00000"
+SERIAL = "SNX00000"
 
 
 def _make_node(*, client_auth_required: bool = False) -> Node:

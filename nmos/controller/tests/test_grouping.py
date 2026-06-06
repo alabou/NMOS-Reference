@@ -86,21 +86,21 @@ class TestExtractGroupHint:
 
 class TestDeviceSerial:
     def test_from_description(self) -> None:
-        dev = {"description": "Matrox device MTX00001 (lab)"}
-        assert device_serial(dev) == "MTX00001"
+        dev = {"description": "Example device SNX00001 (lab)"}
+        assert device_serial(dev) == "SNX00001"
 
     def test_from_label(self) -> None:
-        dev = {"label": "MTX00042 alpha"}
-        assert device_serial(dev) == "MTX00042"
+        dev = {"label": "SNX00042 alpha"}
+        assert device_serial(dev) == "SNX00042"
 
     def test_from_tag_values(self) -> None:
         dev = {
             "label": "no serial here",
             "tags": {
-                "urn:x-matrox:serial/v1.0": ["MTX12345"],
+                "urn:x-matrox:serial/v1.0": ["SNX12345"],
             },
         }
-        assert device_serial(dev) == "MTX12345"
+        assert device_serial(dev) == "SNX12345"
 
     def test_no_match(self) -> None:
         dev = {"label": "generic", "description": "unlabeled"}

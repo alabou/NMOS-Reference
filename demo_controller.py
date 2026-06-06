@@ -50,7 +50,7 @@ def _device(
     return {
         "id": did,
         "label": label,
-        "description": f"Matrox demo device {serial}",
+        "description": f"Example demo device {serial}",
         "controls": [
             {"type": "urn:x-nmos:control:sr-ctrl/v1.1", "href": conn_href},
         ],
@@ -84,72 +84,72 @@ def _receiver(
 
 
 async def seed(cache: ResourceCache) -> None:
-    # Device 1 — MTX00001, one video group (L/R) + one audio group (L/R)
+    # Device 1 — SNX00001, one video group (L/R) + one audio group (L/R)
     await cache.upsert("device", _device("11111111-dev1-0000-0000-000000000001",
-                                          "MTX00001", "Matrox MTX00001 (lab)"))
+                                          "SNX00001", "Example SNX00001 (lab)"))
     await cache.upsert("sender", _sender(
         "11111111-snd0-0000-0000-000000000001",
         "11111111-dev1-0000-0000-000000000001",
-        "mtx1-video-L", "RTP 0:VIDEO 0",
+        "xyz1-video-L", "RTP 0:VIDEO 0",
         active=True,
     ))
     await cache.upsert("sender", _sender(
         "11111111-snd0-0000-0000-000000000002",
         "11111111-dev1-0000-0000-000000000001",
-        "mtx1-video-R", "RTP 0:VIDEO 1",
+        "xyz1-video-R", "RTP 0:VIDEO 1",
     ))
     await cache.upsert("sender", _sender(
         "11111111-snd0-0000-0000-000000000003",
         "11111111-dev1-0000-0000-000000000001",
-        "mtx1-audio-L", "RTP 1:AUDIO 0",
+        "xyz1-audio-L", "RTP 1:AUDIO 0",
     ))
     await cache.upsert("sender", _sender(
         "11111111-snd0-0000-0000-000000000004",
         "11111111-dev1-0000-0000-000000000001",
-        "mtx1-audio-R", "RTP 1:AUDIO 1",
+        "xyz1-audio-R", "RTP 1:AUDIO 1",
     ))
     await cache.upsert("receiver", _receiver(
         "11111111-rcv0-0000-0000-000000000001",
         "11111111-dev1-0000-0000-000000000001",
-        "mtx1-rx-video-L", "RTP 0:VIDEO 0",
+        "xyz1-rx-video-L", "RTP 0:VIDEO 0",
     ))
     await cache.upsert("receiver", _receiver(
         "11111111-rcv0-0000-0000-000000000002",
         "11111111-dev1-0000-0000-000000000001",
-        "mtx1-rx-video-R", "RTP 0:VIDEO 1",
+        "xyz1-rx-video-R", "RTP 0:VIDEO 1",
     ))
 
-    # Device 2 — MTX00002, same shape
+    # Device 2 — SNX00002, same shape
     await cache.upsert("device", _device("22222222-dev2-0000-0000-000000000002",
-                                          "MTX00002", "Matrox MTX00002 (studio)"))
+                                          "SNX00002", "Example SNX00002 (studio)"))
     await cache.upsert("sender", _sender(
         "22222222-snd0-0000-0000-000000000001",
         "22222222-dev2-0000-0000-000000000002",
-        "mtx2-video-L", "RTP 0:VIDEO 0",
+        "xyz2-video-L", "RTP 0:VIDEO 0",
     ))
     await cache.upsert("sender", _sender(
         "22222222-snd0-0000-0000-000000000002",
         "22222222-dev2-0000-0000-000000000002",
-        "mtx2-video-R", "RTP 0:VIDEO 1",
+        "xyz2-video-R", "RTP 0:VIDEO 1",
     ))
     await cache.upsert("receiver", _receiver(
         "22222222-rcv0-0000-0000-000000000001",
         "22222222-dev2-0000-0000-000000000002",
-        "mtx2-rx-audio-L", "RTP 1:AUDIO 0",
+        "xyz2-rx-audio-L", "RTP 1:AUDIO 0",
     ))
     await cache.upsert("receiver", _receiver(
         "22222222-rcv0-0000-0000-000000000002",
         "22222222-dev2-0000-0000-000000000002",
-        "mtx2-rx-audio-R", "RTP 1:AUDIO 1",
+        "xyz2-rx-audio-R", "RTP 1:AUDIO 1",
     ))
 
-    # Device 3 — MTX00003, pure sender (no receivers)
+    # Device 3 — SNX00003, pure sender (no receivers)
     await cache.upsert("device", _device("33333333-dev3-0000-0000-000000000003",
-                                          "MTX00003", "Matrox MTX00003 (encoder)"))
+                                          "SNX00003", "Example SNX00003 (encoder)"))
     await cache.upsert("sender", _sender(
         "33333333-snd0-0000-0000-000000000001",
         "33333333-dev3-0000-0000-000000000003",
-        "mtx3-mux", "SRT 0:MUX 0",
+        "xyz3-mux", "SRT 0:MUX 0",
     ))
 
 
@@ -174,7 +174,7 @@ async def main(port: int) -> None:
     cache = ResourceCache()
     await seed(cache)
 
-    app = create_controller_app(node, cache=cache)
+    app = create_controller_app(node, cache=cache, admin_password="demo")
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", port)
@@ -202,7 +202,7 @@ async def main(port: int) -> None:
             state = not state
             await cache.upsert("sender", _sender(
                 sid, "11111111-dev1-0000-0000-000000000001",
-                "mtx1-video-R", "RTP 0:VIDEO 1",
+                "xyz1-video-R", "RTP 0:VIDEO 1",
                 active=state,
             ))
 

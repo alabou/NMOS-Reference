@@ -12,7 +12,7 @@ Production-grade NMOS Node that:
 - Handles graceful shutdown via DispatchGroup
 
 Usage:
-    python3 nmos_node.py --nodeSerialNumber MTX12345 --nodeConfig config1
+    python3 nmos_node.py --nodeSerialNumber SNX12345 --nodeConfig config1
     python3 nmos_node.py --rdsHost 192.168.1.50 --rdsRegistrationPort 8444 --rdsDisableTLS
     python3 nmos_node.py --nodeDisableTLS --nodeAddr 0.0.0.0 --nodePort 5050
 """
@@ -53,7 +53,7 @@ def parse_args() -> argparse.Namespace:
                    help="RDS query API port (controller UI bootstrap)")
     g.add_argument("--rdsWebSocketPort", type=int, default=8448,
                    help="RDS WebSocket port (controller UI live updates)")
-    g.add_argument("--rdsCertificateName", default="Matrox.Graphics.Device.Server.matrox.com",
+    g.add_argument("--rdsCertificateName", default="Example.Company.Device.Server.example.com",
                    help="RDS server TLS certificate name")
     g.add_argument("--rdsTrustedRootCA", action="append", default=None,
                    help="Trusted root CA for RDS server (PEM path; "
@@ -125,7 +125,7 @@ def parse_args() -> argparse.Namespace:
 
     # --- Node configuration ---
     g = p.add_argument_group("Node Configuration")
-    g.add_argument("--nodeSerialNumber", default="MTX12345", help="Node serial number")
+    g.add_argument("--nodeSerialNumber", default="SNX12345", help="Node serial number")
     g.add_argument("--nodeConfig", default="config1", help="Config name or JSON file path")
     g.add_argument("--wallGroup", type=int, default=0, help="Display Wall base group")
     g.add_argument("--ipmx", action="store_true", help="Enable IPMX mode")
@@ -147,7 +147,7 @@ def parse_args() -> argparse.Namespace:
     g.add_argument("--oauth2Host", default="", help="OAuth2 server host")
     g.add_argument("--oauth2Port", type=int, default=4444, help="OAuth2 server port")
     g.add_argument("--oauth2CertificateName",
-                   default="Matrox.Graphics.Device.Server.matrox.com",
+                   default="Example.Company.Device.Server.example.com",
                    help="OAuth2 TLS certificate name")
     g.add_argument("--oauth2TrustedRootCA", action="append", default=None,
                    help="OAuth2 trusted root CA (PEM path; "
@@ -159,7 +159,7 @@ def parse_args() -> argparse.Namespace:
     # issuer identifier (Hydra leaves it empty; Keycloak uses
     # ``realms/<realm>``). When --oauth2ClientId is left empty the
     # controller derives ``controller-<nodeSerialNumber>`` so a
-    # single ``--nodeSerialNumber MTX00001`` is enough config.
+    # single ``--nodeSerialNumber SNX00001`` is enough config.
     g.add_argument("--oauth2ClientId", default="",
                    help="OAuth2 client_id used by the embedded controller "
                         "to initiate the authorization_code flow. "
@@ -1053,7 +1053,7 @@ def validate_startup_certs(args: argparse.Namespace) -> None:
           ``--trustedRootCA`` entries (``check_trusted_ca``).
     3. If ``--trustedRootCA`` carries one or more paths:
        ``--nodeCertificate`` chains to any of those roots AND its
-       SAN includes ``MTX-<serial>`` AND ``--nodeKey`` matches
+       SAN includes ``XYZ-<serial>`` AND ``--nodeKey`` matches
        the leaf public key (``check_certificate``).
     """
     if args.nodeDisableTLS:

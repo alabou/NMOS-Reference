@@ -1360,8 +1360,8 @@ class Node:
             from nmos.uuid import ResourceType, ResourceSubType, ResourceUuid, update_resource_unique_id
 
             # BCP-002-02 asset distinguishing information constants
-            _MANUFACTURER = "Matrox Video"
-            _PRODUCT = "MV-NMOSNODE-AB2023"
+            _MANUFACTURER = "Example Company"
+            _PRODUCT = "MY-NMOSNODE-AB2026"
             _FUNCTION = "Generic"
 
             # Node

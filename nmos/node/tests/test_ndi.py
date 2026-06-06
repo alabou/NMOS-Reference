@@ -514,11 +514,11 @@ class TestNdiActivationRules:
 
         desc = get_transport_descriptor(TransportNdi)
         activation = _make_activation(desc)
-        activation.sender_name = "MTX12345"
+        activation.sender_name = "SNX12345"
         legs = _make_legs()
         init_sender_activation(activation, legs, TransportNdi, desc, group_hint="")
         staged = activation.staged[0]
-        assert staged.MachineName.value == "MTX12345"
+        assert staged.MachineName.value == "SNX12345"
 
     @pytest.mark.xfail(
         reason="manifest_href is currently set for NDI senders at activation (no NDI exception in the activation path). "

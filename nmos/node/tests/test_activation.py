@@ -196,13 +196,13 @@ class TestSenderInit:
         transport = _get_transport("urn:x-matrox:transport:ndi")
         desc = get_transport_descriptor(transport)
         activation = _make_activation(desc)
-        activation.sender_name = "MTX12345"
+        activation.sender_name = "SNX12345"
         legs = _make_legs()
 
         init_sender_activation(activation, legs, transport, desc, group_hint="")
 
         staged = activation.staged[0]
-        assert staged.MachineName.value == "MTX12345"
+        assert staged.MachineName.value == "SNX12345"
 
 
 # ---------------------------------------------------------------------------

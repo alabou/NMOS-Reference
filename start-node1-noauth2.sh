@@ -26,9 +26,9 @@
 #              vice versa.
 #
 #              Trust-root mapping:
-#                NESTCA = build.2/MatroxRootCA.pem (Node API listener)
-#                CESTCA = build.3/MatroxRootCA.pem (Control listener)
-#                CTCA   = build/MatroxRootCA.pem  (outgoing — registry,
+#                NESTCA = build.1/ExampleRootCA.pem (Node API listener)
+#                CESTCA = build.2/ExampleRootCA.pem (Control listener)
+#                CTCA   = build.0/ExampleRootCA.pem (outgoing — registry,
 #                         and (in Config B/C) the OAuth AS)
 #
 # --oaim is forbidden under Config A (no OAuth2).
@@ -58,30 +58,35 @@ for arg in "$@"; do
   esac
 done
 
-CERTS=/home/alain/Projects/IPMX/Certificates/build
+# Cert directory resolution — override IPMX_CERT_ROOT to point at a
+# different `Certificates/` layout. Default: sibling of this script's
+# parent (i.e. <workspace>/Certificates).
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+CERT_ROOT="${IPMX_CERT_ROOT:-$SCRIPT_DIR/../Certificates}"
+CERTS="$CERT_ROOT/build.0"
 
 # Global CA bundle for --trustedRootCA. Reference-node validates that
 # every per-role trust root (e.g. --nodeTrustedRootCA) chains under
 # this global bundle, so when --split-controls is set we must add the
-# build.2 / build.3 roots here too — even though their *application
+# build.1 / build.2 roots here too — even though their *application
 # role* is solely per-listener mTLS client validation. The bundle's
 # membership at config-parse time is decoupled from how the device
 # actually selects per-role trust at TLS-handshake time.
-CA_BUNDLE="/tmp/MatroxRootCA-bundle.pem"
-cat "$CERTS/MatroxRootCA.pem" "$CERTS/MatroxRootCA.ec.pem" > "$CA_BUNDLE"
-if [ -f /home/alain/Projects/IPMX/Certificates/build.2/MatroxRootCA.pem ]; then
-  cat /home/alain/Projects/IPMX/Certificates/build.2/MatroxRootCA.pem >> "$CA_BUNDLE"
+CA_BUNDLE="/tmp/ExampleRootCA-bundle.pem"
+cat "$CERTS/ExampleRootCA.pem" "$CERTS/ExampleRootCA.ec.pem" > "$CA_BUNDLE"
+if [ -f "$CERT_ROOT/build.1/ExampleRootCA.pem" ]; then
+  cat "$CERT_ROOT/build.1/ExampleRootCA.pem" >> "$CA_BUNDLE"
 fi
-if [ -f /home/alain/Projects/IPMX/Certificates/build.3/MatroxRootCA.pem ]; then
-  cat /home/alain/Projects/IPMX/Certificates/build.3/MatroxRootCA.pem >> "$CA_BUNDLE"
+if [ -f "$CERT_ROOT/build.2/ExampleRootCA.pem" ]; then
+  cat "$CERT_ROOT/build.2/ExampleRootCA.pem" >> "$CA_BUNDLE"
 fi
 CA="$CA_BUNDLE"
 
 case "$TCT" in
-  0|2) NODE_CERT="$CERTS/pem/MatroxDeviceServer.MTX.MTX00001.chain.pem"
-       NODE_KEY="$CERTS/key/MatroxDeviceServer.MTX.MTX00001.key" ;;
-  1)   NODE_CERT="$CERTS/pem/MatroxDeviceServer.MTX.MTX00001.chain.ec.pem"
-       NODE_KEY="$CERTS/key/MatroxDeviceServer.MTX.MTX00001.ec.key" ;;
+  0|2) NODE_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00001.chain.pem"
+       NODE_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00001.key" ;;
+  1)   NODE_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00001.chain.ec.pem"
+       NODE_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00001.ec.key" ;;
   *)   echo "start-node1-noauth2.sh: unsupported --tct=$TCT" >&2; exit 64 ;;
 esac
 
@@ -101,8 +106,8 @@ case "$RAP" in
   0) RDS_FLAGS=(--rdsDisableTLS) ;;
   1) RDS_FLAGS=() ;;
   2) RDS_FLAGS=(
-       --rdsClientCertificate "$CERTS/pem/MatroxDeviceClient.MTX.MTX00001.chain.pem"
-       --rdsClientKey         "$CERTS/key/MatroxDeviceClient.MTX.MTX00001.key"
+       --rdsClientCertificate "$CERTS/pem/ExampleDeviceClient.ABC.SNX00001.chain.pem"
+       --rdsClientKey         "$CERTS/key/ExampleDeviceClient.ABC.SNX00001.key"
      ) ;;
   *) echo "start-node1-noauth2.sh: unsupported --rap=$RAP" >&2; exit 64 ;;
 esac
@@ -114,10 +119,10 @@ esac
 SPLIT_FLAGS=()
 NODE_TRUST_CA="$CA"
 if [ "$SPLIT_CONTROLS" = "1" ]; then
-  NESTCA="/home/alain/Projects/IPMX/Certificates/build.2/MatroxRootCA.pem"
-  CESTCA="/home/alain/Projects/IPMX/Certificates/build.3/MatroxRootCA.pem"
+  NESTCA="$CERT_ROOT/build.1/ExampleRootCA.pem"
+  CESTCA="$CERT_ROOT/build.2/ExampleRootCA.pem"
   if [ ! -f "$NESTCA" ] || [ ! -f "$CESTCA" ]; then
-    echo "start-node1-noauth2.sh: --split-controls needs build.2 + build.3 trust roots" >&2
+    echo "start-node1-noauth2.sh: --split-controls needs build.1 + build.2 trust roots" >&2
     exit 64
   fi
   NODE_TRUST_CA="$NESTCA"
@@ -133,8 +138,8 @@ if [ -n "$GCRL" ]; then
 fi
 
 exec python3 nmos_node.py \
-  --nodeSerialNumber MTX00001 \
-  --nodeAddr MTX-MTX00001 \
+  --nodeSerialNumber SNX00001 \
+  --nodeAddr XYZ-SNX00001 \
   --nodePort 7051 \
   --nodeCertificate "$NODE_CERT" \
   --nodeKey         "$NODE_KEY" \

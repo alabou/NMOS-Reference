@@ -36,6 +36,7 @@ from nmos.crypto import ExclusiveSession
 from nmos.node import Node
 
 from nmos.api.tests._tls_helpers import (
+    CERTS_DIR,
     PKI_AVAILABLE,
     build_client_ssl_context,
     build_server_ssl_context,
@@ -44,7 +45,7 @@ from nmos.api.tests._tls_helpers import (
 
 pytestmark = pytest.mark.skipif(
     not PKI_AVAILABLE,
-    reason="pre-generated TLS PKI not present at /home/alain/Projects/IPMX/Certificates/build",
+    reason=f"pre-generated TLS PKI not present at {CERTS_DIR}",
 )
 
 
@@ -52,7 +53,7 @@ pytestmark = pytest.mark.skipif(
 # Fixtures
 # ---------------------------------------------------------------------------
 
-SERIAL = "MTX00000"
+SERIAL = "SNX00000"
 ACQUIRE_URL = "/x-manufacturer/exclusive/v1.0/acquire"
 RELEASE_URL = "/x-manufacturer/exclusive/v1.0/release"
 # Any UUID shape — the sender doesn't exist, so a handler that runs returns

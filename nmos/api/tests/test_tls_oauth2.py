@@ -21,7 +21,7 @@ handshake via ``aiohttp.test_utils.TestServer`` + ``TCPConnector(ssl=…)``.
 
 Note: we deliberately keep ``check_hostname=False`` on the client's
 SSLContext because the test server binds to ``127.0.0.1`` which is not
-in any SAN. Chain validation (up to MatroxRootCA) remains enforced.
+in any SAN. Chain validation (up to ExampleRootCA) remains enforced.
 """
 
 from __future__ import annotations
@@ -39,6 +39,7 @@ from nmos.node import Node
 from nmos.oauth2.tests._mock_as import MockAuthorizationServer
 
 from nmos.api.tests._tls_helpers import (
+    CERTS_DIR,
     PKI_AVAILABLE,
     build_client_ssl_context,
     build_server_ssl_context,
@@ -49,7 +50,7 @@ from nmos.api.tests._tls_helpers import (
 
 pytestmark = pytest.mark.skipif(
     not PKI_AVAILABLE,
-    reason="pre-generated TLS PKI not present at /home/alain/Projects/IPMX/Certificates/build",
+    reason=f"pre-generated TLS PKI not present at {CERTS_DIR}",
 )
 
 
@@ -57,8 +58,8 @@ pytestmark = pytest.mark.skipif(
 # Fixtures
 # ---------------------------------------------------------------------------
 
-SERIAL = "MTX00000"
-OTHER_SERIAL = "MTX00099"  # never matches the node — binding-mismatch target
+SERIAL = "SNX00000"
+OTHER_SERIAL = "SNX00099"  # never matches the node — binding-mismatch target
 
 
 def _make_oauth2_node(mock_as: MockAuthorizationServer, *, serial: str = SERIAL) -> Node:
@@ -130,9 +131,9 @@ class TestTlsOAuth2ServerBindingAudience:
         mock_as = MockAuthorizationServer("RS256")
         server = await _start_tls_server(flavor, mock_as, client_auth="none")
         try:
-            # aud = full-form SAN ("…Server.MTX.MTX00000.matrox.com") — contains
+            # aud = full-form SAN ("…Server.ABC.SNX00000.example.com") — contains
             # SERIAL substring AND is in tls_server_cert_names.
-            aud = [f"Matrox.Graphics.Device.Server.MTX.{SERIAL}.matrox.com"]
+            aud = [f"Example.Company.Device.Server.ABC.{SERIAL}.example.com"]
             token = mock_as.issue_token_for_node(SERIAL, ["node"], aud=aud)
             async with _make_session(flavor) as session:
                 url = f"https://127.0.0.1:{server.port}/x-nmos/node/v1.3/self"
@@ -145,13 +146,13 @@ class TestTlsOAuth2ServerBindingAudience:
     async def test_token_with_aud_matching_san_short_form_accepted(
         self, flavor: str,
     ) -> None:
-        # Short-form SAN "MTX-MTX00000.local" — still contains serial and is
+        # Short-form SAN "XYZ-SNX00000.local" — still contains serial and is
         # in the tls_server_cert_names list.
         mock_as = MockAuthorizationServer("RS256")
         server = await _start_tls_server(flavor, mock_as, client_auth="none")
         try:
             token = mock_as.issue_token_for_node(
-                SERIAL, ["node"], aud=[f"MTX-{SERIAL}.local"],
+                SERIAL, ["node"], aud=[f"XYZ-{SERIAL}.local"],
             )
             async with _make_session(flavor) as session:
                 url = f"https://127.0.0.1:{server.port}/x-nmos/node/v1.3/self"
@@ -199,7 +200,7 @@ class TestTlsOAuth2ServerBindingAudience:
         self, flavor: str,
     ) -> None:
         # aud looks like a valid SAN but targets a different serial
-        # ("…MTX.MTX00099.matrox.com") → doesn't contain our node serial →
+        # ("…ABC.SNX00099.example.com") → doesn't contain our node serial →
         # aud check fails → 403.
         mock_as = MockAuthorizationServer("RS256")
         server = await _start_tls_server(flavor, mock_as, client_auth="none")
@@ -207,7 +208,7 @@ class TestTlsOAuth2ServerBindingAudience:
             token = mock_as.issue_token_for_node(
                 SERIAL,
                 ["node"],
-                aud=[f"Matrox.Graphics.Device.Server.MTX.{OTHER_SERIAL}.matrox.com"],
+                aud=[f"Example.Company.Device.Server.ABC.{OTHER_SERIAL}.example.com"],
             )
             async with _make_session(flavor) as session:
                 url = f"https://127.0.0.1:{server.port}/x-nmos/node/v1.3/self"
@@ -238,12 +239,12 @@ class TestTlsOAuth2ClientBindingClientId:
         mock_as = MockAuthorizationServer("RS256")
         server = await _start_tls_server(flavor, mock_as, client_auth="required")
         try:
-            # client_id matches the client cert's CN for MTX00000.
+            # client_id matches the client cert's CN for SNX00000.
             token = mock_as.issue_token_for_node(
                 SERIAL,
                 ["node"],
                 client_id=client_cert_name(SERIAL),
-                aud=[f"Matrox.Graphics.Device.Server.MTX.{SERIAL}.matrox.com"],
+                aud=[f"Example.Company.Device.Server.ABC.{SERIAL}.example.com"],
             )
             async with _make_session(flavor, client_serial=SERIAL) as session:
                 url = f"https://127.0.0.1:{server.port}/x-nmos/node/v1.3/self"
@@ -256,7 +257,7 @@ class TestTlsOAuth2ClientBindingClientId:
     async def test_mtls_with_mismatched_client_id_rejected(
         self, flavor: str,
     ) -> None:
-        # Client cert is MTX00000 but token claims client_id=MTX00099 →
+        # Client cert is SNX00000 but token claims client_id=SNX00099 →
         # middleware rejects with 401 BEFORE aud is evaluated.
         mock_as = MockAuthorizationServer("RS256")
         server = await _start_tls_server(flavor, mock_as, client_auth="required")
@@ -265,7 +266,7 @@ class TestTlsOAuth2ClientBindingClientId:
                 SERIAL,
                 ["node"],
                 client_id=client_cert_name(OTHER_SERIAL),
-                aud=[f"Matrox.Graphics.Device.Server.MTX.{SERIAL}.matrox.com"],
+                aud=[f"Example.Company.Device.Server.ABC.{SERIAL}.example.com"],
             )
             async with _make_session(flavor, client_serial=SERIAL) as session:
                 url = f"https://127.0.0.1:{server.port}/x-nmos/node/v1.3/self"
@@ -287,7 +288,7 @@ class TestTlsOAuth2ClientBindingClientId:
             token = mock_as.issue_token_for_node(
                 SERIAL,
                 ["node"],
-                aud=[f"Matrox.Graphics.Device.Server.MTX.{SERIAL}.matrox.com"],
+                aud=[f"Example.Company.Device.Server.ABC.{SERIAL}.example.com"],
             )
             # No client cert.
             async with _make_session(flavor) as session:
@@ -311,7 +312,7 @@ class TestTlsOAuth2ClientBindingClientId:
                 SERIAL,
                 ["node"],
                 client_id=client_cert_name(OTHER_SERIAL),
-                aud=[f"Matrox.Graphics.Device.Server.MTX.{SERIAL}.matrox.com"],
+                aud=[f"Example.Company.Device.Server.ABC.{SERIAL}.example.com"],
             )
             async with _make_session(flavor, client_serial=SERIAL) as session:
                 url = f"https://127.0.0.1:{server.port}/x-nmos/node/v1.3/self"
@@ -340,7 +341,7 @@ class TestTlsOAuth2ClientBindingClientId:
                 SERIAL,
                 ["connection"],
                 client_id=client_cert_name(SERIAL),
-                aud=[f"Matrox.Graphics.Device.Server.MTX.{SERIAL}.matrox.com"],
+                aud=[f"Example.Company.Device.Server.ABC.{SERIAL}.example.com"],
                 read_write_apis={"connection": {"read": ["*"], "write": ["*"]}},
             )
             async with _make_session(flavor) as session:  # no client cert
@@ -367,7 +368,7 @@ class TestTlsOAuth2BothBindingsCombined:
     """O1 + O2 orthogonality: each binding dimension must reject a
     mismatch independently of the other.
 
-    All tests use a CERT_REQUIRED server with client cert = MTX00000.
+    All tests use a CERT_REQUIRED server with client cert = SNX00000.
     The token's aud / client_id are varied to cover the matrix:
 
       aud\\client_id   | match   | mismatch
@@ -385,7 +386,7 @@ class TestTlsOAuth2BothBindingsCombined:
                 SERIAL,
                 ["node"],
                 client_id=client_cert_name(SERIAL),
-                aud=[f"Matrox.Graphics.Device.Server.MTX.{SERIAL}.matrox.com"],
+                aud=[f"Example.Company.Device.Server.ABC.{SERIAL}.example.com"],
             )
             async with _make_session(flavor, client_serial=SERIAL) as session:
                 url = f"https://127.0.0.1:{server.port}/x-nmos/node/v1.3/self"
@@ -406,7 +407,7 @@ class TestTlsOAuth2BothBindingsCombined:
                 SERIAL,
                 ["node"],
                 client_id=client_cert_name(SERIAL),
-                aud=[f"Matrox.Graphics.Device.Server.MTX.{OTHER_SERIAL}.matrox.com"],
+                aud=[f"Example.Company.Device.Server.ABC.{OTHER_SERIAL}.example.com"],
             )
             async with _make_session(flavor, client_serial=SERIAL) as session:
                 url = f"https://127.0.0.1:{server.port}/x-nmos/node/v1.3/self"
@@ -428,7 +429,7 @@ class TestTlsOAuth2BothBindingsCombined:
                 SERIAL,
                 ["node"],
                 client_id=client_cert_name(OTHER_SERIAL),
-                aud=[f"Matrox.Graphics.Device.Server.MTX.{SERIAL}.matrox.com"],
+                aud=[f"Example.Company.Device.Server.ABC.{SERIAL}.example.com"],
             )
             async with _make_session(flavor, client_serial=SERIAL) as session:
                 url = f"https://127.0.0.1:{server.port}/x-nmos/node/v1.3/self"

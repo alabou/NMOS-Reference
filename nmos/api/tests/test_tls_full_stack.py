@@ -42,6 +42,7 @@ from nmos.node import Node
 from nmos.oauth2.tests._mock_as import MockAuthorizationServer
 
 from nmos.api.tests._tls_helpers import (
+    CERTS_DIR,
     PKI_AVAILABLE,
     build_client_ssl_context,
     build_server_ssl_context,
@@ -52,7 +53,7 @@ from nmos.api.tests._tls_helpers import (
 
 pytestmark = pytest.mark.skipif(
     not PKI_AVAILABLE,
-    reason="pre-generated TLS PKI not present at /home/alain/Projects/IPMX/Certificates/build",
+    reason=f"pre-generated TLS PKI not present at {CERTS_DIR}",
 )
 
 
@@ -60,7 +61,7 @@ pytestmark = pytest.mark.skipif(
 # Fixtures
 # ---------------------------------------------------------------------------
 
-SERIAL = "MTX00000"
+SERIAL = "SNX00000"
 ACQUIRE_URL = "/x-manufacturer/exclusive/v1.0/acquire"
 CONNECTION_PATCH_URL = (
     "/x-nmos/connection/v1.1/single/senders/"
@@ -120,7 +121,7 @@ def _write_token(
     mock_as: MockAuthorizationServer, *, scopes: list[str],
 ) -> str:
     """OAuth2 token with write access to the given scopes, client_id
-    bound to the MTX00000 client cert CN, and a wildcard aud."""
+    bound to the SNX00000 client cert CN, and a wildcard aud."""
     return mock_as.issue_token_for_node(
         SERIAL,
         scopes,

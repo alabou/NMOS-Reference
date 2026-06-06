@@ -145,9 +145,9 @@ def check_certificate(
     1. ``cert_path`` (treated as a ``chain.pem`` — leaf followed by
        intermediates) chains to a cert in any of the ``root_ca_paths``.
     2. The leaf's Subject Alternative Name list includes
-       ``f"MTX-{serial_number}"``. The actual Matrox-issued certs
-       under ``Certificates/build/`` use the uppercase ``MTX-`` prefix
-       in their SAN list (verified against MatroxDeviceServer.*.pem),
+       ``f"XYZ-{serial_number}"``. The actual Example-issued certs
+       under ``Certificates/build.0/`` use the uppercase ``XYZ-`` prefix
+       in their SAN list (verified against ExampleDeviceServer.*.pem),
        so this implementation follows the cert generator's actual
        output.
     3. The supplied private key (``key_path``) matches the leaf cert's
@@ -166,9 +166,9 @@ def check_certificate(
     intermediates = chain_certs[1:]
     _verify_chain(leaf, root_certs, intermediates=intermediates)
 
-    # SAN check — uppercase "MTX-<serial>" matching the certificate
+    # SAN check — uppercase "XYZ-<serial>" matching the certificate
     # generator's actual output.
-    expected_dns = f"MTX-{serial_number}"
+    expected_dns = f"XYZ-{serial_number}"
     sans = _extract_dns_sans(leaf)
     if expected_dns not in sans:
         raise CertCheckError(

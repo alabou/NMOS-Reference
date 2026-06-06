@@ -24,10 +24,10 @@ audio pair has role 0 (L) and role 1 (R). Grouping two related senders
 thus matches by prefix; separating their legs matches by role.
 
 Device serial: NMOS devices expose a human-readable label and a
-``description``; the convention used by the Matrox tooling is that the
-serial number is embedded in either. This module exposes a best-effort
-``device_serial()`` helper that pulls the serial from a device's
-metadata; callers fall back to the bare UUID when no serial is found.
+``description``; a common convention is to embed the serial number in
+either field. This module exposes a best-effort ``device_serial()``
+helper that pulls the serial from a device's metadata; callers fall
+back to the bare UUID when no serial is found.
 """
 
 from __future__ import annotations
@@ -83,8 +83,8 @@ _HINT_RE = re.compile(
     r"\s*$"
 )
 
-# Matches "...MTXnnnnn..." — serial form used by Matrox devices.
-_SERIAL_RE = re.compile(r"\b(MTX\d{5,})\b")
+# Matches "...SNXnnnnn..." — SNX-style serial form.
+_SERIAL_RE = re.compile(r"\b(SNX\d{5,})\b")
 
 
 @dataclass(frozen=True)
@@ -182,10 +182,10 @@ def extract_group_hint(resource_tags: Any) -> GroupHint | None:
 
 
 def device_serial(device_resource: Any) -> str | None:
-    """Extract a Matrox-style serial number from a device resource.
+    """Extract an SNX-style serial number from a device resource.
 
     Looks in (in order) the ``description``, ``label``, and any ``tags``
-    values for the first ``MTXnnnnn`` substring. Returns ``None`` when
+    values for the first ``SNXnnnnn`` substring. Returns ``None`` when
     no match is found.
     """
     if device_resource is None:

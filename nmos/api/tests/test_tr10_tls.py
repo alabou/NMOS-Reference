@@ -15,6 +15,7 @@ Three layers of coverage:
 
 from __future__ import annotations
 
+import os
 import socket
 import ssl
 import threading
@@ -33,7 +34,9 @@ from nmos.api.tr10_tls import (
     apply_tr10_tls_restrictions,
 )
 
-CERTS_DIR = Path("/home/alain/Projects/IPMX/Certificates/build")
+_WORKSPACE = Path(__file__).resolve().parents[4]
+CERT_ROOT = Path(os.environ.get("IPMX_CERT_ROOT", _WORKSPACE / "Certificates"))
+CERTS_DIR = CERT_ROOT / "build.0"
 
 
 # ---------------------------------------------------------------------------
@@ -110,14 +113,14 @@ def test_all_groups_listed() -> None:
 # Pre-generated PKI lives outside this repo; skip if absent so test
 # environments without the Certificates workspace still pass.
 _REQUIRED_PKI = (
-    CERTS_DIR / "pem" / "MatroxDeviceServer.MTX.MTX00001.chain.pem",
-    CERTS_DIR / "key" / "MatroxDeviceServer.MTX.MTX00001.key",
-    CERTS_DIR / "MatroxRootCA.pem",
+    CERTS_DIR / "pem" / "ExampleDeviceServer.ABC.SNX00001.chain.pem",
+    CERTS_DIR / "key" / "ExampleDeviceServer.ABC.SNX00001.key",
+    CERTS_DIR / "ExampleRootCA.pem",
 )
 
 pki_available = pytest.mark.skipif(
     not all(p.exists() for p in _REQUIRED_PKI),
-    reason="MatroxRootCA PKI not provisioned in this workspace",
+    reason="ExampleRootCA PKI not provisioned in this workspace",
 )
 
 
@@ -165,8 +168,8 @@ def _restricted_server() -> Iterator[int]:
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     apply_tr10_tls_restrictions(ctx)
     ctx.load_cert_chain(
-        certfile=str(CERTS_DIR / "pem" / "MatroxDeviceServer.MTX.MTX00001.chain.pem"),
-        keyfile=str(CERTS_DIR / "key" / "MatroxDeviceServer.MTX.MTX00001.key"),
+        certfile=str(CERTS_DIR / "pem" / "ExampleDeviceServer.ABC.SNX00001.chain.pem"),
+        keyfile=str(CERTS_DIR / "key" / "ExampleDeviceServer.ABC.SNX00001.key"),
     )
     ready = threading.Event()
     thread, port = _spawn_server(ctx, ready)
@@ -189,7 +192,7 @@ def test_prohibited_tls12_cipher_handshake_refused() -> None:
         client_ctx.maximum_version = ssl.TLSVersion.TLSv1_2
         # Trust the device CA so cert validation passes; the failure
         # must come from cipher negotiation, not chain validation.
-        client_ctx.load_verify_locations(str(CERTS_DIR / "MatroxRootCA.pem"))
+        client_ctx.load_verify_locations(str(CERTS_DIR / "ExampleRootCA.pem"))
         client_ctx.check_hostname = False
         # Offer ONLY a prohibited cipher.
         client_ctx.set_ciphers("AES128-SHA")
@@ -200,7 +203,7 @@ def test_prohibited_tls12_cipher_handshake_refused() -> None:
         # fails. If the server were not restricting ciphers it would
         # negotiate AES128-SHA and the handshake would succeed silently.
         with pytest.raises((ssl.SSLError, OSError)):
-            wrapped = client_ctx.wrap_socket(raw, server_hostname="MTX-MTX00001")
+            wrapped = client_ctx.wrap_socket(raw, server_hostname="XYZ-SNX00001")
             try:
                 wrapped.do_handshake()
             finally:
@@ -215,12 +218,12 @@ def test_mandatory_tls12_cipher_handshake_succeeds() -> None:
         client_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         client_ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         client_ctx.maximum_version = ssl.TLSVersion.TLSv1_2
-        client_ctx.load_verify_locations(str(CERTS_DIR / "MatroxRootCA.pem"))
+        client_ctx.load_verify_locations(str(CERTS_DIR / "ExampleRootCA.pem"))
         client_ctx.check_hostname = False
         client_ctx.set_ciphers("ECDHE-RSA-AES128-GCM-SHA256")
 
         raw = socket.create_connection(("127.0.0.1", port), timeout=3.0)
-        wrapped = client_ctx.wrap_socket(raw, server_hostname="MTX-MTX00001")
+        wrapped = client_ctx.wrap_socket(raw, server_hostname="XYZ-SNX00001")
         try:
             wrapped.do_handshake()
             negotiated = wrapped.cipher()

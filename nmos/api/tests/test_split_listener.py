@@ -51,6 +51,7 @@ from nmos.crypto import ExclusiveSession
 from nmos.node import Node
 
 from nmos.api.tests._tls_helpers import (
+    CERTS_DIR,
     PKI_AVAILABLE,
     build_client_ssl_context,
     build_server_ssl_context,
@@ -112,7 +113,7 @@ class TestControlPortDefaulting:
 
 def _make_node() -> Node:
     node = Node()
-    node.init(serial_number="MTX00001")
+    node.init(serial_number="SNX00001")
     node.exclusive_session = ExclusiveSession()
     return node
 
@@ -222,7 +223,7 @@ class TestControlsUrlPublication:
 
     def test_controls_use_node_port_when_split_disabled(self) -> None:
         node = Node()
-        node.init(serial_number="MTX00001", host="MTX-MTX00001", port=7051)
+        node.init(serial_number="SNX00001", host="XYZ-SNX00001", port=7051)
         hrefs = _control_hrefs_by_type(node)
         for typ, href in hrefs.items():
             assert ":7051/" in href, (
@@ -233,7 +234,7 @@ class TestControlsUrlPublication:
     def test_controls_use_control_port_when_split_enabled(self) -> None:
         node = Node()
         node.init(
-            serial_number="MTX00001", host="MTX-MTX00001",
+            serial_number="SNX00001", host="XYZ-SNX00001",
             port=7051, control_port=7052,
         )
         hrefs = _control_hrefs_by_type(node)
@@ -259,7 +260,7 @@ class TestControlsUrlPublication:
         move the reservation URL."""
         node = Node()
         node.init(
-            serial_number="MTX00001", host="MTX-MTX00001",
+            serial_number="SNX00001", host="XYZ-SNX00001",
             port=7051, control_port=7052,
         )
         svcs = _service_hrefs_by_type(node)
@@ -276,12 +277,12 @@ class TestControlsUrlPublication:
 
 pytestmark_tls = pytest.mark.skipif(
     not PKI_AVAILABLE,
-    reason="pre-generated TLS PKI not present at /home/alain/Projects/IPMX/Certificates/build",
+    reason=f"pre-generated TLS PKI not present at {CERTS_DIR}",
 )
 
 
-SERVER_SERIAL = "MTX00002"
-CLIENT_SERIAL = "MTX00000"
+SERVER_SERIAL = "SNX00002"
+CLIENT_SERIAL = "SNX00000"
 
 
 class TestControlListenerInboundMtls:

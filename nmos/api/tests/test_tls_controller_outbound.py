@@ -43,6 +43,7 @@ from aiohttp.test_utils import TestServer
 from nmos.controller.api_client import RemoteCallResult, RemoteNodeClient
 
 from nmos.api.tests._tls_helpers import (
+    CERTS_DIR,
     PKI_AVAILABLE,
     build_client_ssl_context,
     build_server_ssl_context,
@@ -54,13 +55,13 @@ from nmos.api.tests._tls_helpers import (
 
 pytestmark = pytest.mark.skipif(
     not PKI_AVAILABLE,
-    reason="pre-generated TLS PKI not present at /home/alain/Projects/IPMX/Certificates/build",
+    reason=f"pre-generated TLS PKI not present at {CERTS_DIR}",
 )
 
 
-NODE_CLIENT_SERIAL = "MTX00000"
-CONTROL_CLIENT_SERIAL = "MTX00001"
-SERVER_SERIAL = "MTX00002"
+NODE_CLIENT_SERIAL = "SNX00000"
+CONTROL_CLIENT_SERIAL = "SNX00001"
+SERVER_SERIAL = "SNX00002"
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +136,7 @@ async def test_outbound_mtls_with_valid_client_cert_succeeds() -> None:
                 f"error={result.error!r}"
             )
             assert result.body.get("peer_cn") == (
-                f"Matrox.Graphics.Device.Client.MTX.{NODE_CLIENT_SERIAL}.matrox.com"
+                f"Example.Company.Device.Client.ABC.{NODE_CLIENT_SERIAL}.example.com"
             )
         finally:
             await client.close()
@@ -181,7 +182,7 @@ async def test_outbound_no_client_cert_is_rejected() -> None:
 async def test_outbound_untrusted_client_cert_is_rejected() -> None:
     """Generate a throwaway self-signed cert/key, present it via the
     SSL context, and verify the CERT_REQUIRED server (which trusts
-    only MatroxRootCA) rejects the handshake."""
+    only ExampleRootCA) rejects the handshake."""
     # Build a self-signed cert with pure stdlib so the test stays
     # dependency-free. cryptography is already a project dep.
     from datetime import datetime, timedelta, timezone
@@ -269,7 +270,7 @@ async def test_split_contexts_route_per_call_kind() -> None:
                 f"IS-05 call failed: status={is05.status} error={is05.error!r}"
             )
             assert is05.body.get("peer_cn") == (
-                f"Matrox.Graphics.Device.Client.MTX.{CONTROL_CLIENT_SERIAL}.matrox.com"
+                f"Example.Company.Device.Client.ABC.{CONTROL_CLIENT_SERIAL}.example.com"
             ), (
                 "IS-05 call presented the wrong client cert; expected the "
                 "control cert (CONTROL_CLIENT_SERIAL) but got "
@@ -285,7 +286,7 @@ async def test_split_contexts_route_per_call_kind() -> None:
                 f"Reservation call failed: status={resv.status} error={resv.error!r}"
             )
             assert resv.body.get("peer_cn") == (
-                f"Matrox.Graphics.Device.Client.MTX.{NODE_CLIENT_SERIAL}.matrox.com"
+                f"Example.Company.Device.Client.ABC.{NODE_CLIENT_SERIAL}.example.com"
             ), (
                 "Reservation call presented the wrong client cert; expected "
                 "the node cert (NODE_CLIENT_SERIAL) but got "
@@ -320,7 +321,7 @@ async def test_single_context_uses_node_cert_for_is05() -> None:
             # No control cert was set → IS-05 falls through to the
             # node cert (the only one available).
             assert is05.body.get("peer_cn") == (
-                f"Matrox.Graphics.Device.Client.MTX.{NODE_CLIENT_SERIAL}.matrox.com"
+                f"Example.Company.Device.Client.ABC.{NODE_CLIENT_SERIAL}.example.com"
             )
         finally:
             await client.close()
@@ -340,7 +341,7 @@ async def test_reservation_does_not_leak_control_cert() -> None:
     The reservation call must still succeed because it travels through
     the node session — proving the routing isolates reservation from
     the control trust anchor."""
-    # Both contexts trust the same server (MatroxRootCA), but they
+    # Both contexts trust the same server (ExampleRootCA), but they
     # present different client certs. The server trusts the same CA
     # for both client certs. We're asserting that the reservation
     # call presents the NODE cert (not the control cert) — proven by
@@ -361,7 +362,7 @@ async def test_reservation_does_not_leak_control_cert() -> None:
             )
             assert resv.status == 200
             assert resv.body.get("peer_cn") == (
-                f"Matrox.Graphics.Device.Client.MTX.{NODE_CLIENT_SERIAL}.matrox.com"
+                f"Example.Company.Device.Client.ABC.{NODE_CLIENT_SERIAL}.example.com"
             ), (
                 "Reservation call leaked the control cert into the node "
                 "session; routing logic is broken."

@@ -38,7 +38,7 @@ def _sender(
     return r
 
 
-def _device(did: str, label: str = "dev", serial: str = "MTX00001") -> dict[str, Any]:
+def _device(did: str, label: str = "dev", serial: str = "SNX00001") -> dict[str, Any]:
     return {
         "id": did,
         "label": label,
@@ -350,8 +350,8 @@ class TestGroupedViews:
         # contains senders of multiple formats — AUDIO + VIDEO here all
         # live in the "RTP 0" group.
         cache = ResourceCache()
-        await cache.upsert("device", _device("d1", label="A", serial="MTX00001"))
-        await cache.upsert("device", _device("d2", label="B", serial="MTX00002"))
+        await cache.upsert("device", _device("d1", label="A", serial="SNX00001"))
+        await cache.upsert("device", _device("d2", label="B", serial="SNX00002"))
         await cache.upsert("sender", _sender("s1", device_id="d1", hint="RTP 0:VIDEO 0"))
         await cache.upsert("sender", _sender("s2", device_id="d1", hint="RTP 0:VIDEO 1"))
         await cache.upsert("sender", _sender("s3", device_id="d1", hint="RTP 0:AUDIO 0"))
@@ -360,7 +360,7 @@ class TestGroupedViews:
         views = cache.senders_grouped()
         assert len(views) == 2
         v1 = next(v for v in views if v.device_id == "d1")
-        assert v1.device_serial == "MTX00001"
+        assert v1.device_serial == "SNX00001"
         # Only ONE natural group per device (RTP 0) — AUDIO + VIDEO
         # members coexist inside it.
         assert len(v1.groups) == 1
@@ -392,7 +392,7 @@ class TestGroupedViews:
         dev: dict[str, Any] = {
             "id": "d1",
             "label": "Dev",
-            "description": "MTX00001 lab",
+            "description": "SNX00001 lab",
             "controls": [
                 {
                     "type": "urn:x-nmos:control:sr-ctrl/v1.1",
@@ -427,7 +427,7 @@ class TestSenderFormatFromFlow:
     async def test_null_sender_format_resolved_from_flow(self) -> None:
         cache = ResourceCache()
         await cache.upsert("device", {
-            "id": "d1", "label": "dev", "description": "MTX00001",
+            "id": "d1", "label": "dev", "description": "SNX00001",
             "controls": [],
         })
         await cache.upsert("flow", {
@@ -460,7 +460,7 @@ class TestSenderFormatFromFlow:
         """
         cache = ResourceCache()
         await cache.upsert("device", {
-            "id": "d1", "label": "dev", "description": "MTX00001",
+            "id": "d1", "label": "dev", "description": "SNX00001",
             "controls": [],
         })
         await cache.upsert("sender", {
@@ -486,7 +486,7 @@ class TestSenderFormatFromFlow:
         """
         cache = ResourceCache()
         await cache.upsert("device", {
-            "id": "d1", "label": "dev", "description": "MTX00001",
+            "id": "d1", "label": "dev", "description": "SNX00001",
             "controls": [],
         })
         await cache.upsert("flow", {
@@ -515,7 +515,7 @@ class TestSenderFormatFromFlow:
         """
         cache = ResourceCache()
         await cache.upsert("device", {
-            "id": "d1", "label": "dev", "description": "MTX00001",
+            "id": "d1", "label": "dev", "description": "SNX00001",
             "controls": [],
         })
         await cache.upsert("flow", {

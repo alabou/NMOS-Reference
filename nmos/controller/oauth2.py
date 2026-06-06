@@ -90,11 +90,11 @@ class OAuth2Config:
        straightforward but out-of-scope for the current change.
     """
     issuer: str
-    """Full issuer URL, e.g. ``https://MTX-MTX00000:9443/realms/TR-10-SEC``
+    """Full issuer URL, e.g. ``https://XYZ-SNX00000:9443/realms/TR-10-SEC``
     (Keycloak) or ``https://hydra:4444`` (Hydra)."""
 
     client_id: str
-    """OAuth2 ``client_id`` registered with the AS (e.g. ``controller-MTX00001``)."""
+    """OAuth2 ``client_id`` registered with the AS (e.g. ``controller-SNX00001``)."""
 
     client_secret: str
     """OAuth2 ``client_secret`` paired with ``client_id``."""

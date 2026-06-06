@@ -6,7 +6,7 @@
 #                         [--nap=N] [--rap=R] [--oaim=O] [--tct=T]
 #
 # Positional args:
-#   $1 = OAuth 2.0 authorization server host (default: MTX-MTX00000)
+#   $1 = OAuth 2.0 authorization server host (default: XYZ-SNX00000)
 #   $2 = OAuth 2.0 authorization server port (default: 9443)
 #   $3 = Registry host (default: 127.0.0.1)
 #   $4 = Registry registration port (default: 8444; query port = $4-1)
@@ -25,12 +25,12 @@
 #              NESTCA-vs-CESTCA distinction.
 #
 # Manual invocation with no args keeps the previous defaults
-# (Keycloak at MTX-MTX00000:9443, in-process registry, NAP=2 RAP=0
+# (Keycloak at XYZ-SNX00000:9443, in-process registry, NAP=2 RAP=0
 # OAIM=0 TCT=0 — the validator's baseline).
 
 set -e
 
-AS_HOST="${1:-MTX-MTX00000}"
+AS_HOST="${1:-XYZ-SNX00000}"
 AS_PORT="${2:-9443}"
 RDS_HOST="${3:-127.0.0.1}"
 RDS_REG_PORT="${4:-8444}"
@@ -58,7 +58,12 @@ if [ "$NAP" != "2" ]; then
   exit 64
 fi
 
-CERTS=/home/alain/Projects/IPMX/Certificates/build
+# Cert directory resolution — override IPMX_CERT_ROOT to point at a
+# different `Certificates/` layout. Default: sibling of this script's
+# parent (i.e. <workspace>/Certificates).
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+CERT_ROOT="${IPMX_CERT_ROOT:-$SCRIPT_DIR/../Certificates}"
+CERTS="$CERT_ROOT/build.0"
 
 # The Node's server cert flips between RSA and ECDSA per TCT, BUT
 # all OTHER trust anchors (the OAuth AS, the registry, the incoming
@@ -67,15 +72,15 @@ CERTS=/home/alain/Projects/IPMX/Certificates/build
 # The right shape for ``--trustedRootCA`` is therefore a bundle
 # concatenating BOTH roots so chain validation succeeds whichever
 # side is being checked.
-CA_BUNDLE="/tmp/MatroxRootCA-bundle.pem"
-cat "$CERTS/MatroxRootCA.pem" "$CERTS/MatroxRootCA.ec.pem" > "$CA_BUNDLE"
+CA_BUNDLE="/tmp/ExampleRootCA-bundle.pem"
+cat "$CERTS/ExampleRootCA.pem" "$CERTS/ExampleRootCA.ec.pem" > "$CA_BUNDLE"
 CA="$CA_BUNDLE"
 
 case "$TCT" in
-  0|2) NODE_CERT="$CERTS/pem/MatroxDeviceServer.MTX.MTX00001.chain.pem"
-       NODE_KEY="$CERTS/key/MatroxDeviceServer.MTX.MTX00001.key" ;;
-  1)   NODE_CERT="$CERTS/pem/MatroxDeviceServer.MTX.MTX00001.chain.ec.pem"
-       NODE_KEY="$CERTS/key/MatroxDeviceServer.MTX.MTX00001.ec.key" ;;
+  0|2) NODE_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00001.chain.pem"
+       NODE_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00001.key" ;;
+  1)   NODE_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00001.chain.ec.pem"
+       NODE_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00001.ec.key" ;;
   *)   echo "start-node1-nomtls.sh: unsupported --tct=$TCT" >&2; exit 64 ;;
 esac
 
@@ -90,15 +95,15 @@ case "$RAP" in
   0) RDS_FLAGS=(--rdsDisableTLS) ;;
   1) RDS_FLAGS=() ;;
   2) RDS_FLAGS=(
-       --rdsClientCertificate "$CERTS/pem/MatroxDeviceClient.MTX.MTX00001.chain.pem"
-       --rdsClientKey         "$CERTS/key/MatroxDeviceClient.MTX.MTX00001.key"
+       --rdsClientCertificate "$CERTS/pem/ExampleDeviceClient.ABC.SNX00001.chain.pem"
+       --rdsClientKey         "$CERTS/key/ExampleDeviceClient.ABC.SNX00001.key"
      ) ;;
   *) echo "start-node1-nomtls.sh: unsupported --rap=$RAP" >&2; exit 64 ;;
 esac
 
 exec python3 nmos_node.py \
-  --nodeSerialNumber MTX00001 \
-  --nodeAddr MTX-MTX00001 \
+  --nodeSerialNumber SNX00001 \
+  --nodeAddr XYZ-SNX00001 \
   --nodePort 7051 \
   --nodeCertificate "$NODE_CERT" \
   --nodeKey         "$NODE_KEY" \

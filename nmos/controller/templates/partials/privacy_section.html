@@ -126,7 +126,7 @@
         {% if _has_transport and not _has_auth %}
           The outbound HTTPS call failed before any HTTP exchange —
           usually because <code>--trustedRootCA</code> is missing on the
-          Node command line so the Matrox-issued cert can't be verified.
+          Node command line so the Example-issued cert can't be verified.
         {% elif _has_auth and not _has_transport %}
           The remote rejected the request — usually because the current
           admin's OAuth2 token does not carry grants for the owning Node.

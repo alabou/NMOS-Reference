@@ -3,37 +3,42 @@
 
 """TLS test helpers — SSLContext builders + cert path resolution.
 
-The pre-generated PKI lives outside the repo at
-``/home/alain/Projects/IPMX/Certificates/build/`` and contains:
+The pre-generated PKI lives at ``$IPMX_CERT_ROOT/build.0/`` (default
+``<workspace>/Certificates/build.0/``, where ``<workspace>`` is the
+parent of the ``nmos-reference/`` checkout) and contains:
 
-  - ``MatroxRootCA.pem`` / ``.ec.pem``               — root CA
-  - ``MatroxProductCA.0.0.pem`` / ``.ec.pem``        — intermediate CA
-  - ``pem/MatroxDeviceServer.MTX.MTXnnnnn.pem``      — server leaf (bare)
-  - ``pem/MatroxDeviceServer.MTX.MTXnnnnn.chain.pem`` — server leaf + intermediate
-  - ``pem/MatroxDeviceClient.MTX.MTXnnnnn.pem``      — client leaf (bare)
-  - ``pem/MatroxDeviceClient.MTX.MTXnnnnn.chain.pem`` — client leaf + intermediate
-  - ``key/MatroxDeviceServer.MTX.MTXnnnnn.key``      — server private key
-  - ``key/MatroxDeviceClient.MTX.MTXnnnnn.key``      — client private key
+  - ``ExampleRootCA.pem`` / ``.ec.pem``               — root CA
+  - ``ExampleProductCA.0.0.pem`` / ``.ec.pem``        — intermediate CA
+  - ``pem/ExampleDeviceServer.ABC.SNXnnnnn.pem``      — server leaf (bare)
+  - ``pem/ExampleDeviceServer.ABC.SNXnnnnn.chain.pem`` — server leaf + intermediate
+  - ``pem/ExampleDeviceClient.ABC.SNXnnnnn.pem``      — client leaf (bare)
+  - ``pem/ExampleDeviceClient.ABC.SNXnnnnn.chain.pem`` — client leaf + intermediate
+  - ``key/ExampleDeviceServer.ABC.SNXnnnnn.key``      — server private key
+  - ``key/ExampleDeviceClient.ABC.SNXnnnnn.key``      — client private key
 
-Each identity has serial numbers ``MTX00000`` … ``MTX00009`` and comes in
+Each identity has serial numbers ``SNX00000`` … ``SNX00009`` and comes in
 RSA (``.pem`` / ``.key``) and EC (``.ec.pem`` / ``.ec.key``) flavours.
 
 The serial is encoded in the cert's subject CN
-(``Matrox.Graphics.Device.Server.MTX.MTX00000.matrox.com``) and DNS SANs
-(several forms including ``MTX-MTX00000.local``) — this is exactly the
+(``Example.Company.Device.Server.ABC.SNX00000.example.com``) and DNS SANs
+(several forms including ``XYZ-SNX00000.local``) — this is exactly the
 data that OAuth2 `aud` / `client_id` binding uses.
 """
 
 from __future__ import annotations
 
+import os
 import ssl
 from pathlib import Path
 from typing import Literal
 
-# Absolute path to the pre-generated PKI. Tests skip when this directory is
+# Pre-generated PKI location. Resolve from IPMX_CERT_ROOT or fall back
+# to ``<workspace>/Certificates``. Tests skip when this directory is
 # missing (e.g. the repo is checked out without the sibling Certificates
 # workspace).
-CERTS_DIR = Path("/home/alain/Projects/IPMX/Certificates/build")
+_WORKSPACE = Path(__file__).resolve().parents[4]
+CERT_ROOT = Path(os.environ.get("IPMX_CERT_ROOT", _WORKSPACE / "Certificates"))
+CERTS_DIR = CERT_ROOT / "build.0"
 
 Flavor = Literal["rsa", "ec"]
 ClientAuth = Literal["none", "optional", "required"]
@@ -48,39 +53,39 @@ def _suffix(flavor: Flavor, extension: str) -> str:
 
 def server_chain(serial: str, flavor: Flavor = "rsa") -> Path:
     """Server cert chain file (leaf + intermediate PEM blocks)."""
-    return CERTS_DIR / "pem" / f"MatroxDeviceServer.MTX.{serial}.chain.{_suffix(flavor, 'pem')}"
+    return CERTS_DIR / "pem" / f"ExampleDeviceServer.ABC.{serial}.chain.{_suffix(flavor, 'pem')}"
 
 
 def server_leaf(serial: str, flavor: Flavor = "rsa") -> Path:
     """Server cert bare leaf (no intermediate)."""
-    return CERTS_DIR / "pem" / f"MatroxDeviceServer.MTX.{serial}.{_suffix(flavor, 'pem')}"
+    return CERTS_DIR / "pem" / f"ExampleDeviceServer.ABC.{serial}.{_suffix(flavor, 'pem')}"
 
 
 def server_key(serial: str, flavor: Flavor = "rsa") -> Path:
-    return CERTS_DIR / "key" / f"MatroxDeviceServer.MTX.{serial}.{_suffix(flavor, 'key')}"
+    return CERTS_DIR / "key" / f"ExampleDeviceServer.ABC.{serial}.{_suffix(flavor, 'key')}"
 
 
 def client_chain(serial: str, flavor: Flavor = "rsa") -> Path:
     """Client cert chain file (leaf + intermediate PEM blocks)."""
-    return CERTS_DIR / "pem" / f"MatroxDeviceClient.MTX.{serial}.chain.{_suffix(flavor, 'pem')}"
+    return CERTS_DIR / "pem" / f"ExampleDeviceClient.ABC.{serial}.chain.{_suffix(flavor, 'pem')}"
 
 
 def client_leaf(serial: str, flavor: Flavor = "rsa") -> Path:
-    return CERTS_DIR / "pem" / f"MatroxDeviceClient.MTX.{serial}.{_suffix(flavor, 'pem')}"
+    return CERTS_DIR / "pem" / f"ExampleDeviceClient.ABC.{serial}.{_suffix(flavor, 'pem')}"
 
 
 def client_key(serial: str, flavor: Flavor = "rsa") -> Path:
-    return CERTS_DIR / "key" / f"MatroxDeviceClient.MTX.{serial}.{_suffix(flavor, 'key')}"
+    return CERTS_DIR / "key" / f"ExampleDeviceClient.ABC.{serial}.{_suffix(flavor, 'key')}"
 
 
 def root_ca(flavor: Flavor = "rsa") -> Path:
     """Root CA public cert used as the trust anchor on both sides."""
-    return CERTS_DIR / ("MatroxRootCA.ec.pem" if flavor == "ec" else "MatroxRootCA.pem")
+    return CERTS_DIR / ("ExampleRootCA.ec.pem" if flavor == "ec" else "ExampleRootCA.pem")
 
 
 def product_ca(flavor: Flavor = "rsa") -> Path:
     """Intermediate (product) CA public cert."""
-    return CERTS_DIR / ("MatroxProductCA.0.0.ec.pem" if flavor == "ec" else "MatroxProductCA.0.0.pem")
+    return CERTS_DIR / ("ExampleProductCA.0.0.ec.pem" if flavor == "ec" else "ExampleProductCA.0.0.pem")
 
 
 # ---------------------------------------------------------------------------
@@ -96,12 +101,12 @@ def server_cert_names(serial: str) -> list[str]:
     (``nmos/api/middleware.py:125-127``) can exercise the binding.
     """
     return [
-        f"Matrox.Graphics.Device.Server.MTX.{serial}.matrox.com",  # CN + SAN
-        "Matrox.Graphics.Device.matrox.com",
-        "Matrox.Graphics.Device.Server.matrox.com",
-        "Matrox.Graphics.Device.Server.MTX.matrox.com",
-        f"MTX-{serial}.local",
-        f"MTX-{serial}",
+        f"Example.Company.Device.Server.ABC.{serial}.example.com",  # CN + SAN
+        "Example.Company.Device.example.com",
+        "Example.Company.Device.Server.example.com",
+        "Example.Company.Device.Server.ABC.example.com",
+        f"XYZ-{serial}.local",
+        f"XYZ-{serial}",
     ]
 
 
@@ -111,7 +116,7 @@ def client_cert_name(serial: str) -> str:
     Used as the OAuth2 ``client_id`` claim when mTLS is in effect so the
     ``nmos/api/middleware.py:129-136`` client-cert-binding check passes.
     """
-    return f"Matrox.Graphics.Device.Client.MTX.{serial}.matrox.com"
+    return f"Example.Company.Device.Client.ABC.{serial}.example.com"
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +131,7 @@ def build_server_ssl_context(
     """Build a server-side SSLContext configured for the Node API.
 
     Args:
-        serial: Server cert identity (``MTX00000`` .. ``MTX00009``).
+        serial: Server cert identity (``SNX00000`` .. ``SNX00009``).
         flavor: ``rsa`` or ``ec``.
         client_auth: ``none`` → no client-cert request,
             ``optional`` → request but don't require (verb-gated mTLS),
@@ -170,13 +175,13 @@ def build_client_ssl_context(
 
     Args:
         client_serial: if set, present this client identity for mTLS
-            (``MTX00000`` .. ``MTX00009``). None → server-auth only.
+            (``SNX00000`` .. ``SNX00009``). None → server-auth only.
         flavor: ``rsa`` or ``ec``.
         check_hostname: ``False`` by default — tests bind to
             ``127.0.0.1`` which is not in any SAN. Dedicated hostname-
             mismatch tests override this to exercise Python's default
             hostname-verification behaviour.
-        cafile: trust anchor. Defaults to ``MatroxRootCA`` for the chosen
+        cafile: trust anchor. Defaults to ``ExampleRootCA`` for the chosen
             flavour.
 
     Mirrors ``nmos_node.py::build_registry_ssl_context`` for the test
@@ -208,16 +213,16 @@ def build_client_ssl_context(
 
 PKI_AVAILABLE: bool = (
     CERTS_DIR.is_dir()
-    and server_chain("MTX00000", "rsa").is_file()
-    and server_chain("MTX00000", "ec").is_file()
-    and client_chain("MTX00000", "rsa").is_file()
-    and client_chain("MTX00000", "ec").is_file()
+    and server_chain("SNX00000", "rsa").is_file()
+    and server_chain("SNX00000", "ec").is_file()
+    and client_chain("SNX00000", "rsa").is_file()
+    and client_chain("SNX00000", "ec").is_file()
     and root_ca("rsa").is_file()
     and root_ca("ec").is_file()
 )
 """True when the pre-generated PKI is available on disk.
 
 Tests use ``@pytest.mark.skipif(not PKI_AVAILABLE, reason=...)`` to stay
-green on systems that don't have the sibling ``Certificates/build``
+green on systems that don't have the sibling ``Certificates/build.0``
 directory.
 """

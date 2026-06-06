@@ -40,10 +40,10 @@ PREFIX = "/controller"
 # ---------------------------------------------------------------------------
 
 def _make_device(
-    did: str, serial: str = "MTX00001",
+    did: str, serial: str = "SNX00001",
     conn_href: str = "https://remote/x-nmos/connection/v1.1",
     compat_href: str | None = "https://remote/x-nmos/streamcompatibility/v1.0",
-    node_id: str = "node-MTX00001",
+    node_id: str = "node-SNX00001",
 ) -> dict[str, Any]:
     """Build an IS-04 device dict.
 
@@ -73,7 +73,7 @@ def _make_device(
 
 
 def _make_node_resource(
-    nid: str, serial: str = "MTX00001",
+    nid: str, serial: str = "SNX00001",
     exclusive_href: str | None = None,
     exclusive_authorization: bool = False,
 ) -> dict[str, Any]:
@@ -154,15 +154,15 @@ async def _seed_cache(cache: ResourceCache) -> None:
     # Nodes first — devices reference them via ``node_id``. Default
     # seed does NOT advertise the reservation service; tests that
     # exercise Exclusivity re-upsert the Node with a service URL.
-    await cache.upsert("node", _make_node_resource("node-MTX00001", "MTX00001"))
-    await cache.upsert("node", _make_node_resource("node-MTX00002", "MTX00002"))
+    await cache.upsert("node", _make_node_resource("node-SNX00001", "SNX00001"))
+    await cache.upsert("node", _make_node_resource("node-SNX00002", "SNX00002"))
     await cache.upsert(
         "device",
-        _make_device("dev1", "MTX00001", node_id="node-MTX00001"),
+        _make_device("dev1", "SNX00001", node_id="node-SNX00001"),
     )
     await cache.upsert(
         "device",
-        _make_device("dev2", "MTX00002", node_id="node-MTX00002"),
+        _make_device("dev2", "SNX00002", node_id="node-SNX00002"),
     )
     await cache.upsert(
         "sender", _make_sender("11111111-1111-1111-1111-111111111111", "dev1"),
@@ -263,8 +263,8 @@ class TestPages:
         resp = await controller_client.get(f"{PREFIX}/senders")
         assert resp.status == 200
         text = await resp.text()
-        i1 = text.find("MTX00001")
-        i2 = text.find("MTX00002")
+        i1 = text.find("SNX00001")
+        i2 = text.find("SNX00002")
         assert 0 <= i1 < i2
         # Natural-group display name is "<transport> <group-index>",
         # e.g. "RTP 0" — format is a per-member attribute, not part
@@ -362,8 +362,8 @@ class TestPages:
         # (role 0); only sender groups with matching shape survive.
         # dev1 has two senders in one group (roles 0 + 1) → dropped.
         # dev2 has one sender in one group (role 0) → kept.
-        assert "MTX00002" in text
-        assert "MTX00001" not in text
+        assert "SNX00002" in text
+        assert "SNX00001" not in text
 
     @pytest.mark.asyncio
     async def test_compatible_senders_group_mode_no_matches(
@@ -466,7 +466,7 @@ class TestPages:
         assert sid_a1 in text
         assert sid_v not in text
         # The MUX sender's device (dev2) is present.
-        assert "MTX00002" in text
+        assert "SNX00002" in text
         # Submit-count constraint: 2 senders required (one per subset
         # leaf). Whitespace-tolerant.
         import re
@@ -1063,7 +1063,7 @@ class TestPages:
         # as ``<device_serial> <host:port>`` for unambiguous physical
         # identification (not the generic resource label).
         assert f'data-receiver-id="{rid}"' in text
-        assert "MTX00001" in text     # receiver's device serial
+        assert "SNX00001" in text     # receiver's device serial
         assert "remote" in text       # host component of sr-ctrl href
         # Form carries the pairing info for the JS pair-by-index logic.
         assert f'data-receiver-ids="{rid}"' in text
@@ -1311,8 +1311,8 @@ class TestPages:
         # Rewrite dev1 to drop the stream-compat control entry.
         await cache.upsert(
             "device",
-            _make_device("dev1", "MTX00001", compat_href=None,
-                         node_id="node-MTX00001"),
+            _make_device("dev1", "SNX00001", compat_href=None,
+                         node_id="node-SNX00001"),
         )
         sid = "11111111-1111-1111-1111-111111111111"
         resp = await controller_client.get(
@@ -1449,8 +1449,8 @@ class TestPages:
         usb_rx, usb_tx = await self._seed_usb_pair(cache)
         tb_rx, tb_tx = await self._seed_tb_pair(cache)
 
-        rid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"  # on dev2 / node-MTX00002
-        sid = "11111111-1111-1111-1111-111111111111"  # on dev1 / node-MTX00001
+        rid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"  # on dev2 / node-SNX00002
+        sid = "11111111-1111-1111-1111-111111111111"  # on dev1 / node-SNX00001
         resp = await controller_client.get(
             f"{PREFIX}/receivers/configure"
             f"?receiver_ids={rid}&sender_ids={sid}&mode=single",
@@ -1475,9 +1475,9 @@ class TestPages:
         assert usb_link is not None
         assert "disabled" not in usb_link.group(0)
         # The USB href carries the reverse-direction ids: USB receiver
-        # is on the ORIGINAL sender's Node (dev1 → node-MTX00001);
+        # is on the ORIGINAL sender's Node (dev1 → node-SNX00001);
         # USB sender is on the ORIGINAL receiver's Node (dev2 →
-        # node-MTX00002). Jinja may emit attributes in either order
+        # node-SNX00002). Jinja may emit attributes in either order
         # so the regex accepts data-reverse-group on either side of
         # the href attribute.
         tag_m = re.search(
@@ -1897,8 +1897,8 @@ class TestPages:
         cache: ResourceCache = controller_client.app["_test_cache"]
         await cache.upsert(
             "device",
-            _make_device("dev1", "MTX00001", compat_href=None,
-                         node_id="node-MTX00001"),
+            _make_device("dev1", "SNX00001", compat_href=None,
+                         node_id="node-SNX00001"),
         )
         rid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
         sid = "11111111-1111-1111-1111-111111111111"
@@ -2821,7 +2821,7 @@ class TestPrivacyFlow:
         cache: ResourceCache = controller_client.app["_test_cache"]
         # Re-upsert the Node with the reservation service advertised.
         await cache.upsert("node", _make_node_resource(
-            "node-MTX00001", "MTX00001",
+            "node-SNX00001", "SNX00001",
             exclusive_href="https://remote/x-manufacturer/exclusive/v1.0/",
         ))
         remote: RemoteNodeClient = controller_client.app["_test_remote_stub"]
@@ -2835,11 +2835,11 @@ class TestPrivacyFlow:
         # Acquire.
         resp = await controller_client.post(
             f"{PREFIX}/api/privacy/acquire",
-            json={"node_ids": ["node-MTX00001"]},
+            json={"node_ids": ["node-SNX00001"]},
         )
         assert resp.status == 200
         data = await resp.json()
-        assert data["acquired"] == ["node-MTX00001"]
+        assert data["acquired"] == ["node-SNX00001"]
         assert data["failed"] == []
         remote.acquire_exclusive.assert_awaited_once()
         # Body of the acquire POST — hex exclusive_key + owner.
@@ -2852,7 +2852,7 @@ class TestPrivacyFlow:
         # Release.
         resp = await controller_client.post(
             f"{PREFIX}/api/privacy/release",
-            json={"node_ids": ["node-MTX00001"]},
+            json={"node_ids": ["node-SNX00001"]},
         )
         assert resp.status == 200
         remote.release_exclusive.assert_awaited_once()
@@ -2879,7 +2879,7 @@ class TestPrivacyFlow:
         # Re-upsert the Node with the reservation service advertised
         # and ``authorization=False``.
         await cache.upsert("node", _make_node_resource(
-            "node-MTX00001", "MTX00001",
+            "node-SNX00001", "SNX00001",
             exclusive_href="http://remote/x-manufacturer/exclusive/v1.0/",
             exclusive_authorization=False,
         ))
@@ -2900,7 +2900,7 @@ class TestPrivacyFlow:
         # Acquire first.
         resp = await controller_client.post(
             f"{PREFIX}/api/privacy/acquire",
-            json={"node_ids": ["node-MTX00001"]},
+            json={"node_ids": ["node-SNX00001"]},
         )
         assert resp.status == 200
 
@@ -2927,7 +2927,7 @@ class TestPrivacyFlow:
         """
         cache: ResourceCache = controller_client.app["_test_cache"]
         await cache.upsert("node", _make_node_resource(
-            "node-MTX00001", "MTX00001",
+            "node-SNX00001", "SNX00001",
             exclusive_href="http://remote/x-manufacturer/exclusive/v1.0/",
             exclusive_authorization=False,
         ))
@@ -2948,7 +2948,7 @@ class TestPrivacyFlow:
         # Acquire the reservation first.
         resp = await controller_client.post(
             f"{PREFIX}/api/privacy/acquire",
-            json={"node_ids": ["node-MTX00001"]},
+            json={"node_ids": ["node-SNX00001"]},
         )
         assert resp.status == 200
 
@@ -2972,7 +2972,7 @@ class TestPrivacyFlow:
         """
         cache: ResourceCache = controller_client.app["_test_cache"]
         await cache.upsert("node", _make_node_resource(
-            "node-MTX00001", "MTX00001",
+            "node-SNX00001", "SNX00001",
             exclusive_href="http://remote/x-manufacturer/exclusive/v1.0/",
             exclusive_authorization=False,
         ))
@@ -2992,7 +2992,7 @@ class TestPrivacyFlow:
 
         resp = await controller_client.post(
             f"{PREFIX}/api/privacy/acquire",
-            json={"node_ids": ["node-MTX00001"]},
+            json={"node_ids": ["node-SNX00001"]},
         )
         assert resp.status == 200
 
@@ -3014,7 +3014,7 @@ class TestPrivacyFlow:
         """
         cache: ResourceCache = controller_client.app["_test_cache"]
         await cache.upsert("node", _make_node_resource(
-            "node-MTX00001", "MTX00001",
+            "node-SNX00001", "SNX00001",
             exclusive_href="https://remote/x-manufacturer/exclusive/v1.0/",
             exclusive_authorization=True,
         ))
@@ -3034,7 +3034,7 @@ class TestPrivacyFlow:
 
         resp = await controller_client.post(
             f"{PREFIX}/api/privacy/acquire",
-            json={"node_ids": ["node-MTX00001"]},
+            json={"node_ids": ["node-SNX00001"]},
         )
         assert resp.status == 200
 
@@ -3064,12 +3064,12 @@ class TestPrivacyFlow:
         routes were live)."""
         resp = await controller_client.post(
             f"{PREFIX}/api/privacy/acquire",
-            json={"node_ids": ["node-MTX00001"]},  # default seed has no service
+            json={"node_ids": ["node-SNX00001"]},  # default seed has no service
         )
         assert resp.status == 409
         data = await resp.json()
         assert data["acquired"] == []
-        assert data["failed"][0]["node_id"] == "node-MTX00001"
+        assert data["failed"][0]["node_id"] == "node-SNX00001"
         assert "reservation service" in data["failed"][0]["reason"]
 
     @pytest.mark.asyncio
@@ -3080,7 +3080,7 @@ class TestPrivacyFlow:
         ish (prior successes left held)."""
         cache: ResourceCache = controller_client.app["_test_cache"]
         await cache.upsert("node", _make_node_resource(
-            "node-MTX00001", "MTX00001",
+            "node-SNX00001", "SNX00001",
             exclusive_href="https://remote/exclusive/v1.0/",
         ))
         remote: RemoteNodeClient = controller_client.app["_test_remote_stub"]
@@ -3089,14 +3089,14 @@ class TestPrivacyFlow:
         )
         resp = await controller_client.post(
             f"{PREFIX}/api/privacy/acquire",
-            # node-MTX00002 has no service per default seed.
-            json={"node_ids": ["node-MTX00001", "node-MTX00002"]},
+            # node-SNX00002 has no service per default seed.
+            json={"node_ids": ["node-SNX00001", "node-SNX00002"]},
         )
         assert resp.status == 207
         data = await resp.json()
-        assert data["acquired"] == ["node-MTX00001"]
+        assert data["acquired"] == ["node-SNX00001"]
         assert len(data["failed"]) == 1
-        assert data["failed"][0]["node_id"] == "node-MTX00002"
+        assert data["failed"][0]["node_id"] == "node-SNX00002"
 
     @pytest.mark.asyncio
     async def test_release_all_beacon(
@@ -3107,7 +3107,7 @@ class TestPrivacyFlow:
         """
         cache: ResourceCache = controller_client.app["_test_cache"]
         await cache.upsert("node", _make_node_resource(
-            "node-MTX00001", "MTX00001",
+            "node-SNX00001", "SNX00001",
             exclusive_href="https://remote/exclusive/v1.0/",
         ))
         remote: RemoteNodeClient = controller_client.app["_test_remote_stub"]
@@ -3120,7 +3120,7 @@ class TestPrivacyFlow:
         # Hold a session first.
         await controller_client.post(
             f"{PREFIX}/api/privacy/acquire",
-            json={"node_ids": ["node-MTX00001"]},
+            json={"node_ids": ["node-SNX00001"]},
         )
         # Beacon release.
         resp = await controller_client.post(
@@ -3342,7 +3342,7 @@ class TestPrivacyFlow:
         # here it's the service advertisement).
         cache: ResourceCache = controller_client.app["_test_cache"]
         await cache.upsert("node", _make_node_resource(
-            "node-MTX00001", "MTX00001",
+            "node-SNX00001", "SNX00001",
             exclusive_href="https://remote/exclusive/v1.0/",
         ))
         resp = await controller_client.get(
@@ -3472,7 +3472,7 @@ class TestPrivacyFlow:
         # that Exclusivity is locked by the active-state rule, NOT
         # by the "service missing" rule.
         await cache.upsert("node", _make_node_resource(
-            "node-MTX00001", "MTX00001",
+            "node-SNX00001", "SNX00001",
             exclusive_href="https://remote/exclusive/v1.0/",
         ))
         resp = await controller_client.get(
@@ -3550,7 +3550,7 @@ class TestPrivacyFlow:
         # Now with the service present, the attribute flips to "1".
         cache: ResourceCache = controller_client.app["_test_cache"]
         await cache.upsert("node", _make_node_resource(
-            "node-MTX00001", "MTX00001",
+            "node-SNX00001", "SNX00001",
             exclusive_href="https://remote/exclusive/v1.0/",
         ))
         resp = await controller_client.get(
@@ -3580,7 +3580,7 @@ class TestPrivacyFlow:
         )
         cache: ResourceCache = controller_client.app["_test_cache"]
         await cache.upsert("node", _make_node_resource(
-            "node-MTX00001", "MTX00001",
+            "node-SNX00001", "SNX00001",
             exclusive_href="https://remote/exclusive/v1.0/",
         ))
         resp = await controller_client.get(
@@ -3631,7 +3631,7 @@ class TestPrivacyFlow:
         cache: ResourceCache = controller_client.app["_test_cache"]
         await cache.upsert("receiver", _make_receiver(rid, "dev1", active=True))
         await cache.upsert("node", _make_node_resource(
-            "node-MTX00001", "MTX00001",
+            "node-SNX00001", "SNX00001",
             exclusive_href="https://remote/exclusive/v1.0/",
         ))
         remote: RemoteNodeClient = controller_client.app["_test_remote_stub"]
@@ -3687,7 +3687,7 @@ class TestPrivacyFlow:
         # at all (otherwise the whole panel is hidden).
         cache: ResourceCache = controller_client.app["_test_cache"]
         await cache.upsert("node", _make_node_resource(
-            "node-MTX00001", "MTX00001",
+            "node-SNX00001", "SNX00001",
             exclusive_href="https://remote/exclusive/v1.0/",
         ))
         resp = await controller_client.get(

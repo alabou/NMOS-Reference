@@ -5,7 +5,7 @@
 
 Bare HTTPS end-to-end: a real ``aiohttp.TestServer`` bound to a server
 SSLContext, a real ``ClientSession`` with a client TCPConnector whose
-SSLContext trusts the ``MatroxRootCA``. Each test is parametrised across
+SSLContext trusts the ``ExampleRootCA``. Each test is parametrised across
 RSA and EC cert flavours.
 
 Spec references:
@@ -27,6 +27,7 @@ from nmos.api import create_app
 from nmos.node import Node
 
 from nmos.api.tests._tls_helpers import (
+    CERTS_DIR,
     PKI_AVAILABLE,
     build_client_ssl_context,
     build_server_ssl_context,
@@ -38,7 +39,7 @@ from nmos.api.tests._tls_helpers import (
 
 pytestmark = pytest.mark.skipif(
     not PKI_AVAILABLE,
-    reason="pre-generated TLS PKI not present at /home/alain/Projects/IPMX/Certificates/build",
+    reason=f"pre-generated TLS PKI not present at {CERTS_DIR}",
 )
 
 
@@ -46,7 +47,7 @@ pytestmark = pytest.mark.skipif(
 # Fixtures
 # ---------------------------------------------------------------------------
 
-SERIAL = "MTX00000"
+SERIAL = "SNX00000"
 
 
 def _make_node() -> Node:
@@ -75,7 +76,7 @@ class TestTlsServerAuth:
     `check_hostname=False` everywhere except the dedicated hostname-
     mismatch test — TestServer binds 127.0.0.1 which isn't in any cert
     SAN, so full hostname verification would fail even for the happy
-    path. Chain validation (up to MatroxRootCA) is always performed.
+    path. Chain validation (up to ExampleRootCA) is always performed.
     """
 
     @pytest.mark.asyncio
@@ -116,7 +117,7 @@ class TestTlsServerAuth:
 
     @pytest.mark.asyncio
     async def test_chain_pem_resolves_through_intermediate(self, flavor: str) -> None:
-        # Client trusts only the INTERMEDIATE (MatroxProductCA). By default
+        # Client trusts only the INTERMEDIATE (ExampleProductCA). By default
         # OpenSSL requires the trust anchor to be self-signed so using the
         # intermediate alone would fail; the spec compliance path always
         # anchors at the root. We opt into the PARTIAL_CHAIN flag here
@@ -142,7 +143,7 @@ class TestTlsServerAuth:
     async def test_server_cert_hostname_mismatch_rejected(self, flavor: str) -> None:
         # T1 negative: with hostname checking on, connecting via a URL
         # whose hostname is NOT in the server cert's CN/SAN set must fail.
-        # The cert covers MTX-MTX00000 / Matrox.Graphics.Device.Server…
+        # The cert covers XYZ-SNX00000 / Example.Company.Device.Server…
         # but 127.0.0.1 isn't in any SAN.
         server = await _start_tls_server(flavor)
         try:
@@ -202,7 +203,7 @@ class TestTlsServerAuth:
 
     def test_chain_pem_contains_intermediate_ca(self, flavor: str) -> None:
         # PKI sanity: the `.chain.pem` MUST contain both the leaf and the
-        # intermediate `MatroxProductCA.0.0` PEM blocks. Fails fast if the
+        # intermediate `ExampleProductCA.0.0` PEM blocks. Fails fast if the
         # cert bundle on disk is missing the intermediate append.
         chain_text = server_chain(SERIAL, flavor).read_text()
         begin_count = chain_text.count("-----BEGIN CERTIFICATE-----")
@@ -218,7 +219,7 @@ class TestTlsServerAuth:
             "-----BEGIN CERTIFICATE-----", 1)[1].split(
             "-----END CERTIFICATE-----", 1)[0].strip()
         assert intermediate_body in chain_text, (
-            "chain.pem must embed the MatroxProductCA intermediate cert body"
+            "chain.pem must embed the ExampleProductCA intermediate cert body"
         )
         # And the root CA cert body MUST NOT be in the chain (per spec —
         # the root belongs in the client's trust store, not on the wire).
@@ -227,5 +228,5 @@ class TestTlsServerAuth:
             "-----BEGIN CERTIFICATE-----", 1)[1].split(
             "-----END CERTIFICATE-----", 1)[0].strip()
         assert root_body not in chain_text, (
-            "chain.pem must NOT embed the MatroxRootCA root cert"
+            "chain.pem must NOT embed the ExampleRootCA root cert"
         )

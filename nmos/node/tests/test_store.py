@@ -26,8 +26,8 @@ class TestToStaticId:
     """to_static_id zeroes the uniqueId portion."""
 
     def test_dynamic_to_static(self) -> None:
-        dynamic = _make_uuid(ResourceType.SENDER, 5, "MTX123", 0xDEADBEEF)
-        static = _make_uuid(ResourceType.SENDER, 5, "MTX123", 0)
+        dynamic = _make_uuid(ResourceType.SENDER, 5, "SNX123", 0xDEADBEEF)
+        static = _make_uuid(ResourceType.SENDER, 5, "SNX123", 0)
         assert to_static_id(dynamic) == static
 
     def test_static_is_idempotent(self) -> None:
