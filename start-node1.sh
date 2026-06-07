@@ -89,6 +89,8 @@ exec python3 nmos_node.py \
   --nodeKey         "$NODE_KEY" \
   --nodeTrustedRootCA "$CA" \
   --nodeControlPort 5050 \
+  --nodeClientCertificate "$CERTS/pem/ExampleDeviceClient.ABC.SNX00001.chain.pem" \
+  --nodeClientKey         "$CERTS/key/ExampleDeviceClient.ABC.SNX00001.key" \
   --controllerAdminPassword admin \
   --oauth2 \
   --oauth2Host "${AS_HOST}" \
@@ -97,9 +99,12 @@ exec python3 nmos_node.py \
   --oauth2ClientSecret secret \
   --oauth2ApiSelector realms/TR-10-SEC \
   --oauth2AudienceMode "${OAIM_FLAG}" \
+  --oauth2ClientId Example.Company.Device.Client.ABC.SNX00001.example.com \
   --rdsHost "${RDS_HOST}" \
   --rdsRegistrationPort "${RDS_REG_PORT}" \
   --rdsQueryPort        "${RDS_QUERY_PORT}" \
   "${RDS_FLAGS[@]}" \
   --trustedRootCA "$CA" \
-  --debug-in-depth
+  --debug-in-depth \
+  --nodeConfig config10
+

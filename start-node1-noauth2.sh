@@ -154,4 +154,7 @@ exec python3 nmos_node.py \
   "${RDS_FLAGS[@]}" \
   --trustedRootCA "$CA" \
   "${GCRL_FLAGS[@]}" \
-  --debug-in-depth
+  --debug-in-depth \
+  --nodeConfig config10
+
+  

@@ -121,4 +121,6 @@ exec python3 nmos_node.py \
   --rdsQueryPort        "${RDS_QUERY_PORT}" \
   "${RDS_FLAGS[@]}" \
   --trustedRootCA "$CA" \
-  --debug-in-depth
+  --debug-in-depth  \
+  --nodeConfig config10
+

@@ -22,4 +22,6 @@ exec python3 nmos_node.py \
   --rdsRegistrationPort 8444 \
   --rdsQueryPort 8443 \
   --rdsDisableTLS \
-  --trustedRootCA "$CERTS/ExampleRootCA.pem"
+  --trustedRootCA "$CERTS/ExampleRootCA.pem" \
+  --nodeConfig config_av_usb_tb_B
+  
