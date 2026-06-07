@@ -36,3 +36,4 @@ Thumbs.db
 
 # ignore specs that are from another git repo
 CLAUDE.md
+AGENTS.md
