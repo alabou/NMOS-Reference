@@ -266,14 +266,17 @@ class TestTransportCompatible:
         """SRT and SRT/MPEG2-TS are mutually compatible per the
         transport-compatibility matrix.
         """
+        from nmos.codegen.namespaces import SRT_TRANSPORT_NAMESPACE
         from nmos.controller.compat import transport_compatible
+        srt = SRT_TRANSPORT_NAMESPACE + "transport:srt"
+        srt_mp2t = SRT_TRANSPORT_NAMESPACE + "transport:srt.mp2t"
         assert transport_compatible(
-            "urn:x-matrox:transport:srt",
-            "urn:x-matrox:transport:srt.mpeg2ts",
+            srt,
+            srt_mp2t,
         ) is True
         assert transport_compatible(
-            "urn:x-matrox:transport:srt.mpeg2ts",
-            "urn:x-matrox:transport:srt",
+            srt_mp2t,
+            srt,
         ) is True
 
 

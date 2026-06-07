@@ -921,7 +921,7 @@ def _build_registry() -> dict[Any, TransportDescriptor]:
         receiver_constraints_type=NUsbTransportConstraintsValue,
         receiver_activation_type=NUsbReceiverActivationValue,
         has_privacy=True,
-        privacy_protocol=enums.USB,
+        privacy_protocol=enums.USB_KV,
         sender_port_fn=lambda i: 27500 + i,
         init_sender_extra=_init_usb_sender_extra,
         init_receiver_extra=_init_usb_receiver_extra,

@@ -36,7 +36,12 @@ except ImportError:
 
 from nmos import enums
 from nmos.node import Node, _generate_sdp_from_params
-from nmos.node.activation import get_transport_descriptor
+from nmos.node.activation import (
+    get_transport_descriptor,
+    init_receiver_activation,
+    init_sender_activation,
+)
+from nmos.node.types import MAX_LEGS, Activation, Leg
 
 
 BUILTIN_DIR = Path(__file__).parent.parent / "config" / "builtin"
@@ -108,6 +113,58 @@ def _get_sender_flow(node: Node, sender: Any) -> Any:
     return node.flows.get(fid)
 
 
+def _make_usb_sender_activation() -> Activation:
+    desc = get_transport_descriptor(enums.TransportUsb)
+    activation = Activation(
+        sender_index=0,
+        enabled_legs=1,
+        staged=[desc.sender_params_type() for _ in range(MAX_LEGS)],
+        active=[desc.sender_params_type() for _ in range(MAX_LEGS)],
+        constraints=[desc.sender_constraints_type() for _ in range(MAX_LEGS)],
+        staged_state=desc.sender_activation_type(),
+        active_state=desc.sender_activation_type(),
+        sender_name="USBTST",
+    )
+    init_sender_activation(
+        activation, [Leg(enable=True)], enums.TransportUsb, desc,
+        privacy_enabled=True, group_hint="",
+    )
+    return activation
+
+
+def _make_usb_receiver_activation() -> Activation:
+    desc = get_transport_descriptor(enums.TransportUsb)
+    activation = Activation(
+        receiver_index=0,
+        enabled_legs=1,
+        staged=[desc.receiver_params_type() for _ in range(MAX_LEGS)],
+        active=[desc.receiver_params_type() for _ in range(MAX_LEGS)],
+        constraints=[desc.receiver_constraints_type() for _ in range(MAX_LEGS)],
+        staged_state=desc.receiver_activation_type(),
+        active_state=desc.receiver_activation_type(),
+    )
+    init_receiver_activation(
+        activation, [Leg(enable=True)], enums.TransportUsb, enums.FormatData,
+        desc, privacy_enabled=True,
+    )
+    return activation
+
+
+def _constraint_map(constraints: Any) -> dict[Any, Any]:
+    return constraints.Constraints._inner if hasattr(constraints, "Constraints") else constraints._inner
+
+
+def _constraint_enum_values(constraints: Any, json_key: str) -> list[str]:
+    for key, constraint in _constraint_map(constraints).items():
+        if json_key not in str(key):
+            continue
+        if hasattr(constraint, "get_Enum"):
+            enum_field = constraint.get_Enum()
+            if enum_field.defined:
+                return [str(value) for value in enum_field.value]
+    return []
+
+
 # ===========================================================================
 # Class 1 — TestUsbTransports: enum & registry sanity
 # ===========================================================================
@@ -125,7 +182,6 @@ class TestUsbTransports:
         assert str(e) == "application/usb"
 
     def test_usb_privacy_enum_values(self) -> None:
-        # E1 — transport descriptor registers privacy_protocol=enums.USB.
         assert str(enums.USB) == "USB"
         assert str(enums.USB_KV) == "USB_KV"
 
@@ -133,10 +189,10 @@ class TestUsbTransports:
         assert str(enums.CapTransportUsbClass) in _USB_CAP_CLASS_URNS
 
     def test_usb_descriptor_has_privacy(self) -> None:
-        # E1 — activation.py:924-925
+        # E1 — USB privacy requires key-version signalling.
         desc = get_transport_descriptor(enums.TransportUsb)
         assert desc.has_privacy is True
-        assert desc.privacy_protocol is enums.USB
+        assert desc.privacy_protocol is enums.USB_KV
 
     def test_usb_descriptor_sender_port_fn_is_27500_plus_index(self) -> None:
         # activation.py:926
@@ -421,6 +477,26 @@ class TestUsbIs05Activation:
         assert desc.sender_activation_type is not None
         assert desc.receiver_activation_type is not None
 
+    def test_usb_sender_initial_privacy_protocol_is_usb_kv(self) -> None:
+        activation = _make_usb_sender_activation()
+        assert str(activation.staged[0].ExtPrivacyProtocol.value) == "USB_KV"
+        assert str(activation.active[0].ExtPrivacyProtocol.value) == "USB_KV"
+
+    def test_usb_receiver_initial_privacy_protocol_is_usb_kv(self) -> None:
+        activation = _make_usb_receiver_activation()
+        assert str(activation.staged[0].ExtPrivacyProtocol.value) == "USB_KV"
+        assert str(activation.active[0].ExtPrivacyProtocol.value) == "USB_KV"
+
+    def test_usb_sender_privacy_protocol_constraint_only_allows_usb_kv(self) -> None:
+        activation = _make_usb_sender_activation()
+        enum_values = _constraint_enum_values(activation.constraints[0], "ext_privacy_protocol")
+        assert enum_values == ["USB_KV"]
+
+    def test_usb_receiver_privacy_protocol_constraint_only_allows_usb_kv(self) -> None:
+        activation = _make_usb_receiver_activation()
+        enum_values = _constraint_enum_values(activation.constraints[0], "ext_privacy_protocol")
+        assert enum_values == ["USB_KV"]
+
 
 # ===========================================================================
 # Class 6 — TestUsbSdpGeneration
@@ -489,7 +565,7 @@ class TestUsbEncryption:
     def test_usb_privacy_protocol_registered_on_descriptor(self) -> None:
         # E1
         desc = get_transport_descriptor(enums.TransportUsb)
-        assert desc.privacy_protocol is enums.USB
+        assert desc.privacy_protocol is enums.USB_KV
 
     def test_usb_privacy_fields_present_on_sender_and_receiver(self) -> None:
         from nmos.types.generated.nusb_sender_transport_params import NUsbSenderTransportParamsValue

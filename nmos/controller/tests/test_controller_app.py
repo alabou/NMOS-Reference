@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock
 import pytest
 from aiohttp.test_utils import TestClient
 
+from nmos.codegen.namespaces import USB_TRANSPORT_NAMESPACE
 from nmos.controller import create_controller_app
 from nmos.controller.api_client import RemoteCallResult, RemoteNodeClient
 from nmos.controller.auth import (
@@ -33,6 +34,7 @@ from nmos.node import Node
 
 ADMIN_PASSWORD = "test-admin-pw"
 PREFIX = "/controller"
+USB_TRANSPORT = USB_TRANSPORT_NAMESPACE + "transport:usb"
 
 
 # ---------------------------------------------------------------------------
@@ -1511,24 +1513,23 @@ class TestPages:
         """Seed one USB receiver + one USB sender on opposite devices,
         each alone in its natural group (the USB shape rule).
 
-        Returns ``(recv_id, send_id)``. Both sides carry the Matrox
-        USB transport URN AND a unique ``natural_group_index`` so
-        that no other same-direction resource on the target device
-        shares the ``(USB, group_index)`` key.
+        Returns ``(recv_id, send_id)``. Both sides carry the configured
+        USB transport URN and a unique ``natural_group_index`` so that
+        no other same-direction resource on the target device shares
+        the ``(USB, group_index)`` key.
         """
-        usb_transport = "urn:x-matrox:transport:usb"
         hint = f"USB {group_index}:DATA 0"
         await cache.upsert("receiver", {
             "id": recv_id, "device_id": recv_side_device,
             "label": "usb-rx", "format": "urn:x-nmos:format:data",
-            "transport": usb_transport,
+            "transport": USB_TRANSPORT,
             "tags": {GROUP_HINT_TAG: [hint]},
             "subscription": {"active": False, "sender_id": None},
         })
         await cache.upsert("sender", {
             "id": send_id, "device_id": send_side_device,
             "label": "usb-tx", "format": "urn:x-nmos:format:data",
-            "transport": usb_transport,
+            "transport": USB_TRANSPORT,
             "tags": {GROUP_HINT_TAG: [hint]},
             "subscription": {"active": False, "receiver_id": None},
         })
@@ -1951,7 +1952,7 @@ class TestPages:
             "id": "u-alone", "device_id": "d1",
             "label": "usb-alone",
             "format": "urn:x-nmos:format:data",
-            "transport": "urn:x-matrox:transport:usb",
+            "transport": USB_TRANSPORT,
             "tags": {GROUP_HINT_TAG: ["USB 4:DATA 0"]},
             "subscription": {"active": False, "receiver_id": None},
         })
@@ -1960,7 +1961,7 @@ class TestPages:
             "id": "u-shared-1", "device_id": "d1",
             "label": "usb-shared-1",
             "format": "urn:x-nmos:format:data",
-            "transport": "urn:x-matrox:transport:usb",
+            "transport": USB_TRANSPORT,
             "tags": {GROUP_HINT_TAG: ["USB 1:DATA 0"]},
             "subscription": {"active": False, "receiver_id": None},
         })
@@ -1968,7 +1969,7 @@ class TestPages:
             "id": "u-shared-2", "device_id": "d1",
             "label": "usb-shared-2",
             "format": "urn:x-nmos:format:data",
-            "transport": "urn:x-matrox:transport:usb",
+            "transport": USB_TRANSPORT,
             "tags": {GROUP_HINT_TAG: ["USB 1:DATA 1"]},
             "subscription": {"active": False, "receiver_id": None},
         })

@@ -42,9 +42,20 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from nmos.codegen.namespaces import (
+    NDI_TRANSPORT_NAMESPACE,
+    SRT_TRANSPORT_NAMESPACE,
+    USB_TRANSPORT_NAMESPACE,
+)
 from nmos.controller.cache import GroupedResource, NaturalGroupView
 
 log = logging.getLogger(__name__)
+
+_NDI_TRANSPORT = NDI_TRANSPORT_NAMESPACE + "transport:ndi"
+_SRT_TRANSPORT = SRT_TRANSPORT_NAMESPACE + "transport:srt"
+_SRT_MP2T_TRANSPORT = SRT_TRANSPORT_NAMESPACE + "transport:srt.mp2t"
+_SRT_RTP_TRANSPORT = SRT_TRANSPORT_NAMESPACE + "transport:srt.rtp"
+_USB_TRANSPORT = USB_TRANSPORT_NAMESPACE + "transport:usb"
 
 
 # ---------------------------------------------------------------------------
@@ -156,19 +167,19 @@ _TRANSPORT_ACCEPTS: dict[str, set[str]] = {
     # MQTT / WebSocket / NDI — exact match.
     "urn:x-nmos:transport:mqtt":       {"urn:x-nmos:transport:mqtt"},
     "urn:x-nmos:transport:websocket":  {"urn:x-nmos:transport:websocket"},
-    "urn:x-matrox:transport:ndi":      {"urn:x-matrox:transport:ndi"},
+    _NDI_TRANSPORT:                    {_NDI_TRANSPORT},
     # SRT
-    "urn:x-matrox:transport:srt":           {
-        "urn:x-matrox:transport:srt",
-        "urn:x-matrox:transport:srt.mpeg2ts",
+    _SRT_TRANSPORT: {
+        _SRT_TRANSPORT,
+        _SRT_MP2T_TRANSPORT,
     },
-    "urn:x-matrox:transport:srt.mpeg2ts":   {
-        "urn:x-matrox:transport:srt",
-        "urn:x-matrox:transport:srt.mpeg2ts",
+    _SRT_MP2T_TRANSPORT: {
+        _SRT_TRANSPORT,
+        _SRT_MP2T_TRANSPORT,
     },
-    "urn:x-matrox:transport:srt.rtp":       {"urn:x-matrox:transport:srt.rtp"},
-    # USB / TCP — exact match.
-    "urn:x-matrox:transport:usb":      {"urn:x-matrox:transport:usb"},
+    _SRT_RTP_TRANSPORT:                {_SRT_RTP_TRANSPORT},
+    # USB / TCP — exact match, using configured namespace target.
+    _USB_TRANSPORT:                    {_USB_TRANSPORT},
     "urn:x-matrox:transport:tcp":      {"urn:x-matrox:transport:tcp"},
     # UDP family
     "urn:x-matrox:transport:udp": {

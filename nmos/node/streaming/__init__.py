@@ -44,6 +44,8 @@ _SRT_TRANSPORTS = {
 _TCP_TRANSPORTS = {
     "urn:x-matrox:transport:rtsp",
     "urn:x-nmos:transport:rtp-tcp",
+    "urn:x-nmos:transport:usb",
+    "urn:x-matrox:transport:usb",
     "urn:x-matrox:transport:ndi",
 }
 
@@ -297,4 +299,3 @@ def _build_tcp_coro(
             decrypt_fn=decrypt_fn,
             stop_event=stop_event,
         )
-

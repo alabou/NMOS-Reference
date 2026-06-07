@@ -11,11 +11,48 @@ import uuid
 import pytest
 
 from nmos.node.events import EngineEvent, EventId
+from nmos.node.streaming import _build_streaming_coro
 from nmos.node.streaming.transport_tcp import tcp_sender, tcp_receiver
+
+
+class _Field:
+    def __init__(self, value: object) -> None:
+        self.defined = True
+        self.value = value
+
+
+class _TcpParams:
+    SourceIp = _Field("127.0.0.1")
+    SourcePort = _Field(0)
+    DestinationIp = _Field("127.0.0.1")
+    DestinationPort = _Field(0)
 
 
 class TestTcpLoopback:
     """Loopback tests: TCP sender (listener) ↔ receiver (connector)."""
+
+    @pytest.mark.asyncio
+    async def test_usb_transports_dispatch_to_tcp_emulation(self) -> None:
+        """USB is emulated over TCP, so both USB URNs must build TCP coroutines."""
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        for transport in (
+            "urn:x-nmos:transport:usb",
+            "urn:x-matrox:transport:usb",
+        ):
+            sender_coro = _build_streaming_coro(
+                loop, transport, _TcpParams(),
+                str(uuid.uuid4()), "lo", True, None, None, None, stop,
+            )
+            receiver_coro = _build_streaming_coro(
+                loop, transport, _TcpParams(),
+                str(uuid.uuid4()), "lo", False, None, None, None, stop,
+            )
+            assert sender_coro is not None
+            assert receiver_coro is not None
+            sender_coro.close()
+            receiver_coro.close()
 
     @pytest.mark.asyncio
     async def test_tcp_loopback(self) -> None:
