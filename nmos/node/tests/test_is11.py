@@ -3041,6 +3041,94 @@ class TestIS11OriginalFlag:
             f"bit_rate should be preserved at 40000 (original=True), got {actual_br}"
         )
 
+    def test_bitrate_exact_range_preserved_when_constrained(self) -> None:
+        """Slider selections encode an exact value as minimum == maximum.
+        That must force the coded flow bitrate exactly like enum [40000].
+        """
+        node = _make_node()
+        try:
+            _build_config(node, "config5")  # Native H264
+        except Exception:
+            pytest.skip("Config5 build failed")
+
+        video_sender = None
+        for static_id, sender in node.senders:
+            fmt = sender.Format.value.s if sender.Format.defined else ""
+            if "video" in fmt:
+                video_sender = sender
+                break
+        if video_sender is None:
+            pytest.skip("No video sender")
+
+        err, status = _apply_constraints(node, video_sender, [{
+            "urn:x-nmos:cap:meta:enabled": True,
+            "urn:x-nmos:cap:meta:preference": 100,
+            "urn:x-nmos:cap:format:media_type": {"enum": ["video/H264"]},
+            "urn:x-nmos:cap:format:frame_width": {"enum": [1920]},
+            "urn:x-nmos:cap:format:frame_height": {"enum": [1080]},
+            "urn:x-nmos:cap:format:profile": {"enum": ["High-422"]},
+            "urn:x-nmos:cap:format:bit_rate": {
+                "minimum": 40000,
+                "maximum": 40000,
+            },
+        }])
+        assert err is None, f"Constraint rejected: {err}"
+        assert status == "constrained"
+
+        from nmos.node.flow_caps import get_flow_to_caps
+        from nmos.node.compatibility import _get_cap_int
+        flow_ptr = _get_sender_flow(node, video_sender)
+        caps = get_flow_to_caps(node, flow_ptr)
+        actual_br = _get_cap_int(caps, "urn:x-nmos:cap:format:bit_rate")
+        assert actual_br == 40000, (
+            "exact range bit_rate should force 40000, "
+            f"got {actual_br}"
+        )
+
+    def test_bitrate_non_exact_range_selects_concrete_value(self) -> None:
+        """A non-exact bit_rate range must still force a concrete flow
+        value. The selected value is the range minimum.
+        """
+        node = _make_node()
+        try:
+            _build_config(node, "config5")  # Native H264
+        except Exception:
+            pytest.skip("Config5 build failed")
+
+        video_sender = None
+        for static_id, sender in node.senders:
+            fmt = sender.Format.value.s if sender.Format.defined else ""
+            if "video" in fmt:
+                video_sender = sender
+                break
+        if video_sender is None:
+            pytest.skip("No video sender")
+
+        err, status = _apply_constraints(node, video_sender, [{
+            "urn:x-nmos:cap:meta:enabled": True,
+            "urn:x-nmos:cap:meta:preference": 100,
+            "urn:x-nmos:cap:format:media_type": {"enum": ["video/H264"]},
+            "urn:x-nmos:cap:format:frame_width": {"enum": [1920]},
+            "urn:x-nmos:cap:format:frame_height": {"enum": [1080]},
+            "urn:x-nmos:cap:format:profile": {"enum": ["High-422"]},
+            "urn:x-nmos:cap:format:bit_rate": {
+                "minimum": 10000,
+                "maximum": 20000,
+            },
+        }])
+        assert err is None, f"Constraint rejected: {err}"
+        assert status == "constrained"
+
+        from nmos.node.flow_caps import get_flow_to_caps
+        from nmos.node.compatibility import _get_cap_int
+        flow_ptr = _get_sender_flow(node, video_sender)
+        caps = get_flow_to_caps(node, flow_ptr)
+        actual_br = _get_cap_int(caps, "urn:x-nmos:cap:format:bit_rate")
+        assert actual_br == 10000, (
+            "non-exact range bit_rate should force the minimum value, "
+            f"got {actual_br}"
+        )
+
     def test_bitrate_recalculated_when_not_constrained(self) -> None:
         """Constrain H264 WITHOUT bit_rate → fix-up derives max bitrate from level.
 

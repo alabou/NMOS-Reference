@@ -706,6 +706,49 @@ def _make_mock_node_with_video_source(source_id: str = "dummy") -> Any:
 class TestForceFlowProperties:
     """Test force_flow_properties_compatibility with per-property logic."""
 
+    @staticmethod
+    def _make_raw_video_flow(width: int = 1920, height: int = 1080) -> Any:
+        from nmos.types.generated.nflow_video_raw import NFlowVideoRaw, NFlowVideoRawValue
+        from nmos.types.generated.nflow import NFlowValue
+        from nmos.types.generated.nvideo_component import NVideoComponentValue
+        from nmos.types.generated.nrational import NRationalValue
+        from nmos.enums import EnumRegistry, Y, Cb, Cr
+
+        fv = NFlowVideoRawValue()
+        fv.set_to_default()
+        fv.MediaType.value = EnumRegistry.get("video/raw")
+        fv.FrameWidth.value = width
+        fv.FrameHeight.value = height
+        fv.InterlaceMode.value = EnumRegistry.get("progressive")
+        fv.Colorspace.value = EnumRegistry.get("BT709")
+        fv.TransferCharacteristic.value = EnumRegistry.get("SDR")
+        gr = NRationalValue()
+        gr.Numerator.value = 60
+        gr.Denominator.value = 1
+        fv.FlowCore.GrainRate.set_value(gr)
+        fv.FlowCore.SourceId.value = "dummy"
+        c0 = NVideoComponentValue()
+        c0.Name.value = Y
+        c0.Width.value = width
+        c0.Height.value = height
+        c0.BitDepth.value = 10
+        c1 = NVideoComponentValue()
+        c1.Name.value = Cb
+        c1.Width.value = width // 2
+        c1.Height.value = height
+        c1.BitDepth.value = 10
+        c2 = NVideoComponentValue()
+        c2.Name.value = Cr
+        c2.Width.value = width // 2
+        c2.Height.value = height
+        c2.BitDepth.value = 10
+        fv.Components.value = [c0, c1, c2]
+        wrapper = NFlowVideoRaw()
+        wrapper.set_value(fv)
+        fp = NFlowValue()
+        fp.set(wrapper)
+        return fp
+
     def test_force_picks_first_value_from_constraint(self) -> None:
         """When flow doesn't match constraint, pick first constraint value."""
         from nmos.node.flow_caps import get_flow_to_caps
@@ -756,6 +799,70 @@ class TestForceFlowProperties:
         from nmos.node.compatibility import _get_cap_int
         assert _get_cap_int(result, CapFormatFrameWidth) == 3840
         assert _get_cap_int(result, CapFormatFrameHeight) == 2160
+
+    def test_force_range_selects_minimum_when_current_above(self) -> None:
+        """A multi-value range must materialize a concrete value when
+        the current flow value is outside the allowed range. The
+        selected value is the range minimum.
+        """
+        active_cons = Cons(consets=[ConSet(
+            preference=100, label="force down",
+            cons=make_conset(
+                Constraint(CapFormatFrameWidth, RangeValue(min=720, max=1280, type=RangeType.INT)),
+                Constraint(CapFormatFrameHeight, RangeValue(min=480, max=720, type=RangeType.INT)),
+            ),
+        )])
+
+        mock_node = _make_mock_node_with_video_source("dummy")
+        result, _groups = force_flow_properties_compatibility(
+            mock_node, self._make_raw_video_flow(), active_cons,
+            reset=True, verbose=True,
+        )
+        assert result is not None
+        assert _get_cap_int(result, CapFormatFrameWidth) == 720
+        assert _get_cap_int(result, CapFormatFrameHeight) == 480
+
+    def test_force_range_selects_minimum_when_current_below(self) -> None:
+        """The same minimum-selection rule applies when the current
+        flow value is below the allowed range.
+        """
+        active_cons = Cons(consets=[ConSet(
+            preference=100, label="force up",
+            cons=make_conset(
+                Constraint(CapFormatFrameWidth, RangeValue(min=3840, max=7680, type=RangeType.INT)),
+                Constraint(CapFormatFrameHeight, RangeValue(min=2160, max=4320, type=RangeType.INT)),
+            ),
+        )])
+
+        mock_node = _make_mock_node_with_video_source("dummy")
+        result, _groups = force_flow_properties_compatibility(
+            mock_node, self._make_raw_video_flow(), active_cons,
+            reset=True, verbose=True,
+        )
+        assert result is not None
+        assert _get_cap_int(result, CapFormatFrameWidth) == 3840
+        assert _get_cap_int(result, CapFormatFrameHeight) == 2160
+
+    def test_force_range_keeps_current_when_inside(self) -> None:
+        """A current flow value already inside a multi-value range is
+        valid and should remain selected, even during force/reset.
+        """
+        active_cons = Cons(consets=[ConSet(
+            preference=100, label="keep valid",
+            cons=make_conset(
+                Constraint(CapFormatFrameWidth, RangeValue(min=1280, max=3840, type=RangeType.INT)),
+                Constraint(CapFormatFrameHeight, RangeValue(min=720, max=2160, type=RangeType.INT)),
+            ),
+        )])
+
+        mock_node = _make_mock_node_with_video_source("dummy")
+        result, _groups = force_flow_properties_compatibility(
+            mock_node, self._make_raw_video_flow(), active_cons,
+            reset=True, verbose=True,
+        )
+        assert result is not None
+        assert _get_cap_int(result, CapFormatFrameWidth) == 1920
+        assert _get_cap_int(result, CapFormatFrameHeight) == 1080
 
     def test_force_returns_compliant_groups(self) -> None:
         """Winning conset's layer_compatibility_groups is returned."""

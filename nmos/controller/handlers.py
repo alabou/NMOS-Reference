@@ -2407,6 +2407,7 @@ def _widget_for_constraint(
             "min":   _simple_value(mn),
             "max":   _simple_value(mx),
             "value": _simple_value(mn),
+            "display": f"{_simple_value(mn)} … {_simple_value(mx)}",
             "disabled": disabled,
         }
 

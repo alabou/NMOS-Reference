@@ -1154,6 +1154,139 @@ class TestPages:
         assert "urn:x-matrox:cap:meta:layer" in js
 
     @pytest.mark.asyncio
+    async def test_configure_ranges_default_to_declared_full_range(
+        self, controller_client: TestClient,
+    ) -> None:
+        """Range widgets should match multiselect defaults: no user
+        edit means the full declared capability range, not the minimum
+        narrowed into an exact active constraint.
+        """
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        sid = "11111111-1111-1111-1111-111111111111"
+        rid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        sender = _make_sender(sid, "dev1")
+        sender["caps"] = {
+            "constraint_sets": [{
+                "urn:x-nmos:cap:meta:label": "Native",
+                "urn:x-nmos:cap:meta:enabled": True,
+                "urn:x-nmos:cap:meta:preference": 100,
+                "urn:x-nmos:cap:format:bit_rate": {
+                    "minimum": 10000,
+                    "maximum": 40000,
+                },
+                "urn:x-nmos:cap:format:frame_width": {
+                    "enum": [720, 1280, 1920],
+                },
+                "urn:x-nmos:cap:format:frame_height": {
+                    "enum": [480, 720, 1080],
+                },
+                "urn:x-matrox:cap:format:audio_layers": {
+                    "minimum": 0,
+                    "maximum": 3,
+                },
+                "urn:x-matrox:cap:format:data_layers": {
+                    "minimum": 0,
+                    "maximum": 1,
+                },
+            }],
+        }
+        await cache.upsert("sender", sender)
+
+        expected_ranges = {
+            "urn:x-nmos:cap:format:bit_rate": "10000 … 40000",
+            "urn:x-matrox:cap:format:audio_layers": "0 … 3",
+            "urn:x-matrox:cap:format:data_layers": "0 … 1",
+        }
+
+        for path in (
+            f"{PREFIX}/senders/configure?sender_ids={sid}&conset_{sid}=0",
+            f"{PREFIX}/receivers/configure"
+            f"?receiver_ids={rid}&sender_ids={sid}&conset_{sid}=0",
+        ):
+            resp = await controller_client.get(path)
+            assert resp.status == 200
+            text = await resp.text()
+            for urn, display in expected_ranges.items():
+                lo, hi = display.split(" … ")
+                assert f'data-param-urn="{urn}"' in text
+                assert f'value="{display}"' in text
+                assert f'data-range-min="{lo}"' in text
+                assert f'data-range-max="{hi}"' in text
+            # Frame dimensions remain value-selection widgets when
+            # published as enums; the range-default change must not
+            # convert them into sliders.
+            assert 'data-param-urn="urn:x-nmos:cap:format:frame_width"' in text
+            assert 'data-param-urn="urn:x-nmos:cap:format:frame_height"' in text
+            assert 'data-range-min="720"' not in text
+            assert 'data-range-min="480"' not in text
+
+    @pytest.mark.asyncio
+    async def test_configure_frame_dimensions_use_range_for_min_max_caps(
+        self, controller_client: TestClient,
+    ) -> None:
+        """Frame dimensions remain enum selectors when published as
+        enums, but min/max frame dimensions are range widgets and also
+        default to their full declared range.
+        """
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        sid = "11111111-1111-1111-1111-111111111111"
+        rid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        sender = _make_sender(sid, "dev1")
+        sender["caps"] = {
+            "constraint_sets": [{
+                "urn:x-nmos:cap:meta:label": "Native",
+                "urn:x-nmos:cap:meta:enabled": True,
+                "urn:x-nmos:cap:meta:preference": 100,
+                "urn:x-nmos:cap:format:frame_width": {
+                    "minimum": 640,
+                    "maximum": 1920,
+                },
+                "urn:x-nmos:cap:format:frame_height": {
+                    "minimum": 480,
+                    "maximum": 1080,
+                },
+            }],
+        }
+        await cache.upsert("sender", sender)
+
+        expected_ranges = {
+            "urn:x-nmos:cap:format:frame_width": "640 … 1920",
+            "urn:x-nmos:cap:format:frame_height": "480 … 1080",
+        }
+
+        for path in (
+            f"{PREFIX}/senders/configure?sender_ids={sid}&conset_{sid}=0",
+            f"{PREFIX}/receivers/configure"
+            f"?receiver_ids={rid}&sender_ids={sid}&conset_{sid}=0",
+        ):
+            resp = await controller_client.get(path)
+            assert resp.status == 200
+            text = await resp.text()
+            for urn, display in expected_ranges.items():
+                lo, hi = display.split(" … ")
+                assert f'data-param-urn="{urn}"' in text
+                assert f'value="{display}"' in text
+                assert f'data-range-min="{lo}"' in text
+                assert f'data-range-max="{hi}"' in text
+
+    @pytest.mark.asyncio
+    async def test_controller_js_emits_full_range_until_slider_narrows(
+        self, controller_client: TestClient,
+    ) -> None:
+        """The shipped JS must not collapse untouched range widgets
+        to min == max, and old v2 localStorage records must be ignored.
+        """
+        resp = await controller_client.get(
+            f"{PREFIX}/static/controller.js",
+        )
+        assert resp.status == 200
+        js = await resp.text()
+        assert "data-range-min" in js
+        assert "data-range-max" in js
+        assert "constraintSet[urn] = { minimum: mn, maximum: mx }" in js
+        assert "nmos_controller.config.v3." in js
+
+    @pytest.mark.asyncio
     async def test_configure_toggles_reflect_any_active_constrained(
         self, controller_client: TestClient,
     ) -> None:

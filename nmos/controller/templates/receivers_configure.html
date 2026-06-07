@@ -343,10 +343,12 @@
                                            {% if w.disabled %}disabled{% endif %}>
                                     <input type="text"
                                            class="form-control form-control-sm param-input param-range-value"
-                                           style="width:6rem"
-                                           value="{{ w.value }}"
+                                           style="width:10rem"
+                                           value="{{ w.display }}"
                                            data-sender-id="{{ sender.id }}"
                                            data-param-urn="{{ p.urn }}"
+                                           data-range-min="{{ w.min }}"
+                                           data-range-max="{{ w.max }}"
                                            readonly>
                                   </div>
                                   <small class="text-muted">{{ w.min }} … {{ w.max }}</small>

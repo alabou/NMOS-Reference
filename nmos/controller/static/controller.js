@@ -464,13 +464,21 @@
         if (sel.length > 0) constraintSet[urn] = { enum: sel };
         return;
       }
-      // Range: we look at the text mirror (``.param-range-value``)
-      // so the readonly text stays the source of truth when JS
-      // updates it from the slider.
+      // Range: the server renders the readonly mirror as the full
+      // declared range by default, matching multi-select widgets
+      // that default to all enum values. Once the user moves the
+      // slider, _initRangeSync writes a numeric value to the mirror
+      // and the request intentionally narrows to that exact value.
       if (el.classList.contains('param-range-value')) {
         const n = Number(el.value);
         if (!Number.isNaN(n)) {
           constraintSet[urn] = { minimum: n, maximum: n };
+          return;
+        }
+        const mn = Number(el.getAttribute('data-range-min'));
+        const mx = Number(el.getAttribute('data-range-max'));
+        if (!Number.isNaN(mn) && !Number.isNaN(mx)) {
+          constraintSet[urn] = { minimum: mn, maximum: mx };
         }
       }
     });
@@ -732,7 +740,7 @@
   // ------------------------------------------------------------------
   // Persistence: remember per-sender param edits across page reloads.
   //
-  // Key shape: ``nmos_controller.config.v2.<sender_id>.<cs_hash>``
+  // Key shape: ``nmos_controller.config.v3.<sender_id>.<cs_hash>``
   //   value: JSON { <param_urn>: <array|number|string>, ... }
   //
   // The CS hash is a server-computed SHA-256 of the constraint set's
@@ -744,7 +752,7 @@
   // currently on this page, then reloads so defaults re-render.
   // ------------------------------------------------------------------
 
-  const _STORAGE_PREFIX = 'nmos_controller.config.v2.';
+  const _STORAGE_PREFIX = 'nmos_controller.config.v3.';
 
   function _storageKey(senderId, consetHash) {
     return `${_STORAGE_PREFIX}${senderId}.${consetHash}`;
@@ -802,7 +810,9 @@
 
   function _snapshotSenderInputs(form, senderId) {
     // Capture the current editable values for one sender as a plain
-    // map: param URN → multi-select array / range number.
+    // map: param URN → multi-select array / narrowed range number.
+    // Untouched ranges are rendered as "min … max" and intentionally
+    // omitted so cache restore does not narrow them later.
     const record = {};
     form.querySelectorAll(
       `[data-sender-id="${senderId}"][data-param-urn]`,

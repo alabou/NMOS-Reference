@@ -2599,6 +2599,33 @@ def force_flow_properties_compatibility(
         compliant: dict[str, Cap] = {}
         failed = False
 
+        def _constraint_replacement_value(
+            constraint: Any, *, current_value: Any, current_ok: bool,
+        ) -> Any:
+            """Return a concrete value to write for a violated constraint.
+
+            Enum constraints expose concrete values via ``value.values``.
+            Slider-style exact selections arrive as ``minimum == maximum``
+            ranges, which CCF represents with ``values is None`` and
+            ``min/max`` populated. Treat those as a one-value constraint.
+            For non-exact ranges, keep a current value that already
+            satisfies the range. When a concrete value has to be chosen,
+            use the minimum bound when available.
+            """
+            rv = constraint.value
+            if rv.values and len(rv.values) > 0:
+                return rv.values[0]
+            if rv.min is not None and rv.max is not None and rv.min == rv.max:
+                return rv.min
+            if current_value is not None:
+                if current_ok:
+                    return current_value
+            if rv.min is not None:
+                return rv.min
+            if rv.max is not None:
+                return rv.max
+            return None
+
         for prop_name, prop_cap in flow_caps.caps.items():
             # Default: keep flow's current value
             compliant[prop_name] = prop_cap
@@ -2609,10 +2636,12 @@ def force_flow_properties_compatibility(
                 continue  # No constraint or unconstrained
 
             # Check if current value satisfies constraint
+            current_value = None
             current_ok = False
-            if prop_cap.value.values and not reset:
+            if prop_cap.value.values:
+                current_value = prop_cap.value.values[0]
                 try:
-                    current_ok = value_included_in_range(prop_cap.value.values[0], constraint.value)
+                    current_ok = value_included_in_range(current_value, constraint.value)
                 except (ValueError, TypeError):
                     current_ok = False
 
@@ -2640,6 +2669,15 @@ def force_flow_properties_compatibility(
                         # Default: first value
                         compliant[prop_name] = Cap(prop_name, RangeValue(
                             values=(constraint.value.values[0],), type=constraint.value.type))
+                else:
+                    replacement = _constraint_replacement_value(
+                        constraint,
+                        current_value=current_value,
+                        current_ok=current_ok,
+                    )
+                    if replacement is not None:
+                        compliant[prop_name] = Cap(prop_name, RangeValue(
+                            values=(replacement,), type=constraint.value.type))
 
         if failed:
             continue  # Try next constraint set
