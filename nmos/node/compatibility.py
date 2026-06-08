@@ -2599,27 +2599,15 @@ def force_flow_properties_compatibility(
         compliant: dict[str, Cap] = {}
         failed = False
 
-        def _constraint_replacement_value(
-            constraint: Any, *, current_value: Any, current_ok: bool,
-        ) -> Any:
-            """Return a concrete value to write for a violated constraint.
+        def _constraint_replacement_value(constraint: Any) -> Any:
+            """Concrete value to write for a forced/violated (non-enum) range constraint.
 
-            Enum constraints expose concrete values via ``value.values``.
-            Slider-style exact selections arrive as ``minimum == maximum``
-            ranges, which CCF represents with ``values is None`` and
-            ``min/max`` populated. Treat those as a one-value constraint.
-            For non-exact ranges, keep a current value that already
-            satisfies the range. When a concrete value has to be chosen,
-            use the minimum bound when available.
+            The caller handles enums; for a range pick the minimum bound, else the 
+            maximum. The current value is never preserved — on the force path 
+            (reset=True) the result must depend only on the constraint, and on the
+            repair path the current value is out of range.
             """
             rv = constraint.value
-            if rv.values and len(rv.values) > 0:
-                return rv.values[0]
-            if rv.min is not None and rv.max is not None and rv.min == rv.max:
-                return rv.min
-            if current_value is not None:
-                if current_ok:
-                    return current_value
             if rv.min is not None:
                 return rv.min
             if rv.max is not None:
@@ -2670,11 +2658,7 @@ def force_flow_properties_compatibility(
                         compliant[prop_name] = Cap(prop_name, RangeValue(
                             values=(constraint.value.values[0],), type=constraint.value.type))
                 else:
-                    replacement = _constraint_replacement_value(
-                        constraint,
-                        current_value=current_value,
-                        current_ok=current_ok,
-                    )
+                    replacement = _constraint_replacement_value(constraint)
                     if replacement is not None:
                         compliant[prop_name] = Cap(prop_name, RangeValue(
                             values=(replacement,), type=constraint.value.type))

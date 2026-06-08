@@ -843,12 +843,13 @@ class TestForceFlowProperties:
         assert _get_cap_int(result, CapFormatFrameWidth) == 3840
         assert _get_cap_int(result, CapFormatFrameHeight) == 2160
 
-    def test_force_range_keeps_current_when_inside(self) -> None:
-        """A current flow value already inside a multi-value range is
-        valid and should remain selected, even during force/reset.
+    def test_force_range_snaps_to_minimum_on_reset(self) -> None:
+        """On the force path (reset=True) a range constraint resolves to its
+        minimum bound regardless of the current flow value. The result must
+        depend only on the constraint, not on any value already in range.
         """
         active_cons = Cons(consets=[ConSet(
-            preference=100, label="keep valid",
+            preference=100, label="snap to min",
             cons=make_conset(
                 Constraint(CapFormatFrameWidth, RangeValue(min=1280, max=3840, type=RangeType.INT)),
                 Constraint(CapFormatFrameHeight, RangeValue(min=720, max=2160, type=RangeType.INT)),
@@ -861,8 +862,8 @@ class TestForceFlowProperties:
             reset=True, verbose=True,
         )
         assert result is not None
-        assert _get_cap_int(result, CapFormatFrameWidth) == 1920
-        assert _get_cap_int(result, CapFormatFrameHeight) == 1080
+        assert _get_cap_int(result, CapFormatFrameWidth) == 1280
+        assert _get_cap_int(result, CapFormatFrameHeight) == 720
 
     def test_force_returns_compliant_groups(self) -> None:
         """Winning conset's layer_compatibility_groups is returned."""

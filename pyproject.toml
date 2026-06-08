@@ -36,7 +36,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-asyncio", "mypy"]
+dev = ["pytest", "pytest-asyncio", "pytest-aiohttp", "mypy"]
 
 [project.urls]
 Homepage = "https://github.com/alabou/NMOS-Reference"
