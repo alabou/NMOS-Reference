@@ -20,60 +20,73 @@ Comparison types:
 
 from __future__ import annotations
 
+from nmos.enums import (
+    FormatVideo, FormatAudio, FormatData, FormatMux,
+    VideoRaw, DataSmpte291, DataJson,
+    AudioRawL8, AudioRawL16, AudioRawL20, AudioRawL24, AudioCodedAm824,
+    Internal, Ptp,
+)
+
+# Comma-joined media-type lists used by the "in"/"notin" comparisons.
+_RAW_AUDIO_MEDIA_TYPES = ",".join([
+    AudioRawL8.s, AudioRawL16.s, AudioRawL20.s, AudioRawL24.s, AudioCodedAm824.s,
+])
+_DATA_MEDIA_TYPES = ",".join([DataSmpte291.s, DataJson.s])
+
 # NClock: discriminate on ref_type
 NCLOCK_PREDICATES: dict[str, list[tuple[str, str, str]]] = {
-    "NClockInternal": [("ref_type", "internal", "eq")],
-    "NClockPtp": [("ref_type", "ptp", "eq")],
+    "NClockInternal": [("ref_type", Internal.s, "eq")],
+    "NClockPtp": [("ref_type", Ptp.s, "eq")],
 }
 
 # NReceiver: discriminate on format
 NRECEIVER_PREDICATES: dict[str, list[tuple[str, str, str]]] = {
-    "NReceiverVideo": [("format", "urn:x-nmos:format:video", "eq")],
-    "NReceiverAudio": [("format", "urn:x-nmos:format:audio", "eq")],
-    "NReceiverData": [("format", "urn:x-nmos:format:data", "eq")],
-    "NReceiverMux": [("format", "urn:x-nmos:format:mux", "eq")],
+    "NReceiverVideo": [("format", FormatVideo.s, "eq")],
+    "NReceiverAudio": [("format", FormatAudio.s, "eq")],
+    "NReceiverData": [("format", FormatData.s, "eq")],
+    "NReceiverMux": [("format", FormatMux.s, "eq")],
 }
 
 # NSource: discriminate on format
 NSOURCE_PREDICATES: dict[str, list[tuple[str, str, str]]] = {
-    "NSourceVideo": [("format", "urn:x-nmos:format:video", "eq")],
-    "NSourceAudio": [("format", "urn:x-nmos:format:audio", "eq")],
-    "NSourceData": [("format", "urn:x-nmos:format:data", "eq")],
-    "NSourceMux": [("format", "urn:x-nmos:format:mux", "eq")],
+    "NSourceVideo": [("format", FormatVideo.s, "eq")],
+    "NSourceAudio": [("format", FormatAudio.s, "eq")],
+    "NSourceData": [("format", FormatData.s, "eq")],
+    "NSourceMux": [("format", FormatMux.s, "eq")],
 }
 
 # NFlow: discriminate on format + media_type
 NFLOW_PREDICATES: dict[str, list[tuple[str, str, str]]] = {
     "NFlowVideoRaw": [
-        ("format", "urn:x-nmos:format:video", "eq"),
-        ("media_type", "video/raw", "eq"),
+        ("format", FormatVideo.s, "eq"),
+        ("media_type", VideoRaw.s, "eq"),
     ],
     "NFlowVideoCoded": [
-        ("format", "urn:x-nmos:format:video", "eq"),
-        ("media_type", "video/raw", "neq"),
+        ("format", FormatVideo.s, "eq"),
+        ("media_type", VideoRaw.s, "neq"),
     ],
     "NFlowAudioRaw": [
-        ("format", "urn:x-nmos:format:audio", "eq"),
-        ("media_type", "audio/L8,audio/L16,audio/L20,audio/L24,audio/AM824", "in"),
+        ("format", FormatAudio.s, "eq"),
+        ("media_type", _RAW_AUDIO_MEDIA_TYPES, "in"),
     ],
     "NFlowAudioCoded": [
-        ("format", "urn:x-nmos:format:audio", "eq"),
-        ("media_type", "audio/L8,audio/L16,audio/L20,audio/L24,audio/AM824", "notin"),
+        ("format", FormatAudio.s, "eq"),
+        ("media_type", _RAW_AUDIO_MEDIA_TYPES, "notin"),
     ],
     "NFlowDataSdianc": [
-        ("format", "urn:x-nmos:format:data", "eq"),
-        ("media_type", "video/smpte291", "eq"),
+        ("format", FormatData.s, "eq"),
+        ("media_type", DataSmpte291.s, "eq"),
     ],
     "NFlowDataJson": [
-        ("format", "urn:x-nmos:format:data", "eq"),
-        ("media_type", "application/json", "eq"),
+        ("format", FormatData.s, "eq"),
+        ("media_type", DataJson.s, "eq"),
     ],
     "NFlowData": [
-        ("format", "urn:x-nmos:format:data", "eq"),
-        ("media_type", "video/smpte291,application/json", "notin"),
+        ("format", FormatData.s, "eq"),
+        ("media_type", _DATA_MEDIA_TYPES, "notin"),
     ],
     "NFlowMux": [
-        ("format", "urn:x-nmos:format:mux", "eq"),
+        ("format", FormatMux.s, "eq"),
     ],
 }
 

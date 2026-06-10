@@ -134,8 +134,8 @@
           },
           "urn:x-nmos:cap:format:profile": {
             "enum": [
-              "High 4:4:4 12-bit",
-              "Main 4:4:4 12-bit"
+              "High444.12",
+              "Main444.12"
             ]
           },
           "urn:x-nmos:cap:format:level": {

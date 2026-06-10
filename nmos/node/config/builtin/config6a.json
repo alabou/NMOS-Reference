@@ -718,7 +718,7 @@
           "urn:x-nmos:cap:meta:preference": 100,
           "urn:x-nmos:cap:format:media_type": {
             "enum": [
-              "audio/aac"
+              "audio/mpeg4-generic"
             ]
           },
           "urn:x-nmos:cap:format:sample_rate": {

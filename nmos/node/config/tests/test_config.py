@@ -294,7 +294,7 @@ class TestTemplates:
         from nmos.node.config.templates import apply_template_to_constraint_set
 
         cs = {
-            "urn:x-nmos:cap:format:media_type": {"enum": ["audio/aac"]},
+            "urn:x-nmos:cap:format:media_type": {"enum": ["audio/mpeg4-generic"]},
         }
 
         apply_template_to_constraint_set(cs, verbose=False)
@@ -386,7 +386,7 @@ class TestMuxLayerCountValidation:
                     "urn:x-nmos:cap:meta:preference": 100,
                     "urn:x-matrox:cap:meta:format": "urn:x-nmos:format:audio",
                     "urn:x-matrox:cap:meta:layer": 0,
-                    "urn:x-nmos:cap:format:media_type": {"enum": ["audio/aac"]},
+                    "urn:x-nmos:cap:format:media_type": {"enum": ["audio/MP4A-ADTS"]},
                 },
                 # NO data sub-constraint — claim of max=1 is unreachable.
             ],
@@ -423,7 +423,7 @@ class TestMuxLayerCountValidation:
                         "urn:x-nmos:cap:meta:preference": 100,
                         "urn:x-matrox:cap:meta:format": "urn:x-nmos:format:audio",
                         "urn:x-matrox:cap:meta:layer": i,
-                        "urn:x-nmos:cap:format:media_type": {"enum": ["audio/aac"]},
+                        "urn:x-nmos:cap:format:media_type": {"enum": ["audio/MP4A-ADTS"]},
                     }
                     for i in range(3)
                 ],
@@ -977,6 +977,23 @@ def _get_receiver_version(receiver_ptr):
     return r_ver, c_ver
 
 
+def _receiver_constraints_snapshot(receiver_ptr):
+    """JSON snapshot of a receiver's constraint sets (excludes the caps Version),
+    used to detect whether propagation actually rewrote any constraints."""
+    from nmos.json.engine import JsonEngine
+    inner = receiver_ptr.get() if hasattr(receiver_ptr, 'get') else receiver_ptr
+    rv = inner.value if hasattr(inner, 'value') else inner
+    if not (hasattr(rv, 'Caps') and rv.Caps.defined):
+        return None
+    caps_val = rv.Caps.value
+    if not (hasattr(caps_val, 'ConstraintSets') and caps_val.ConstraintSets.defined):
+        return None
+    try:
+        return JsonEngine().encode(caps_val.ConstraintSets)
+    except Exception:
+        return None
+
+
 def _build_random_video_constraints():
     """Build a constraint set with randomized generic video properties."""
     widths = [1280, 1920, 3840]
@@ -1068,8 +1085,9 @@ class TestParametrizedConstraintPropagation:
             if receiver is None:
                 continue
 
-            # Record versions before
+            # Record versions + constraint snapshot before
             r_ver_before, c_ver_before = _get_receiver_version(receiver)
+            snap_before = _receiver_constraints_snapshot(receiver)
 
             _time.sleep(0.01)  # Ensure timestamp differs
 
@@ -1082,23 +1100,36 @@ class TestParametrizedConstraintPropagation:
 
             result = node.force_active_constraints(sender, ac)
 
-            # Record versions after
+            # Record versions + snapshot after
             r_ver_after, c_ver_after = _get_receiver_version(receiver)
+            snap_after = _receiver_constraints_snapshot(receiver)
 
-            assert r_ver_after != r_ver_before, (
-                f"{config_name} sender[{i}] '{s_cfg['label']}': "
-                f"receiver version should change after constraint propagation"
-            )
-
-            # Caps version bumps only if the receiver has a preference=100
-            # sub-constraint-set matching the sender's format+layer.
-            # If not (e.g., config11 mux has no native video sub-CS),
-            # the caps version legitimately stays the same.
-            # We verify it changed OR accept it didn't.
-            if c_ver_before is not None and c_ver_after is not None:
-                if c_ver_after != c_ver_before:
-                    pass  # Good — caps version bumped
-                # else: no matching native CS — acceptable
+            # Propagation is gate-conditional (faithful to the Go reference): the
+            # receiver's native constraints are only rewritten when the compliant
+            # generic properties satisfy one of the receiver's NON-native
+            # constraint sets (checkReceiverNativePropertiesCompatibility) AND a
+            # matching native (preference=100) set exists. For some configs the
+            # sender's properties fall outside every non-native alternative (e.g.
+            # config6: component_depth 10 vs the receiver's 8-bit-only set) or no
+            # native sub-set matches the layer/format (e.g. config11 mux). In those
+            # cases propagation correctly does NOT occur and nothing is bumped.
+            #
+            # A real constraint rewrite MUST bump the receiver version. (The reverse
+            # does not hold: a successful propagation that writes values identical
+            # to the existing ones still bumps the version — faithful to Go, which
+            # calls Version.Now() on success regardless of whether values changed.)
+            constraints_changed = snap_after != snap_before
+            version_changed = r_ver_after != r_ver_before
+            if constraints_changed:
+                assert version_changed, (
+                    f"{config_name} sender[{i}] '{s_cfg['label']}': receiver "
+                    f"constraints were rewritten but the version did not bump"
+                )
+                if c_ver_before is not None and c_ver_after is not None:
+                    assert c_ver_after != c_ver_before, (
+                        f"{config_name} sender[{i}]: caps version should bump when "
+                        f"native constraints change"
+                    )
 
     @pytest.mark.parametrize("config_name", _LINKED_CONFIGS)
     def test_video_senders_propagate_generic_properties(self, config_name: str) -> None:

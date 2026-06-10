@@ -118,12 +118,12 @@ class TestHelpers:
         assert get_format_from_media_type("video/raw") == "urn:x-nmos:format:video"
         assert get_format_from_media_type("video/H264") == "urn:x-nmos:format:video"
         assert get_format_from_media_type("audio/L24") == "urn:x-nmos:format:audio"
-        assert get_format_from_media_type("audio/aac") == "urn:x-nmos:format:audio"
+        assert get_format_from_media_type("audio/mpeg4-generic") == "urn:x-nmos:format:audio"
         # video/MP2T is opaque (not supported) — falls to FormatVideo
         assert get_format_from_media_type("video/MP2T") == "urn:x-nmos:format:video"
         assert get_format_from_media_type("application/AM824") == "urn:x-nmos:format:mux"
         assert get_format_from_media_type("application/MP2T") == "urn:x-nmos:format:mux"
-        assert get_format_from_media_type("data/USB") == "urn:x-nmos:format:data"
+        assert get_format_from_media_type("application/usb") == "urn:x-nmos:format:data"
 
     def test_class_from_media_type(self) -> None:
         assert get_class_from_media_type("video/raw") == "raw"
@@ -131,7 +131,7 @@ class TestHelpers:
         assert get_class_from_media_type("video/H265") == "coded"
         assert get_class_from_media_type("audio/L24") == "raw"
         assert get_class_from_media_type("audio/AM824") == "coded"  # ClassAudioCoded
-        assert get_class_from_media_type("audio/aac") == "coded"
+        assert get_class_from_media_type("audio/mpeg4-generic") == "coded"
         # video/MP2T is opaque (not supported) — falls to "coded" (video codec class)
         assert get_class_from_media_type("video/MP2T") == "coded"
         assert get_class_from_media_type("application/AM824") == "mux"  # ClassMux (MuxAm824)
@@ -228,7 +228,7 @@ class TestFixPcmSampleDepth:
     def test_non_pcm_not_affected(self) -> None:
         props = {
             CapFormatMediaType: Cap(CapFormatMediaType,
-                RangeValue(values=("audio/aac",), type=RangeType.STRING)),
+                RangeValue(values=("audio/mpeg4-generic",), type=RangeType.STRING)),
         }
         fix_pcm_sample_depth(props)
         # Should not crash or modify anything
@@ -1048,3 +1048,60 @@ class TestCCFDirectComparison:
         h = direct_result.capsets[0].caps.get(CapFormatFrameHeight)
         assert h is not None
         assert 1080 in h.value.values
+
+
+@pytest.mark.skipif(not HAS_CCF, reason="MatroxCCF not available")
+class TestNConstraintToRange:
+    """Unit tests for the receiver NConstraint → CCF RangeValue converter that
+    backs the sender→receiver propagation check-gate
+    (_check_receiver_native_properties_compatibility)."""
+
+    def _make(self, data):
+        from nmos.types.generated.nconstraint import NConstraint
+        c = NConstraint()
+        c.decode_value(data)
+        return c
+
+    def test_int_enum(self) -> None:
+        from nmos.node.compatibility import _nconstraint_to_range
+        rng = _nconstraint_to_range(self._make({"enum": [1920, 3840]}))
+        assert rng.type == RangeType.INT
+        assert rng.includes_value(1920) and rng.includes_value(3840)
+        assert not rng.includes_value(1280)
+
+    def test_int_minmax(self) -> None:
+        from nmos.node.compatibility import _nconstraint_to_range
+        rng = _nconstraint_to_range(self._make({"minimum": 720, "maximum": 2160}))
+        assert rng.type == RangeType.INT
+        assert rng.includes_value(1080)
+        assert not rng.includes_value(480)
+        assert not rng.includes_value(4320)
+
+    def test_string_enum(self) -> None:
+        from nmos.node.compatibility import _nconstraint_to_range
+        rng = _nconstraint_to_range(self._make({"enum": ["BT709", "BT2020"]}))
+        assert rng.type == RangeType.STRING
+        assert rng.includes_value("BT709")
+        assert not rng.includes_value("BT601")
+
+    def test_bool_enum(self) -> None:
+        from nmos.node.compatibility import _nconstraint_to_range
+        rng = _nconstraint_to_range(self._make({"enum": [True]}))
+        assert rng.type == RangeType.BOOL
+        assert rng.includes_value(True)
+        assert not rng.includes_value(False)
+
+    def test_rational_enum(self) -> None:
+        from nmos.node.compatibility import _nconstraint_to_range
+        rng = _nconstraint_to_range(self._make({"enum": [{"numerator": 60, "denominator": 1}]}))
+        assert rng.type == RangeType.RATIONAL
+        assert rng.includes_value(Fraction(60, 1))
+        assert not rng.includes_value(Fraction(30, 1))
+
+    def test_includes_range_single_value(self) -> None:
+        """The check-gate compares a compliant Cap's RangeValue against the
+        receiver constraint range via includes_range (property ⊆ constraint)."""
+        from nmos.node.compatibility import _nconstraint_to_range
+        rng = _nconstraint_to_range(self._make({"enum": [720, 1280, 1920, 3840]}))
+        assert rng.includes_range(RangeValue(values=(1920,), type=RangeType.INT))
+        assert not rng.includes_range(RangeValue(values=(1000,), type=RangeType.INT))

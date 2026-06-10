@@ -62,6 +62,44 @@ from nmos.node.updates import (
     SourceUpdate,
     iter_set_fields,
 )
+from nmos.enums import (
+    # Formats
+    FormatAudio, FormatData,
+    # Media types
+    VideoCodedH264, VideoCodedH265, VideoCodedJxsv,
+    AudioRawL8, AudioRawL16, AudioRawL20, AudioRawL24, AudioCodedAm824,
+    AudioCodedAac, AudioCodedAacLATM, AudioCodedAacADTS,
+    MuxAm824, MuxMpeg2TS, MuxGeneric,
+    # Transport
+    TransportUsb, TransportRtsp, TransportRtspTcp, TransportSrt, TransportSrtMpeg2Ts,
+    TransportUdp, TransportUdpUnicast, TransportUdpMulticast,
+    TransportUdpMpeg2Ts, TransportUdpMpeg2TsUnicast, TransportUdpMpeg2TsMulticast,
+    # Tags
+    TagGroupHint, TagAssetManufacturer, TagAssetProduct, TagAssetInstance, TagAssetFunction,
+    # Colorspace / transfer / interlace
+    BT601, BT709, BT2020, BT2100, SDR, HLG, PQ,
+    InterlacedTff, InterlacedBff, InterlacedPsf,
+    # Audio channels / video components
+    L, R, C, LFE, Ls, Rs, Lrs, Rrs, Lt, Rt, M1, M2, B, G,
+    # H.264 profiles / shared codec levels
+    CodecProfileMain, H264ProfileBaselineConstrained, H264ProfileBaseline, H264ProfileExtended, H264ProfileHigh,
+    H264ProfileHighProgressive, H264ProfileHighConstrained, H264ProfileHigh10,
+    H264ProfileHigh10Progressive, H264ProfileHigh_422, H264ProfileHighPredictive_444,
+    H264ProfileHigh10Intra, H264ProfileHighIntra_422, H264ProfileHighIntra_444,
+    H264ProfileCAVLCIntra_444,
+    CodecLevel1, CodecLevel1b, CodecLevel1_1, CodecLevel1_2, CodecLevel1_3,
+    CodecLevel2, CodecLevel2_1, CodecLevel2_2, CodecLevel3, CodecLevel3_1, CodecLevel3_2,
+    CodecLevel4, CodecLevel4_1, CodecLevel4_2, CodecLevel5, CodecLevel5_1, CodecLevel5_2,
+    CodecLevel6, CodecLevel6_1, CodecLevel6_2,
+    # Packet transmission / parameter-set modes
+    CodeStream, NonInterleavedNalUnits, NonInterleavedAccessUnits,
+    InAndOutOfBand, OutOfBand, Strict,
+    # Compatibility status
+    Unconstrained, Constrained, ActiveConstraintsViolation, Unknown,
+    CompliantStream, NonCompliantStream,
+    # Protocols / clock / transport params / sender type
+    Http, Https, Ptp, Internal, IEEE1588_2008, SourceIp, SenderType2110TPW,
+)
 from nmos.uuid import (
     ResourceSubType,
     ResourceType,
@@ -102,7 +140,7 @@ def _get_sdp_channel_order(channels: list[Any], is_am824: bool) -> str:
         return ""
 
     if n == 1:
-        if _sym(channels[0]) == "M1":
+        if _sym(channels[0]) == M1.s:
             return "SMPTE2110.(M)"
         return "SMPTE2110.(U01)"
 
@@ -110,19 +148,19 @@ def _get_sdp_channel_order(channels: list[Any], is_am824: bool) -> str:
         if is_am824:
             return "SMPTE2110.(AES3)"
         s0, s1 = _sym(channels[0]), _sym(channels[1])
-        if s0 == "M1" and s1 == "M2":
+        if s0 == M1.s and s1 == M2.s:
             return "SMPTE2110.(DM)"
-        if s0 == "L" and s1 == "R":
+        if s0 == L.s and s1 == R.s:
             return "SMPTE2110.(ST)"
-        if s0 == "Lt" and s1 == "Rt":
+        if s0 == Lt.s and s1 == Rt.s:
             return "SMPTE2110.(LtRt)"
         return "SMPTE2110.(U02)"
 
     if n == 4 and is_am824:
         s2, s3 = _sym(channels[2]), _sym(channels[3])
-        if s2 == "L" and s3 == "R":
+        if s2 == L.s and s3 == R.s:
             return "SMPTE2110.(AES3,ST)"
-        if s2 == "Lt" and s3 == "Rt":
+        if s2 == Lt.s and s3 == Rt.s:
             return "SMPTE2110.(AES3,LtRt)"
         return "SMPTE2110.(AES3,U02)"
 
@@ -130,24 +168,24 @@ def _get_sdp_channel_order(channels: list[Any], is_am824: bool) -> str:
         if is_am824:
             return "SMPTE2110.(AES3,AES3,AES3)"
         syms = [_sym(c) for c in channels]
-        if syms == ["L", "R", "C", "LFE", "Ls", "Rs"]:
+        if syms == [L.s, R.s, C.s, LFE.s, Ls.s, Rs.s]:
             return "SMPTE2110.(51)"
         return f"SMPTE2110.(U{n:02d})"
 
     if n == 8:
         if is_am824:
             syms = [_sym(c) for c in channels[2:8]]
-            if syms == ["L", "R", "C", "LFE", "Ls", "Rs"]:
+            if syms == [L.s, R.s, C.s, LFE.s, Ls.s, Rs.s]:
                 return "SMPTE2110.(AES3,51)"
             return "SMPTE2110.(AES3,U06)"
         syms = [_sym(c) for c in channels]
-        if syms == ["L", "R", "C", "LFE", "Ls", "Rs", "Lrs", "Rrs"]:
+        if syms == [L.s, R.s, C.s, LFE.s, Ls.s, Rs.s, Lrs.s, Rrs.s]:
             return "SMPTE2110.(71)"
         return f"SMPTE2110.(U{n:02d})"
 
     if n == 10 and is_am824:
         syms = [_sym(c) for c in channels[2:10]]
-        if syms == ["L", "R", "C", "LFE", "Ls", "Rs", "Lrs", "Rrs"]:
+        if syms == [L.s, R.s, C.s, LFE.s, Ls.s, Rs.s, Lrs.s, Rrs.s]:
             return "SMPTE2110.(AES3,71)"
         return "SMPTE2110.(AES3,U08)"
 
@@ -178,7 +216,7 @@ def _get_aes3_composite_channel_order(node: Any, mux_flow: Any) -> tuple[str, in
       - Coded audio (AAC etc.): counts as 2 channels (one AES3 pair) → "AES3"
       - audio/AM824: PROHIBITED as sub-flow (raises ValueError)
     """
-    _PCM_TYPES = {"audio/L8", "audio/L16", "audio/L20", "audio/L24"}
+    _PCM_TYPES = {AudioRawL8.s, AudioRawL16.s, AudioRawL20.s, AudioRawL24.s}
 
     flow_core = _get_flow_core(mux_flow)
     parent_ids = flow_core.Parents.value if flow_core.Parents.defined else []
@@ -196,7 +234,7 @@ def _get_aes3_composite_channel_order(node: Any, mux_flow: Any) -> tuple[str, in
 
         # Only consider audio sub-flows
         fmt_str = str(parent_inner.Format.value) if hasattr(parent_inner, 'Format') and parent_inner.Format.defined else ""
-        if fmt_str != "urn:x-nmos:format:audio":
+        if fmt_str != FormatAudio.s:
             continue
 
         parent_fc = _get_flow_core(parent_flow)
@@ -207,7 +245,7 @@ def _get_aes3_composite_channel_order(node: Any, mux_flow: Any) -> tuple[str, in
             mt = str(parent_inner.MediaType.value)
 
         # AM824 cannot be a sub-flow — raise here
-        if mt == "audio/AM824":
+        if mt == AudioCodedAm824.s:
             raise ValueError(
                 "audio/AM824 cannot be a sub-flow of a mux flow — "
                 "AES3 spec: audio sub-flows MUST NOT use the audio/AM824 media type"
@@ -273,33 +311,33 @@ def _get_h264_profile_level_id(flow_inner: Any) -> str:
     # Profile → profile_idc + profile_iop
     _PROFILE_MAP: dict[str, tuple[int, int, int]] = {
         # profile_str: (profile_idc, profile_iop, default_level_idc)
-        "Constrained Baseline": (0x42, 0x40, 11),
-        "Baseline": (0x42, 0x80, 11),
-        "Main": (0x4d, 0x00, 11),
-        "Extended": (0x58, 0x20, 11),
-        "High": (0x64, 0x00, 9),
-        "HighProgressive": (0x64, 0x08, 9),
-        "HighConstrained": (0x64, 0x0c, 9),
-        "High10": (0x6e, 0x00, 9),
-        "High10Progressive": (0x6e, 0x08, 9),
-        "High-422": (0x7a, 0x00, 9),
-        "HighPredictive-444": (0xf4, 0x00, 9),
-        "High10Intra": (0x6e, 0x10, 9),
-        "HighIntra-422": (0x7a, 0x10, 9),
-        "HighIntra-444": (0xf4, 0x10, 9),
-        "CAVLCIntra-444": (0x2c, 0x00, 9),
+        H264ProfileBaselineConstrained.s: (0x42, 0x40, 11),
+        H264ProfileBaseline.s: (0x42, 0x80, 11),
+        CodecProfileMain.s: (0x4d, 0x00, 11),
+        H264ProfileExtended.s: (0x58, 0x20, 11),
+        H264ProfileHigh.s: (0x64, 0x00, 9),
+        H264ProfileHighProgressive.s: (0x64, 0x08, 9),
+        H264ProfileHighConstrained.s: (0x64, 0x0c, 9),
+        H264ProfileHigh10.s: (0x6e, 0x00, 9),
+        H264ProfileHigh10Progressive.s: (0x6e, 0x08, 9),
+        H264ProfileHigh_422.s: (0x7a, 0x00, 9),
+        H264ProfileHighPredictive_444.s: (0xf4, 0x00, 9),
+        H264ProfileHigh10Intra.s: (0x6e, 0x10, 9),
+        H264ProfileHighIntra_422.s: (0x7a, 0x10, 9),
+        H264ProfileHighIntra_444.s: (0xf4, 0x10, 9),
+        H264ProfileCAVLCIntra_444.s: (0x2c, 0x00, 9),
     }
 
     profile_idc, profile_iop, level_idc = _PROFILE_MAP.get(profile, (0x64, 0x00, 9))
 
     # Level → level_idc
     _LEVEL_MAP: dict[str, int] = {
-        "1": 10, "1b": 9, "1.1": 11, "1.2": 12, "1.3": 13,
-        "2": 20, "2.1": 21, "2.2": 22,
-        "3": 30, "3.1": 31, "3.2": 32,
-        "4": 40, "4.1": 41, "4.2": 42,
-        "5": 50, "5.1": 51, "5.2": 52,
-        "6": 60, "6.1": 61, "6.2": 62,
+        CodecLevel1.s: 10, CodecLevel1b.s: 9, CodecLevel1_1.s: 11, CodecLevel1_2.s: 12, CodecLevel1_3.s: 13,
+        CodecLevel2.s: 20, CodecLevel2_1.s: 21, CodecLevel2_2.s: 22,
+        CodecLevel3.s: 30, CodecLevel3_1.s: 31, CodecLevel3_2.s: 32,
+        CodecLevel4.s: 40, CodecLevel4_1.s: 41, CodecLevel4_2.s: 42,
+        CodecLevel5.s: 50, CodecLevel5_1.s: 51, CodecLevel5_2.s: 52,
+        CodecLevel6.s: 60, CodecLevel6_1.s: 61, CodecLevel6_2.s: 62,
     }
     if level:
         level_idc = _LEVEL_MAP.get(level, level_idc)
@@ -345,22 +383,22 @@ def _set_ipmx_timing(media: Any) -> None:
 
 
 _RTSP_TRANSPORT_URNS = {
-    "urn:x-matrox:transport:rtsp",
-    "urn:x-matrox:transport:rtsp.tcp",
+    TransportRtsp.s,
+    TransportRtspTcp.s,
 }
 _USB_TRANSPORT_URNS = {
-    "urn:x-nmos:transport:usb",
+    TransportUsb.s,
     "urn:x-matrox:transport:usb",
 }
 _SRT_UDP_MP2T_TRANSPORT_URNS = {
-    "urn:x-matrox:transport:srt",
-    "urn:x-matrox:transport:srt.mp2t",
-    "urn:x-matrox:transport:udp",
-    "urn:x-matrox:transport:udp.ucast",
-    "urn:x-matrox:transport:udp.mcast",
-    "urn:x-matrox:transport:udp.mp2t",
-    "urn:x-matrox:transport:udp.mp2t.ucast",
-    "urn:x-matrox:transport:udp.mp2t.mcast",
+    TransportSrt.s,
+    TransportSrtMpeg2Ts.s,
+    TransportUdp.s,
+    TransportUdpUnicast.s,
+    TransportUdpMulticast.s,
+    TransportUdpMpeg2Ts.s,
+    TransportUdpMpeg2TsUnicast.s,
+    TransportUdpMpeg2TsMulticast.s,
 }
 
 
@@ -417,7 +455,7 @@ def _resolve_leg_ips_and_ports(active_params: Any, sender_index: int,
     dest_port = 27500 + 2 * sender_index
     if active_params is None:
         return {
-            "source_ip": source_ip, "src_port": src_port,
+            SourceIp.s: source_ip, "src_port": src_port,
             "dest_ip": dest_ip, "dest_port": dest_port,
         }
     if hasattr(active_params, "SourceIp") and active_params.SourceIp.defined:
@@ -441,7 +479,7 @@ def _resolve_leg_ips_and_ports(active_params: Any, sender_index: int,
         except (AttributeError, ValueError, TypeError):
             pass
     return {
-        "source_ip": source_ip, "src_port": src_port,
+        SourceIp.s: source_ip, "src_port": src_port,
         "dest_ip": dest_ip, "dest_port": dest_port,
     }
 
@@ -497,7 +535,7 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
       - ``rtp``: full flow-derived RTP/AVP media section
     """
     leg_addrs = _resolve_leg_ips_and_ports(active_params, sender_index, interface_ip)
-    source_ip = leg_addrs["source_ip"]
+    source_ip = leg_addrs[SourceIp.s]
     src_port = leg_addrs["src_port"]
     dest_ip = leg_addrs["dest_ip"]
     dest_port = leg_addrs["dest_port"]
@@ -571,7 +609,7 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
                     media.depth = comps[0].BitDepth.value
                 if comps:
                     names = [str(c.Name.value) if c.Name.defined else "" for c in comps]
-                    if set(names) & {"R", "G", "B"}:
+                    if set(names) & {R.s, G.s, B.s}:
                         media.sampling = E.SamplingRGB.value
                     elif len(comps) >= 3:
                         w0 = comps[0].Width.value if comps[0].Width.defined else 0
@@ -597,27 +635,27 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
             if hasattr(flow_inner, 'Colorspace') and flow_inner.Colorspace.defined:
                 cs = str(flow_inner.Colorspace.value)
                 _colorimetry_map = {
-                    "BT601": E.ColorimetryBT601,
-                    "BT709": E.ColorimetryBT709,
-                    "BT2020": E.ColorimetryBT2020,
-                    "BT2100": E.ColorimetryBT2100,
+                    BT601.s: E.ColorimetryBT601,
+                    BT709.s: E.ColorimetryBT709,
+                    BT2020.s: E.ColorimetryBT2020,
+                    BT2100.s: E.ColorimetryBT2100,
                 }
                 media.colorimetry = _colorimetry_map.get(cs, E.ColorimetryBT709).value
 
             if hasattr(flow_inner, 'TransferCharacteristic') and flow_inner.TransferCharacteristic.defined:
                 tc = str(flow_inner.TransferCharacteristic.value)
-                _tcs_map = {"SDR": E.TransferSDR, "PQ": E.TransferPQ, "HLG": E.TransferHLG}
+                _tcs_map = {SDR.s: E.TransferSDR, PQ.s: E.TransferPQ, HLG.s: E.TransferHLG}
                 if tc in _tcs_map:
                     media.transfer_characteristic = _tcs_map[tc].value
 
             if hasattr(flow_inner, 'InterlaceMode') and flow_inner.InterlaceMode.defined:
                 im = str(flow_inner.InterlaceMode.value)
-                if im == "interlaced_tff":
+                if im == InterlacedTff.s:
                     media.interlaced = True
                     media.top_field_first = True
-                elif im == "interlaced_bff":
+                elif im == InterlacedBff.s:
                     media.interlaced = True
-                elif im == "interlaced_psf":
+                elif im == InterlacedPsf.s:
                     media.interlaced = True
                     media.segmented = True
 
@@ -633,16 +671,16 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
             if hasattr(flow_inner, 'MediaType') and flow_inner.MediaType.defined:
                 mt = str(flow_inner.MediaType.value)
                 _audio_enc = {
-                    "audio/L8": E.EncodingL8,
-                    "audio/L16": E.EncodingL16,
-                    "audio/L20": E.EncodingL20,
-                    "audio/L24": E.EncodingL24,
-                    "audio/AM824": E.EncodingAM824,
-                    "audio/mpeg4-generic": E.EncodingAAC,
-                    "audio/MP4A-LATM": E.EncodingAAC_LATM,
-                    "audio/mp4a-latm": E.EncodingAAC_LATM,
-                    "audio/MP4A-ADTS": E.EncodingAAC_ADTS,
-                    "audio/mp4a-adts": E.EncodingAAC_ADTS,
+                    AudioRawL8.s: E.EncodingL8,
+                    AudioRawL16.s: E.EncodingL16,
+                    AudioRawL20.s: E.EncodingL20,
+                    AudioRawL24.s: E.EncodingL24,
+                    AudioCodedAm824.s: E.EncodingAM824,
+                    AudioCodedAac.s: E.EncodingAAC,
+                    AudioCodedAacLATM.s: E.EncodingAAC_LATM,
+                    AudioCodedAacLATM.s.lower(): E.EncodingAAC_LATM,
+                    AudioCodedAacADTS.s: E.EncodingAAC_ADTS,
+                    AudioCodedAacADTS.s.lower(): E.EncodingAAC_ADTS,
                 }
                 enc = _audio_enc.get(mt)
                 if enc is None:
@@ -675,7 +713,7 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
                 media.channels = 2
 
             channel_order = ""
-            is_am824 = mt == "audio/AM824"
+            is_am824 = mt == AudioCodedAm824.s
             try:
                 source_id = _get_flow_core(node.flows.get(sender.FlowId.value)).SourceId.value
                 source = node.sources.get(source_id)
@@ -701,10 +739,9 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
             if hasattr(flow_inner, 'MediaType') and flow_inner.MediaType.defined:
                 mt = str(flow_inner.MediaType.value)
                 _video_enc = {
-                    "video/jxsv": E.EncodingJxsv,
-                    "video/H264": E.EncodingH264,
-                    "video/H265": E.EncodingH265,
-                    "video/JPEG": E.EncodingJpeg if hasattr(E, 'EncodingJpeg') else None,
+                    VideoCodedJxsv.s: E.EncodingJxsv,
+                    VideoCodedH264.s: E.EncodingH264,
+                    VideoCodedH265.s: E.EncodingH265,
                 }
                 enc = _video_enc.get(mt)
                 if enc is None:
@@ -721,8 +758,8 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
             if hasattr(flow_inner, 'Colorspace') and flow_inner.Colorspace.defined:
                 cs = str(flow_inner.Colorspace.value)
                 _colorimetry_map = {
-                    "BT601": E.ColorimetryBT601, "BT709": E.ColorimetryBT709,
-                    "BT2020": E.ColorimetryBT2020, "BT2100": E.ColorimetryBT2100,
+                    BT601.s: E.ColorimetryBT601, BT709.s: E.ColorimetryBT709,
+                    BT2020.s: E.ColorimetryBT2020, BT2100.s: E.ColorimetryBT2100,
                 }
                 media.colorimetry = _colorimetry_map.get(cs, E.ColorimetryBT709).value
 
@@ -741,7 +778,7 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
                     media.depth = comps[0].BitDepth.value
                 if comps:
                     names = [str(c.Name.value) if c.Name.defined else "" for c in comps]
-                    if set(names) & {"R", "G", "B"}:
+                    if set(names) & {R.s, G.s, B.s}:
                         media.sampling = E.SamplingRGB.value
                     elif len(comps) >= 3:
                         w0 = comps[0].Width.value if comps[0].Width.defined else 0
@@ -757,7 +794,7 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
                 media.bitrate_kbits = flow_inner.BitRate.value
 
             mt = str(flow_inner.MediaType.value) if flow_inner.MediaType.defined else ""
-            if mt == "video/H264":
+            if mt == VideoCodedH264.s:
                 media.codec_profile_level_id = _get_h264_profile_level_id(flow_inner)
                 media.h264_packetization_mode = 1  # Non-interleaved
                 media.sender_type = E.SenderType2110TPW.value
@@ -767,13 +804,13 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
             if hasattr(flow_inner, 'MediaType') and flow_inner.MediaType.defined:
                 mt = str(flow_inner.MediaType.value)
 
-            if mt == "application/AM824":
+            if mt == MuxAm824.s:
                 _BLOCKED_TRANSPORTS = {
-                    "urn:x-matrox:transport:srt",
+                    TransportSrt.s,
                     "urn:x-matrox:transport:srt.mpeg2ts",
-                    "urn:x-matrox:transport:udp",
-                    "urn:x-matrox:transport:udp.ucast",
-                    "urn:x-matrox:transport:udp.mcast",
+                    TransportUdp.s,
+                    TransportUdpUnicast.s,
+                    TransportUdpMulticast.s,
                     "urn:x-matrox:transport:udp.mpeg2ts",
                     "urn:x-matrox:transport:udp.mpeg2ts.ucast",
                     "urn:x-matrox:transport:udp.mpeg2ts.mcast",
@@ -807,7 +844,7 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
                 media.max_p_time_us = media.p_time_us
                 media.frame_count = int((media.p_time_us * media.sample_rate) / 1000000)
 
-            elif mt in ("application/MP2T", "application/mp2t"):
+            elif mt in (MuxMpeg2TS.s, MuxGeneric.s):
                 if "rtp" in transport:
                     media.media_name = "video"
                     media.type = E.Video.value
@@ -903,7 +940,7 @@ def _generate_sdp_from_params(node: Any, sender: Any, sender_id: str,
             activation.sender_index if hasattr(activation, 'sender_index') else 0,
             interface_ip,
         )
-        origin_ip = leg0_addrs["source_ip"]
+        origin_ip = leg0_addrs[SourceIp.s]
 
     flow_inner = None
     if sender.FlowId.defined and sender.FlowId.value is not None:
@@ -916,7 +953,7 @@ def _generate_sdp_from_params(node: Any, sender: Any, sender_id: str,
 
     # PTP clock lookup (session-level fact)
     ptp_gmid = "00-00-00-00-00-00-00-00"
-    ptp_version = "IEEE1588-2008"
+    ptp_version = IEEE1588_2008.s
     found_ptp = False
     try:
         if node.node_value is not None and node.node_value.Clocks.defined:
@@ -1056,7 +1093,7 @@ def _extract_group_hint(resource: Any) -> str:
         if not isinstance(tags, dict):
             return ""
         for key, values in tags.items():
-            if str(key) == "urn:x-nmos:tag:grouphint/v1.0" and values:
+            if str(key) == TagGroupHint.s and values:
                 first = values[0]
                 return str(first) if first is not None else ""
     except (AttributeError, TypeError):
@@ -1379,9 +1416,9 @@ class Node:
             # configuration tags are merged in afterwards — both name
             # spaces coexist in the same ``tags`` dict per the spec.
             _node_tags: dict[str, list[str]] = {
-                "urn:x-nmos:tag:asset:manufacturer/v1.0": [_MANUFACTURER],
-                "urn:x-nmos:tag:asset:product/v1.0": [_PRODUCT],
-                "urn:x-nmos:tag:asset:instance-id/v1.0": [serial_number],
+                TagAssetManufacturer.s: [_MANUFACTURER],
+                TagAssetProduct.s: [_PRODUCT],
+                TagAssetInstance.s: [serial_number],
             }
             _node_tags.update(self._security_tags)
             nv.ResourceCore.Tags.value = _node_tags
@@ -1398,7 +1435,7 @@ class Node:
             ep.set_to_default()
             ep.Host.value = host
             ep.Port.value = port
-            ep.Protocol.value = _ER.get("http")
+            ep.Protocol.value = _ER.get(Http.s)
             api.Endpoints.value = [ep]
 
             # Default clocks: PTP "clk0" + Internal "clk1"
@@ -1410,9 +1447,9 @@ class Node:
                 ptp_val = NClockPtpValue()
                 ptp_val.set_to_default()
                 ptp_val.Name.value = "clk0"
-                ptp_val.RefType.value = _ER.get("ptp")
+                ptp_val.RefType.value = _ER.get(Ptp.s)
                 ptp_val.Traceable.value = False
-                ptp_val.Version.value = _ER.get("IEEE1588-2008")
+                ptp_val.Version.value = _ER.get(IEEE1588_2008.s)
                 ptp_val.Gmid.value = "00-00-00-00-00-00-00-00"
                 ptp_val.Locked.value = True
                 ptp_wrapper = NClockPtp()
@@ -1422,7 +1459,7 @@ class Node:
                 int_val = NClockInternalValue()
                 int_val.set_to_default()
                 int_val.Name.value = "clk1"
-                int_val.RefType.value = _ER.get("internal")
+                int_val.RefType.value = _ER.get(Internal.s)
                 int_wrapper = NClockInternal()
                 int_wrapper._defined = True
                 int_wrapper._value = int_val
@@ -1468,7 +1505,7 @@ class Node:
                 # Scheme follows the Node's TLS posture so peers
                 # consuming the IS-04 services array know whether to
                 # talk plain HTTP or HTTPS.
-                scheme = "https" if self.tls_enabled else "http"
+                scheme = Https.s if self.tls_enabled else Http.s
                 services: list[NNodeServiceValue] = []
 
                 svc_exclusive = NNodeServiceValue()
@@ -1505,10 +1542,10 @@ class Node:
 
             # BCP-002-02: Device asset tags
             dv.ResourceCore.Tags.value = {
-                "urn:x-nmos:tag:asset:manufacturer/v1.0": [_MANUFACTURER],
-                "urn:x-nmos:tag:asset:product/v1.0": [_PRODUCT],
-                "urn:x-nmos:tag:asset:function/v1.0": [_FUNCTION],
-                "urn:x-nmos:tag:asset:instance-id/v1.0": [serial_number],
+                TagAssetManufacturer.s: [_MANUFACTURER],
+                TagAssetProduct.s: [_PRODUCT],
+                TagAssetFunction.s: [_FUNCTION],
+                TagAssetInstance.s: [serial_number],
             }
 
             # Device controls
@@ -1526,7 +1563,7 @@ class Node:
                 # controller's per-control gating; the Node-side
                 # enforcement already runs through the existing
                 # ``client_auth_middleware`` in nmos/api/middleware.py.
-                scheme = "https" if self.tls_enabled else "http"
+                scheme = Https.s if self.tls_enabled else Http.s
                 # When ``--controlTrustedRootCA`` is set, the operator
                 # has split IS-05 / IS-11 onto ``--controlPort`` so the
                 # advertised hrefs MUST point there — otherwise remote
@@ -2388,7 +2425,7 @@ class Node:
                 ep = self.node_value.Api.value.Endpoints
                 if ep.defined and len(ep.value) > 0:
                     endpoint = ep.value[0]
-                    scheme = str(endpoint.Protocol.value) if endpoint.Protocol.defined else "http"
+                    scheme = str(endpoint.Protocol.value) if endpoint.Protocol.defined else Http.s
                     ep_host = endpoint.Host.value if endpoint.Host.defined else "127.0.0.1"
                     ep_port = endpoint.Port.value if endpoint.Port.defined else 5050
                     sender.ManifestHref.value = (
@@ -2752,17 +2789,17 @@ class Node:
         if (hasattr(sender, 'CompatibilityStatus')
                 and sender.CompatibilityStatus.defined):
             prev_was_violated = sender.CompatibilityStatus.value is (
-                EnumRegistry.get("active_constraints_violation")
+                EnumRegistry.get(ActiveConstraintsViolation.s)
             )
 
         status = check_sender_flow_compatibility(self, sender_id, verbose=True)
 
         if status == "compatible":
-            result = "constrained"
+            result = Constrained.s
         elif status == "incompatible":
-            result = "active_constraints_violation"
+            result = ActiveConstraintsViolation.s
         else:
-            result = "unconstrained"
+            result = Unconstrained.s
 
         if hasattr(sender, 'CompatibilityStatus'):
             sender.CompatibilityStatus.value = EnumRegistry.get(result)
@@ -2771,8 +2808,8 @@ class Node:
             sender_id, is_sender=True,
             prev_was_violated=prev_was_violated,
             new_result=result,
-            violation_states=("active_constraints_violation",),
-            healthy_states=("constrained", "unconstrained"),
+            violation_states=(ActiveConstraintsViolation.s,),
+            healthy_states=(Constrained.s, Unconstrained.s),
             role="sender",
         )
 
@@ -2863,7 +2900,7 @@ class Node:
             self.sender_ccf_merged.pop(static_id, None)
             if hasattr(sender, 'CompatibilityStatus'):
                 from nmos.enums import EnumRegistry
-                sender.CompatibilityStatus.value = EnumRegistry.get("unconstrained")
+                sender.CompatibilityStatus.value = EnumRegistry.get(Unconstrained.s)
             return None
 
         # Store raw NMOS Constraints on sender (for IS-04 encoding)
@@ -3063,17 +3100,17 @@ class Node:
                 and hasattr(core, 'CompatibilityStatus')
                 and core.CompatibilityStatus.defined):
             prev_was_noncompliant = core.CompatibilityStatus.value is (
-                EnumRegistry.get("non_compliant_stream")
+                EnumRegistry.get(NonCompliantStream.s)
             )
 
         status = check_stream_compatibility(self, receiver_id, verbose=True)
 
         if status == "compliant":
-            result = "compliant_stream"
+            result = CompliantStream.s
         elif status == "non_compliant":
-            result = "non_compliant_stream"
+            result = NonCompliantStream.s
         else:
-            result = "unknown"
+            result = Unknown.s
 
         try:
             if core is not None:
@@ -3085,8 +3122,8 @@ class Node:
             receiver_id, is_sender=False,
             prev_was_violated=prev_was_noncompliant,
             new_result=result,
-            violation_states=("non_compliant_stream",),
-            healthy_states=("compliant_stream", "unknown"),
+            violation_states=(NonCompliantStream.s,),
+            healthy_states=(CompliantStream.s, Unknown.s),
             role="receiver",
         )
 
@@ -3293,7 +3330,7 @@ class Node:
             from nmos.types.generated.nsource import NSourceValue
             from nmos.enums import EnumRegistry
 
-            format_data = EnumRegistry.get("urn:x-nmos:format:data")
+            format_data = EnumRegistry.get(FormatData.s)
 
             inner = NSourceDataValue()
             inner.SourceCore.set_to_default()
@@ -3425,44 +3462,44 @@ class Node:
             media_type = str(inner.MediaType.value) if inner.MediaType.defined else ""
             bitrate = inner.Bitrate.value if inner.Bitrate.defined else 0
 
-            if media_type == "video/jxsv":
+            if media_type == VideoCodedJxsv.s:
                 _set_if_exists("Bitrate", _get_transport_bitrate(bitrate))
-                _set_if_exists("PacketTransmissionMode", EnumRegistry.get("codestream"))
+                _set_if_exists("PacketTransmissionMode", EnumRegistry.get(CodeStream.s))
                 if self.ipmx or not self.rfc:
-                    _set_if_exists("SenderType", EnumRegistry.get("2110TPW"))
-            elif media_type in ("video/H264", "video/H265"):
+                    _set_if_exists("SenderType", EnumRegistry.get(SenderType2110TPW.s))
+            elif media_type in (VideoCodedH264.s, VideoCodedH265.s):
                 _set_if_exists("Bitrate", _get_transport_bitrate(bitrate))
                 _set_if_exists("PacketTransmissionMode",
-                               EnumRegistry.get("non_interleaved_nal_units"))
+                               EnumRegistry.get(NonInterleavedNalUnits.s))
                 _set_if_exists("ParameterSetsTransportMode",
-                               EnumRegistry.get("in_and_out_of_band"))
+                               EnumRegistry.get(InAndOutOfBand.s))
                 _set_if_exists("ParameterSetsFlowMode",
-                               EnumRegistry.get("strict"))
+                               EnumRegistry.get(Strict.s))
                 if self.ipmx or not self.rfc:
-                    _set_if_exists("SenderType", EnumRegistry.get("2110TPW"))
+                    _set_if_exists("SenderType", EnumRegistry.get(SenderType2110TPW.s))
 
         elif "AudioCoded" in type_name:
             media_type = str(inner.MediaType.value) if inner.MediaType.defined else ""
             bitrate = inner.Bitrate.value if inner.Bitrate.defined else 0
 
-            if media_type == "audio/AM824":
+            if media_type == AudioCodedAm824.s:
                 pass  # No optional attributes for AM824
-            elif media_type == "audio/mpeg4-generic":
+            elif media_type == AudioCodedAac.s:
                 _set_if_exists("Bitrate", _get_transport_bitrate(bitrate))
                 _set_if_exists("PacketTransmissionMode",
-                               EnumRegistry.get("non_interleaved_access_units"))
+                               EnumRegistry.get(NonInterleavedAccessUnits.s))
                 _set_if_exists("ParameterSetsTransportMode",
-                               EnumRegistry.get("out_of_band"))
+                               EnumRegistry.get(OutOfBand.s))
                 _set_if_exists("ParameterSetsFlowMode",
-                               EnumRegistry.get("strict"))
-            elif media_type in ("audio/MP4A-LATM", "audio/MP4A-ADTS"):
+                               EnumRegistry.get(Strict.s))
+            elif media_type in (AudioCodedAacLATM.s, AudioCodedAacADTS.s):
                 _set_if_exists("Bitrate", _get_transport_bitrate(bitrate))
                 _set_if_exists("PacketTransmissionMode",
-                               EnumRegistry.get("non_interleaved_access_units"))
+                               EnumRegistry.get(NonInterleavedAccessUnits.s))
                 _set_if_exists("ParameterSetsTransportMode",
-                               EnumRegistry.get("in_and_out_of_band"))
+                               EnumRegistry.get(InAndOutOfBand.s))
                 _set_if_exists("ParameterSetsFlowMode",
-                               EnumRegistry.get("strict"))
+                               EnumRegistry.get(Strict.s))
 
     # --- Natural group assignment ---
 
@@ -3521,7 +3558,7 @@ class Node:
             tag_dict = {}
 
         from nmos.enums import EnumRegistry
-        tag_key = EnumRegistry.get("urn:x-nmos:tag:grouphint/v1.0")
+        tag_key = EnumRegistry.get(TagGroupHint.s)
         if tag_key is not None:
             tag_dict[str(tag_key)] = [hint]
         tags_field.value = tag_dict

@@ -39,6 +39,12 @@ from typing import Any, Callable, Final
 
 from aiohttp import web
 
+from nmos.enums import (
+    CapMetaFormat, CapMetaLayer, CapMetaLayerCompatibilityGroups, CapMetaLayerEnabled,
+    CapMetaEnabled, CapMetaPreference, CapMetaLabel, CapFormatMediaType,
+    TransportUsb, ActivateImmediate,
+)
+
 from nmos.controller.api_client import (
     RemoteCallResult,
     RemoteNodeClient,
@@ -1144,7 +1150,7 @@ async def api_receiver_deactivate(request: web.Request) -> web.Response:
         )
     body_patch = {
         "master_enable": False,
-        "activation": {"mode": "activate_immediate"},
+        "activation": {"mode": ActivateImmediate.s},
     }
     forwarded = _headers_with_reservation(
         request, r_device.get("id", "") or "",
@@ -1264,7 +1270,7 @@ async def api_receiver_activate(request: web.Request) -> web.Response:
     body_patch: dict[str, Any] = {
         "master_enable": True,
         "sender_id": sender_id,
-        "activation": {"mode": "activate_immediate"},
+        "activation": {"mode": ActivateImmediate.s},
         "transport_file": {
             "data": sdp_result.body,
             "type": "application/sdp",
@@ -1366,7 +1372,7 @@ async def _proxy_sender_staged(
 
     body = {
         "master_enable": master_enable,
-        "activation": {"mode": "activate_immediate"},
+        "activation": {"mode": ActivateImmediate.s},
     }
     result = await client.patch_sender_staged(
         base, sender_id, body, forwarded, trace_id=_trace_id(request),
@@ -1538,7 +1544,7 @@ async def _activate_sender_with_privacy(
 
     body_patch: dict[str, Any] = {
         "master_enable": True,
-        "activation": {"mode": "activate_immediate"},
+        "activation": {"mode": ActivateImmediate.s},
         "transport_params": [leg],
     }
     result = await client.patch_sender_staged(
@@ -1954,13 +1960,13 @@ _FORMAT_URN_PREFIX = "urn:x-nmos:format:"
 # on every caps / configure page silently fall back to the natural-
 # group hint for EVERY constraint set — the MUX sender that should
 # show {video, audio, mux} × {0, 1, …} collapsed to {mux} × {0}.
-_CAPS_META_FORMAT = "urn:x-matrox:cap:meta:format"
-_CAPS_META_LAYER = "urn:x-matrox:cap:meta:layer"
-_CAPS_META_COMP_GROUPS = "urn:x-matrox:cap:meta:layer_compatibility_groups"
-_CAPS_META_LAYER_ENABLED = "urn:x-matrox:cap:meta:layer_enabled"
-_CAPS_META_ENABLED = "urn:x-nmos:cap:meta:enabled"
-_CAPS_META_PREFERENCE = "urn:x-nmos:cap:meta:preference"
-_CAPS_META_LABEL = "urn:x-nmos:cap:meta:label"
+_CAPS_META_FORMAT = CapMetaFormat.s
+_CAPS_META_LAYER = CapMetaLayer.s
+_CAPS_META_COMP_GROUPS = CapMetaLayerCompatibilityGroups.s
+_CAPS_META_LAYER_ENABLED = CapMetaLayerEnabled.s
+_CAPS_META_ENABLED = CapMetaEnabled.s
+_CAPS_META_PREFERENCE = CapMetaPreference.s
+_CAPS_META_LABEL = CapMetaLabel.s
 
 
 def _cs_is_visible(cs: dict[str, Any]) -> bool:
@@ -1986,7 +1992,7 @@ def _cs_is_visible(cs: dict[str, Any]) -> bool:
         return True
     layer_enabled = cs.get(_CAPS_META_LAYER_ENABLED, False)
     return layer_enabled is True
-_CAPS_FORMAT_MEDIA_TYPE = "urn:x-nmos:cap:format:media_type"
+_CAPS_FORMAT_MEDIA_TYPE = CapFormatMediaType.s
 
 
 def _short_format(value: Any) -> str:
@@ -3038,7 +3044,7 @@ def _receiver_state_map(
 # Nodes publish either variant and the classifier still fires.
 _USB_TRANSPORT_URNS: Final[frozenset[str]] = frozenset({
     "urn:x-matrox:transport:usb",
-    "urn:x-nmos:transport:usb",
+    TransportUsb.s,
 })
 
 # Canonical group-identity strings used by the reverse-link resolver

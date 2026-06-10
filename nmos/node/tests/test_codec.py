@@ -81,7 +81,7 @@ from nmos.types.generated.naudio_channel import NAudioChannelValue
 # Test helpers
 # ---------------------------------------------------------------------------
 
-InterlacedTff = EnumRegistry.get("interlace_tff")
+InterlacedTff = EnumRegistry.get("interlaced_tff")
 BT709 = EnumRegistry.get("BT709")
 
 

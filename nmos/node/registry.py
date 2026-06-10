@@ -31,6 +31,7 @@ import aiohttp
 from nmos.api.tr10_tls import apply_tr10_tls_restrictions
 from nmos.json.engine import JsonEngine
 from nmos.node import _get_flow_core, _get_resource_core, _get_source_core
+from nmos.enums import Http, Https
 
 log = logging.getLogger(__name__)
 
@@ -77,7 +78,7 @@ class RegistryClient:
         self._base_url = self._build_base_url()
 
     def _build_base_url(self) -> str:
-        scheme = "https" if self._config.tls else "http"
+        scheme = Https.s if self._config.tls else Http.s
         return f"{scheme}://{self._config.host}:{self._config.port}"
 
     def _build_ssl_context(self) -> ssl.SSLContext | None:

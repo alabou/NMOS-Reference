@@ -14,6 +14,22 @@ from fractions import Fraction
 from typing import Any
 
 from nmos.json.engine import JsonEngine
+from nmos.enums import (
+    # Formats
+    FormatVideo, FormatAudio, FormatData, FormatMux,
+    # Media types
+    VideoRaw, VideoCodedH264, VideoCodedH265, VideoCodedJxsv,
+    AudioRawL8, AudioRawL16, AudioRawL20, AudioRawL24, MuxMpeg2TS,
+    # Capability URNs
+    CapFormatMediaType, CapFormatChannelCount, CapFormatSampleRate, CapFormatSampleDepth,
+    CapFormatGrainRate, CapFormatFrameWidth, CapFormatFrameHeight, CapFormatComponentDepth,
+    CapFormatColorspace, CapFormatColorSampling, CapFormatProfile, CapFormatLevel,
+    CapFormatBitRate, CapFormatConstantBitRate, CapMetaFormat,
+    # Colorspace / sampling
+    BT709, SamplingYCbCr_422,
+    # Audio channels / video components
+    L, R, C, LFE, Ls, Rs, Lss, Rss, Y, Cb, Cr, G, B,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +78,7 @@ def build_video_source(params: dict[str, Any], sender_config: dict[str, Any]) ->
 
     inner = NSourceVideoValue()
     inner.set_to_default()
-    inner.Format.value = EnumRegistry.get("urn:x-nmos:format:video")
+    inner.Format.value = EnumRegistry.get(FormatVideo.s)
 
     _set_source_core(inner.SourceCore, params, sender_config)
 
@@ -79,16 +95,16 @@ def build_audio_source(params: dict[str, Any], sender_config: dict[str, Any]) ->
 
     inner = NSourceAudioValue()
     inner.set_to_default()
-    inner.Format.value = EnumRegistry.get("urn:x-nmos:format:audio")
+    inner.Format.value = EnumRegistry.get(FormatAudio.s)
 
     _set_source_core(inner.SourceCore, params, sender_config)
 
     # Audio channels from constraint set or default
     from nmos.types.generated.naudio_channel import NAudioChannelValue
-    channel_count = params.get("urn:x-nmos:cap:format:channel_count", 2)
+    channel_count = params.get(CapFormatChannelCount.s, 2)
     if isinstance(channel_count, int) and channel_count > 0:
         # Standard channel symbols for common configurations
-        _CHANNEL_SYMBOLS = ["L", "R", "C", "LFE", "Ls", "Rs", "Lss", "Rss"]
+        _CHANNEL_SYMBOLS = [L.s, R.s, C.s, LFE.s, Ls.s, Rs.s, Lss.s, Rss.s]
         channels: list[NAudioChannelValue] = []
         for i in range(channel_count):
             ch = NAudioChannelValue()
@@ -112,7 +128,7 @@ def build_data_source(params: dict[str, Any], sender_config: dict[str, Any]) -> 
 
     inner = NSourceDataValue()
     inner.set_to_default()
-    inner.Format.value = EnumRegistry.get("urn:x-nmos:format:data")
+    inner.Format.value = EnumRegistry.get(FormatData.s)
 
     _set_source_core(inner.SourceCore, params, sender_config)
 
@@ -136,7 +152,7 @@ def build_mux_source(
 
     inner = NSourceMuxValue()
     inner.set_to_default()
-    inner.Format.value = EnumRegistry.get("urn:x-nmos:format:mux")
+    inner.Format.value = EnumRegistry.get(FormatMux.s)
 
     _set_source_core(inner.SourceCore, {}, sender_config)
 
@@ -205,11 +221,11 @@ def _set_source_core(
 
     # Grain rate from params (extracted from highest-preference constraint set)
     # For video: grain_rate. For audio: sample_rate maps to GrainRate (GrainRate is used for both).
-    grain_rate = params.get("urn:x-nmos:cap:format:grain_rate")
+    grain_rate = params.get(CapFormatGrainRate.s)
     if grain_rate is not None and isinstance(grain_rate, Fraction):
         _set_rational(source_core.GrainRate, grain_rate)
     elif grain_rate is None:
-        sample_rate = params.get("urn:x-nmos:cap:format:sample_rate")
+        sample_rate = params.get(CapFormatSampleRate.s)
         if sample_rate is not None and isinstance(sample_rate, Fraction):
             _set_rational(source_core.GrainRate, sample_rate)
 
@@ -225,9 +241,9 @@ def build_video_flow(
     from nmos.types.generated.nflow import NFlowValue
     from nmos.enums import EnumRegistry
 
-    media_type = str(params.get("urn:x-nmos:cap:format:media_type", "video/raw"))
+    media_type = str(params.get(CapFormatMediaType.s, VideoRaw.s))
 
-    if media_type == "video/raw":
+    if media_type == VideoRaw.s:
         return _build_video_raw_flow(params, source_id, config)
     else:
         return _build_video_coded_flow(params, source_id, config, media_type)
@@ -243,8 +259,8 @@ def _build_video_raw_flow(
 
     inner = NFlowVideoRawValue()
     inner.set_to_default()
-    inner.Format.value = EnumRegistry.get("urn:x-nmos:format:video")
-    inner.MediaType.value = EnumRegistry.get("video/raw")
+    inner.Format.value = EnumRegistry.get(FormatVideo.s)
+    inner.MediaType.value = EnumRegistry.get(VideoRaw.s)
     inner.FlowCore.SourceId.value = source_id
 
     _set_flow_core(inner.FlowCore, params, config)
@@ -266,7 +282,7 @@ def _build_video_coded_flow(
 
     inner = NFlowVideoCodedValue()
     inner.set_to_default()
-    inner.Format.value = EnumRegistry.get("urn:x-nmos:format:video")
+    inner.Format.value = EnumRegistry.get(FormatVideo.s)
 
     mt_enum = EnumRegistry.get(media_type)
     if mt_enum is not None:
@@ -278,19 +294,19 @@ def _build_video_coded_flow(
     _set_video_fields(inner, params)
 
     # Coded-specific fields
-    profile = params.get("urn:x-nmos:cap:format:profile")
+    profile = params.get(CapFormatProfile.s)
     if profile is not None:
         p_enum = EnumRegistry.get(str(profile))
         if p_enum is not None:
             inner.Profile.value = p_enum
 
-    level = params.get("urn:x-nmos:cap:format:level")
+    level = params.get(CapFormatLevel.s)
     if level is not None:
         l_enum = EnumRegistry.get(str(level))
         if l_enum is not None:
             inner.Level.value = l_enum
 
-    bitrate = params.get("urn:x-nmos:cap:format:bit_rate")
+    bitrate = params.get(CapFormatBitRate.s)
     if bitrate is not None:
         inner.Bitrate.value = int(bitrate)
 
@@ -301,11 +317,11 @@ def _build_video_coded_flow(
             select_h265_level_from_coded_flow,
             select_jxsv_level_from_coded_flow,
         )
-        if media_type == "video/H264":
+        if media_type == VideoCodedH264.s:
             select_h264_level_from_coded_flow(inner)
-        elif media_type == "video/H265":
+        elif media_type == VideoCodedH265.s:
             select_h265_level_from_coded_flow(inner)
-        elif media_type == "video/jxsv":
+        elif media_type == VideoCodedJxsv.s:
             select_jxsv_level_from_coded_flow(inner)
 
     flow = NFlowValue()
@@ -326,10 +342,10 @@ def build_audio_flow(
     from nmos.types.generated.nflow import NFlowValue
     from nmos.enums import EnumRegistry
 
-    media_type = str(params.get("urn:x-nmos:cap:format:media_type", "audio/L24"))
+    media_type = str(params.get(CapFormatMediaType.s, AudioRawL24.s))
 
     # Determine raw vs coded: PCM types (L8/L16/L20/L24) are raw, everything else coded
-    _RAW_AUDIO = {"audio/L8", "audio/L16", "audio/L20", "audio/L24"}
+    _RAW_AUDIO = {AudioRawL8.s, AudioRawL16.s, AudioRawL20.s, AudioRawL24.s}
     is_coded = media_type not in _RAW_AUDIO
 
     inner: Any
@@ -338,7 +354,7 @@ def build_audio_flow(
     else:
         inner = NFlowAudioRawValue()
     inner.set_to_default()
-    inner.Format.value = EnumRegistry.get("urn:x-nmos:format:audio")
+    inner.Format.value = EnumRegistry.get(FormatAudio.s)
 
     mt_enum = EnumRegistry.get(media_type)
     if mt_enum is not None:
@@ -349,16 +365,16 @@ def build_audio_flow(
     _set_flow_core(inner.FlowCore, params, config)
 
     # Audio-specific: sample rate
-    sample_rate = params.get("urn:x-nmos:cap:format:sample_rate")
+    sample_rate = params.get(CapFormatSampleRate.s)
     if sample_rate is not None and isinstance(sample_rate, Fraction):
         _set_rational(inner.SampleRate, sample_rate)
 
     if is_coded:
         # Coded audio properties
-        profile = params.get("urn:x-nmos:cap:format:profile")
-        level = params.get("urn:x-nmos:cap:format:level")
-        bit_rate = params.get("urn:x-nmos:cap:format:bit_rate")
-        cbr = params.get("urn:x-nmos:cap:format:constant_bit_rate")
+        profile = params.get(CapFormatProfile.s)
+        level = params.get(CapFormatLevel.s)
+        bit_rate = params.get(CapFormatBitRate.s)
+        cbr = params.get(CapFormatConstantBitRate.s)
 
         if "am824" in media_type.lower():
             # AM824 has no profile/level/bitrate — zero out
@@ -379,8 +395,8 @@ def build_audio_flow(
                 inner.ConstantBitrate.value = bool(cbr)
     else:
         # Raw audio: bit depth
-        bit_depth = params.get("urn:x-nmos:cap:format:component_depth") or \
-                    params.get("urn:x-nmos:cap:format:sample_depth")
+        bit_depth = params.get(CapFormatComponentDepth.s) or \
+                    params.get(CapFormatSampleDepth.s)
         if bit_depth is not None:
             inner.BitDepth.value = int(bit_depth)
 
@@ -399,12 +415,12 @@ def build_data_flow(
 
     inner = NFlowDataValue()
     inner.set_to_default()
-    inner.Format.value = EnumRegistry.get("urn:x-nmos:format:data")
+    inner.Format.value = EnumRegistry.get(FormatData.s)
 
     # Set media_type from the extracted params when available — mirrors
     # build_video_flow / build_audio_flow / build_mux_flow. Required for
     # data flows like USB (application/usb) to satisfy IS-04 FL1.
-    mt = params.get("urn:x-nmos:cap:format:media_type")
+    mt = params.get(CapFormatMediaType.s)
     if mt is not None:
         mt_enum = EnumRegistry.get(str(mt))
         if mt_enum is not None:
@@ -435,10 +451,10 @@ def build_mux_flow(
 
     inner = NFlowMuxValue()
     inner.set_to_default()
-    inner.Format.value = EnumRegistry.get("urn:x-nmos:format:mux")
+    inner.Format.value = EnumRegistry.get(FormatMux.s)
 
     # Set media_type from params or default
-    mt = params.get("urn:x-nmos:cap:format:media_type", "application/MP2T")
+    mt = params.get(CapFormatMediaType.s, MuxMpeg2TS.s)
     mt_enum = EnumRegistry.get(str(mt))
     if mt_enum is not None:
         inner.MediaType.value = mt_enum
@@ -476,13 +492,13 @@ def _set_flow_core(flow_core: Any, params: dict[str, Any], config: dict[str, Any
     if label:
         flow_core.ResourceCore.Label.value = label
 
-    grain_rate = params.get("urn:x-nmos:cap:format:grain_rate")
+    grain_rate = params.get(CapFormatGrainRate.s)
     if grain_rate is not None and isinstance(grain_rate, Fraction):
         _set_rational(flow_core.GrainRate, grain_rate)
 
     # For audio flows: sample_rate maps to GrainRate (GrainRate is used for both)
     if grain_rate is None:
-        sample_rate = params.get("urn:x-nmos:cap:format:sample_rate")
+        sample_rate = params.get(CapFormatSampleRate.s)
         if sample_rate is not None and isinstance(sample_rate, Fraction):
             _set_rational(flow_core.GrainRate, sample_rate)
 
@@ -491,20 +507,20 @@ def _set_video_fields(inner: Any, params: dict[str, Any]) -> None:
     """Set video-specific fields (width, height, depth, colorspace, components)."""
     from nmos.enums import EnumRegistry
 
-    width = params.get("urn:x-nmos:cap:format:frame_width")
+    width = params.get(CapFormatFrameWidth.s)
     if width is not None:
         inner.FrameWidth.value = int(width)
 
-    height = params.get("urn:x-nmos:cap:format:frame_height")
+    height = params.get(CapFormatFrameHeight.s)
     if height is not None:
         inner.FrameHeight.value = int(height)
 
-    colorspace = params.get("urn:x-nmos:cap:format:colorspace")
+    colorspace = params.get(CapFormatColorspace.s)
     cs_enum = EnumRegistry.get(str(colorspace)) if colorspace is not None else None
     # Always set Colorspace — default to BT709
-    inner.Colorspace.value = cs_enum if cs_enum is not None else EnumRegistry.get("BT709")
+    inner.Colorspace.value = cs_enum if cs_enum is not None else EnumRegistry.get(BT709.s)
 
-    depth = params.get("urn:x-nmos:cap:format:component_depth")
+    depth = params.get(CapFormatComponentDepth.s)
     if depth is not None:
         depth_int = int(depth)
         # Build components (Y, Cb, Cr for 4:2:2)
@@ -520,7 +536,7 @@ def _set_video_components(
     """Set video components based on sampling and dimensions."""
     from nmos.enums import EnumRegistry
 
-    sampling = str(params.get("urn:x-nmos:cap:format:color_sampling", "YCbCr-4:2:2"))
+    sampling = str(params.get(CapFormatColorSampling.s, SamplingYCbCr_422.s))
 
     if hasattr(inner, 'Components'):
         from nmos.types.generated.nvideo_component import NVideoComponentValue
@@ -536,28 +552,28 @@ def _set_video_components(
         components: list[NVideoComponentValue] = []
         if sampling.startswith("RGB"):
             components = [
-                _make_comp("R", width, height, depth),
-                _make_comp("G", width, height, depth),
-                _make_comp("B", width, height, depth),
+                _make_comp(R.s, width, height, depth),
+                _make_comp(G.s, width, height, depth),
+                _make_comp(B.s, width, height, depth),
             ]
         elif "4:4:4" in sampling:
             components = [
-                _make_comp("Y", width, height, depth),
-                _make_comp("Cb", width, height, depth),
-                _make_comp("Cr", width, height, depth),
+                _make_comp(Y.s, width, height, depth),
+                _make_comp(Cb.s, width, height, depth),
+                _make_comp(Cr.s, width, height, depth),
             ]
         elif "4:2:0" in sampling:
             components = [
-                _make_comp("Y", width, height, depth),
-                _make_comp("Cb", width // 2, height // 2, depth),
-                _make_comp("Cr", width // 2, height // 2, depth),
+                _make_comp(Y.s, width, height, depth),
+                _make_comp(Cb.s, width // 2, height // 2, depth),
+                _make_comp(Cr.s, width // 2, height // 2, depth),
             ]
         else:
             # Default: YCbCr-4:2:2
             components = [
-                _make_comp("Y", width, height, depth),
-                _make_comp("Cb", width // 2, height, depth),
-                _make_comp("Cr", width // 2, height, depth),
+                _make_comp(Y.s, width, height, depth),
+                _make_comp(Cb.s, width // 2, height, depth),
+                _make_comp(Cr.s, width // 2, height, depth),
             ]
 
         inner.Components._defined = True
@@ -727,9 +743,9 @@ def _attach_receiver_caps(inner: Any, constraint_sets: list[dict[str, Any]]) -> 
             media_types: list[str] = []
             for cs in constraint_sets:
                 # Skip sub-flow (layer) constraint sets
-                if "urn:x-matrox:cap:meta:format" in cs:
+                if CapMetaFormat.s in cs:
                     continue
-                mt_cap = cs.get("urn:x-nmos:cap:format:media_type")
+                mt_cap = cs.get(CapFormatMediaType.s)
                 if mt_cap and "enum" in mt_cap:
                     media_types = [str(v) for v in mt_cap["enum"]]
                     break

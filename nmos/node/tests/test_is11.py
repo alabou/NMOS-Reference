@@ -1658,7 +1658,7 @@ class TestIS11AudioFormatTransitions:
         err, status = _apply_constraints(self.node, sender, [{
             "urn:x-nmos:cap:meta:enabled": True,
             "urn:x-nmos:cap:meta:preference": 100,
-            "urn:x-nmos:cap:format:media_type": {"enum": ["audio/aac"]},
+            "urn:x-nmos:cap:format:media_type": {"enum": ["audio/mpeg4-generic"]},
         }])
         assert err is None, f"AAC transition should be valid: {err}"
         assert status == "constrained"

@@ -72,9 +72,10 @@ def select_pipeline(format_urn: str, caps: Any) -> PipelineType:
                 if mt and mt.value.enumerated:
                     media_types.update(str(v) for v in mt.value.enumerated)
 
+        from nmos.enums import VideoRaw
         has_raw = any("raw" in mt for mt in media_types)
         has_coded = any(
-            mt not in ("video/raw",) and "video/" in mt
+            mt not in (VideoRaw.s,) and "video/" in mt
             for mt in media_types
         )
         if has_raw and has_coded:
@@ -474,7 +475,8 @@ def _enforce_label_consistency(constraint_sets: list[dict[str, Any]]) -> None:
     if not constraint_sets:
         return
 
-    label_key = "urn:x-nmos:cap:meta:label"
+    from caps.MatroxCCF import CapMetaLabel, CapFormatMediaType
+    label_key = CapMetaLabel
     has_any_label = any(cs.get(label_key) for cs in constraint_sets)
     if not has_any_label:
         return  # None have labels — that's valid
@@ -483,7 +485,7 @@ def _enforce_label_consistency(constraint_sets: list[dict[str, Any]]) -> None:
         if cs.get(label_key):
             continue  # Already has a label
         # Auto-generate from media_type
-        mt_cap = cs.get("urn:x-nmos:cap:format:media_type", {})
+        mt_cap = cs.get(CapFormatMediaType, {})
         mt_enum = mt_cap.get("enum", [])
         if mt_enum:
             cs[label_key] = str(mt_enum[0])

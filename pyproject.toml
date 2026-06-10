@@ -33,6 +33,7 @@ dependencies = [
     "cryptography",
     "pyOpenSSL",
     "PyJWT",
+    "pycryptodome"
 ]
 
 [project.optional-dependencies]

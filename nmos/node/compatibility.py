@@ -11,26 +11,6 @@ Uses CCF (MatroxCCF) operators for constraint algebra:
 
 Flow → CCF conversion via get_flow_to_caps() in flow_caps.py.
 CCF → Flow write-back via update_*_flow() functions here.
-
-Compliance audit (2026-04-10):
-  Audited: getFlowProperties, getSdpProperties, getGenericProperties,
-    checkFlowPropertiesCompatibility, checkReceiverCompatibility,
-    validateActiveConstraints, forceFlowPropertiesCompatibility,
-    forceActiveConstraints, updateFlowToCompliantFlow,
-    updateSenderToCompliantFlow, checkSenderFlowCompatibility,
-    checkStreamCompatibility, updateReceiverNativePropertiesCompatibility.
-
-  NOT YET PORTED (deferred until receiver→sender pipelines):
-    - checkReceiverNativePropertiesCompatibility
-        Checks receiver native properties against non-native constraint sets.
-        Only called from updateReceiverConstraintsToFlowProperties.
-    - updateReceiverConstraintsToFlowProperties
-        Propagates compliant flow properties to connected receiver's constraint
-        sets. Recursive for mux. Called from updateFlowToCompliantFlow.
-    - update_receiver_native_properties is PARTIAL: missing layer/format
-        parameters needed for mux sub-flow receiver constraint updates.
-    - update_flow_to_compliant is PARTIAL: missing the
-        updateReceiverConstraintsToFlowProperties call.
 """
 
 from __future__ import annotations
@@ -45,6 +25,43 @@ from nmos.enums import (
     EnumRegistry,
     # Formats
     FormatVideo, FormatAudio, FormatData, FormatMux,
+    # Media types
+    MuxGeneric, MuxNdi, MuxRtsp,
+    VideoRaw, VideoCodedH264, VideoCodedH265, VideoCodedJxsv,
+    AudioRawL8, AudioRawL16, AudioRawL20, AudioRawL24,
+    # Clock ref
+    Ptp, Internal,
+    # Interlace / colorspace / transfer characteristic
+    Progressive, InterlacedTff, InterlacedBff,
+    BT601, BT709, BT2020, BT2100, XYZ, UNSPECIFIED,
+    BT601_5, BT709_2, ST2065_1, ST2065_3, ST428_1,
+    SDR, HLG, PQ, LINEAR, BT2100LINPQ, BT2100LINHLG, DENSITY, ST2115LOGS3,
+    # Color sampling
+    SamplingYCbCr_420, SamplingYCbCr_422, SamplingYCbCr_444,
+    # Packet transmission / parameter-set modes
+    CodeStream, SliceSequential, SliceOutOfOrder, SingleNalUnit,
+    NonInterleavedNalUnits, InterleavedNalUnits,
+    NonInterleavedAccessUnits, InterleavedAccessUnits,
+    InBand, InAndOutOfBand, OutOfBand,
+    # Codec profiles / levels
+    JxsvProfileMain420_12, JxsvProfileHigh420_12,
+    JxsvProfileMain444_12, JxsvProfileHigh444_12,
+    JxsvLevel4k1, JxsvLevel4k2, JxsvLevel4k3,
+    H264ProfileHigh_422, H264ProfileHighIntra_422, H264ProfileHigh10, H264ProfileHigh10Intra,
+    H265ProfileMain10_422, H265ProfileMain10Intra_422, H265ProfileMain10,
+    H265ProfileMain10Intra, H265ProfileMain10_444, H265ProfileMain10Intra_444,
+    CodecLevel3, CodecLevel3_1, CodecLevel3_2, CodecLevel4, CodecLevel4_1, CodecLevel4_2,
+    CodecLevel5, CodecLevel5_1, CodecLevel5_2, CodecLevel6, CodecLevel6_1, CodecLevel6_2,
+    H265LevelMain3, H265LevelMain3_1, H265LevelMain4, H265LevelHigh4,
+    H265LevelMain4_1, H265LevelHigh4_1, H265LevelMain5, H265LevelHigh5,
+    H265LevelMain5_1, H265LevelHigh5_1, H265LevelMain5_2, H265LevelHigh5_2,
+    H265LevelMain6, H265LevelHigh6, H265LevelMain6_1, H265LevelHigh6_1,
+    H265LevelMain6_2, H265LevelHigh6_2,
+    # Compatibility status
+    Unconstrained, Constrained, ActiveConstraintsViolation, Unknown,
+    CompliantStream, NonCompliantStream,
+    # Audio channel symbols
+    L, R, C, LFE, Ls, Rs, Lrs, Rrs,
     # Capabilities — format
     CapFormatMediaType, CapFormatEventType, CapFormatGrainRate,
     CapFormatFrameWidth, CapFormatFrameHeight, CapFormatInterlaceMode,
@@ -191,14 +208,14 @@ def get_format_from_media_type(media_type: str) -> str:
         "video/raw"  → FormatVideo.s
         "audio/L24"  → FormatAudio.s
         "video/MP2T" → FormatMux.s
-        "data/USB"   → FormatData.s
+        "application/usb" → FormatData.s
     """
     # application/AM824, application/MP2T, etc. are mux formats.
     # NOTE: video/MP2T is OPAQUE (not supported in this implementation).
     # There is no MuxVideoMp2t enum — video/MP2T falls to FormatVideo.
     _MUX_MEDIA_TYPES = {
-        "application/am824", "application/mp2t",
-        "application/ndi", "application/rtsp", "application/generic",
+        "application/am824", MuxGeneric.s,
+        MuxNdi.s, MuxRtsp.s, "application/generic",
     }
     mt = media_type.lower() if media_type else ""
     if mt in _MUX_MEDIA_TYPES:
@@ -221,8 +238,8 @@ def get_class_from_media_type(media_type: str) -> str:
     # application/AM824, application/MP2T, etc. are mux class.
     # NOTE: video/MP2T is OPAQUE (not supported) — not in this set.
     _MUX_CLASS = {
-        "application/am824", "application/mp2t",
-        "application/ndi", "application/rtsp", "application/generic",
+        "application/am824", MuxGeneric.s,
+        MuxNdi.s, MuxRtsp.s, "application/generic",
     }
     mt = media_type.lower() if media_type else ""
 
@@ -231,7 +248,7 @@ def get_class_from_media_type(media_type: str) -> str:
         return "mux"
 
     # Video
-    if mt == "video/raw":
+    if mt == VideoRaw.s:
         return "raw"
     elif mt.startswith("video/"):
         return "coded"
@@ -301,7 +318,7 @@ def fix_pcm_sample_depth(
     media_type = str(mt_values[0])
 
     # Only applies to PCM types
-    _PCM_TYPES = {"audio/L8", "audio/L16", "audio/L20", "audio/L24"}
+    _PCM_TYPES = {AudioRawL8.s, AudioRawL16.s, AudioRawL20.s, AudioRawL24.s}
     if media_type not in _PCM_TYPES:
         return
 
@@ -322,8 +339,8 @@ def fix_pcm_sample_depth(
     if sd_cap is not None and sd_cap.value.values:
         sample_depth = int(sd_cap.value.values[0])
 
-    _DEPTH_TO_MT = {8: "audio/L8", 16: "audio/L16", 20: "audio/L20", 24: "audio/L24"}
-    _MT_TO_DEPTH = {"audio/L8": 8, "audio/L16": 16, "audio/L20": 20, "audio/L24": 24}
+    _DEPTH_TO_MT = {8: AudioRawL8.s, 16: AudioRawL16.s, 20: AudioRawL20.s, 24: AudioRawL24.s}
+    _MT_TO_DEPTH = {AudioRawL8.s: 8, AudioRawL16.s: 16, AudioRawL20.s: 20, AudioRawL24.s: 24}
 
     if (original_sample_depth or not original_media_type) and sample_depth != 0:
         # sample_depth takes priority → adjust media_type
@@ -502,23 +519,23 @@ def check_sender_flow_compatibility(
     try:
         from caps.MatroxCCF import Caps, convert_caps_json_to_caps
     except ImportError:
-        return "unconstrained"
+        return Unconstrained.s
 
     from nmos.node.flow_caps import get_flow_to_caps
 
     # Get sender
     sender = node.senders.get(sender_id)
     if sender is None:
-        return "unconstrained"
+        return Unconstrained.s
 
     # Get flow
     flow_id = sender.FlowId.value if sender.FlowId.defined and sender.FlowId.value else None
     if flow_id is None:
-        return "unconstrained"
+        return Unconstrained.s
 
     flow_ptr = node.flows.get(flow_id)
     if flow_ptr is None:
-        return "unconstrained"
+        return Unconstrained.s
 
     # Get flow caps (via get_flow_to_caps)
     flow_caps = get_flow_to_caps(node, flow_ptr)
@@ -528,7 +545,7 @@ def check_sender_flow_compatibility(
     # When active constraints → checks flow against them.
     sender_cons = _get_sender_normalized_ccf_cons(node, sender)
     if sender_cons is None or len(sender_cons.consets) == 0:
-        return "unconstrained"
+        return Unconstrained.s
 
     if verbose:
         print(f"  [check_sender_flow] sender={sender_id}")
@@ -795,11 +812,11 @@ def _write_source_channels(
 
     if am824:
         # GetAm824AudioChannels — stereo pairs first
-        _AM824_SYMBOLS = ["L", "R", "L", "R", "C", "LFE", "Ls", "Rs", "Lrs", "Rrs"]
+        _AM824_SYMBOLS = [L.s, R.s, L.s, R.s, C.s, LFE.s, Ls.s, Rs.s, Lrs.s, Rrs.s]
         symbols = _AM824_SYMBOLS
     else:
         # GetAudioChannels — standard SMPTE ordering
-        _SYMBOLS = ["L", "R", "C", "LFE", "Ls", "Rs", "Lrs", "Rrs"]
+        _SYMBOLS = [L.s, R.s, C.s, LFE.s, Ls.s, Rs.s, Lrs.s, Rrs.s]
         symbols = _SYMBOLS
 
     channels: list[Any] = []
@@ -873,9 +890,9 @@ def update_raw_video_flow(
     sync_media = _get_cap_bool(compliant_caps, CapTransportSynchronousMedia.s)
     clk_ref = _get_cap_str(compliant_caps, CapTransportClockRefType.s)
     clk_name = ""
-    if clk_ref == "ptp":
+    if clk_ref == Ptp.s:
         clk_name = "clk0"
-    elif clk_ref == "internal":
+    elif clk_ref == Internal.s:
         clk_name = "clk1"
 
     if frame_width is None or frame_height is None:
@@ -977,9 +994,9 @@ def update_raw_audio_flow(
     sync_media = _get_cap_bool(compliant_caps, CapTransportSynchronousMedia.s)
     clk_ref = _get_cap_str(compliant_caps, CapTransportClockRefType.s)
     clk_name = ""
-    if clk_ref == "ptp":
+    if clk_ref == Ptp.s:
         clk_name = "clk0"
-    elif clk_ref == "internal":
+    elif clk_ref == Internal.s:
         clk_name = "clk1"
 
     if sample_depth is None or sample_rate is None or channel_count is None:
@@ -994,7 +1011,7 @@ def update_raw_audio_flow(
     fv = inner.value if hasattr(inner, 'value') else inner
 
     # Set MediaType from sample_depth via WithFlowAudio
-    _DEPTH_TO_MT = {8: "audio/L8", 16: "audio/L16", 20: "audio/L20", 24: "audio/L24"}
+    _DEPTH_TO_MT = {8: AudioRawL8.s, 16: AudioRawL16.s, 20: AudioRawL20.s, 24: AudioRawL24.s}
     mt_str = _DEPTH_TO_MT.get(sample_depth)
     if mt_str:
         fv.MediaType.value = EnumRegistry.get(mt_str)
@@ -1053,9 +1070,9 @@ def update_coded_video_flow(
     sync_media = _get_cap_bool(compliant_caps, CapTransportSynchronousMedia.s)
     clk_ref = _get_cap_str(compliant_caps, CapTransportClockRefType.s)
     clk_name = ""
-    if clk_ref == "ptp":
+    if clk_ref == Ptp.s:
         clk_name = "clk0"
-    elif clk_ref == "internal":
+    elif clk_ref == Internal.s:
         clk_name = "clk1"
 
     if frame_width is None or frame_height is None or media_type is None:
@@ -1141,9 +1158,9 @@ def update_coded_audio_flow(
     sync_media = _get_cap_bool(compliant_caps, CapTransportSynchronousMedia.s)
     clk_ref = _get_cap_str(compliant_caps, CapTransportClockRefType.s)
     clk_name = ""
-    if clk_ref == "ptp":
+    if clk_ref == Ptp.s:
         clk_name = "clk0"
-    elif clk_ref == "internal":
+    elif clk_ref == Internal.s:
         clk_name = "clk1"
 
     if media_type is None or sample_rate is None or channel_count is None:
@@ -1204,9 +1221,9 @@ def update_data_flow(
     sync_media = _get_cap_bool(compliant_caps, CapTransportSynchronousMedia.s)
     clk_ref = _get_cap_str(compliant_caps, CapTransportClockRefType.s)
     clk_name = ""
-    if clk_ref == "ptp":
+    if clk_ref == Ptp.s:
         clk_name = "clk0"
-    elif clk_ref == "internal":
+    elif clk_ref == Internal.s:
         clk_name = "clk1"
 
     inner = flow_ptr.get() if hasattr(flow_ptr, 'get') else flow_ptr
@@ -1238,9 +1255,9 @@ def update_mux_flow(
     sync_media = _get_cap_bool(compliant_caps, CapTransportSynchronousMedia.s)
     clk_ref = _get_cap_str(compliant_caps, CapTransportClockRefType.s)
     clk_name = ""
-    if clk_ref == "ptp":
+    if clk_ref == Ptp.s:
         clk_name = "clk0"
-    elif clk_ref == "internal":
+    elif clk_ref == Internal.s:
         clk_name = "clk1"
 
     if verbose:
@@ -1370,7 +1387,7 @@ def fix_coded_video_flow(
         return
     media_type = str(mt_cap.value.values[0])
 
-    if media_type not in ("video/H264", "video/H265", "video/jxsv"):
+    if media_type not in (VideoCodedH264.s, VideoCodedH265.s, VideoCodedJxsv.s):
         return
 
     # Extract all required properties
@@ -1430,56 +1447,56 @@ def fix_coded_video_flow(
 
     # --- Profile/Sampling fix-up (per codec) ---
 
-    if media_type == "video/jxsv":
+    if media_type == VideoCodedJxsv.s:
         _PROFILE_TO_SAMPLING: dict[str, list[str]] = {
-            "Main420.12": ["YCbCr-4:2:0"],
-            "High420.12": ["YCbCr-4:2:0"],
-            "Main444.12": ["YCbCr-4:4:4", "YCbCr-4:2:2", "YCbCr-4:2:0"],
-            "High444.12": ["YCbCr-4:4:4", "YCbCr-4:2:2", "YCbCr-4:2:0"],
+            JxsvProfileMain420_12.s: [SamplingYCbCr_420.s],
+            JxsvProfileHigh420_12.s: [SamplingYCbCr_420.s],
+            JxsvProfileMain444_12.s: [SamplingYCbCr_444.s, SamplingYCbCr_422.s, SamplingYCbCr_420.s],
+            JxsvProfileHigh444_12.s: [SamplingYCbCr_444.s, SamplingYCbCr_422.s, SamplingYCbCr_420.s],
         }
         _SAMPLING_TO_PROFILE: dict[str, list[str]] = {
-            "YCbCr-4:2:0": ["High420.12", "Main420.12"],
-            "YCbCr-4:2:2": ["High444.12", "Main444.12"],
-            "YCbCr-4:4:4": ["High444.12", "Main444.12"],
+            SamplingYCbCr_420.s: [JxsvProfileHigh420_12.s, JxsvProfileMain420_12.s],
+            SamplingYCbCr_422.s: [JxsvProfileHigh444_12.s, JxsvProfileMain444_12.s],
+            SamplingYCbCr_444.s: [JxsvProfileHigh444_12.s, JxsvProfileMain444_12.s],
         }
-        try_levels = ["4k-1", "4k-2", "4k-3"]
+        try_levels = [JxsvLevel4k1.s, JxsvLevel4k2.s, JxsvLevel4k3.s]
 
         from nmos.node.codec import get_jxsv_max_bitrate, check_jxsv_profile_level
 
-    elif media_type == "video/H264":
+    elif media_type == VideoCodedH264.s:
         _PROFILE_TO_SAMPLING = {
-            "High-422": ["YCbCr-4:2:2", "YCbCr-4:2:0"],
-            "HighIntra-422": ["YCbCr-4:2:2", "YCbCr-4:2:0"],
-            "High10": ["YCbCr-4:2:0"],
-            "High10Intra": ["YCbCr-4:2:0"],
+            H264ProfileHigh_422.s: [SamplingYCbCr_422.s, SamplingYCbCr_420.s],
+            H264ProfileHighIntra_422.s: [SamplingYCbCr_422.s, SamplingYCbCr_420.s],
+            H264ProfileHigh10.s: [SamplingYCbCr_420.s],
+            H264ProfileHigh10Intra.s: [SamplingYCbCr_420.s],
         }
         _SAMPLING_TO_PROFILE = {
-            "YCbCr-4:2:2": ["High-422", "HighIntra-422"],
-            "YCbCr-4:2:0": ["High-422", "HighIntra-422", "High10", "High10Intra"],
+            SamplingYCbCr_422.s: [H264ProfileHigh_422.s, H264ProfileHighIntra_422.s],
+            SamplingYCbCr_420.s: [H264ProfileHigh_422.s, H264ProfileHighIntra_422.s, H264ProfileHigh10.s, H264ProfileHigh10Intra.s],
         }
-        try_levels = ["3", "3.1", "3.2", "4", "4.1", "4.2",
-                      "5", "5.1", "5.2", "6", "6.1", "6.2"]
+        try_levels = [CodecLevel3.s, CodecLevel3_1.s, CodecLevel3_2.s, CodecLevel4.s, CodecLevel4_1.s, CodecLevel4_2.s,
+                      CodecLevel5.s, CodecLevel5_1.s, CodecLevel5_2.s, CodecLevel6.s, CodecLevel6_1.s, CodecLevel6_2.s]
 
         from nmos.node.codec import get_h264_max_bitrate, check_h264_profile_level
 
-    elif media_type == "video/H265":
+    elif media_type == VideoCodedH265.s:
         _PROFILE_TO_SAMPLING = {
-            "Main10-422": ["YCbCr-4:2:2", "YCbCr-4:2:0"],
-            "Main10Intra-422": ["YCbCr-4:2:2", "YCbCr-4:2:0"],
-            "Main10": ["YCbCr-4:2:0"],
-            "Main10Intra": ["YCbCr-4:2:0"],
-            "Main10-444": ["YCbCr-4:4:4", "YCbCr-4:2:2", "YCbCr-4:2:0"],
-            "Main10Intra-444": ["YCbCr-4:4:4", "YCbCr-4:2:2", "YCbCr-4:2:0"],
+            H265ProfileMain10_422.s: [SamplingYCbCr_422.s, SamplingYCbCr_420.s],
+            H265ProfileMain10Intra_422.s: [SamplingYCbCr_422.s, SamplingYCbCr_420.s],
+            H265ProfileMain10.s: [SamplingYCbCr_420.s],
+            H265ProfileMain10Intra.s: [SamplingYCbCr_420.s],
+            H265ProfileMain10_444.s: [SamplingYCbCr_444.s, SamplingYCbCr_422.s, SamplingYCbCr_420.s],
+            H265ProfileMain10Intra_444.s: [SamplingYCbCr_444.s, SamplingYCbCr_422.s, SamplingYCbCr_420.s],
         }
         _SAMPLING_TO_PROFILE = {
-            "YCbCr-4:2:0": ["Main10", "Main10Intra"],
-            "YCbCr-4:2:2": ["Main10-422", "Main10Intra-422"],
-            "YCbCr-4:4:4": ["Main10-444", "Main10Intra-444"],
+            SamplingYCbCr_420.s: [H265ProfileMain10.s, H265ProfileMain10Intra.s],
+            SamplingYCbCr_422.s: [H265ProfileMain10_422.s, H265ProfileMain10Intra_422.s],
+            SamplingYCbCr_444.s: [H265ProfileMain10_444.s, H265ProfileMain10Intra_444.s],
         }
         try_levels = [
-            "Main-3", "Main-3.1", "Main-4", "High-4", "Main-4.1", "High-4.1",
-            "Main-5", "High-5", "Main-5.1", "High-5.1", "Main-5.2", "High-5.2",
-            "Main-6", "High-6", "Main-6.1", "High-6.1", "Main-6.2", "High-6.2",
+            H265LevelMain3.s, H265LevelMain3_1.s, H265LevelMain4.s, H265LevelHigh4.s, H265LevelMain4_1.s, H265LevelHigh4_1.s,
+            H265LevelMain5.s, H265LevelHigh5.s, H265LevelMain5_1.s, H265LevelHigh5_1.s, H265LevelMain5_2.s, H265LevelHigh5_2.s,
+            H265LevelMain6.s, H265LevelHigh6.s, H265LevelMain6_1.s, H265LevelHigh6_1.s, H265LevelMain6_2.s, H265LevelHigh6_2.s,
         ]
 
         from nmos.node.codec import get_h265_max_bitrate, check_h265_profile_level
@@ -1532,8 +1549,8 @@ def fix_coded_video_flow(
     from nmos.types.generated.nrational import NRationalValue
 
     depth = _get_int(CapFormatComponentDepth.s) or 10
-    colorspace_e = EnumRegistry.get(_get_str(CapFormatColorspace.s) or "BT709")
-    transfer_e = EnumRegistry.get(_get_str(CapFormatTransferCharacteristic.s) or "SDR")
+    colorspace_e = EnumRegistry.get(_get_str(CapFormatColorspace.s) or BT709.s)
+    transfer_e = EnumRegistry.get(_get_str(CapFormatTransferCharacteristic.s) or SDR.s)
     interlace_e = Progressive
     if not profile:
         return  # Cannot fix coded flow without a profile
@@ -1585,15 +1602,15 @@ def fix_coded_video_flow(
             # If bitrate not user-constrained, compute max for this level
             if not original_bitrate:
                 try:
-                    if media_type == "video/jxsv" and sublevel_e:
+                    if media_type == VideoCodedJxsv.s and sublevel_e:
                         try_bitrate = get_jxsv_max_bitrate(
                             tw, th, colorspace_e, transfer_e, interlace_e,
                             comps, gr_val, profile_e, level_e, sublevel_e)
-                    elif media_type == "video/H264":
+                    elif media_type == VideoCodedH264.s:
                         try_bitrate = get_h264_max_bitrate(
                             tw, th, colorspace_e, transfer_e, interlace_e,
                             comps, gr_val, profile_e, level_e)
-                    elif media_type == "video/H265":
+                    elif media_type == VideoCodedH265.s:
                         try_bitrate = get_h265_max_bitrate(
                             tw, th, colorspace_e, transfer_e, interlace_e,
                             comps, gr_val, profile_e, level_e)
@@ -1602,15 +1619,15 @@ def fix_coded_video_flow(
 
             # Validate the complete configuration
             try:
-                if media_type == "video/jxsv" and sublevel_e:
+                if media_type == VideoCodedJxsv.s and sublevel_e:
                     check_jxsv_profile_level(
                         tw, th, colorspace_e, transfer_e, interlace_e,
                         comps, gr_val, profile_e, level_e, sublevel_e, try_bitrate)
-                elif media_type == "video/H264":
+                elif media_type == VideoCodedH264.s:
                     check_h264_profile_level(
                         tw, th, colorspace_e, transfer_e, interlace_e,
                         comps, gr_val, profile_e, level_e, try_bitrate)
-                elif media_type == "video/H265":
+                elif media_type == VideoCodedH265.s:
                     check_h265_profile_level(
                         tw, th, colorspace_e, transfer_e, interlace_e,
                         comps, gr_val, profile_e, level_e, try_bitrate)
@@ -1664,22 +1681,22 @@ def _swap_flow_flavor(
     if target_class == "raw" and "video" in mt:
         new_inner = NFlowVideoRawValue()
         new_inner.set_to_default()
-        new_inner.Format.value = EnumRegistry.get("urn:x-nmos:format:video")
+        new_inner.Format.value = FormatVideo
         new_inner.MediaType.value = EnumRegistry.get(mt)
     elif target_class == "raw" and "audio" in mt:
         new_inner = NFlowAudioRawValue()
         new_inner.set_to_default()
-        new_inner.Format.value = EnumRegistry.get("urn:x-nmos:format:audio")
+        new_inner.Format.value = FormatAudio
         new_inner.MediaType.value = EnumRegistry.get(mt)
     elif target_class == "coded" and "video" in mt:
         new_inner = NFlowVideoCodedValue()
         new_inner.set_to_default()
-        new_inner.Format.value = EnumRegistry.get("urn:x-nmos:format:video")
+        new_inner.Format.value = FormatVideo
         new_inner.MediaType.value = EnumRegistry.get(mt)
     elif target_class == "coded" and "audio" in mt:
         new_inner = NFlowAudioCodedValue()
         new_inner.set_to_default()
-        new_inner.Format.value = EnumRegistry.get("urn:x-nmos:format:audio")
+        new_inner.Format.value = FormatAudio
         new_inner.MediaType.value = EnumRegistry.get(mt)
 
     if new_inner is None:
@@ -1713,9 +1730,10 @@ def update_flow_to_compliant(
     Handles raw↔coded class transitions by detecting if the compliant media_type
     class differs from the current flow class.
 
-    PARTIAL: Missing updateReceiverConstraintsToFlowProperties call which
-    propagates compliant flow properties to connected receiver constraints.
-    TODO: Add when receiver→sender pipelines are implemented.
+    Scope: writes the flow only. Propagation of the compliant flow properties to
+    a linked receiver's native constraints is handled one level up by
+    update_sender_to_compliant_flow() via _propagate_to_linked_receiver(), not
+    here.
     """
     from nmos.types.generated.nflow_video_raw import NFlowVideoRaw, NFlowVideoRawValue
     from nmos.types.generated.nflow_video_coded import NFlowVideoCoded, NFlowVideoCodedValue
@@ -1783,6 +1801,15 @@ def update_flow_to_compliant(
             update_data_flow(node, flow_ptr, compliant_caps, compliant_groups, verbose)
         elif isinstance(poly, (NFlowMux, NFlowMuxValue)):
             update_mux_flow(node, flow_ptr, compliant_caps, compliant_groups, verbose)
+
+    # Propagate the compliant flow properties to the linked receiver's native
+    # constraints. Placed here — not in update_sender_to_compliant_flow — so 
+    # that the trunk flow and every mux sub-flow (which call update_flow_to_compliant
+    # directly) both propagate. Uses the possibly-rebound flow_ptr (class transitions
+    # above).
+    _update_receiver_constraints_to_flow_properties(
+        node, flow_ptr, compliant_caps, compliant_groups, verbose,
+    )
 
 
 
@@ -1992,25 +2019,25 @@ def get_sdp_to_caps(
     def _colorspace_from_sdp(colorimetry: Any, color_range: Any) -> str | None:
         """Map SDP colorimetry to NMOS colorspace (getColorspaceFromSdp)."""
         if color_range is not None and str(color_range).lower() == "full":
-            return "UNSPECIFIED"
+            return UNSPECIFIED.s
         c = str(colorimetry).upper() if colorimetry else ""
         _MAP = {
-            "BT601": "BT601", "BT709": "BT709", "BT2020": "BT2020",
-            "BT2100": "BT2100", "BT601-5": "BT601_5", "BT709-2": "BT709_2",
-            "ST2065-1": "ST2065_1", "ST2065-3": "ST2065_3", "XYZ": "XYZ",
+            BT601.s: BT601.s, BT709.s: BT709.s, BT2020.s: BT2020.s,
+            BT2100.s: BT2100.s, BT601_5.s: BT601_5.s, BT709_2.s: BT709_2.s,
+            ST2065_1.s: ST2065_1.s, ST2065_3.s: ST2065_3.s, XYZ.s: XYZ.s,
         }
-        return _MAP.get(c, "UNSPECIFIED")
+        return _MAP.get(c, UNSPECIFIED.s)
 
     def _transfer_from_sdp(transfer: Any) -> str | None:
         """Map SDP transfer characteristic to NMOS (getTransferCharacteristicFromSdp)."""
         t = str(transfer).upper() if transfer else ""
         _MAP = {
-            "SDR": "SDR", "HLG": "HLG", "PQ": "PQ", "LINEAR": "LINEAR",
-            "BT2100LINPQ": "BT2100LINPQ", "BT2100LINHLG": "BT2100LINHLG",
-            "ST2065-1": "ST2065_1", "ST428-1": "ST428_1", "DENSITY": "DENSITY",
-            "ST2115LOGS3": "ST2115LOGS3",
+            SDR.s: SDR.s, HLG.s: HLG.s, PQ.s: PQ.s, LINEAR.s: LINEAR.s,
+            BT2100LINPQ.s: BT2100LINPQ.s, BT2100LINHLG.s: BT2100LINHLG.s,
+            ST2065_1.s: ST2065_1.s, ST428_1.s: ST428_1.s, DENSITY.s: DENSITY.s,
+            ST2115LOGS3.s: ST2115LOGS3.s,
         }
-        return _MAP.get(t, "UNSPECIFIED")
+        return _MAP.get(t, UNSPECIFIED.s)
 
     # --- Common video property extraction ---
     def _extract_video_common() -> None:
@@ -2033,9 +2060,9 @@ def get_sdp_to_caps(
         if media.exact_frame_rate_numerator and media.exact_frame_rate_denominator:
             _r(CapFormatGrainRate.s, media.exact_frame_rate_numerator, media.exact_frame_rate_denominator)
         if not media.interlaced:
-            _s(CapFormatInterlaceMode.s, "progressive")
+            _s(CapFormatInterlaceMode.s, Progressive.s)
         else:
-            _s(CapFormatInterlaceMode.s, "interlace_tff" if media.top_field_first else "interlace_bff")
+            _s(CapFormatInterlaceMode.s, InterlacedTff.s if media.top_field_first else InterlacedBff.s)
 
     # --- Common audio transport ---
     def _extract_audio_transport() -> None:
@@ -2085,13 +2112,13 @@ def get_sdp_to_caps(
         if enc_str == "raw":
             if not _check(check_sdp_rfc4175, check_sdp_st2110_10, check_sdp_st2110_21, check_sdp_st2110_20):
                 return None
-            _s(CapFormatMediaType.s, "video/raw")
+            _s(CapFormatMediaType.s, VideoRaw.s)
             _extract_video_common()
 
         elif enc_str == "jxsv":
             if not _check(check_sdp_rfc9134, check_sdp_st2110_10, check_sdp_st2110_21, check_sdp_st2110_22):
                 return None
-            _s(CapFormatMediaType.s, "video/jxsv")
+            _s(CapFormatMediaType.s, VideoCodedJxsv.s)
             _extract_video_common()
             if media.profile is not None:
                 _s(CapFormatProfile.s, str(media.profile))
@@ -2100,14 +2127,14 @@ def get_sdp_to_caps(
             if media.sub_level is not None:
                 _s(CapFormatSublevel.s, str(media.sub_level))
             # Packet mode
-            if media.jxsv_packet_mode is not None and str(media.jxsv_packet_mode).lower() == "codestream":
-                _s(CapTransportPacketTransmissionMode.s, "codestream")
+            if media.jxsv_packet_mode is not None and str(media.jxsv_packet_mode).lower() == CodeStream.s:
+                _s(CapTransportPacketTransmissionMode.s, CodeStream.s)
             else:
                 jxsv_trans = getattr(media, 'jxsv_trans_mode', None)
                 if jxsv_trans is not None and str(jxsv_trans).lower() == "sequential":
-                    _s(CapTransportPacketTransmissionMode.s, "slice_sequential")
+                    _s(CapTransportPacketTransmissionMode.s, SliceSequential.s)
                 else:
-                    _s(CapTransportPacketTransmissionMode.s, "slice_out_of_order")
+                    _s(CapTransportPacketTransmissionMode.s, SliceOutOfOrder.s)
             if media.bitrate_kbits:
                 _i(CapTransportBitRate.s, media.bitrate_kbits)
 
@@ -2120,7 +2147,7 @@ def get_sdp_to_caps(
         elif enc_str == "h264":
             if not _check(check_sdp_rfc6184, check_sdp_st2110_10, check_sdp_st2110_22):
                 return None
-            _s(CapFormatMediaType.s, "video/H264")
+            _s(CapFormatMediaType.s, VideoCodedH264.s)
             if not media.codec_profile_level_id:
                 return None
             try:
@@ -2133,26 +2160,26 @@ def get_sdp_to_caps(
             # Packetization mode
             pm = media.h264_packetization_mode
             if pm == 0:
-                _s(CapTransportPacketTransmissionMode.s, "single_nal_unit")
+                _s(CapTransportPacketTransmissionMode.s, SingleNalUnit.s)
             elif pm == 1:
-                _s(CapTransportPacketTransmissionMode.s, "non_interleaved_nal_units")
+                _s(CapTransportPacketTransmissionMode.s, NonInterleavedNalUnits.s)
             elif pm == 2:
-                _s(CapTransportPacketTransmissionMode.s, "interleaved_nal_units")
+                _s(CapTransportPacketTransmissionMode.s, InterleavedNalUnits.s)
             # Parameter sets transport mode
             ps = media.h264_parameter_sets
             if not ps:
-                _s(CapTransportParameterSetsTransportMode.s, "in_band")
+                _s(CapTransportParameterSetsTransportMode.s, InBand.s)
             elif ps.endswith(","):
-                _s(CapTransportParameterSetsTransportMode.s, "in_and_out_of_band")
+                _s(CapTransportParameterSetsTransportMode.s, InAndOutOfBand.s)
             else:
-                _s(CapTransportParameterSetsTransportMode.s, "out_of_band")
+                _s(CapTransportParameterSetsTransportMode.s, OutOfBand.s)
             if media.bitrate_kbits:
                 _i(CapTransportBitRate.s, media.bitrate_kbits)
 
         elif enc_str == "h265":
             if not _check(check_sdp_rfc7798, check_sdp_st2110_10, check_sdp_st2110_22):
                 return None
-            _s(CapFormatMediaType.s, "video/H265")
+            _s(CapFormatMediaType.s, VideoCodedH265.s)
             if not media.h265_interop_constraints or not media.h265_profile_compatibility_indicator:
                 return None
             try:
@@ -2166,24 +2193,24 @@ def get_sdp_to_caps(
                 _s(CapFormatProfile.s, str(h265_profile))
                 _s(CapFormatLevel.s, str(h265_level))
                 if progressive:
-                    _s(CapFormatInterlaceMode.s, "progressive")
+                    _s(CapFormatInterlaceMode.s, Progressive.s)
             except Exception:
                 return None
             # DON diff → packet mode
             if media.h26x_max_don_diff > 0:
-                _s(CapTransportPacketTransmissionMode.s, "interleaved_nal_units")
+                _s(CapTransportPacketTransmissionMode.s, InterleavedNalUnits.s)
             else:
-                _s(CapTransportPacketTransmissionMode.s, "non_interleaved_nal_units")
+                _s(CapTransportPacketTransmissionMode.s, NonInterleavedNalUnits.s)
             # VPS/SPS/PPS → parameter sets transport mode
             vps = media.h265_vps
             sps = media.h265_sps
             pps = media.h265_pps
             if not vps and not sps and not pps:
-                _s(CapTransportParameterSetsTransportMode.s, "in_band")
+                _s(CapTransportParameterSetsTransportMode.s, InBand.s)
             elif (vps and vps.endswith(",")) or (sps and sps.endswith(",")) or (pps and pps.endswith(",")):
-                _s(CapTransportParameterSetsTransportMode.s, "in_and_out_of_band")
+                _s(CapTransportParameterSetsTransportMode.s, InAndOutOfBand.s)
             else:
-                _s(CapTransportParameterSetsTransportMode.s, "out_of_band")
+                _s(CapTransportParameterSetsTransportMode.s, OutOfBand.s)
             if media.bitrate_kbits:
                 _i(CapTransportBitRate.s, media.bitrate_kbits)
 
@@ -2243,14 +2270,14 @@ def get_sdp_to_caps(
                 _i(CapFormatBitRate.s, media.aac_bitrate // 1000)  # bps → Kbps
             # Interleaving
             if media.aac_max_displacement > 0:
-                _s(CapTransportPacketTransmissionMode.s, "interleaved_access_units")
+                _s(CapTransportPacketTransmissionMode.s, InterleavedAccessUnits.s)
             else:
-                _s(CapTransportPacketTransmissionMode.s, "non_interleaved_access_units")
+                _s(CapTransportPacketTransmissionMode.s, NonInterleavedAccessUnits.s)
             # Config presence → parameter sets transport
             if not media.aac_config:
-                _s(CapTransportParameterSetsTransportMode.s, "in_band")
+                _s(CapTransportParameterSetsTransportMode.s, InBand.s)
             else:
-                _s(CapTransportParameterSetsTransportMode.s, "out_of_band")
+                _s(CapTransportParameterSetsTransportMode.s, OutOfBand.s)
             _extract_audio_transport()
             # RFC 3640: constant duration overrides ptime
             if media.aac_constant_duration and media.sample_rate:
@@ -2277,20 +2304,20 @@ def get_sdp_to_caps(
             if media.aac_bitrate:
                 _i(CapFormatBitRate.s, media.aac_bitrate // 1000)
             if media.aac_max_displacement > 0:
-                _s(CapTransportPacketTransmissionMode.s, "interleaved_access_units")
+                _s(CapTransportPacketTransmissionMode.s, InterleavedAccessUnits.s)
             else:
-                _s(CapTransportPacketTransmissionMode.s, "non_interleaved_access_units")
+                _s(CapTransportPacketTransmissionMode.s, NonInterleavedAccessUnits.s)
             # LATM/ADTS parameter sets logic
             if media.aac_config_present:
                 if not media.aac_config:
-                    _s(CapTransportParameterSetsTransportMode.s, "in_band")
+                    _s(CapTransportParameterSetsTransportMode.s, InBand.s)
                 else:
-                    _s(CapTransportParameterSetsTransportMode.s, "in_and_out_of_band")
+                    _s(CapTransportParameterSetsTransportMode.s, InAndOutOfBand.s)
             else:
                 if not media.aac_config:
                     return None  # Error: no config available
                 else:
-                    _s(CapTransportParameterSetsTransportMode.s, "out_of_band")
+                    _s(CapTransportParameterSetsTransportMode.s, OutOfBand.s)
             _extract_audio_transport()
             if media.aac_constant_duration and media.sample_rate:
                 ptime_us = (media.aac_constant_duration * 1000000) // media.sample_rate
@@ -2314,10 +2341,10 @@ def get_sdp_to_caps(
         _b(CapTransportSynchronousMedia.s, True)
 
     ts_ref = getattr(media, 'ts_ref_clock_source', None)
-    if ts_ref is not None and str(ts_ref).lower() == "ptp":
-        _s(CapTransportClockRefType.s, "ptp")
+    if ts_ref is not None and str(ts_ref).lower() == Ptp.s:
+        _s(CapTransportClockRefType.s, Ptp.s)
     else:
-        _s(CapTransportClockRefType.s, "internal")
+        _s(CapTransportClockRefType.s, Internal.s)
 
     privacy_val = getattr(media, 'privacy', False)
     _b(CapTransportPrivacy.s, bool(privacy_val))
@@ -2736,14 +2763,10 @@ def update_sender_to_compliant_flow(
     # It is done in force_active_constraints() AFTER all mutations
     # (trunk + sub-flows) are complete, to avoid stale ID references
     # during the mux sub-flow forcing loop.
-
-    # Propagate compliant properties to linked receiver's constraint sets
-    # via updateReceiverCapabilitiesCompatibility
-    try:
-        _propagate_to_linked_receiver(node, flow_ptr, compliant_caps, compliant_groups, verbose)
-    except Exception as exc:
-        if verbose:
-            print(f"  [update_sender_flow] Receiver propagation skipped: {exc}")
+    #
+    # NOTE: receiver constraint propagation (updateReceiverConstraintsToFlowProperties)
+    # is NOT triggered here. It is invoked at the end of update_flow_to_compliant()so
+    # that both the trunk flow and every mux sub-flow propagate.
 
     # Update sender's optional format attributes via AddSenderOptionalFormatAttributes
     if hasattr(node, '_add_sender_optional_format_attributes'):
@@ -2756,162 +2779,262 @@ def update_sender_to_compliant_flow(
 # Generic property filtering (getGenericProperties)
 # ---------------------------------------------------------------------------
 
-# Generic video constraints (RAW ones without media_type)
-_GENERIC_VIDEO_PROPS: set[str] = {
-    CapFormatGrainRate.s, CapFormatFrameWidth.s, CapFormatFrameHeight.s,
-    CapFormatInterlaceMode.s, CapFormatColorspace.s,
-    CapFormatTransferCharacteristic.s, CapFormatColorSampling.s,
-    CapFormatComponentDepth.s,
-}
-
-# Generic audio constraints (PCM ones without media_type)
-_GENERIC_AUDIO_PROPS: set[str] = {
-    CapFormatChannelCount.s, CapFormatSampleRate.s, CapFormatSampleDepth.s,
-}
+# Generic property filtering is provided by the public get_generic_properties()
+# above (port of getGenericProperties), keyed by exact format URN and including
+# the mux VideoLayers/AudioLayers/DataLayers branch. It operates on a
+# ``{cap_name -> Cap}`` map; callers pass ``compliant_caps.caps``.
 
 
-def _get_generic_properties(
-    flow_format: str, compliant_caps: Any,
-) -> dict[str, Any]:
-    """Filter compliant properties to generic (non-transport) ones only.
+def _nconstraint_to_range(nconstraint: Any) -> Any:
+    """Convert a receiver ``NConstraint`` into a CCF ``RangeValue`` (capability).
 
-    Only properties that can be meaningfully propagated to a receiver's
-    native constraint sets are kept.
+    Mirrors the receiver-side constraint shapes ``isPropertyIn*Capability`` helpers.
+    An unconstrained constraint (no ``Enum``/``Minimum``/``Maximum``) maps to an 
+    infinite range, matching ``isConstraintUnconstrained`` accept-all behaviour.
+    Returns ``None`` if the constraint cannot be interpreted.
     """
-    if compliant_caps is None:
-        return {}
+    from caps.MatroxCCF import RangeValue, RangeType
+    from fractions import Fraction
 
-    if "video" in flow_format:
-        allowed = _GENERIC_VIDEO_PROPS
-    elif "audio" in flow_format:
-        allowed = _GENERIC_AUDIO_PROPS
-    else:
-        return {}
+    try:
+        inner = nconstraint.value       # concrete NConstraint* wrapper
+        leaf = inner.value              # *Value with Enum / Minimum / Maximum
+    except Exception:
+        return None
 
-    # Extract matching properties from the compliant CapSet
-    result: dict[str, Any] = {}
-    caps = compliant_caps.caps if hasattr(compliant_caps, 'caps') else {}
-    for prop_name, cap in caps.items():
-        if prop_name in allowed:
-            result[prop_name] = cap
-    return result
+    cls = type(inner).__name__
+
+    def _enum_list(field: Any) -> list[Any]:
+        return list(field.value) if field.defined else []
+
+    if cls == "NConstraintBool":
+        enum = _enum_list(leaf.Enum)
+        return RangeValue(values=tuple(enum), type=RangeType.BOOL) if enum \
+            else RangeValue(type=RangeType.BOOL)
+
+    if cls == "NConstraintString":
+        enum = _enum_list(leaf.Enum)  # list[EnumId]
+        return RangeValue(values=tuple(str(e) for e in enum), type=RangeType.STRING) \
+            if enum else RangeValue(type=RangeType.STRING)
+
+    if cls in ("NConstraintInt", "NConstraintFloat"):
+        rtype = RangeType.INT if cls == "NConstraintInt" else RangeType.FLOAT
+        enum = _enum_list(leaf.Enum)
+        if enum:
+            return RangeValue(values=tuple(enum), type=rtype)
+        mn = leaf.Minimum.value if leaf.Minimum.defined else None
+        mx = leaf.Maximum.value if leaf.Maximum.defined else None
+        if mn is None and mx is None:
+            return RangeValue(type=rtype)
+        return RangeValue(min=mn, max=mx, type=rtype)
+
+    if cls == "NConstraintRational":
+        def _frac(nr: Any) -> Fraction:
+            num = nr.Numerator.value if nr.Numerator.defined else 0
+            den = nr.Denominator.value if nr.Denominator.defined else 1
+            return Fraction(num, den)
+        enum = _enum_list(leaf.Enum)  # list[NRationalValue]
+        if enum:
+            return RangeValue(values=tuple(_frac(r) for r in enum), type=RangeType.RATIONAL)
+        mn = _frac(leaf.Minimum.value) if leaf.Minimum.defined else None
+        mx = _frac(leaf.Maximum.value) if leaf.Maximum.defined else None
+        if mn is None and mx is None:
+            return RangeValue(type=RangeType.RATIONAL)
+        return RangeValue(min=mn, max=mx, type=RangeType.RATIONAL)
+
+    return None
 
 
-def _update_receiver_native_constraints(
-    constraint_sets_field: Any,
+def _constraint_set_items(constraint_sets_field: Any) -> list[Any]:
+    """Return the list of constraint-set objects from an NArrayOfConstraintSet."""
+    if constraint_sets_field is None or not constraint_sets_field.defined:
+        return []
+    cs_list = constraint_sets_field.value
+    if not cs_list:
+        return []
+    items = cs_list._inner if hasattr(cs_list, '_inner') else cs_list
+    return items or []
+
+
+def _cs_meta_enabled(cs: Any) -> bool:
+    """Enabled gate: enabled unless both MetaEnabled and MetaLayerEnabled are false."""
+    enabled = cs.MetaEnabled.value if (hasattr(cs, 'MetaEnabled') and cs.MetaEnabled.defined) else True
+    if enabled:
+        return True
+    return bool(cs.MetaLayerEnabled.value) if (hasattr(cs, 'MetaLayerEnabled') and cs.MetaLayerEnabled.defined) else False
+
+
+def _cs_preference(cs: Any) -> int:
+    return cs.MetaPreference.value if (hasattr(cs, 'MetaPreference') and cs.MetaPreference.defined) else 0
+
+
+def _cs_layer_format_matches(cs: Any, source_layer: int, source_format: str) -> bool:
+    """Layer/format gate (EXACT). For source_layer>=0 require MetaLayer==layer and
+    MetaFormat==format; for source_layer<0 reject any set carrying a MetaLayer."""
+    if source_layer >= 0:
+        cs_layer = cs.MetaLayer.value if (hasattr(cs, 'MetaLayer') and cs.MetaLayer.defined) else None
+        if cs_layer != source_layer:
+            return False
+        cs_format = str(cs.MetaFormat.value) if (hasattr(cs, 'MetaFormat') and cs.MetaFormat.defined) else ""
+        return cs_format == source_format
+    return not (hasattr(cs, 'MetaLayer') and cs.MetaLayer.defined)
+
+
+def _check_receiver_native_properties_compatibility(
     generic_props: dict[str, Any],
+    compliant_groups: list[int] | None,
+    constraint_sets_field: Any,
     source_layer: int,
     source_format: str,
     verbose: bool = False,
 ) -> bool:
-    """Update receiver's native constraint sets with compliant property values.
-
-    Finds the preference=100 constraint set matching the source layer/format,
-    then replaces each property's constraint with a single-value enum.
-
-    Returns True if a constraint set was updated.
     """
-    from caps.MatroxCCF import Cap, RangeValue, RangeType
+    Validate the compliant generic properties against the receiver's NON-native
+    (preference != 100) constraint sets. Returns True if at least one matching
+    non-native set accepts every property; False otherwise.
+    """
+    from nmos.enums import EnumRegistry
 
-    cs_list = constraint_sets_field.value
-    if not cs_list:
-        return False
-
-    items = cs_list._inner if hasattr(cs_list, '_inner') else cs_list
+    items = _constraint_set_items(constraint_sets_field)
     if not items:
         return False
 
+    cg = set(compliant_groups or [])
+
     for cs in items:
-        # Check enabled
-        enabled = True
-        if hasattr(cs, 'MetaEnabled') and cs.MetaEnabled.defined:
-            enabled = cs.MetaEnabled.value
-        if not enabled:
-            layer_enabled = False
-            if hasattr(cs, 'MetaLayerEnabled') and cs.MetaLayerEnabled.defined:
-                layer_enabled = cs.MetaLayerEnabled.value
-            if not layer_enabled:
+        if not _cs_meta_enabled(cs):
+            continue
+        # We check the NON-native sets; native (==100) is produced, not tested.
+        if _cs_preference(cs) == 100:
+            continue
+        if not _cs_layer_format_matches(cs, source_layer, source_format):
+            continue
+        # Group guard for PROPAGATION (distinct from mux sub-flow compliance).
+        # Propagating compliant properties to a receiver's native constraints
+        # while still honouring layer compatibility groups is only tractable when
+        # the groups match exactly; partial overlap is intentionally not handled
+        # (too complex). So we propagate into a non-native set only when its
+        # compatibility groups EXACTLY equal the properties' compliant groups.
+        #
+        # Per the Matrox ReceiverCapabilities spec, "A Constraint Set without a
+        # layer_compatibility_groups attribute MUST be assumed as being part of all
+        # groups." An absent/empty group set therefore means ALL groups and acts as
+        # a wildcard that satisfies the match on either side.
+        if hasattr(cs, 'MetaLayerCompatibilityGroups') and cs.MetaLayerCompatibilityGroups.defined:
+            cs_groups = set(cs.MetaLayerCompatibilityGroups.value)
+            if cs_groups and cg and cg != cs_groups:
                 continue
 
-        # Only preference=100
-        pref = 0
-        if hasattr(cs, 'MetaPreference') and cs.MetaPreference.defined:
-            pref = cs.MetaPreference.value
-        if pref != 100:
+        constraint_dict = cs.Constraints.get() if hasattr(cs, 'Constraints') else {}
+        if constraint_dict is None:
+            constraint_dict = {}
+
+        ok = True
+        for prop_name, cap in generic_props.items():
+            enum_id = EnumRegistry.get(prop_name) if isinstance(prop_name, str) else prop_name
+            nconstraint = constraint_dict.get(enum_id)
+            if nconstraint is None:
+                # Property not constrained by this set → accept it.
+                continue
+            rng = _nconstraint_to_range(nconstraint)
+            if rng is None:
+                continue
+            try:
+                included = rng.includes_range(cap.value)
+            except Exception:
+                included = False
+            if not included:
+                ok = False
+                break
+
+        if ok:
+            return True
+
+    return False
+
+
+def _compliant_value_to_json(cap: Any) -> Any:
+    """Extract a single concrete value from a compliant CCF Cap and render it as
+    the JSON scalar used by NConstraint enum decoding. Returns ``None`` if no
+    value can be extracted."""
+    from fractions import Fraction
+
+    val = getattr(cap, 'value', None)
+    if val is None:
+        return None
+
+    first_val = None
+    if getattr(val, 'values', None):
+        first_val = val.values[0]
+    elif getattr(val, 'enumerated', None):
+        first_val = next(iter(val.enumerated))
+    elif getattr(val, 'min', None) is not None:
+        first_val = val.min
+    if first_val is None:
+        return None
+
+    # bool must precede int (bool is a subclass of int)
+    if isinstance(first_val, bool):
+        return first_val
+    if isinstance(first_val, int):
+        return first_val
+    if isinstance(first_val, float):
+        return first_val
+    if isinstance(first_val, Fraction):
+        return {"numerator": first_val.numerator, "denominator": first_val.denominator}
+    if isinstance(first_val, str):
+        return first_val
+    if hasattr(first_val, 's'):  # EnumId
+        return str(first_val)
+    return None
+
+
+def _update_receiver_native_properties_compatibility(
+    generic_props: dict[str, Any],
+    constraint_sets_field: Any,
+    source_layer: int,
+    source_format: str,
+    verbose: bool = False,
+) -> bool:
+    """
+    Find the native (preference==100) constraint set matching the source
+    layer/format and overwrite each generic property with a single-value enum
+    constraint (a proper NConstraint object — not a raw JSON dict). Returns True
+    if a native set was updated, False otherwise (NOT_ALLOWED).
+    """
+    from nmos.enums import EnumRegistry
+    from nmos.types.generated.nconstraint import NConstraint
+
+    items = _constraint_set_items(constraint_sets_field)
+    if not items:
+        return False
+
+    # byPreference (descending) — sorts before selecting the native set.
+    items = sorted(items, key=_cs_preference, reverse=True)
+
+    for cs in items:
+        if not _cs_meta_enabled(cs):
+            continue
+        if _cs_preference(cs) != 100:
+            continue
+        if not _cs_layer_format_matches(cs, source_layer, source_format):
             continue
 
-        # Layer/format matching
-        if source_layer >= 0:
-            cs_layer = -1
-            if hasattr(cs, 'MetaLayer') and cs.MetaLayer.defined:
-                cs_layer = cs.MetaLayer.value
-            if cs_layer != source_layer:
-                continue
-            cs_format = ""
-            if hasattr(cs, 'MetaFormat') and cs.MetaFormat.defined:
-                cs_format = str(cs.MetaFormat.value)
-            if source_format and cs_format and source_format not in cs_format and cs_format not in source_format:
-                continue
-        else:
-            # No layer specified — skip constraint sets that have a layer
-            if hasattr(cs, 'MetaLayer') and cs.MetaLayer.defined:
-                continue
-
-        # Update constraints with generic properties
         if not hasattr(cs, 'Constraints'):
             continue
-
-        constraints = cs.Constraints
-        # NConstraintsValue wraps a dict — access via .Get() or ._inner
-        constraint_dict = None
-        if hasattr(constraints, 'Get'):
-            constraint_dict = constraints.Get()
-        elif hasattr(constraints, '_inner') and isinstance(constraints._inner, dict):
-            constraint_dict = constraints._inner
-        elif hasattr(constraints, 'value') and isinstance(constraints.value, dict):
-            constraint_dict = constraints.value
+        constraint_dict = cs.Constraints.get()  # live dict[EnumId, NConstraint]
         if constraint_dict is None:
-            continue
+            cs.Constraints.set_to_default()
+            constraint_dict = cs.Constraints.get()
 
         for prop_name, cap in generic_props.items():
-            # Extract the value from the Cap and create a single-value enum constraint
-            if not hasattr(cap, 'value') or cap.value is None:
+            json_val = _compliant_value_to_json(cap)
+            if json_val is None:
                 continue
-
-            val = cap.value
-            # Get the first value from the Cap's enumerated/range values
-            first_val = None
-            if hasattr(val, 'enumerated') and val.enumerated:
-                first_val = next(iter(val.enumerated))
-            elif hasattr(val, 'values') and val.values:
-                first_val = val.values[0]
-            elif hasattr(val, 'min') and val.min is not None:
-                first_val = val.min
-
-            if first_val is None:
-                continue
-
-            # Build a new constraint from the NConstraintSet's decode infrastructure
-            # For simplicity, update existing constraint's enum if it exists,
-            # or create a new one via the constraint set's JSON decode path
-            from nmos.enums import EnumRegistry
             enum_id = EnumRegistry.get(prop_name) if isinstance(prop_name, str) else prop_name
-
-            # Build a constraint dict and decode it onto the constraint set
-            # This is the simplest way to update without knowing the exact NConstraint type
-            from fractions import Fraction
-            if isinstance(first_val, bool):
-                constraint_dict[enum_id] = {"enum": [first_val]}
-            elif isinstance(first_val, int):
-                constraint_dict[enum_id] = {"enum": [first_val]}
-            elif isinstance(first_val, float):
-                constraint_dict[enum_id] = {"enum": [first_val]}
-            elif isinstance(first_val, str):
-                constraint_dict[enum_id] = {"enum": [first_val]}
-            elif isinstance(first_val, Fraction):
-                constraint_dict[enum_id] = {"enum": [{"numerator": first_val.numerator, "denominator": first_val.denominator}]}
-            elif hasattr(first_val, 's'):  # EnumId
-                constraint_dict[enum_id] = {"enum": [str(first_val)]}
+            constraint = NConstraint()
+            constraint.decode_value({"enum": [json_val]})
+            constraint_dict[enum_id] = constraint
 
         if verbose:
             print(f"  [update_native] Updated preference=100 CS with {len(generic_props)} properties")
@@ -2921,96 +3044,160 @@ def _update_receiver_native_constraints(
     return False
 
 
-def _propagate_to_linked_receiver(
+def _update_receiver_constraints_to_flow_properties(
     node: Any,
     flow_ptr: Any,
     compliant_caps: Any,
     compliant_groups: list[int] | None,
     verbose: bool = False,
 ) -> None:
-    """Propagate sender's compliant flow properties to the linked receiver's
-    native constraint sets.
-
-    Steps:
-    1. Get the flow's source → read SourceCore.ReceiverId and SourceCore.Layer
-    2. If no linked receiver, skip
-    3. Find the receiver
-    4. Bump the receiver's version (the constraint sets would be updated here
-       in a full implementation; for now we just bump the version to signal
-       that the receiver's state has changed)
     """
-    from nmos.node import _get_flow_core, _get_source_core, _set_version_now
-    from nmos.node.store import to_static_id
+    Propagate a sender's compliant flow properties to the native
+    (preference=100) constraint set of the receiver linked to the flow's source.
+    Recursive over parent (sub/derived) flows. Only generic, format-independent
+    properties are propagated.
+    """
+    from nmos.node import (
+        _get_flow_core, _get_source_core, _set_version_now, _nmos_version_now,
+    )
 
     flow_core = _get_flow_core(flow_ptr)
-
-    # Get the source
-    if not flow_core.SourceId.defined or flow_core.SourceId.value is None:
-        return
-    source_id = flow_core.SourceId.value
-    source_ptr = node.sources.get(source_id)
-    if source_ptr is None:
-        return
-
-    source_core = _get_source_core(source_ptr)
-
-    # Check if source has a linked receiver
-    if not source_core.ReceiverId.defined or source_core.ReceiverId.value is None:
-        return  # No linked receiver — nothing to propagate
-
-    receiver_id = source_core.ReceiverId.value
-    source_layer = source_core.Layer.value if source_core.Layer.defined else -1
-
-    if verbose:
-        print(f"  [propagate_to_receiver] Source links to receiver {receiver_id}, layer={source_layer}")
-
-    # Find receiver by dynamic ID
-    receiver_ptr = node.receivers.get(receiver_id)
-    if receiver_ptr is None:
-        # Try static ID lookup
-        static_id = to_static_id(receiver_id)
-        receiver_ptr = node.receivers.get(static_id)
-    if receiver_ptr is None:
-        if verbose:
-            print(f"  [propagate_to_receiver] Receiver {receiver_id} not found, skipping")
-        return
-
-    # Get flow format for property filtering
     flow_inner = flow_ptr.get() if hasattr(flow_ptr, 'get') else flow_ptr
     fv = flow_inner.value if hasattr(flow_inner, 'value') else flow_inner
     flow_format = str(fv.Format.value) if hasattr(fv, 'Format') and fv.Format.defined else ""
 
-    # Filter to generic properties only (getGenericProperties)
-    generic_props = _get_generic_properties(flow_format, compliant_caps)
-
-    if not generic_props:
-        if verbose:
-            print(f"  [propagate_to_receiver] No generic properties to propagate")
+    # Only propagate from video, audio and data Flows.
+    if flow_format not in (FormatVideo.s, FormatAudio.s, FormatData.s):
         return
 
-    inner = receiver_ptr.get() if hasattr(receiver_ptr, 'get') else receiver_ptr
-    rv = inner.value if hasattr(inner, 'value') else inner
-    core = getattr(rv, 'ReceiverCore', rv)
+    caps_map = compliant_caps.caps if hasattr(compliant_caps, 'caps') else {}
 
-    # Update receiver's native constraint sets (updateReceiverNativePropertiesCompatibility)
-    if hasattr(rv, 'Caps') and rv.Caps.defined:
-        caps_val = rv.Caps.value
-        if hasattr(caps_val, 'ConstraintSets') and caps_val.ConstraintSets.defined:
-            updated = _update_receiver_native_constraints(
-                caps_val.ConstraintSets, generic_props, source_layer,
-                flow_format, verbose,
+    # --- Parents branch: update and recurse into parent flows ---
+    if flow_core.Parents.defined and flow_core.Parents.value:
+        from caps.MatroxCCF import CapSet
+        for parent_id in flow_core.Parents.value:
+            parent_ptr = node.flows.get(parent_id)
+            if parent_ptr is None:
+                raise UnexpectedError(f"missing parent flow {parent_id}")
+
+            # DEFECT 1 corrected: derive all state from the PARENT flow.
+            parent_core = _get_flow_core(parent_ptr)
+            parent_inner = parent_ptr.get() if hasattr(parent_ptr, 'get') else parent_ptr
+            parent_fv = parent_inner.value if hasattr(parent_inner, 'value') else parent_inner
+
+            # Skip static parent flows.
+            if parent_core.Static.defined and parent_core.Static.value:
+                continue
+
+            parent_format = str(parent_fv.Format.value) if hasattr(parent_fv, 'Format') and parent_fv.Format.defined else ""
+            parent_media_type = str(parent_fv.MediaType.value) if hasattr(parent_fv, 'MediaType') and parent_fv.MediaType.defined else ""
+            parent_class = get_class_from_media_type(parent_media_type)
+
+            parent_generic = get_generic_properties(parent_format, caps_map)
+            parent_caps = CapSet(caps=dict(parent_generic))
+
+            if parent_format == FormatVideo.s:
+                if parent_class != "raw":
+                    raise UnexpectedError("unexpected parent coded video Flow")
+                update_raw_video_flow(node, parent_ptr, parent_caps, compliant_groups, verbose)
+            elif parent_format == FormatAudio.s:
+                if parent_class != "raw":
+                    raise UnexpectedError("unexpected parent coded audio Flow")
+                update_raw_audio_flow(node, parent_ptr, parent_caps, compliant_groups, verbose)
+            elif parent_format == FormatData.s:
+                update_data_flow(node, parent_ptr, parent_caps, compliant_groups, verbose)
+            else:
+                raise UnexpectedError(f"unexpected parent format {parent_format}")
+
+            _update_receiver_constraints_to_flow_properties(
+                node, parent_ptr, parent_caps, compliant_groups, verbose,
             )
-            if updated:
-                # Bump caps version (capsValue.Version.Now())
-                from nmos.node import _nmos_version_now
-                if hasattr(caps_val, 'Version'):
-                    caps_val.Version.value = _nmos_version_now()
+        return
 
-    # Bump receiver version (receiver.UpdateVersion())
-    _set_version_now(core.ResourceCore)
+    # --- Leaf branch: propagate to the linked receiver ---
+    if not flow_core.SourceId.defined or flow_core.SourceId.value is None:
+        raise UnexpectedError("a Flow without parent Flows must reference a Source")
+    source_id = flow_core.SourceId.value
+    source_ptr = node.sources.get(source_id)
+    if source_ptr is None:
+        raise UnexpectedError(f"missing source {source_id}")
+
+    source_core = _get_source_core(source_ptr)
+    source_inner = source_ptr.get() if hasattr(source_ptr, 'get') else source_ptr
+    sv = source_inner.value if hasattr(source_inner, 'value') else source_inner
+    source_format = str(sv.Format.value) if hasattr(sv, 'Format') and sv.Format.defined else ""
+    if source_format != flow_format:
+        raise UnexpectedError("a Flow without parent Flows must reference a Source of the same format")
+
+    source_layer = source_core.Layer.value if source_core.Layer.defined else -1
+
+    if not source_core.ReceiverId.defined or source_core.ReceiverId.value is None:
+        return  # No linked receiver — nothing to propagate.
+    receiver_id = source_core.ReceiverId.value
+    receiver_ptr = node.receivers.get(receiver_id)
+    if receiver_ptr is None:
+        return  # Linked receiver not present here — skip.
+
+    # The store holds an NReceiverValue whose get() yields the concrete *Value
+    # (e.g. NReceiverMuxValue), which exposes ReceiverCore/Caps directly.
+    from nmos.types.generated.nreceiver_video import NReceiverVideoValue
+    from nmos.types.generated.nreceiver_audio import NReceiverAudioValue
+    from nmos.types.generated.nreceiver_data import NReceiverDataValue
+    from nmos.types.generated.nreceiver_mux import NReceiverMuxValue
+
+    poly = receiver_ptr.get() if hasattr(receiver_ptr, 'get') else receiver_ptr
+    rv = poly.value if hasattr(poly, 'value') else poly
+    if isinstance(rv, NReceiverMuxValue):
+        mux_receiver = True
+    elif isinstance(rv, (NReceiverVideoValue, NReceiverAudioValue, NReceiverDataValue)):
+        mux_receiver = False
+    else:
+        raise UnexpectedError("invalid receiver type")
+    receiver_core = getattr(rv, 'ReceiverCore', rv)
+
+    # Skip static receivers.
+    if hasattr(receiver_core, 'Static') and receiver_core.Static.defined and receiver_core.Static.value:
+        return
+
+    # Source/receiver layer invariant.
+    if (mux_receiver and source_layer < 0) or (not mux_receiver and source_layer >= 0):
+        raise UnexpectedError("source layer is invalid for the linked receiver")
+
+    if not (hasattr(rv, 'Caps') and rv.Caps.defined):
+        return
+    caps_val = rv.Caps.value
+    if not (hasattr(caps_val, 'ConstraintSets') and caps_val.ConstraintSets.defined):
+        return
+
+    # Only generic properties can be propagated (transport ones depend on format).
+    generic_props = get_generic_properties(flow_format, caps_map)
+
+    # Validate against the receiver's NON-native constraint sets first.
+    if not _check_receiver_native_properties_compatibility(
+        generic_props, compliant_groups, caps_val.ConstraintSets,
+        source_layer, source_format, verbose,
+    ):
+        if verbose:
+            print(f"  [propagate_to_receiver] {receiver_id}: generic props not compatible with non-native sets — skipped")
+        return
+
+    # Here the native update is all-or-nothing: it returns False *before* mutating
+    # anything when no native set matches the source layer/format, and otherwise 
+    # updates exactly one set in place and returns True. So no clone/restore is
+    # needed on the False path.
+    updated = _update_receiver_native_properties_compatibility(
+        generic_props, caps_val.ConstraintSets, source_layer, source_format, verbose,
+    )
+    if not updated:
+        return
+
+    # Success: bump caps version, then receiver resource version.
+    if hasattr(caps_val, 'Version'):
+        caps_val.Version.value = _nmos_version_now()
+    _set_version_now(receiver_core.ResourceCore)
 
     if verbose:
-        print(f"  [propagate_to_receiver] Receiver caps+version bumped, {len(generic_props)} properties propagated")
+        print(f"  [propagate_to_receiver] {receiver_id}: {len(generic_props)} generic properties propagated")
 
 
 def intersect_constraints_with_caps(
@@ -3080,11 +3267,11 @@ def set_sender_compatibility_state(
 
     # Map to IS-11 status
     if status == "compatible":
-        result = "constrained"
+        result = Constrained.s
     elif status == "incompatible":
-        result = "active_constraints_violation"
+        result = ActiveConstraintsViolation.s
     else:
-        result = "unconstrained"
+        result = Unconstrained.s
 
     if verbose:
         print(f"  [set_sender_state] {sender_id} → {result}")
@@ -3116,53 +3303,13 @@ def check_stream_compatibility(
     # Get SDP properties as CapSet
     stream_caps = get_sdp_to_caps(node, receiver_id, mux=is_mux, verbose=verbose)
     if stream_caps is None:
-        return "unknown"
+        return Unknown.s
 
     compatible = check_receiver_compatibility(
         node, receiver_id, stream_caps, verbose=verbose,
     )
 
     return "compliant" if compatible else "non_compliant"
-
-
-def update_receiver_native_properties(
-    node: Any,
-    receiver_id: str,
-    compliant_caps: Any,
-    verbose: bool = False,
-) -> None:
-    """Update receiver's native (preference=100) constraint set with new properties.
-
-    PARTIAL: Missing layer/format filtering (needed for mux sub-flows).
-    TODO: Add layer/format parameters and filtering when receiver→sender
-    pipelines are implemented. Also implement checkReceiverNativePropertiesCompatibility
-    and updateReceiverConstraintsToFlowProperties which depend on this function.
-
-    Writes single-value capabilities from compliant_caps into the native CapSet.
-    """
-    try:
-        from caps.MatroxCCF import CapSet, Cap, RangeValue, RangeType
-    except ImportError:
-        return
-
-    if compliant_caps is None:
-        return
-
-    receiver_caps = _get_receiver_ccf_caps(node, node.receivers.get(receiver_id))
-    if receiver_caps is None:
-        return
-
-    # Find the native CapSet (preference=100)
-    for cs in receiver_caps.capsets:
-        if cs.preference == 100:
-            # Update each cap in the native set with values from compliant_caps
-            for name, cap in compliant_caps.caps.items():
-                if cap.value.values and len(cap.value.values) == 1:
-                    cs.caps[name] = Cap(name, RangeValue(
-                        values=cap.value.values, type=cap.value.type))
-            if verbose:
-                print(f"  [update_native] Updated native CapSet for receiver {receiver_id}")
-            return
 
 
 def set_receiver_compatibility_state(
@@ -3179,13 +3326,13 @@ def set_receiver_compatibility_state(
     - "unknown": no stream to check
     """
     if stream_caps is None:
-        return "unknown"
+        return Unknown.s
 
     compatible = check_receiver_compatibility(
         node, receiver_id, stream_caps, verbose=verbose,
     )
 
-    result = "compliant_stream" if compatible else "non_compliant_stream"
+    result = CompliantStream.s if compatible else NonCompliantStream.s
 
     if verbose:
         print(f"  [set_receiver_state] {receiver_id} → {result}")

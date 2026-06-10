@@ -36,6 +36,7 @@ import aiohttp
 
 from nmos.api.tr10_tls import apply_tr10_tls_restrictions
 from nmos.controller.cache import ResourceCache, ResourceKind
+from nmos.enums import Http, Https
 
 log = logging.getLogger(__name__)
 
@@ -161,7 +162,7 @@ class RdsWebSocketClient:
         self, session: aiohttp.ClientSession, resource_path: str,
     ) -> str:
         """POST /x-nmos/query/v1.3/subscriptions/ and extract ws_href."""
-        scheme = "https" if self._config.tls else "http"
+        scheme = Https.s if self._config.tls else Http.s
         url = (
             f"{scheme}://{self._config.query_host}:{self._config.query_port}"
             f"/x-nmos/query/{QUERY_API_VERSION}/subscriptions/"

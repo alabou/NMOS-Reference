@@ -334,7 +334,7 @@
           ],
           "urn:x-nmos:cap:format:media_type": {
             "enum": [
-              "audio/aac"
+              "audio/MP4A-ADTS"
             ]
           }
         }
@@ -538,7 +538,7 @@
           ],
           "urn:x-nmos:cap:format:media_type": {
             "enum": [
-              "audio/aac"
+              "audio/MP4A-ADTS"
             ]
           }
         }
@@ -692,7 +692,7 @@
           "urn:x-nmos:cap:meta:preference": 100,
           "urn:x-nmos:cap:format:media_type": {
             "enum": [
-              "audio/aac"
+              "audio/mpeg4-generic"
             ]
           },
           "urn:x-nmos:cap:format:sample_rate": {
@@ -742,7 +742,7 @@
           "urn:x-nmos:cap:meta:preference": 0,
           "urn:x-nmos:cap:format:media_type": {
             "enum": [
-              "audio/aac"
+              "audio/mpeg4-generic"
             ]
           }
         }
