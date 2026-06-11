@@ -526,7 +526,8 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
                               flow_inner: Any, node: Any, sender: Any,
                               interface_ip: str, sender_index: int,
                               ptp_gmid: str, ptp_version: str,
-                              found_ptp: bool, E: Any) -> None:
+                              found_ptp: bool, synchronous_media: bool = False,
+                              E: Any) -> None:
     """Populate one MediaDescriptor for a single leg.
 
     Branches on transport category:
@@ -587,7 +588,9 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
         media.ts_ref_clock_source = E.LocalMac.value
         media.ts_ref_clock_local_mac_address = "00-00-00-00-00-00"
 
-    media.media_clock_type = E.Sender.value
+    # Asynchronous media → mediaclk:sender; synchronous → mediaclk:direct
+    # (this node only produces asynchronous signals).
+    media.media_clock_type = E.Direct.value if synchronous_media else E.Sender.value
 
     # --- Populate from flow (video / audio / coded / mux branches) -------
     if flow_inner is not None:
@@ -957,23 +960,38 @@ def _generate_sdp_from_params(node: Any, sender: Any, sender_id: str,
                 if got is not None:
                     flow_inner = got
 
-    # PTP clock lookup (session-level fact)
+    # Reference clock for the SDP ts-refclk line — selected by the clock the
+    # sender's SOURCE references (its ClockName), not by whichever clocks the
+    # node happens to publish. A source on the PTP clock advertises
+    # ts-refclk:ptp with that clock's GMID; a source on the internal clock
+    # advertises ts-refclk:localmac (this node's sources use the internal
+    # clock — no PTP).
     ptp_gmid = "00-00-00-00-00-00-00-00"
     ptp_version = IEEE1588_2008.s
     found_ptp = False
+    synchronous_media = False
     try:
-        if node.node_value is not None and node.node_value.Clocks.defined:
-            for clock_val in node.node_value.Clocks._value._inner:
-                wrapper = clock_val._inner if hasattr(clock_val, '_inner') else None
-                if wrapper is None:
-                    continue
-                ptp_val = wrapper._value if hasattr(wrapper, '_value') else None
-                if ptp_val is not None and hasattr(ptp_val, 'Gmid') and ptp_val.Gmid.defined:
-                    ptp_gmid = ptp_val.Gmid.value
-                    ptp_version = str(ptp_val.Version.value) if ptp_val.Version.defined else ptp_version
+        source_core = None
+        if flow_inner is not None:
+            flow_core = flow_inner.FlowCore if hasattr(flow_inner, 'FlowCore') else None
+            if flow_core is not None and flow_core.SourceId.defined:
+                source_ptr = node.sources.get(flow_core.SourceId.value)
+                if source_ptr is not None:
+                    source_core = _get_source_core(source_ptr)
+        if source_core is not None:
+            if source_core.SynchronousMedia.defined:
+                synchronous_media = bool(source_core.SynchronousMedia.value)
+            if (source_core.ClockName.defined
+                    and source_core.ClockName.value is not None):
+                clock_inner = node._lookup_clock_by_name(str(source_core.ClockName.value))
+                # A PTP clock carries a Gmid; an internal clock does not.
+                if (clock_inner is not None and hasattr(clock_inner, 'Gmid')
+                        and clock_inner.Gmid.defined):
+                    ptp_gmid = clock_inner.Gmid.value
+                    ptp_version = (str(clock_inner.Version.value)
+                                   if clock_inner.Version.defined else ptp_version)
                     found_ptp = True
-                    break
-    except AttributeError:
+    except (AttributeError, TypeError, KeyError):
         pass
 
     # --- Step 3: SDP session-level fields -------------------------------
@@ -1013,6 +1031,7 @@ def _generate_sdp_from_params(node: Any, sender: Any, sender_id: str,
             ptp_gmid=ptp_gmid,
             ptp_version=ptp_version,
             found_ptp=found_ptp,
+            synchronous_media=synchronous_media,
             E=E,
         )
         media_index += 1
@@ -1038,6 +1057,7 @@ def _generate_sdp_from_params(node: Any, sender: Any, sender_id: str,
             ptp_gmid=ptp_gmid,
             ptp_version=ptp_version,
             found_ptp=found_ptp,
+            synchronous_media=synchronous_media,
             E=E,
         )
         media_index = 1

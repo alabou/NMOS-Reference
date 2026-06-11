@@ -195,8 +195,11 @@ def _set_source_core(
 
     Source information is inferred:
     - Label: derived from sender label + "Source" prefix
-    - ClockName: defaults to "clk0"
-    - SynchronousMedia: defaults to True
+    - ClockName: "clk1" — the internal clock. This node's sources do not
+      use PTP, so they reference the internal clock and their SDP carries
+      ts-refclk:localmac.
+    - SynchronousMedia: False — this node only produces asynchronous
+      signals (SDP mediaclk:sender).
     - GrainRate: from constraint_sets grain_rate capability
     """
     sender_label = sender_config.get("label", "")
@@ -215,9 +218,9 @@ def _set_source_core(
     if sender_label:
         source_core.ResourceCore.Description.value = f"Source for {sender_label}"
 
-    # Defaults
-    source_core.ClockName.value = "clk0"
-    source_core.SynchronousMedia.value = True
+    # Defaults: internal clock, asynchronous signal (no PTP on this node)
+    source_core.ClockName.value = "clk1"
+    source_core.SynchronousMedia.value = False
 
     # Grain rate from params (extracted from highest-preference constraint set)
     # For video: grain_rate. For audio: sample_rate maps to GrainRate (GrainRate is used for both).

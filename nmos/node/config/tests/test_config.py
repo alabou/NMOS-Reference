@@ -92,7 +92,7 @@ class TestConfig1:
         """Config1 produces the expected pipeline.
 
         Creates:
-        - 1 NSourceVideoValue (FormatVideo, 60fps, clk0, sync=true)
+        - 1 NSourceVideoValue (FormatVideo, 60fps, clk1 internal, sync=false)
         - 1 NFlowVideoRawValue (VideoRaw, 1920x1080, 10-bit, BT709)
         - 1 NSenderValue (TransportRtpMulticast, with VideoRaw constraint)
         - 1 NReceiverVideoValue (TransportRtpMulticast, with VideoRaw constraint)
@@ -114,7 +114,7 @@ class TestConfig1:
                 continue
             # Auto-generated label: "Source Video 0"
             assert "Source" in sc.ResourceCore.Label.value
-            assert sc.ClockName.value == "clk0"
+            assert sc.ClockName.value == "clk1"
             break
 
         # Verify flow
