@@ -93,7 +93,7 @@ from nmos.enums import (
     CodecLevel6, CodecLevel6_1, CodecLevel6_2,
     # Packet transmission / parameter-set modes
     CodeStream, NonInterleavedNalUnits, NonInterleavedAccessUnits,
-    InAndOutOfBand, OutOfBand, Strict,
+    InBand, OutOfBand, Strict,
     # Compatibility status
     Unconstrained, Constrained, ActiveConstraintsViolation, Unknown,
     CompliantStream, NonCompliantStream,
@@ -3586,7 +3586,7 @@ class Node:
                 _set_if_exists("PacketTransmissionMode",
                                EnumRegistry.get(NonInterleavedNalUnits.s))
                 _set_if_exists("ParameterSetsTransportMode",
-                               EnumRegistry.get(InAndOutOfBand.s))
+                               EnumRegistry.get(InBand.s))
                 _set_if_exists("ParameterSetsFlowMode",
                                EnumRegistry.get(Strict.s))
                 if self.ipmx or not self.rfc:
@@ -3611,7 +3611,7 @@ class Node:
                 _set_if_exists("PacketTransmissionMode",
                                EnumRegistry.get(NonInterleavedAccessUnits.s))
                 _set_if_exists("ParameterSetsTransportMode",
-                               EnumRegistry.get(InAndOutOfBand.s))
+                               EnumRegistry.get(InBand.s))
                 _set_if_exists("ParameterSetsFlowMode",
                                EnumRegistry.get(Strict.s))
 
