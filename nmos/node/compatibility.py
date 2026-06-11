@@ -47,6 +47,7 @@ from nmos.enums import (
     JxsvProfileMain420_12, JxsvProfileHigh420_12,
     JxsvProfileMain444_12, JxsvProfileHigh444_12,
     JxsvLevel4k1, JxsvLevel4k2, JxsvLevel4k3,
+    CodecProfileMain, H264ProfileHigh,
     H264ProfileHigh_422, H264ProfileHighIntra_422, H264ProfileHigh10, H264ProfileHigh10Intra,
     H265ProfileMain10_422, H265ProfileMain10Intra_422, H265ProfileMain10,
     H265ProfileMain10Intra, H265ProfileMain10_444, H265ProfileMain10Intra_444,
@@ -1419,10 +1420,13 @@ def fix_coded_video_flow(
             H264ProfileHighIntra_422.s: [SamplingYCbCr_422.s, SamplingYCbCr_420.s],
             H264ProfileHigh10.s: [SamplingYCbCr_420.s],
             H264ProfileHigh10Intra.s: [SamplingYCbCr_420.s],
+            H264ProfileHigh.s: [SamplingYCbCr_420.s],
+            CodecProfileMain.s: [SamplingYCbCr_420.s],
         }
         _SAMPLING_TO_PROFILE = {
             SamplingYCbCr_422.s: [H264ProfileHigh_422.s, H264ProfileHighIntra_422.s],
-            SamplingYCbCr_420.s: [H264ProfileHigh_422.s, H264ProfileHighIntra_422.s, H264ProfileHigh10.s, H264ProfileHigh10Intra.s],
+            SamplingYCbCr_420.s: [H264ProfileHigh_422.s, H264ProfileHighIntra_422.s, H264ProfileHigh10.s, H264ProfileHigh10Intra.s,
+                                  H264ProfileHigh.s, CodecProfileMain.s],
         }
         try_levels = [CodecLevel3.s, CodecLevel3_1.s, CodecLevel3_2.s, CodecLevel4.s, CodecLevel4_1.s, CodecLevel4_2.s,
                       CodecLevel5.s, CodecLevel5_1.s, CodecLevel5_2.s, CodecLevel6.s, CodecLevel6_1.s, CodecLevel6_2.s]
@@ -1437,9 +1441,10 @@ def fix_coded_video_flow(
             H265ProfileMain10Intra.s: [SamplingYCbCr_420.s],
             H265ProfileMain10_444.s: [SamplingYCbCr_444.s, SamplingYCbCr_422.s, SamplingYCbCr_420.s],
             H265ProfileMain10Intra_444.s: [SamplingYCbCr_444.s, SamplingYCbCr_422.s, SamplingYCbCr_420.s],
+            CodecProfileMain.s: [SamplingYCbCr_420.s],
         }
         _SAMPLING_TO_PROFILE = {
-            SamplingYCbCr_420.s: [H265ProfileMain10.s, H265ProfileMain10Intra.s],
+            SamplingYCbCr_420.s: [H265ProfileMain10.s, H265ProfileMain10Intra.s, CodecProfileMain.s],
             SamplingYCbCr_422.s: [H265ProfileMain10_422.s, H265ProfileMain10Intra_422.s],
             SamplingYCbCr_444.s: [H265ProfileMain10_444.s, H265ProfileMain10Intra_444.s],
         }

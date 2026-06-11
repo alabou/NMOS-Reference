@@ -3489,3 +3489,91 @@ class TestCodecFlavorSwap:
         err = node.force_active_constraints(sender, {"constraint_sets": []})
         assert err is None
         assert node.set_sender_compatibility_state(sender) == "unconstrained"
+
+
+@pytest.mark.skipif(not HAS_CCF, reason="MatroxCCF not available")
+class TestProfileCapsetConsistency:
+    """The 8-bit profile families are declared as their own capability sets
+    (H.264 Main/High @ 8-bit 4:2:0; H.265 Main @ 8-bit, Main10 @ 8/10-bit —
+    all 4:2:0), so the merge guarantees jointly-valid combinations: a
+    profile-only constraint inherits the capset's depth/sampling, and a
+    constraint demanding an impossible combination (e.g. Main at 10-bit)
+    fits no capability set and is rejected at PUT time."""
+
+    def _setup_video(self):
+        node = _make_node()
+        try:
+            _build_config(node, "config10")
+        except Exception as exc:
+            pytest.skip(f"config10 build failed: {exc}")
+        for static_id, sender in node.senders:
+            fmt = sender.Format.value.s if sender.Format.defined else ""
+            if "video" in fmt and "mux" not in fmt:
+                return node, sender
+        pytest.skip("No video sender")
+
+    def _flow(self, node, sender):
+        from nmos.node.flow_caps import get_flow_to_caps
+        from nmos.node.compatibility import _get_cap_str, _get_cap_int
+        caps = get_flow_to_caps(node, _get_sender_flow(node, sender))
+        return {
+            "profile": _get_cap_str(caps, "urn:x-nmos:cap:format:profile"),
+            "level": _get_cap_str(caps, "urn:x-nmos:cap:format:level"),
+            "sampling": _get_cap_str(caps, "urn:x-nmos:cap:format:color_sampling"),
+            "depth": _get_cap_int(caps, "urn:x-nmos:cap:format:component_depth"),
+        }
+
+    def _put(self, node, sender, caps):
+        err = node.force_active_constraints(sender, {"constraint_sets": [{
+            "urn:x-nmos:cap:meta:preference": 100, **caps,
+        }]})
+        status = node.set_sender_compatibility_state(sender)
+        return err, status
+
+    def test_h264_main_inherits_8bit_420(self) -> None:
+        node, sender = self._setup_video()
+        err, status = self._put(node, sender, {
+            "urn:x-nmos:cap:format:media_type": {"enum": ["video/H264"]},
+            "urn:x-nmos:cap:format:profile": {"enum": ["Main"]},
+        })
+        assert err is None and status == "constrained"
+        f = self._flow(node, sender)
+        assert (f["profile"], f["depth"], f["sampling"]) == ("Main", 8, "YCbCr-4:2:0")
+
+    def test_h265_main_inherits_8bit_420(self) -> None:
+        node, sender = self._setup_video()
+        err, status = self._put(node, sender, {
+            "urn:x-nmos:cap:format:media_type": {"enum": ["video/H265"]},
+            "urn:x-nmos:cap:format:profile": {"enum": ["Main"]},
+        })
+        assert err is None and status == "constrained"
+        f = self._flow(node, sender)
+        assert (f["profile"], f["depth"], f["sampling"]) == ("Main", 8, "YCbCr-4:2:0")
+        # the level settles on the smallest valid level for the 8-bit config
+        assert f["level"] == "Main-4.1"
+
+    def test_h265_main10_keeps_10bit(self) -> None:
+        node, sender = self._setup_video()
+        err, status = self._put(node, sender, {
+            "urn:x-nmos:cap:format:media_type": {"enum": ["video/H265"]},
+            "urn:x-nmos:cap:format:profile": {"enum": ["Main10"]},
+        })
+        assert err is None and status == "constrained"
+        f = self._flow(node, sender)
+        assert (f["profile"], f["depth"], f["sampling"]) == ("Main10", 10, "YCbCr-4:2:0")
+
+    @pytest.mark.parametrize("mt,profile", [
+        ("video/H264", "Main"), ("video/H264", "High"), ("video/H265", "Main"),
+    ])
+    def test_8bit_profile_at_10bit_is_rejected(self, mt: str, profile: str) -> None:
+        """A constraint demanding an 8-bit-only profile at 10-bit fits no
+        capability set — the PUT must be rejected and the flow untouched."""
+        node, sender = self._setup_video()
+        before = self._flow(node, sender)
+        err, _ = self._put(node, sender, {
+            "urn:x-nmos:cap:format:media_type": {"enum": [mt]},
+            "urn:x-nmos:cap:format:profile": {"enum": [profile]},
+            "urn:x-nmos:cap:format:component_depth": {"enum": [10]},
+        })
+        assert err is not None, f"{profile}@10bit must be unsatisfiable"
+        assert self._flow(node, sender) == before

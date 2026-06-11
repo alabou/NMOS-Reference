@@ -76,6 +76,8 @@ _AM824_CHANNEL_ORDER = ["SMPTE2110.(AES3)", "SMPTE2110.(AES3,ST)",
                         "SMPTE2110.(AES3,51)", "SMPTE2110.(AES3,71)"]
 # PCM channel_order grouping symbols (ST 2110-31): 2ch=ST, 6ch=51, 8ch=71 — plain strings by design.
 _PCM_CHANNEL_ORDER = ["SMPTE2110.(ST)", "SMPTE2110.(51)", "SMPTE2110.(71)"]
+# Receivers additionally accept single-channel (mono) PCM: 1ch=M.
+_PCM_CHANNEL_ORDER_RECEIVER = ["SMPTE2110.(M)"] + _PCM_CHANNEL_ORDER
 
 
 # ---------------------------------------------------------------------------
@@ -450,11 +452,15 @@ def get_jxsv_template(*, sub: bool = False) -> dict[str, Any]:
 # Audio templates
 # ---------------------------------------------------------------------------
 
-def get_pcm_template(*, sub: bool = False) -> dict[str, Any]:
+def get_pcm_template(*, receiver: bool = False, sub: bool = False) -> dict[str, Any]:
     """Template for audio/L16, audio/L20, audio/L24.
 
-    channel_count is 2/6/8 (no 4 — the channel_order grouping has ST/51/71 only).
-    Sub (within MPEG2-TS): 48 kHz only per SMPTE 302M, no channel_order.
+    channel_count is 2/6/8 (no 4 — the channel_order grouping has ST/51/71
+    only). Receivers additionally accept single-channel (mono) PCM, so their
+    capabilities carry channel_count 1 and the M channel_order grouping;
+    senders never produce mono.
+    Sub (within MPEG2-TS): 48 kHz only per SMPTE 302M, no channel_order, and
+    channels are carried in pairs so mono does not apply.
     """
     t: dict[str, Any] = {
         CapFormatMediaType.s: {"enum": [AudioRawL16.s, AudioRawL20.s, AudioRawL24.s]},
@@ -465,8 +471,11 @@ def get_pcm_template(*, sub: bool = False) -> dict[str, Any]:
         # SMPTE 302M restricts to 48 kHz
         t[CapFormatSampleRate.s] = {"enum": [{"numerator": 48000}]}
     else:
+        if receiver:
+            t[CapFormatChannelCount.s] = {"enum": [1, 2, 6, 8]}
         t[CapFormatSampleRate.s] = {"enum": [{"numerator": 48000}, {"numerator": 96000}]}
-        t[CapTransportChannelOrder.s] = {"enum": list(_PCM_CHANNEL_ORDER)}
+        t[CapTransportChannelOrder.s] = {"enum": list(
+            _PCM_CHANNEL_ORDER_RECEIVER if receiver else _PCM_CHANNEL_ORDER)}
     return t
 
 
@@ -576,7 +585,7 @@ def get_generic_template(
     elif mt == VideoCodedJxsv.s.lower():
         return get_jxsv_template(sub=sub)
     elif mt in (AudioRawL16.s.lower(), AudioRawL20.s.lower(), AudioRawL24.s.lower()):
-        return get_pcm_template(sub=sub)
+        return get_pcm_template(receiver=receiver, sub=sub)
     elif mt in (AudioCodedAac.s.lower(), AudioCodedAacADTS.s.lower()):
         return get_aac_template(sub=sub)
     elif mt == AudioCodedAm824.s.lower():

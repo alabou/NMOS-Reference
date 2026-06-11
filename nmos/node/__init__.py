@@ -905,12 +905,19 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
                     if set(names) & {R.s, G.s, B.s}:
                         media.sampling = E.SamplingRGB.value
                     elif len(comps) >= 3:
+                        # Chroma subsampling from the component geometry:
+                        # full-size chroma = 4:4:4; half width = 4:2:2;
+                        # half width and half height = 4:2:0.
                         w0 = comps[0].Width.value if comps[0].Width.defined else 0
                         w1 = comps[1].Width.value if comps[1].Width.defined else 0
+                        h0 = comps[0].Height.value if comps[0].Height.defined else 0
+                        h1 = comps[1].Height.value if comps[1].Height.defined else 0
                         if w0 == w1:
                             media.sampling = E.SamplingYCbCr_444.value
-                        else:
+                        elif h0 == h1:
                             media.sampling = E.SamplingYCbCr_422.value
+                        else:
+                            media.sampling = E.SamplingYCbCr_420.value
 
             # b=AS carries the transport bitrate (essence + transport overhead).  Read the
             # sender's transport Bitrate attribute so the SDP matches the published transport
