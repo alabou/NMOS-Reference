@@ -78,7 +78,7 @@ from nmos.enums import (
     TagGroupHint, TagAssetManufacturer, TagAssetProduct, TagAssetInstance, TagAssetFunction,
     # Colorspace / transfer / interlace
     BT601, BT709, BT2020, BT2100, SDR, HLG, PQ,
-    InterlacedTff, InterlacedBff, InterlacedPsf,
+    InterlacedTff, InterlacedBff, InterlacedPsf, Progressive,
     # Audio channels / video components
     L, R, C, LFE, Ls, Rs, Lrs, Rrs, Lt, Rt, M1, M2, B, G,
     # H.264 profiles / shared codec levels
@@ -343,6 +343,127 @@ def _get_h264_profile_level_id(flow_inner: Any) -> str:
         level_idc = _LEVEL_MAP.get(level, level_idc)
 
     return f"{profile_idc:02x}{profile_iop:02x}{level_idc:02x}"
+
+
+def _get_h265_profile_level_id(
+    profile: str, level: str, progressive: bool,
+) -> tuple[int, int, int, int, str, str]:
+    """Compute the H.265 fmtp profile/level parameters (RFC 7798).
+
+    Returns (profile_space, profile_id, tier_flag, level_id,
+    profile_compatibility, interop_constraints) where the last two are the
+    hex strings carried by the ``profile-compatibility-indicator`` and
+    ``interop-constraints`` fmtp parameters. The bit patterns are the exact
+    inverse of ``sdp.MatroxSdp.get_h265_profile_level_from_sdp`` so a
+    generated SDP round-trips to the same profile/level.
+
+    Raises ValueError for an unknown profile or level.
+    """
+    from sdp.MatroxSdp import (
+        GENERAL_PROGRESSIVE_SOURCE_FLAG,
+        GENERAL_NON_PACKED_CONSTRAINT_FLAG,
+        GENERAL_FRAME_ONLY_CONSTRAINT_FLAG,
+        GENERAL_MAX_14BIT_CONSTRAINT_FLAG,
+        GENERAL_MAX_12BIT_CONSTRAINT_FLAG,
+        GENERAL_MAX_10BIT_CONSTRAINT_FLAG,
+        GENERAL_MAX_8BIT_CONSTRAINT_FLAG,
+        GENERAL_MAX_422CHROMA_CONSTRAINT_FLAG,
+        GENERAL_MAX_420CHROMA_CONSTRAINT_FLAG,
+        GENERAL_MAX_MONOCHROME_CONSTRAINT_FLAG,
+        GENERAL_INTRA_CONSTRAINT_FLAG,
+        GENERAL_ONE_PICTURE_ONLY_CONSTRAINT_FLAG,
+        GENERAL_LOWER_BIT_RATE_CONSTRAINT_FLAG,
+    )
+    from nmos import enums as NE
+
+    B14 = GENERAL_MAX_14BIT_CONSTRAINT_FLAG
+    B12 = GENERAL_MAX_12BIT_CONSTRAINT_FLAG
+    B10 = GENERAL_MAX_10BIT_CONSTRAINT_FLAG
+    B8 = GENERAL_MAX_8BIT_CONSTRAINT_FLAG
+    C422 = GENERAL_MAX_422CHROMA_CONSTRAINT_FLAG
+    C420 = GENERAL_MAX_420CHROMA_CONSTRAINT_FLAG
+    MONO = GENERAL_MAX_MONOCHROME_CONSTRAINT_FLAG
+    INTRA = GENERAL_INTRA_CONSTRAINT_FLAG
+    ONE = GENERAL_ONE_PICTURE_ONLY_CONSTRAINT_FLAG
+    LBR = GENERAL_LOWER_BIT_RATE_CONSTRAINT_FLAG
+
+    # profile → (profile_id, extra compatibility bits, constraint flags).
+    # The compatibility indicator always also carries 1 << profile_id.
+    _PROFILE_MAP: dict[str, tuple[int, int, int]] = {
+        NE.CodecProfileMain.s: (1, (1 << 2), 0),
+        NE.H265ProfileMain10.s: (2, 0, 0),
+        NE.H265ProfileMain10StillPicture.s: (2, 0, ONE),
+        NE.H265ProfileMainStillPicture.s: (3, (1 << 1) | (1 << 2), 0),
+        NE.H265ProfileMonochrome.s: (4, 0, B12 | B10 | B8 | C422 | C420 | MONO | LBR),
+        NE.H265ProfileMonochrome10.s: (4, 0, B12 | B10 | C422 | C420 | MONO | LBR),
+        NE.H265ProfileMonochrome12.s: (4, 0, B12 | C422 | C420 | MONO | LBR),
+        NE.H265ProfileMonochrome16.s: (4, 0, C422 | C420 | MONO | LBR),
+        NE.H265ProfileMain12.s: (4, 0, B12 | C422 | C420 | LBR),
+        NE.H265ProfileMain10_422.s: (4, 0, B12 | B10 | C422 | LBR),
+        NE.H265ProfileMain12_422.s: (4, 0, B12 | C422 | LBR),
+        NE.H265ProfileMain_444.s: (4, 0, B12 | B10 | B8 | LBR),
+        NE.H265ProfileMain10_444.s: (4, 0, B12 | B10 | LBR),
+        NE.H265ProfileMain12_444.s: (4, 0, B12 | LBR),
+        NE.H265ProfileMainIntra.s: (4, 0, B12 | B10 | B8 | C422 | C420 | INTRA),
+        NE.H265ProfileMain10Intra.s: (4, 0, B12 | B10 | C422 | C420 | INTRA),
+        NE.H265ProfileMain12Intra.s: (4, 0, B12 | C422 | C420 | INTRA),
+        NE.H265ProfileMain10Intra_422.s: (4, 0, B12 | B10 | C422 | INTRA),
+        NE.H265ProfileMain12Intra_422.s: (4, 0, B12 | C422 | INTRA),
+        NE.H265ProfileMainIntra_444.s: (4, 0, B12 | B10 | B8 | INTRA),
+        NE.H265ProfileMain10Intra_444.s: (4, 0, B12 | B10 | INTRA),
+        NE.H265ProfileMain12Intra_444.s: (4, 0, B12 | INTRA),
+        NE.H265ProfileMain16Intra_444.s: (4, 0, INTRA),
+        NE.H265ProfileMainStillPicture_444.s: (4, 0, B12 | B10 | B8 | INTRA | ONE),
+        NE.H265ProfileMain16StillPicture_444.s: (4, 0, INTRA | ONE),
+        NE.H265ProfileHighThroughput_444.s: (5, 0, B14 | B12 | B10 | B8 | LBR),
+        NE.H265ProfileHighThroughput10_444.s: (5, 0, B14 | B12 | B10 | LBR),
+        NE.H265ProfileHighThroughput14_444.s: (5, 0, B14 | LBR),
+        NE.H265ProfileHighThroughput16Intra_444.s: (5, 0, INTRA),
+        NE.H265ProfileScreenExtendedMain.s: (9, 0, B14 | B12 | B10 | B8 | C422 | C420 | LBR),
+        NE.H265ProfileScreenExtendedMain10.s: (9, 0, B14 | B12 | B10 | C422 | C420 | LBR),
+        NE.H265ProfileScreenExtendedMain_444.s: (9, 0, B14 | B12 | B10 | B8 | LBR),
+        NE.H265ProfileScreenExtendedMain10_444.s: (9, 0, B14 | B12 | B10 | LBR),
+        NE.H265ProfileScreenExtendedHighThroughput_444.s: (11, 0, B14 | B12 | B10 | B8 | LBR),
+        NE.H265ProfileScreenExtendedHighThroughput10_444.s: (11, 0, B14 | B12 | B10 | LBR),
+        NE.H265ProfileScreenExtendedHighThroughput14_444.s: (11, 0, B14 | LBR),
+    }
+
+    entry = _PROFILE_MAP.get(profile)
+    if entry is None:
+        raise ValueError(f"unsupported H.265 profile '{profile}' for SDP fmtp")
+    profile_id, extra_compat, constraints = entry
+
+    compatibility = (1 << profile_id) | extra_compat
+
+    constraints |= GENERAL_NON_PACKED_CONSTRAINT_FLAG
+    if progressive:
+        constraints |= GENERAL_PROGRESSIVE_SOURCE_FLAG
+        constraints |= GENERAL_FRAME_ONLY_CONSTRAINT_FLAG
+
+    # level → (level_id, tier_flag). level_id = 30 × level number; the
+    # Main and High tiers share level ids and differ by the tier flag.
+    _LEVEL_MAP: dict[str, tuple[int, int]] = {
+        NE.H265LevelMain1.s: (30, 0), NE.H265LevelMain2.s: (60, 0),
+        NE.H265LevelMain2_1.s: (63, 0), NE.H265LevelMain3.s: (90, 0),
+        NE.H265LevelMain3_1.s: (93, 0), NE.H265LevelMain4.s: (120, 0),
+        NE.H265LevelMain4_1.s: (123, 0), NE.H265LevelMain5.s: (150, 0),
+        NE.H265LevelMain5_1.s: (153, 0), NE.H265LevelMain5_2.s: (156, 0),
+        NE.H265LevelMain6.s: (180, 0), NE.H265LevelMain6_1.s: (183, 0),
+        NE.H265LevelMain6_2.s: (186, 0),
+        NE.H265LevelHigh1.s: (30, 1), NE.H265LevelHigh2.s: (60, 1),
+        NE.H265LevelHigh2_1.s: (63, 1), NE.H265LevelHigh3.s: (90, 1),
+        NE.H265LevelHigh3_1.s: (93, 1), NE.H265LevelHigh4.s: (120, 1),
+        NE.H265LevelHigh4_1.s: (123, 1), NE.H265LevelHigh5.s: (150, 1),
+        NE.H265LevelHigh5_1.s: (153, 1), NE.H265LevelHigh5_2.s: (156, 1),
+        NE.H265LevelHigh6.s: (180, 1), NE.H265LevelHigh6_1.s: (183, 1),
+        NE.H265LevelHigh6_2.s: (186, 1), NE.H265LevelHigh8_5.s: (255, 1),
+    }
+    level_entry = _LEVEL_MAP.get(level)
+    if level_entry is None:
+        raise ValueError(f"unsupported H.265 level '{level}' for SDP fmtp")
+    level_id, tier_flag = level_entry
+
+    return 0, profile_id, tier_flag, level_id, f"{compatibility:08X}", f"{constraints:012X}"
 
 
 def _set_ipmx_timing(media: Any) -> None:
@@ -802,11 +923,32 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
             elif hasattr(flow_inner, 'BitRate') and flow_inner.BitRate.defined:
                 media.bitrate_kbits = flow_inner.BitRate.value
 
+            # TP applies to every coded video stream, not just H.264
+            media.sender_type = E.SenderType2110TPW.value
+
             mt = str(flow_inner.MediaType.value) if flow_inner.MediaType.defined else ""
             if mt == VideoCodedH264.s:
                 media.codec_profile_level_id = _get_h264_profile_level_id(flow_inner)
                 media.h264_packetization_mode = 1  # Non-interleaved
-                media.sender_type = E.SenderType2110TPW.value
+            elif mt == VideoCodedH265.s:
+                profile = (str(flow_inner.Profile.value)
+                           if hasattr(flow_inner, 'Profile') and flow_inner.Profile.defined else "")
+                level = (str(flow_inner.Level.value)
+                         if hasattr(flow_inner, 'Level') and flow_inner.Level.defined else "")
+                progressive = True
+                if hasattr(flow_inner, 'InterlaceMode') and flow_inner.InterlaceMode.defined:
+                    progressive = str(flow_inner.InterlaceMode.value) == Progressive.s
+                (media.h265_profile_space, media.h265_profile_id,
+                 tier_flag, media.h265_level_id,
+                 media.h265_profile_compatibility_indicator,
+                 media.h265_interop_constraints) = _get_h265_profile_level_id(
+                    profile, level, progressive)
+                media.h265_tier_flag = bool(tier_flag)
+                media.h265_tx_mode = E.H265TxModeSRST.value
+                media.h265_vps = ""
+                media.h265_sps = ""
+                media.h265_pps = ""
+                media.h26x_max_don_diff = 0  # non-interleaved mode
 
         elif "Mux" in type_name or "FlowMux" in type_name:
             mt = ""
