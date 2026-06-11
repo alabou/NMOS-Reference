@@ -635,7 +635,7 @@ CapFormatConstantBitRate = EnumRegistry.get(_H26x_CAP + "cap:format:constant_bit
 # Transport caps
 CapTransportBitRate = EnumRegistry.get("urn:x-nmos:cap:transport:bit_rate")
 CapTransportPacketTime = EnumRegistry.get("urn:x-nmos:cap:transport:packet_time")
-CapTransportMaxPacketTtime = EnumRegistry.get("urn:x-nmos:cap:transport:max_packet_time")
+CapTransportMaxPacketTime = EnumRegistry.get("urn:x-nmos:cap:transport:max_packet_time")
 CapTransportSenderType = EnumRegistry.get("urn:x-nmos:cap:transport:st2110_21_sender_type")
 CapTransportPacketTransmissionMode = EnumRegistry.get("urn:x-nmos:cap:transport:packet_transmission_mode")
 CapTransportParameterSetsFlowMode = EnumRegistry.get(_H26x_CAP + "cap:transport:parameter_sets_flow_mode")

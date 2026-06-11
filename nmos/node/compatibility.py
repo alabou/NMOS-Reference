@@ -72,7 +72,7 @@ from nmos.enums import (
     CapFormatProfile, CapFormatLevel, CapFormatSublevel,
     CapFormatVideoLayers, CapFormatAudioLayers, CapFormatDataLayers,
     # Capabilities — transport
-    CapTransportBitRate, CapTransportPacketTime, CapTransportMaxPacketTtime,
+    CapTransportBitRate, CapTransportPacketTime, CapTransportMaxPacketTime,
     CapTransportSenderType, CapTransportPacketTransmissionMode,
     CapTransportParameterSetsFlowMode, CapTransportParameterSetsTransportMode,
     CapTransportChannelOrder, CapTransportHkep, CapTransportPrivacy,
@@ -151,7 +151,7 @@ SUPPORTED_MUX_MIXED_CONSTRAINTS: list[str] = _META_CONSTRAINTS + [
 # Transport constraint URNs (isConstraintNameOfTransportCategory)
 _TRANSPORT_CONSTRAINTS: set[str] = {
     CapTransportBitRate.s, CapTransportPacketTime.s,
-    CapTransportMaxPacketTtime.s, CapTransportSenderType.s,
+    CapTransportMaxPacketTime.s, CapTransportSenderType.s,
     CapTransportPacketTransmissionMode.s,
     CapTransportParameterSetsFlowMode.s,
     CapTransportParameterSetsTransportMode.s,
@@ -1945,7 +1945,6 @@ def get_sdp_to_caps(
             Cap,
             RangeValue,
             RangeType,
-            CapTransportMaxPacketTime,
         )
     except ImportError:
         return None
@@ -1977,6 +1976,9 @@ def get_sdp_to_caps(
 
     def _b(name: str, val: bool) -> None:
         caps[name] = Cap(name, RangeValue(values=(val,), type=RangeType.BOOL))
+
+    def _f(name: str, val: float) -> None:
+        caps[name] = Cap(name, RangeValue(values=(val,), type=RangeType.FLOAT))
 
     # --- Helper: colorspace from SDP colorimetry + color_range ---
     def _colorspace_from_sdp(colorimetry: Any, color_range: Any) -> str | None:
@@ -2031,12 +2033,14 @@ def get_sdp_to_caps(
     def _extract_audio_transport() -> None:
         if media.bitrate_kbits:
             _i(CapTransportBitRate.s, media.bitrate_kbits)
-        ptime = getattr(media, 'ptime_us', 0) or getattr(media, 'ptime', 0)
-        if ptime:
-            _i(CapTransportPacketTime.s, ptime)
-        max_ptime = getattr(media, 'max_ptime_us', 0) or getattr(media, 'max_ptime', 0)
-        if max_ptime:
-            _i(CapTransportMaxPacketTime.s, max_ptime)
+        # packet_time capabilities are expressed in MILLISECONDS (float);
+        # the SDP layer stores ptime/maxptime in microseconds.
+        ptime_us = getattr(media, 'p_time_us', 0)
+        if ptime_us:
+            _f(CapTransportPacketTime.s, ptime_us / 1000.0)
+        max_ptime_us = getattr(media, 'max_p_time_us', 0)
+        if max_ptime_us:
+            _f(CapTransportMaxPacketTime.s, max_ptime_us / 1000.0)
 
     # --- SDP specification checks (CheckSpecification per encoding) ---
     try:
@@ -2064,8 +2068,8 @@ def get_sdp_to_caps(
                 return False
         return True
 
-    # --- Dispatch by media type ---
-    media_type_enum = getattr(media, 'media_type', None)
+    # --- Dispatch by media type (the SDP m= line type: video/audio/application) ---
+    media_type_enum = getattr(media, 'type', None)
     encoding = media.encoding_name
 
     if media_type_enum is not None and str(media_type_enum) == "video":
@@ -2245,8 +2249,8 @@ def get_sdp_to_caps(
             # RFC 3640: constant duration overrides ptime
             if media.aac_constant_duration and media.sample_rate:
                 ptime_us = (media.aac_constant_duration * 1000000) // media.sample_rate
-                _i(CapTransportPacketTime.s, ptime_us)
-                _i(CapTransportMaxPacketTime.s, ptime_us)
+                _f(CapTransportPacketTime.s, ptime_us / 1000.0)
+                _f(CapTransportMaxPacketTime.s, ptime_us / 1000.0)
 
         elif enc_lower in ("mp4a-latm", "mp4a-adts"):
             # AAC-LATM / AAC-ADTS (RFC 6416)
@@ -2284,8 +2288,8 @@ def get_sdp_to_caps(
             _extract_audio_transport()
             if media.aac_constant_duration and media.sample_rate:
                 ptime_us = (media.aac_constant_duration * 1000000) // media.sample_rate
-                _i(CapTransportPacketTime.s, ptime_us)
-                _i(CapTransportMaxPacketTime.s, ptime_us)
+                _f(CapTransportPacketTime.s, ptime_us / 1000.0)
+                _f(CapTransportMaxPacketTime.s, ptime_us / 1000.0)
 
     elif media_type_enum is not None and str(media_type_enum) == "application":
         # APPLICATION — validate against known formats (Json, Usb, Mpeg2TS, Rtsp)

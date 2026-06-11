@@ -46,7 +46,7 @@ from nmos.enums import (
     CapFormatBitRate, CapFormatSampleDepth, CapFormatSampleRate,
     CapFormatChannelCount, CapTransportPacketTransmissionMode,
     CapTransportParameterSetsTransportMode, CapTransportParameterSetsFlowMode,
-    CapTransportUsbClass, CapTransportChannelOrder, CapMetaLabel,
+    CapTransportUsbClass, CapTransportChannelOrder, CapTransportPacketTime, CapMetaLabel,
     # Constraint values
     Progressive, SDR, BT601, BT709, BT2020,
     SamplingYCbCr_420, SamplingYCbCr_422, SamplingYCbCr_444,
@@ -238,12 +238,16 @@ def get_native_jxsv_template(*, sub: bool = False) -> dict[str, Any]:
 def get_native_pcm_template(*, sub: bool = False) -> dict[str, Any]:
     """Native single-value defaults for PCM audio (from DEFAULT_NATIVE_PCM)."""
     na = DEFAULT_NATIVE_PCM
-    return {
+    t: dict[str, Any] = {
         CapFormatMediaType.s: {"enum": [na.media_type]},
         CapFormatSampleRate.s: {"enum": [{"numerator": na.rate}]},
         CapFormatChannelCount.s: {"enum": [na.channels]},
         CapFormatSampleDepth.s: {"enum": [na.depth]},
     }
+    if not sub:
+        # Supported RTP packet times in milliseconds (1 ms / 125 µs)
+        t[CapTransportPacketTime.s] = {"enum": [0.125, 1]}
+    return t
 
 
 def get_native_aac_template(*, sub: bool = False) -> dict[str, Any]:
@@ -283,8 +287,11 @@ def get_native_am824_template(*, sub: bool = False) -> dict[str, Any]:
         CapFormatSampleRate.s: {"enum": [{"numerator": na.rate}]},
         CapFormatChannelCount.s: {"enum": [na.channels]},
     }
-    if not sub and na.channel_order is not None:
-        t[CapTransportChannelOrder.s] = {"enum": [na.channel_order]}
+    if not sub:
+        if na.channel_order is not None:
+            t[CapTransportChannelOrder.s] = {"enum": [na.channel_order]}
+        # Supported RTP packet times in milliseconds (1 ms / 125 µs)
+        t[CapTransportPacketTime.s] = {"enum": [0.125, 1]}
     return t
 
 
@@ -476,6 +483,9 @@ def get_pcm_template(*, receiver: bool = False, sub: bool = False) -> dict[str, 
         t[CapFormatSampleRate.s] = {"enum": [{"numerator": 48000}, {"numerator": 96000}]}
         t[CapTransportChannelOrder.s] = {"enum": list(
             _PCM_CHANNEL_ORDER_RECEIVER if receiver else _PCM_CHANNEL_ORDER)}
+        # Supported RTP packet times in milliseconds: 1 ms when a packet can
+        # carry it, else 125 µs (both senders and receivers).
+        t[CapTransportPacketTime.s] = {"enum": [0.125, 1]}
     return t
 
 
@@ -525,6 +535,9 @@ def get_am824_template(*, sub: bool = False) -> dict[str, Any]:
         t[CapFormatSampleRate.s] = {"enum": [{"numerator": 48000}, {"numerator": 96000}]}
         # Channel order uses AES3 grouping symbols per ST 2110-31 (no enum — plain strings by design)
         t[CapTransportChannelOrder.s] = {"enum": list(_AM824_CHANNEL_ORDER)}
+        # Supported RTP packet times in milliseconds: 1 ms when a packet can
+        # carry it, else 125 µs (both senders and receivers).
+        t[CapTransportPacketTime.s] = {"enum": [0.125, 1]}
     return t
 
 
