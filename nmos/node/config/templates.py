@@ -29,6 +29,7 @@ remain plain strings by design.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any
 
@@ -54,7 +55,7 @@ from nmos.enums import (
     H264ProfileHigh_422, H264ProfileHighIntra_422,
     H265ProfileMain10_422, H265ProfileMain10_444,
     H265ProfileMain10Intra_422, H265ProfileMain10Intra_444,
-    CodecLevel3, CodecLevel3_1, CodecLevel3_2,
+    CodecLevel2, CodecLevel3, CodecLevel3_1, CodecLevel3_2,
     CodecLevel4, CodecLevel4_1, CodecLevel4_2, CodecLevel5, CodecLevel5_1,
     CodecLevel5_2, CodecLevel6, CodecLevel6_1, CodecLevel6_2,
     H265LevelMain3, H265LevelMain3_1, H265LevelMain4, H265LevelHigh4,
@@ -76,6 +77,74 @@ _AM824_CHANNEL_ORDER = ["SMPTE2110.(AES3)", "SMPTE2110.(AES3,ST)",
 # PCM channel_order grouping symbols (ST 2110-31): 2ch=ST, 6ch=51, 8ch=71 — plain strings by design.
 _PCM_CHANNEL_ORDER = ["SMPTE2110.(ST)", "SMPTE2110.(51)", "SMPTE2110.(71)"]
 
+
+# ---------------------------------------------------------------------------
+# Default native operating point
+#
+# Single-value defaults used to fill a native (preference=100) constraint set
+# when the config omits a parameter.  Edit the DEFAULT_NATIVE_* instances below to
+# change the defaults — they are the single place these values live (the template
+# functions only read from them).
+#
+# Coded-only fields default to None → the cap is simply not emitted, so the config
+# must supply it.  The H.265/JXSV codec-specific defaults are representative values
+# and may be tuned here.
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class NativeVideo:
+    media_type: str
+    width: int = 1920
+    height: int = 1080
+    depth: int = 10
+    rate: int = 60
+    color_sampling: str = SamplingYCbCr_422.s
+    colorspace: str = BT709.s
+    transfer_characteristic: str = SDR.s
+    # Coded video only:
+    profile: str | None = None
+    level: str | None = None
+    sublevel: str | None = None
+    bitrate_kbps: int | None = None
+    cbr: bool = False
+
+
+@dataclass(frozen=True)
+class NativeAudio:
+    media_type: str
+    rate: int = 48000
+    channels: int = 2
+    depth: int = 24
+    # Coded audio only:
+    profile: str | None = None
+    level: str | None = None
+    bitrate_kbps: int | None = None
+    cbr: bool = False
+    channel_order: str | None = None
+
+
+# Video native default: H264 @ 1920x1080, 10-bit, 60p, 4:2:2, BT709, SDR,
+# High-422 @ L4, 40 Mbps, CBR off.  Raw shares the common operating point (no codec params).
+DEFAULT_NATIVE_RAW = NativeVideo(media_type=VideoRaw.s)
+DEFAULT_NATIVE_H264 = NativeVideo(
+    media_type=VideoCodedH264.s, profile=H264ProfileHigh_422.s,
+    level=CodecLevel4.s, bitrate_kbps=40000, cbr=False)
+DEFAULT_NATIVE_H265 = NativeVideo(
+    media_type=VideoCodedH265.s, profile=H265ProfileMain10_422.s,
+    level=H265LevelMain4.s, bitrate_kbps=40000, cbr=False)
+DEFAULT_NATIVE_JXSV = NativeVideo(
+    media_type=VideoCodedJxsv.s, profile=JxsvProfileMain420_12.s,
+    level=JxsvLevel4k1.s, sublevel=JxsvSublevel3bpp.s, bitrate_kbps=40000, cbr=False)
+
+# Audio native defaults: AAC = 48 kHz, 2 ch, profile AAC, level 2, 128 kbps, CBR on, 24-bit;
+# AM824 = 48 kHz, 2 ch, channel order SMPTE2110.(AES3), 24-bit; PCM = 48 kHz, 2 ch, L24/24-bit.
+DEFAULT_NATIVE_PCM = NativeAudio(media_type=AudioRawL24.s)
+DEFAULT_NATIVE_AAC = NativeAudio(
+    media_type=AudioCodedAac.s, profile=AacProfileAAC.s,
+    level=CodecLevel2.s, bitrate_kbps=128, cbr=True)
+DEFAULT_NATIVE_AM824 = NativeAudio(
+    media_type=AudioCodedAm824.s, channel_order="SMPTE2110.(AES3)")
+
 # ---------------------------------------------------------------------------
 # Common video values shared across templates
 # ---------------------------------------------------------------------------
@@ -95,85 +164,67 @@ _COMMON_COLORSPACES = [BT601.s, BT709.s, BT2020.s]
 # Native video templates (single-value defaults — tip of the pyramid)
 # ---------------------------------------------------------------------------
 
-def get_native_raw_template(*, sub: bool = False) -> dict[str, Any]:
-    """Native defaults for video/raw.
+def _native_video_caps(nv: NativeVideo) -> dict[str, Any]:
+    """Single-value native video caps built from a NativeVideo default.
 
-    Config must provide: frame_width, frame_height, grain_rate,
-    component_depth, color_sampling, colorspace.
+    Coded-only fields (profile/level/sublevel/bit_rate) are emitted only when the
+    struct sets them; otherwise the config must supply them.
     """
-    return {
-        CapFormatMediaType.s: {"enum": [VideoRaw.s]},
+    t: dict[str, Any] = {
+        CapFormatMediaType.s: {"enum": [nv.media_type]},
         CapFormatInterlaceMode.s: {"enum": [Progressive.s]},
-        CapFormatTransferCharacteristic.s: {"enum": [SDR.s]},
+        CapFormatGrainRate.s: {"enum": [{"numerator": nv.rate}]},
+        CapFormatFrameWidth.s: {"enum": [nv.width]},
+        CapFormatFrameHeight.s: {"enum": [nv.height]},
+        CapFormatColorSampling.s: {"enum": [nv.color_sampling]},
+        CapFormatTransferCharacteristic.s: {"enum": [nv.transfer_characteristic]},
+        CapFormatColorspace.s: {"enum": [nv.colorspace]},
+        CapFormatComponentDepth.s: {"enum": [nv.depth]},
     }
+    if nv.profile is not None:
+        t[CapFormatProfile.s] = {"enum": [nv.profile]}
+    if nv.level is not None:
+        t[CapFormatLevel.s] = {"enum": [nv.level]}
+    if nv.sublevel is not None:
+        t[CapFormatSublevel.s] = {"enum": [nv.sublevel]}
+    if nv.bitrate_kbps is not None:
+        t[CapFormatBitRate.s] = {"enum": [nv.bitrate_kbps]}
+    return t
+
+
+def _native_h26x_caps(nv: NativeVideo, *, receiver: bool, sub: bool) -> dict[str, Any]:
+    t = _native_video_caps(nv)
+    t[CapFormatConstantBitRate.s] = {"enum": [nv.cbr]}
+    if not sub:
+        t[CapTransportPacketTransmissionMode.s] = {"enum": [NonInterleavedNalUnits.s]}
+        # parameter_sets_transport_mode sender default kept as in_band (project decision)
+        pstm = [InBand.s, InAndOutOfBand.s, OutOfBand.s] if receiver else [InBand.s]
+        t[CapTransportParameterSetsTransportMode.s] = {"enum": pstm}
+        t[CapTransportParameterSetsFlowMode.s] = {"enum": [Strict.s]}
+    return t
+
+
+def get_native_raw_template(*, sub: bool = False) -> dict[str, Any]:
+    """Native single-value defaults for video/raw (from DEFAULT_NATIVE_RAW)."""
+    return _native_video_caps(DEFAULT_NATIVE_RAW)
 
 
 def get_native_h264_template(*, receiver: bool = False, sub: bool = False) -> dict[str, Any]:
-    """Native defaults for video/H264.
-
-    Config must provide: frame_width, frame_height, grain_rate,
-    component_depth, color_sampling, colorspace, profile, level, bit_rate.
-    """
-    t: dict[str, Any] = {
-        CapFormatMediaType.s: {"enum": [VideoCodedH264.s]},
-        CapFormatInterlaceMode.s: {"enum": [Progressive.s]},
-        CapFormatTransferCharacteristic.s: {"enum": [SDR.s]},
-        CapFormatConstantBitRate.s: {"enum": [False]},
-    }
-
-    if not sub:
-        if receiver:
-            t[CapTransportPacketTransmissionMode.s] = {"enum": [NonInterleavedNalUnits.s]}
-            t[CapTransportParameterSetsTransportMode.s] = {"enum": [InBand.s, InAndOutOfBand.s, OutOfBand.s]}
-            t[CapTransportParameterSetsFlowMode.s] = {"enum": [Strict.s]}
-        else:
-            t[CapTransportPacketTransmissionMode.s] = {"enum": [NonInterleavedNalUnits.s]}
-            t[CapTransportParameterSetsTransportMode.s] = {"enum": [InBand.s]}
-            t[CapTransportParameterSetsFlowMode.s] = {"enum": [Strict.s]}
-
-    return t
+    """Native single-value defaults for video/H264 (from DEFAULT_NATIVE_H264)."""
+    return _native_h26x_caps(DEFAULT_NATIVE_H264, receiver=receiver, sub=sub)
 
 
 def get_native_h265_template(*, receiver: bool = False, sub: bool = False) -> dict[str, Any]:
-    """Native defaults for video/H265.
-
-    Config must provide: frame_width, frame_height, grain_rate,
-    component_depth, color_sampling, colorspace, profile, level, bit_rate.
-    """
-    t: dict[str, Any] = {
-        CapFormatMediaType.s: {"enum": [VideoCodedH265.s]},
-        CapFormatInterlaceMode.s: {"enum": [Progressive.s]},
-        CapFormatTransferCharacteristic.s: {"enum": [SDR.s]},
-        CapFormatConstantBitRate.s: {"enum": [False]},
-    }
-
-    if not sub:
-        if receiver:
-            t[CapTransportPacketTransmissionMode.s] = {"enum": [NonInterleavedNalUnits.s]}
-            t[CapTransportParameterSetsTransportMode.s] = {"enum": [InBand.s, InAndOutOfBand.s, OutOfBand.s]}
-            t[CapTransportParameterSetsFlowMode.s] = {"enum": [Strict.s]}
-        else:
-            t[CapTransportPacketTransmissionMode.s] = {"enum": [NonInterleavedNalUnits.s]}
-            t[CapTransportParameterSetsTransportMode.s] = {"enum": [InBand.s]}
-            t[CapTransportParameterSetsFlowMode.s] = {"enum": [Strict.s]}
-
-    return t
+    """Native single-value defaults for video/H265 (from DEFAULT_NATIVE_H265)."""
+    return _native_h26x_caps(DEFAULT_NATIVE_H265, receiver=receiver, sub=sub)
 
 
 def get_native_jxsv_template(*, sub: bool = False) -> dict[str, Any]:
-    """Native defaults for video/jxsv.
-
-    Config must provide: frame_width, frame_height, grain_rate,
-    component_depth, color_sampling, colorspace, profile, level, sublevel.
-    """
-    t: dict[str, Any] = {
-        CapFormatMediaType.s: {"enum": [VideoCodedJxsv.s]},
-        CapFormatInterlaceMode.s: {"enum": [Progressive.s]},
-        CapFormatTransferCharacteristic.s: {"enum": [SDR.s]},
-    }
-    if sub:
-        t[CapTransportPacketTransmissionMode.s] = {"enum": [NonInterleavedNalUnits.s]}
-    else:
+    """Native single-value defaults for video/jxsv (from DEFAULT_NATIVE_JXSV)."""
+    nv = DEFAULT_NATIVE_JXSV
+    t = _native_video_caps(nv)
+    t[CapFormatConstantBitRate.s] = {"enum": [nv.cbr]}
+    if not sub:
         t[CapTransportPacketTransmissionMode.s] = {"enum": [CodeStream.s]}
     return t
 
@@ -183,27 +234,34 @@ def get_native_jxsv_template(*, sub: bool = False) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def get_native_pcm_template(*, sub: bool = False) -> dict[str, Any]:
-    """Native defaults for audio/L24.
-
-    Config must provide: sample_rate, channel_count.
-    """
+    """Native single-value defaults for PCM audio (from DEFAULT_NATIVE_PCM)."""
+    na = DEFAULT_NATIVE_PCM
     return {
-        CapFormatMediaType.s: {"enum": [AudioRawL24.s]},
-        CapFormatSampleDepth.s: {"enum": [24]},
+        CapFormatMediaType.s: {"enum": [na.media_type]},
+        CapFormatSampleRate.s: {"enum": [{"numerator": na.rate}]},
+        CapFormatChannelCount.s: {"enum": [na.channels]},
+        CapFormatSampleDepth.s: {"enum": [na.depth]},
     }
 
 
 def get_native_aac_template(*, sub: bool = False) -> dict[str, Any]:
-    """Native defaults for AAC.
+    """Native single-value defaults for AAC (from DEFAULT_NATIVE_AAC).
 
     Non-sub uses audio/mpeg4-generic (AAC over RTP, RFC 3640); sub (within an
     MPEG2-TS mux) uses audio/MP4A-ADTS.
-
-    Config must provide: sample_rate, channel_count, profile, level, bit_rate.
     """
+    na = DEFAULT_NATIVE_AAC
     t: dict[str, Any] = {
-        CapFormatConstantBitRate.s: {"enum": [False]},
+        CapFormatSampleRate.s: {"enum": [{"numerator": na.rate}]},
+        CapFormatChannelCount.s: {"enum": [na.channels]},
+        CapFormatConstantBitRate.s: {"enum": [na.cbr]},
     }
+    if na.profile is not None:
+        t[CapFormatProfile.s] = {"enum": [na.profile]}
+    if na.level is not None:
+        t[CapFormatLevel.s] = {"enum": [na.level]}
+    if na.bitrate_kbps is not None:
+        t[CapFormatBitRate.s] = {"enum": [na.bitrate_kbps]}
 
     if not sub:
         t[CapFormatMediaType.s] = {"enum": [AudioCodedAac.s]}
@@ -216,15 +274,16 @@ def get_native_aac_template(*, sub: bool = False) -> dict[str, Any]:
 
 
 def get_native_am824_template(*, sub: bool = False) -> dict[str, Any]:
-    """Native defaults for audio/AM824.
-
-    AM824 always uses 48 kHz and stereo pairs (even channel counts).
-    """
-    return {
-        CapFormatMediaType.s: {"enum": [AudioCodedAm824.s]},
-        CapFormatSampleRate.s: {"enum": [{"numerator": 48000}]},
-        CapFormatChannelCount.s: {"enum": [2, 4, 8, 10]},
+    """Native single-value defaults for audio/AM824 (from DEFAULT_NATIVE_AM824)."""
+    na = DEFAULT_NATIVE_AM824
+    t: dict[str, Any] = {
+        CapFormatMediaType.s: {"enum": [na.media_type]},
+        CapFormatSampleRate.s: {"enum": [{"numerator": na.rate}]},
+        CapFormatChannelCount.s: {"enum": [na.channels]},
     }
+    if not sub and na.channel_order is not None:
+        t[CapTransportChannelOrder.s] = {"enum": [na.channel_order]}
+    return t
 
 
 # ---------------------------------------------------------------------------

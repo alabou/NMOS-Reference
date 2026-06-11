@@ -39,13 +39,7 @@ def complete_capabilities(
     Uses CCF inheritance (<-) to fill gaps without overriding user-specified values.
     """
     try:
-        from caps.MatroxCCF import (
-            Caps, CapSet, Cap, RangeValue, RangeType,
-            CapTransportBitRate, CapTransportPacketTime,
-            CapTransport_ST2110_21_SenderType,
-            CapTransportPrivacy, CapTransportHkep,
-            CapTransportSynchronousMedia,
-        )
+        from caps.MatroxCCF import Caps
     except ImportError:
         return caps
 
@@ -448,55 +442,47 @@ def _validate_preference_hierarchy(caps: Any, verbose: bool) -> None:
 
 
 def _add_ipmx_constraints(capset: Any, verbose: bool) -> None:
-    """Add IPMX transport constraints to a CapSet if not already present."""
+    """Add IPMX transport constraints to a CapSet if not already present.
+
+    This reference node uses an internal clock (no PTP) and produces only
+    asynchronous media, so it advertises the narrowed operating point
+    clock_ref_type=[internal], synchronous_media=[false] — a deliberate
+    node-capability subset of the general IPMX envelope (which allows
+    [ptp, internal] and, for receivers, synchronous_media [true, false]).
+
+    Intentionally NOT published here:
+    - HKEP (HDCP): not supported by this reference node.
+    - info_block: not yet standardized.
+    - bit_rate / packet_time / st2110_21_sender_type: bit_rate and packet_time are
+      transport properties extracted from the SDP (get_sdp_to_caps), not capability
+      completion; st2110_21_sender_type is not published as a capability.
+    """
     try:
         from caps.MatroxCCF import (
             Cap, RangeValue, RangeType,
-            CapTransportBitRate, CapTransportPacketTime,
-            CapTransport_ST2110_21_SenderType,
-            CapTransportSynchronousMedia,
+            CapTransportClockRefType, CapTransportSynchronousMedia,
         )
+        from nmos.enums import Internal
     except ImportError:
         return
 
-    # BitRate (transport level, not format level)
-    if CapTransportBitRate not in capset.caps:
-        capset.caps[CapTransportBitRate] = Cap(
-            name=CapTransportBitRate,
-            value=RangeValue(type=RangeType.INT),  # INF
+    # Clock reference: internal only (this node has no PTP)
+    if CapTransportClockRefType not in capset.caps:
+        capset.caps[CapTransportClockRefType] = Cap(
+            name=CapTransportClockRefType,
+            value=RangeValue(values=(Internal.s,), type=RangeType.STRING),
         )
         if verbose:
-            print(f"    + Added IPMX constraint: {CapTransportBitRate} (unconstrained)")
+            print(f"    + Added IPMX constraint: {CapTransportClockRefType} = [{Internal.s}]")
 
-    # PacketTime
-    if CapTransportPacketTime not in capset.caps:
-        capset.caps[CapTransportPacketTime] = Cap(
-            name=CapTransportPacketTime,
-            value=RangeValue(type=RangeType.FLOAT),  # INF
-        )
-        if verbose:
-            print(f"    + Added IPMX constraint: {CapTransportPacketTime} (unconstrained)")
-
-    # ST2110-21 Sender Type
-    if CapTransport_ST2110_21_SenderType not in capset.caps:
-        capset.caps[CapTransport_ST2110_21_SenderType] = Cap(
-            name=CapTransport_ST2110_21_SenderType,
-            value=RangeValue(
-                values=("2110TPN", "2110TPNL", "2110TPW"),
-                type=RangeType.STRING,
-            ),
-        )
-        if verbose:
-            print(f"    + Added IPMX constraint: {CapTransport_ST2110_21_SenderType}")
-
-    # Synchronous Media
+    # Asynchronous media only
     if CapTransportSynchronousMedia not in capset.caps:
         capset.caps[CapTransportSynchronousMedia] = Cap(
             name=CapTransportSynchronousMedia,
-            value=RangeValue(values=(True,), type=RangeType.BOOL),
+            value=RangeValue(values=(False,), type=RangeType.BOOL),
         )
         if verbose:
-            print(f"    + Added IPMX constraint: {CapTransportSynchronousMedia}")
+            print(f"    + Added IPMX constraint: {CapTransportSynchronousMedia} = [False]")
 
 
 def _add_privacy_constraints(capset: Any, privacy_enabled: bool, verbose: bool) -> None:
