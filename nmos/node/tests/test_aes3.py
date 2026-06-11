@@ -134,10 +134,9 @@ def _apply_constraints(node: Node, sender: object,
     from nmos.types.generated.nsender_active_constraints import NSenderActiveConstraintsValue
     obj = NSenderActiveConstraintsValue()
     obj.decode(JsonEngine(), {"constraint_sets": constraint_sets})
-    _, err = node.validate_active_constraints(sender, obj)
+    err = node.force_active_constraints(sender, obj)
     if err is not None:
         return str(err), node.set_sender_compatibility_state(sender)
-    node.force_active_constraints(sender, obj)
     status = node.set_sender_compatibility_state(sender)
     return None, status
 

@@ -177,13 +177,16 @@ async def handle_put_sender_constraints_active(request: web.Request) -> web.Resp
     except Exception as exc:
         return error_response(400, f"invalid constraint format: {exc}", request=request)
 
-    # Validate against sender capabilities
-    _, err = node.validate_active_constraints(sender, constraints_obj)
+    # Validate and apply in one pass — force_active_constraints validates,
+    # normalizes, and merges the constraints against the sender capabilities,
+    # then forces the flow. A constraint set that fits no capability set
+    # yields an error here.
+    try:
+        err = node.force_active_constraints(sender, constraints_obj)
+    except Exception as exc:
+        return error_response(500, f"cannot apply active constraints: {exc}", request=request)
     if err is not None:
         return error_response(422, str(err), request=request)
-
-    # Apply constraints
-    node.force_active_constraints(sender, constraints_obj)
 
     # bump IS-04 sender version after constraint change
     import time
@@ -223,7 +226,9 @@ async def handle_delete_sender_constraints_active(request: web.Request) -> web.R
         return error_response(423, "cannot delete active constraints of an active Sender", request=request)
 
     # Clear active constraints
-    node.force_active_constraints(sender, None)
+    err = node.force_active_constraints(sender, None)
+    if err is not None:
+        return error_response(500, str(err), request=request)
 
     # bump IS-04 sender version after constraint change
     import time

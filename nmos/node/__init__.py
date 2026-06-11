@@ -2716,53 +2716,52 @@ class Node:
             return caps.to_cons() if caps else None
         return None
 
-    def validate_active_constraints(
-        self, sender: Any, constraints: Any,
-    ) -> tuple[Any, Any | None]:
-        """Validate active constraints against sender capabilities.
-
-        Uses CCF normalize + inclusion checking.
-
-        Returns (constraints, error) — error is None if valid.
-        """
-        from nmos.node.compatibility import validate_active_constraints as _validate
-        sender_id = sender.ResourceCore.Id.value if hasattr(sender, 'ResourceCore') else ""
-        active_cons = self._constraints_to_ccf(constraints)
-        normalized_cons, err = _validate(self, sender_id, active_cons, verbose=True)
-        if err is not None:
-            return constraints, InvalidParameter(f"constraints violate sender capabilities: {err}")
-        return constraints, None
-
     def check_active_constraints(
         self, sender: Any, active_constraints: Any,
     ) -> tuple[Any, Any, Any | None]:
         """Validate, normalize, and merge constraints against capabilities.
 
-        Returns (normalized_cons, merged_caps, error).
-        - normalized_cons: CCF Cons = active constraints + auto-generated defaults for missing layers
-        - merged_caps: CCF Caps = sender capabilities constricted by constraints
-        - error: NotAllowed if constraints don't fit any capability set
+        Returns (normalized_cons, merged_cons, error).
+        - merged_cons: CCF Cons — each user constraint set overlaid onto the
+          capability set it fits (inheriting that set's media_type and every
+          unconstrained capability). This is what the flow is FORCED with.
+        - normalized_cons: CCF Cons = user constraint sets (plus auto-generated
+          defaults for missing mux layers) followed by the merged sets. This is
+          what the flow is CHECKED against.
+        - error: NotAllowed if a constraint set fits no capability set.
         """
         from nmos.node.compatibility import (
             validate_active_constraints as _validate,
-            force_active_constraints as _force,
+            merge_active_constraints as _merge,
         )
-        from nmos.node.store import to_static_id
 
         sender_id = sender.ResourceCore.Id.value if hasattr(sender, 'ResourceCore') else ""
-        static_id = to_static_id(sender_id)
         active_cons = self._constraints_to_ccf(active_constraints)
 
-        # Step 1: Validate and normalize (includes mux layer validation)
-        normalized_cons, err = _validate(self, sender_id, active_cons, verbose=True)
+        # Step 1: Validate names/metadata and normalize (includes mux layer validation)
+        validated_cons, err = _validate(self, sender_id, active_cons, verbose=True)
         if err is not None:
             return None, None, NotAllowed(f"active constraints not compliant: {err}")
 
-        # Step 2: Merge = constrict sender caps (Caps) by normalized constraints (Cons)
-        sender_caps = self.sender_ccf_caps.get(static_id)
-        merged_caps = _force(self, sender_id, normalized_cons, verbose=True) if sender_caps else None
+        # Step 2: Merge each constraint set onto the capability set it fits
+        merged_cons, err = _merge(self, sender_id, validated_cons, verbose=True)
+        if err is not None:
+            return None, None, NotAllowed(f"active constraints not compliant: {err}")
 
-        return normalized_cons, merged_caps, None
+        # Step 3: normalized = user constraint sets ++ merged sets. The check
+        # path accepts a flow matching ANY of these; capability compliance is
+        # guaranteed by FORCING from the merged sets, which are
+        # capability-derived and therefore self-consistent.
+        normalized_cons = validated_cons
+        if validated_cons is not None and merged_cons is not None:
+            try:
+                from caps.MatroxCCF import Cons as _Cons
+                normalized_cons = _Cons(
+                    consets=[*validated_cons.consets, *merged_cons.consets])
+            except ImportError:
+                pass
+
+        return normalized_cons, merged_cons, None
 
     def set_sender_compatibility_state(self, sender: Any) -> str:
         """Compute and set IS-11 sender compatibility status.
@@ -2892,11 +2891,17 @@ class Node:
         - If constraints is None: DELETE (reset to unconstrained)
         - Otherwise: store constraints, force flow update
         """
-        from nmos.node.compatibility import update_sender_to_compliant_flow
         from nmos.node.store import to_static_id
 
         sender_id = sender.ResourceCore.Id.value if hasattr(sender, 'ResourceCore') else ""
         static_id = to_static_id(sender_id)
+
+        # An empty constraint_sets array means "remove constraints" — route it
+        # through the same reset path as DELETE.
+        if constraints is not None:
+            _cc = self._constraints_to_ccf(constraints)
+            if _cc is not None and len(_cc.consets) == 0:
+                constraints = None
 
         if constraints is None:
             # DELETE: reset to defaults (SetToDefault on all constraint fields)
@@ -2914,37 +2919,39 @@ class Node:
             sender.Constraints.set_value(constraints.clone() if hasattr(constraints, 'clone') else constraints)
 
         # Validate, normalize, and merge using check_active_constraints
-        normalized_cons, merged_caps, err = self.check_active_constraints(sender, constraints)
+        normalized_cons, merged_cons, err = self.check_active_constraints(sender, constraints)
         if err is not None:
             return err
 
         # Cache CCF versions:
-        # - normalized_cons (Cons): active constraints + defaults for unconstrained layers.
-        #   Used for flow compatibility checks. Empty consets mean "unconstrained".
-        # - merged_caps (Caps): sender caps constricted by constraints.
-        #   Used for updateSenderToCompliantFlow to narrow the flow to compliant values.
+        # - normalized_cons (Cons): user constraint sets + defaults for
+        #   unconstrained mux layers + the merged sets. The flow is CHECKED
+        #   against these. Empty consets mean "unconstrained".
+        # - merged_cons (Cons): each user constraint set overlaid onto the
+        #   capability set it fits (inheriting media_type + unconstrained
+        #   capabilities). The flow is FORCED from these — the user's
+        #   original=True flags ride along on the overlaid parameters, which
+        #   the fix-up functions read to decide what may change.
         if normalized_cons is not None:
             self.sender_ccf_normalized[static_id] = normalized_cons
-        if merged_caps is not None:
-            self.sender_ccf_merged[static_id] = merged_caps
+        if merged_cons is not None:
+            self.sender_ccf_merged[static_id] = merged_cons
 
         # --- Force flow update ---
-        # Step 1: Force main flow (trunk, layer=-1, reset=True)
-        # Pass activeConstraints (normalized), NOT merged caps.
-        # normalized_cons preserves the original=True flags on constraints,
-        # which fix-up functions use to decide whether to override values.
-        if normalized_cons is not None:
-            if not update_sender_to_compliant_flow(self, sender_id, normalized_cons, layer=-1, reset=True, verbose=True):
-                return NotAllowed("cannot force main flow to comply with constraints")
-
-        # Step 2: Re-verify main flow
-        # "Redo the verification because of possible properties that cannot be changed"
-        from nmos.node.compatibility import (
-            check_flow_properties_compatibility,
-            force_flow_properties_compatibility,
-            update_flow_to_compliant,
-        )
-        from nmos.node.flow_caps import get_flow_to_caps
+        # Check the flow (main + mux sub-flows) against the normalized
+        # constraints; where it does not comply, repair it from the merged
+        # constraint sets with reset=False so properties whose current value
+        # already satisfies the constraints are kept, then re-verify. This is
+        # the same check→repair→recheck sequence the steady-state
+        # compatibility evaluation uses.
+        #
+        # A repair failure does NOT fail the request: the constraints were
+        # accepted (they fit the capabilities), and a flow that cannot be
+        # repaired (e.g. every constraint set has preference <= 0, which can
+        # never force properties) is reported through the sender's
+        # CompatibilityStatus as active_constraints_violation, not as a
+        # request error.
+        from nmos.node.compatibility import check_sender_flow_compatibility
 
         flow_id = sender.FlowId.value if hasattr(sender, 'FlowId') and sender.FlowId.defined and sender.FlowId.value else None
         if flow_id is None:
@@ -2954,80 +2961,12 @@ class Node:
         if flow_ptr is None:
             return None
 
-        if normalized_cons is not None:
-            flow_caps = get_flow_to_caps(self, flow_ptr)
-            if not check_flow_properties_compatibility(self, flow_caps, normalized_cons, verbose=True):
-                return NotAllowed("main flow not compatible after forcing")
+        check_sender_flow_compatibility(self, sender_id, verbose=True)
 
-        # Step 3: Mux sub-flow forcing loop
-        from nmos.enums import FormatMux, FormatVideo, FormatAudio, FormatData
-        format_urn = sender.Format.value.s if hasattr(sender, 'Format') and sender.Format.defined else ""
-        if format_urn == FormatMux.s and normalized_cons is not None:
-            from nmos.types.generated.nflow_mux import NFlowMux, NFlowMuxValue
-            from nmos.types.generated.nflow_video_raw import NFlowVideoRawValue
-            from nmos.types.generated.nflow_video_coded import NFlowVideoCodedValue
-            from nmos.types.generated.nflow_audio_raw import NFlowAudioRawValue
-            from nmos.types.generated.nflow_audio_coded import NFlowAudioCodedValue
-
-            poly = flow_ptr.get() if hasattr(flow_ptr, 'get') else flow_ptr
-            if poly is not None:
-                fv = poly.value if hasattr(poly, 'value') else poly
-                fc = fv.FlowCore if hasattr(fv, 'FlowCore') else None
-                if fc is not None and fc.Parents.defined:
-                    parents = fc.Parents.value or []
-
-                    check_layers: dict[str, int] = {
-                        FormatVideo.s: -1,
-                        FormatAudio.s: -1,
-                        FormatData.s: -1,
-                    }
-
-                    for parent_flow_id in parents:
-                        parent_ptr = self.flows.get(parent_flow_id)
-                        assert parent_ptr is not None, f"missing parent flow {parent_flow_id}"
-
-                        parent_poly = parent_ptr.get() if hasattr(parent_ptr, 'get') else parent_ptr
-                        assert parent_poly is not None, f"parent flow {parent_flow_id} has no value"
-
-                        # Reject circular mux
-                        if isinstance(parent_poly, (NFlowMux, NFlowMuxValue)):
-                            return NotAllowed("mux cannot have parent mux")
-
-                        parent_fv = parent_poly.value if hasattr(parent_poly, 'value') else parent_poly
-
-                        # Determine format
-                        if isinstance(parent_poly, (NFlowVideoRawValue, NFlowVideoCodedValue)):
-                            fmt = FormatVideo.s
-                        elif isinstance(parent_poly, (NFlowAudioRawValue, NFlowAudioCodedValue)):
-                            fmt = FormatAudio.s
-                        else:
-                            fmt = FormatData.s
-
-                        # Validate sequential layers
-                        parent_fc = parent_fv.FlowCore if hasattr(parent_fv, 'FlowCore') else None
-                        assert parent_fc is not None and parent_fc.Layer.defined, f"parent flow {parent_flow_id} missing Layer"
-                        layer = parent_fc.Layer.value
-                        assert layer >= 0, f"parent flow {parent_flow_id} has invalid Layer={layer}"
-                        assert check_layers.get(fmt, -1) + 1 == layer, \
-                            f"non-sequential layer: {fmt} expected={check_layers.get(fmt, -1) + 1} got={layer}"
-                        check_layers[fmt] = layer
-
-                        # Force sub-flow (updateFlowToCompliantFlow)
-                        compliant, compliant_groups = force_flow_properties_compatibility(
-                            self, parent_ptr, normalized_cons,
-                            layer=layer, format_urn=fmt, reset=True, verbose=True,
-                        )
-                        if compliant is not None:
-                            update_flow_to_compliant(self, parent_ptr, compliant, compliant_groups, verbose=True)
-                        else:
-                            return NotAllowed(f"cannot force sub-flow layer={layer} format={fmt}")
-
-                        # Re-verify sub-flow
-                        parent_caps = get_flow_to_caps(self, parent_ptr)
-                        if not check_flow_properties_compatibility(
-                            self, parent_caps, normalized_cons, layer=layer, format_urn=fmt, verbose=True,
-                        ):
-                            return NotAllowed(f"sub-flow layer={layer} format={fmt} not compatible after forcing")
+        # The repair may have replaced the flow object (codec flavor change) —
+        # re-resolve before the UUID cascade.
+        flow_id = sender.FlowId.value if sender.FlowId.defined and sender.FlowId.value else None
+        flow_ptr = self.flows.get(flow_id) if flow_id else None
 
         # --- Atomic State Changes: UUID cascade ---
         # Each update*Flow call propagates a new UUID and cascades to

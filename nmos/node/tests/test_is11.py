@@ -720,15 +720,15 @@ class TestIS11EdgeCases:
         # Should not raise
         node.force_active_constraints(sender, None)
 
-    def test_validate_none_constraints(self) -> None:
-        """validate_active_constraints with None constraints should succeed."""
+    def test_force_none_constraints(self) -> None:
+        """force_active_constraints with None constraints resets without error."""
         node = _make_node()
         _build_config(node, "config1")
         result = _get_first_sender(node)
         if result is None:
             pytest.skip("No senders")
         _, sender = result
-        _, err = node.validate_active_constraints(sender, None)
+        err = node.force_active_constraints(sender, None)
         assert err is None
 
 
@@ -1074,7 +1074,7 @@ class TestIS11AllConfigs:
         This mirrors what a controller does: read the sender's IS-04
         caps.constraint_sets, then PUT them as IS-11 active constraints.
         The node MUST accept its own capabilities — rejection means
-        validate_active_constraints is broken.
+        check_active_constraints (validate + merge) is broken.
         """
         if not HAS_CCF:
             pytest.skip("MatroxCCF not available")
@@ -1103,7 +1103,7 @@ class TestIS11AllConfigs:
 
             # Use native caps as active constraints (what a controller does)
             active_body = {"constraint_sets": cs}
-            result, err = node.validate_active_constraints(sender, active_body)
+            _, _, err = node.check_active_constraints(sender, active_body)
             assert err is None, (
                 f"{config_name} sender {static_id}: "
                 f"native caps rejected as active constraints: {err}"
@@ -1121,10 +1121,9 @@ def _apply_constraints(node: Node, sender: object, constraint_sets: list[dict]) 
     from nmos.types.generated.nsender_active_constraints import NSenderActiveConstraintsValue
     obj = NSenderActiveConstraintsValue()
     obj.decode(JsonEngine(), {"constraint_sets": constraint_sets})
-    _, err = node.validate_active_constraints(sender, obj)
+    err = node.force_active_constraints(sender, obj)
     if err is not None:
         return str(err), node.set_sender_compatibility_state(sender)
-    node.force_active_constraints(sender, obj)
     status = node.set_sender_compatibility_state(sender)
     return None, status
 
@@ -3323,3 +3322,170 @@ class TestIS11OriginalFlag:
         assert actual_level == "High-4.1", (
             f"level should be preserved at High-4.1 (original=True), got {actual_level}"
         )
+
+
+# ===========================================================================
+# Merge of active constraints onto capability sets
+# ===========================================================================
+
+@pytest.mark.skipif(not HAS_CCF, reason="MatroxCCF not available")
+class TestMergeActiveConstraints:
+    """merge_active_constraints overlays each user constraint set onto the
+    capability set it fits, inheriting that set's media_type and every
+    unconstrained capability — so forcing always yields a self-consistent
+    operating point."""
+
+    def _setup_video(self):
+        node = _make_node()
+        try:
+            _build_config(node, "config10")
+        except Exception as exc:
+            pytest.skip(f"config10 build failed: {exc}")
+        for static_id, sender in node.senders:
+            fmt = sender.Format.value.s if sender.Format.defined else ""
+            if "video" in fmt and "mux" not in fmt:
+                return node, sender
+        pytest.skip("No video sender")
+
+    def _merge(self, node, sender, constraint_sets):
+        from nmos.node.compatibility import (
+            merge_active_constraints, validate_active_constraints,
+        )
+        sender_id = sender.ResourceCore.Id.value
+        cons = node._constraints_to_ccf({"constraint_sets": constraint_sets})
+        validated, err = validate_active_constraints(node, sender_id, cons)
+        assert err is None, f"validate failed: {err}"
+        return merge_active_constraints(node, sender_id, validated)
+
+    def test_profile_only_h265_merge_carries_media_type(self) -> None:
+        """A profile-only H.265 constraint fits only the H.265 capability
+        set — the merged set must inherit media_type=video/H265."""
+        node, sender = self._setup_video()
+        merged, err = self._merge(node, sender, [{
+            "urn:x-nmos:cap:meta:preference": 100,
+            "urn:x-nmos:cap:format:profile": {"enum": ["Main10-422"]},
+        }])
+        assert err is None
+        assert len(merged.consets) == 1
+        mc = merged.consets[0]
+        mt = mc.cons["urn:x-nmos:cap:format:media_type"]
+        assert list(mt.value.values) == ["video/H265"]
+        # the user's profile is overlaid, original flag preserved
+        prof = mc.cons["urn:x-nmos:cap:format:profile"]
+        assert list(prof.value.values) == ["Main10-422"]
+        assert prof.original is True
+        # inherited capability params are NOT original
+        assert mt.original is False
+        # preference comes from the user constraint set
+        assert mc.preference == 100
+
+    def test_no_capability_match_errors(self) -> None:
+        """A constraint set fitting no capability set is unsatisfiable."""
+        node, sender = self._setup_video()
+        merged, err = self._merge(node, sender, [{
+            "urn:x-nmos:cap:meta:preference": 100,
+            "urn:x-nmos:cap:format:profile": {"enum": ["NoSuchProfile"]},
+        }])
+        assert merged is None
+        assert err is not None and "not included" in err
+
+    def test_check_active_constraints_returns_normalized_and_merged(self) -> None:
+        """normalized = user sets ++ merged sets; merged = capability overlay."""
+        node, sender = self._setup_video()
+        body = {"constraint_sets": [{
+            "urn:x-nmos:cap:meta:preference": 100,
+            "urn:x-nmos:cap:format:profile": {"enum": ["Main10-422"]},
+        }]}
+        normalized, merged, err = node.check_active_constraints(sender, body)
+        assert err is None
+        assert len(merged.consets) == 1
+        # normalized carries the user conset first, then the merged conset
+        assert len(normalized.consets) == 2
+        assert "urn:x-nmos:cap:format:media_type" not in normalized.consets[0].cons
+        assert "urn:x-nmos:cap:format:media_type" in normalized.consets[1].cons
+
+
+@pytest.mark.skipif(not HAS_CCF, reason="MatroxCCF not available")
+class TestCodecFlavorSwap:
+    """Applying a constraint whose merged capability set implies another
+    codec must transition the flow to a valid configuration of that codec."""
+
+    def _setup_h264_video(self):
+        node = _make_node()
+        try:
+            _build_config(node, "config10")
+        except Exception as exc:
+            pytest.skip(f"config10 build failed: {exc}")
+        from nmos.node.flow_caps import get_flow_to_caps
+        from nmos.node.compatibility import _get_cap_str
+        for static_id, sender in node.senders:
+            fmt = sender.Format.value.s if sender.Format.defined else ""
+            if "video" not in fmt or "mux" in fmt:
+                continue
+            flow_ptr = _get_sender_flow(node, sender)
+            if flow_ptr is None:
+                continue
+            caps = get_flow_to_caps(node, flow_ptr)
+            if _get_cap_str(caps, "urn:x-nmos:cap:format:media_type") == "video/H264":
+                return node, sender
+        pytest.skip("No H.264 video sender")
+
+    def _flow_state(self, node, sender):
+        from nmos.node.flow_caps import get_flow_to_caps
+        from nmos.node.compatibility import _get_cap_str, _get_cap_int
+        caps = get_flow_to_caps(node, _get_sender_flow(node, sender))
+        return {
+            "media_type": _get_cap_str(caps, "urn:x-nmos:cap:format:media_type"),
+            "profile": _get_cap_str(caps, "urn:x-nmos:cap:format:profile"),
+            "level": _get_cap_str(caps, "urn:x-nmos:cap:format:level"),
+            "width": _get_cap_int(caps, "urn:x-nmos:cap:format:frame_width"),
+            "height": _get_cap_int(caps, "urn:x-nmos:cap:format:frame_height"),
+        }
+
+    def test_profile_only_h265_swaps_flow_to_h265(self) -> None:
+        """profile=[Main10-422] with NO media_type on an H.264 flow: the
+        merged capability set supplies media_type=video/H265, so the flow
+        must transition to a valid H.265 configuration — and properties the
+        constraints leave valid (resolution) must be preserved."""
+        node, sender = self._setup_h264_video()
+        before = self._flow_state(node, sender)
+        assert before["media_type"] == "video/H264"
+
+        err = node.force_active_constraints(sender, {"constraint_sets": [{
+            "urn:x-nmos:cap:meta:preference": 100,
+            "urn:x-nmos:cap:format:profile": {"enum": ["Main10-422"]},
+        }]})
+        assert err is None, f"constraint rejected: {err}"
+
+        after = self._flow_state(node, sender)
+        assert after["media_type"] == "video/H265", (
+            f"flow must swap to H.265, got {after['media_type']}")
+        assert after["profile"] == "Main10-422"
+        # H.265 level namespace, not an H.264 level
+        assert after["level"] and (after["level"].startswith("Main-")
+                                   or after["level"].startswith("High-"))
+        # in-range properties are preserved, not reset
+        assert after["width"] == before["width"]
+        assert after["height"] == before["height"]
+
+        status = node.set_sender_compatibility_state(sender)
+        assert status == "constrained"
+
+    def test_unsatisfiable_constraint_leaves_flow_untouched(self) -> None:
+        """A constraint fitting no capability set is rejected and the flow
+        keeps its current configuration."""
+        node, sender = self._setup_h264_video()
+        before = self._flow_state(node, sender)
+        err = node.force_active_constraints(sender, {"constraint_sets": [{
+            "urn:x-nmos:cap:meta:preference": 100,
+            "urn:x-nmos:cap:format:profile": {"enum": ["NoSuchProfile"]},
+        }]})
+        assert err is not None
+        assert self._flow_state(node, sender) == before
+
+    def test_empty_constraint_sets_resets_to_unconstrained(self) -> None:
+        """PUT of an empty constraint_sets array removes the constraints."""
+        node, sender = self._setup_h264_video()
+        err = node.force_active_constraints(sender, {"constraint_sets": []})
+        assert err is None
+        assert node.set_sender_compatibility_state(sender) == "unconstrained"

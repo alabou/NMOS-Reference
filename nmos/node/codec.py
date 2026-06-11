@@ -474,9 +474,10 @@ def check_h265_profile_level(
     if level_info is None:
         raise InvalidParameter("invalid level")
 
-    # NOTE: H.265 sample count here uses a macroblock-based calculation
-    # (ceil(w/16)*ceil(h/16)).
-    samples = int(math.ceil(frame_width / 16) * math.ceil(frame_height / 16))
+    # H.265 level limits are specified in luma samples (MaxLumaPs for the
+    # picture size, MaxLumaSr for the sample rate) — width × height, not
+    # macroblocks.
+    samples = int(frame_width * frame_height)
 
     if samples > level_info.max_size:
         raise NotAllowed("invalid level")

@@ -201,10 +201,13 @@ def get_format_from_media_type(media_type: str) -> str:
         "application/usb" → FormatData.s
     """
     # NOTE: video/MP2T is OPAQUE (not supported in this implementation).
+    # Media types are matched EXACTLY against the canonical enum values —
+    # case is significant (application/MP2T is MPEG2-TS over RTP while
+    # application/mp2t is the generic/UDP variant, two distinct types).
     _MUX_MEDIA_TYPES = {
         MuxMpeg2TS.s, MuxAm824.s, MuxGeneric.s, MuxNdi.s, MuxRtsp.s,
     }
-    mt = media_type.lower() if media_type else ""
+    mt = media_type or ""
     if mt in _MUX_MEDIA_TYPES:
         return FormatMux.s
     elif mt.startswith("video/"):
@@ -223,10 +226,12 @@ def get_class_from_media_type(media_type: str) -> str:
     Returns "raw", "coded", or "" for the media class.
     """
     # NOTE: video/MP2T is OPAQUE (not supported) — not in this set.
+    # Media types are matched EXACTLY against the canonical enum values —
+    # case is significant (see get_format_from_media_type).
     _MUX_CLASS = {
         MuxMpeg2TS.s, MuxAm824.s, MuxGeneric.s, MuxNdi.s, MuxRtsp.s,
     }
-    mt = media_type.lower() if media_type else ""
+    mt = media_type or ""
 
     # Mux (check before video/ prefix since application/* types need priority)
     if mt in _MUX_CLASS:
@@ -239,7 +244,7 @@ def get_class_from_media_type(media_type: str) -> str:
         return "coded"
 
     # Audio — audio/AM824 is ClassAudioCoded (not raw)
-    if mt in ("audio/l8", "audio/l16", "audio/l20", "audio/l24"):
+    if mt in (AudioRawL8.s, AudioRawL16.s, AudioRawL20.s, AudioRawL24.s):
         return "raw"
     elif mt.startswith("audio/"):
         return "coded"
@@ -525,12 +530,19 @@ def check_sender_flow_compatibility(
     # Get flow caps (via get_flow_to_caps)
     flow_caps = get_flow_to_caps(node, flow_ptr)
 
-    # Check against NormalizedConstraints (IS-11 active constraints).
-    # When no active constraints → NormalizedConstraints is empty → "unconstrained".
+    # Check against the normalized constraints (IS-11 active constraints).
+    # When no active constraints → normalized is empty → "unconstrained".
     # When active constraints → checks flow against them.
     sender_cons = _get_sender_normalized_ccf_cons(node, sender)
     if sender_cons is None or len(sender_cons.consets) == 0:
         return Unconstrained.s
+
+    # Repairs FORCE from the merged constraints (capability-derived, so the
+    # repaired flow is self-consistent); checks run against the normalized
+    # constraints. Fall back to normalized if no merged cache exists.
+    merged_cons = _get_sender_merged_ccf_cons(node, sender)
+    if merged_cons is None or len(merged_cons.consets) == 0:
+        merged_cons = sender_cons
 
     if verbose:
         print(f"  [check_sender_flow] sender={sender_id}")
@@ -543,7 +555,7 @@ def check_sender_flow_compatibility(
     if not compatible:
         # Attempt to fix the flow, then recheck
         fix_ok = update_sender_to_compliant_flow(
-            node, sender_id, sender_cons, layer=-1, reset=False, verbose=verbose,
+            node, sender_id, merged_cons, layer=-1, reset=False, verbose=verbose,
         )
         if fix_ok:
             # Re-fetch flow properties after fix
@@ -627,9 +639,10 @@ def check_sender_flow_compatibility(
 
         if not sub_compatible:
             # Attempt to fix parent flow, then recheck
-            # First force compliance (Cons → CapSet), then write back to flow
+            # First force compliance (Cons → CapSet) from the merged
+            # constraints, then write back to flow
             compliant, compliant_groups = force_flow_properties_compatibility(
-                node, parent_ptr, sender_cons,
+                node, parent_ptr, merged_cons,
                 layer=layer, format_urn=fmt, verbose=verbose,
             )
             if compliant is not None:
@@ -667,11 +680,25 @@ def _get_sender_static_id(sender: Any) -> str:
 def _get_sender_normalized_ccf_cons(node: Any, sender: Any) -> Any:
     """Get sender's normalized active constraints as cached CCF Cons.
 
-    Returns None if no active constraints (unconstrained state).
-    The check runs against NormalizedConstraints — these are Cons, not Caps.
+    Normalized = the user's constraint sets (plus auto-generated defaults
+    for missing mux layers) followed by the merged sets. The flow is
+    CHECKED against these. Returns None if unconstrained.
     """
     static_id = _get_sender_static_id(sender)
     return node.sender_ccf_normalized.get(static_id)
+
+
+def _get_sender_merged_ccf_cons(node: Any, sender: Any) -> Any:
+    """Get sender's merged active constraints as cached CCF Cons.
+
+    Merged = each user constraint set overlaid onto the capability set it
+    fits, inheriting that set's media_type and every unconstrained
+    capability. The flow is FORCED from these so the result is always a
+    self-consistent, capability-compliant operating point. Returns None
+    if unconstrained.
+    """
+    static_id = _get_sender_static_id(sender)
+    return node.sender_ccf_merged.get(static_id)
 
 
 def _get_sender_ccf_caps(node: Any, sender: Any) -> Any:
@@ -681,68 +708,6 @@ def _get_sender_ccf_caps(node: Any, sender: Any) -> Any:
     """
     static_id = _get_sender_static_id(sender)
     return node.sender_ccf_caps.get(static_id)
-
-
-def force_active_constraints(
-    node: Any,
-    sender_id: str,
-    active_cons: Cons,
-    verbose: bool = False,
-) -> Any:
-    """Apply active constraints to narrow sender capabilities.
-
-    Uses CCF constriction: sender_caps << active_constraints.
-
-    Args:
-        node: Node instance.
-        sender_id: Sender resource ID.
-        active_cons: CCF Caps of active constraints.
-        verbose: Print CCF state for debugging.
-
-    Returns:
-        Constricted CCF Caps, or None on failure.
-    """
-    try:
-        from caps.MatroxCCF import caps_constrict_by_cons, Caps
-    except ImportError:
-        return None
-
-    sender = node.senders.get(sender_id)
-    if sender is None:
-        return None
-
-    sender_caps = _get_sender_ccf_caps(node, sender)
-    if sender_caps is None:
-        return None
-
-    # active_cons is already Cons. Filter out empty consets (unconstrained layers
-    # from normalize()) — they should NOT participate in constriction.
-    if active_cons is None or len(active_cons.consets) == 0:
-        return sender_caps  # No constraints = unconstrained
-
-    from caps.MatroxCCF import Cons as _Cons, ConSet as _ConSet
-    non_empty = _Cons(consets=[
-        _ConSet(cons=dict(cs.cons), preference=cs.preference, label=cs.label,
-                format=cs.format, layer=cs.layer,
-                layer_compatibility_groups=cs.layer_compatibility_groups)
-        for cs in active_cons.consets if len(cs.cons) > 0
-    ])
-    if len(non_empty.consets) == 0:
-        return sender_caps  # All consets empty = unconstrained
-
-    if verbose:
-        print(f"  [force_active_constraints] Sender caps: {len(sender_caps.capsets)} capsets")
-        print(f"  [force_active_constraints] Constraints: {len(non_empty.consets)} consets")
-
-    try:
-        result = caps_constrict_by_cons(sender_caps, non_empty)
-        if verbose:
-            print(f"  [force_active_constraints] Constricted: {len(result.capsets)} capsets")
-        return result
-    except ValueError as exc:
-        if verbose:
-            print(f"  [force_active_constraints] FAILED: {exc}")
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -1524,6 +1489,13 @@ def fix_coded_video_flow(
             fix_profile()
 
     # --- Level selection ---
+    # Runs only when the constraint set constrains the level: forcing seeds
+    # the level with the highest allowed value, and this pass settles on the
+    # smallest allowed level that validates the complete configuration. An
+    # unconstrained level is left untouched.
+    if constraints is None or constraints.get(CapFormatLevel.s) is None:
+        return
+
     # Try resolutions from current down to smaller standard sizes
     try_widths = [frame_width, 3840, 1920, 1280, 720]
     try_heights = [frame_height, 2160, 1080, 720, 480]
@@ -1570,14 +1542,9 @@ def fix_coded_video_flow(
         tw, th = try_widths[i], try_heights[i]
         comps = _make_components(tw, th)
 
-        # Try current level first — preserves the flow's level if it's valid.
-        # This prevents the fix-up from downgrading a valid level to the minimum.
-        ordered_levels = list(try_levels)
-        if level and level in ordered_levels:
-            ordered_levels.remove(level)
-            ordered_levels.insert(0, level)
-
-        for try_level in ordered_levels:
+        # Levels are tried in ascending order so the configuration settles
+        # on the smallest allowed level that validates.
+        for try_level in try_levels:
             if not _value_in_constraint(try_level, CapFormatLevel.s):
                 continue
 
@@ -1712,8 +1679,14 @@ def update_flow_to_compliant(
 ) -> None:
     """Dispatch to the correct update_*_flow based on flow type.
 
+    (Plays the role of updating a flow to its compliant operating point —
+    the write-back half of update_sender_to_compliant_flow.)
+
     Handles raw↔coded class transitions by detecting if the compliant media_type
-    class differs from the current flow class.
+    class differs from the current flow class. Within-class media_type changes
+    (e.g. one coded video codec to another) are written directly by the
+    per-class update functions, which set MediaType plus the codec-specific
+    properties from the compliant caps.
 
     Scope: writes the flow only. Propagation of the compliant flow properties to
     a linked receiver's native constraints is handled one level up by
@@ -2378,23 +2351,26 @@ def validate_active_constraints(
     active_cons: Cons,
     verbose: bool = False,
 ) -> tuple[Any, str | None]:
-    """Validate active constraints (Cons) against sender capabilities (Caps).
-
-    Implements validateActiveConstraints + checkActiveConstraints.
+    """Validate active constraints (Cons): names, metadata, and mux layers.
 
     Steps:
-    1. Mark constraints as original
-    2. Normalize constraints (CCF handles mux layer/format validation, namespace filtering,
-       trunk/layer creation for missing layers — equivalent to the mux branch)
-    3. Check each constraint set is included in at least one sender CapSet
+    1. Mark every user constraint as original (so downstream fix-ups can
+       distinguish user-pinned parameters from inherited ones)
+    2. Validate constraint names against the sender format's namespace
+    3. Normalize constraints (CCF handles mux layer/format validation,
+       namespace filtering, trunk/layer creation for missing layers)
+
+    Capability-inclusion checking is NOT done here — it happens in
+    merge_active_constraints, where each constraint set must fit at
+    least one capability set (and is merged onto the one it fits).
 
     Returns:
-        (normalized_caps, None) on success — normalized includes auto-generated defaults for
-        missing mux layers.
+        (normalized_cons, None) on success — normalized includes
+        auto-generated defaults for missing mux layers.
         (None, error_message) on failure.
     """
     try:
-        from caps.MatroxCCF import conset_included_in_caps, Cons as _Cons, ConSet as _ConSet
+        from caps.MatroxCCF import Cons as _Cons, ConSet as _ConSet
     except ImportError:
         return active_cons, None
 
@@ -2459,22 +2435,108 @@ def validate_active_constraints(
     except ValueError as e:
         return None, str(e)
 
-    # CCF inclusion check: each constraint conset must fit in at least one sender CapSet
     if verbose:
         print(f"  [validate_constraints] sender={sender_id} format={format_urn}")
         print(f"  [validate_constraints] Constraints: {len(normalized.consets)} consets")
-        print(f"  [validate_constraints] Sender caps: {len(sender_caps.capsets)} capsets")
-
-    for conset in normalized.consets:
-        if not conset_included_in_caps(conset, sender_caps):
-            if verbose:
-                print(f"  [validate_constraints] ConSet '{conset.label}' NOT included in any sender CapSet")
-            return None, f"constraint set '{conset.label}' not included in sender capabilities"
-
-    if verbose:
         print(f"  [validate_constraints] Result: VALID")
 
     return normalized, None
+
+
+def merge_active_constraints(
+    node: Any,
+    sender_id: str,
+    normalized_cons: Any,
+    verbose: bool = False,
+) -> tuple[Any, str | None]:
+    """Merge each constraint set onto the capability set it fits.
+
+    For each (non-empty) constraint set, scan the sender's capability
+    sets of the same part (format/layer) in preference order; the first
+    capability set that fully includes the constraint set is cloned to
+    a ConSet, given the constraint set's preference/label/groups, and
+    overlaid with the user's constrained parameters. The merged set
+    therefore inherits every capability the user did not constrain —
+    notably media_type — so forcing the flow from it always yields a
+    self-consistent, capability-compliant operating point.
+
+    Empty constraint sets (the auto-generated defaults for unconstrained
+    mux layers) are carried through unchanged: they constrain nothing, so
+    forcing a sub-flow from one keeps the flow's current properties — but
+    they must be present in the merged result for the layer to be
+    force-able at all.
+
+    Returns:
+        (merged_cons, None) on success — a Cons of capability-derived
+        constraint sets with user parameters overlaid, plus the
+        unconstrained-layer defaults.
+        (None, error_message) when a constraint set fits no capability
+        set (the constraints are unsatisfiable).
+    """
+    try:
+        from caps.MatroxCCF import Cons as _Cons, conset_included_in_capset
+    except ImportError:
+        return normalized_cons, None
+
+    sender = node.senders.get(sender_id)
+    if sender is None:
+        return normalized_cons, None
+
+    if normalized_cons is None:
+        return None, None
+
+    sender_caps = _get_sender_ccf_caps(node, sender)
+    if sender_caps is None or len(sender_caps.capsets) == 0:
+        # Unconstrained sender: nothing to merge onto.
+        return _Cons(consets=[]), None
+
+    merged_consets = []
+    for conset in normalized_cons.consets:
+        # Auto-generated defaults for unconstrained mux layers carry no
+        # constraints — pass them through so the layer remains force-able
+        # (forcing from one keeps the sub-flow's current properties).
+        if len(conset.cons) == 0:
+            merged_consets.append(conset)
+            continue
+
+        # Candidate capability sets of the same part, preference-sorted.
+        if conset.format is not None:
+            candidates = sender_caps.get(format=conset.format, layer=conset.layer)
+        else:
+            candidates = sender_caps.get()
+
+        matched = None
+        for capset in candidates.capsets:
+            if conset_included_in_capset(conset, capset):
+                matched = capset
+                break
+
+        if matched is None:
+            if verbose:
+                print(f"  [merge_constraints] ConSet '{conset.label}' NOT included in any sender CapSet")
+            return None, f"constraint set '{conset.label}' not included in sender capabilities"
+
+        # Clone the matched capability set as a ConSet (inherits media_type
+        # and every other capability), then overlay the user's parameters.
+        merged = matched.to_conset()
+        merged.preference = conset.preference
+        merged.label = conset.label
+        merged.layer_compatibility_groups = conset.layer_compatibility_groups
+
+        for name, con in conset.cons.items():
+            # An unconstrained parameter keeps the capability's value.
+            if con.value.infinite:
+                continue
+            # Overlay by reference: preserves original=True on user params,
+            # which the codec/PCM fix-ups read to decide what may change.
+            merged.cons[name] = con
+
+        if verbose:
+            print(f"  [merge_constraints] ConSet '{conset.label}' merged onto CapSet '{matched.label}'")
+
+        merged_consets.append(merged)
+
+    return _Cons(consets=merged_consets), None
 
 
 def _count_mux_layers(node: Any, sender: Any) -> tuple[int, int, int]:

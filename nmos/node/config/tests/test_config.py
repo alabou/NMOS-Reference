@@ -860,23 +860,26 @@ class TestConstraintPropagationToLinkedReceiver:
         assert source_core.ReceiverId.defined and source_core.ReceiverId.value is not None, \
             "Video sender's source should link to the mux receiver"
 
-        # Apply IS-11 constraints to the video sender.
-        # Use the sender's own native constraint set (preference=100) as the
-        # active constraint. This guarantees compatibility and triggers the
-        # full force_active_constraints → update_sender_to_compliant_flow →
-        # _propagate_to_linked_receiver chain.
+        # Apply IS-11 constraints to the video sender that CHANGE the flow
+        # (1280x720 vs the native 1920x1080). The flow is only rewritten —
+        # and the change only propagates to the linked receiver — when the
+        # current flow violates the constraints; constraints the flow
+        # already satisfies leave it (and the receiver) untouched.
         import time
         time.sleep(0.01)  # Ensure version timestamp differs from creation
 
-        # Encode the sender's caps as JSON and re-decode as active constraints
         from nmos.json.engine import JsonEngine
         from nmos.types.generated.nsender_active_constraints import NSenderActiveConstraintsValue
-        engine = JsonEngine()
-        caps_json_str = engine.encode(video_sender.Caps)
-        constraint_json = JsonEngine.parse_any(caps_json_str)
+        constraint_json = {"constraint_sets": [{
+            "urn:x-nmos:cap:meta:preference": 100,
+            "urn:x-nmos:cap:format:media_type": {"enum": ["video/H264"]},
+            "urn:x-nmos:cap:format:frame_width": {"enum": [1280]},
+            "urn:x-nmos:cap:format:frame_height": {"enum": [720]},
+        }]}
         active_constraints = NSenderActiveConstraintsValue()
         active_constraints.decode(None, constraint_json)
-        node.force_active_constraints(video_sender, active_constraints)
+        err = node.force_active_constraints(video_sender, active_constraints)
+        assert err is None, f"constraints rejected: {err}"
 
         # Read receiver version AFTER constraint change
         # Re-fetch because the object might have been updated

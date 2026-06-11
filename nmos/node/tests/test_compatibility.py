@@ -54,7 +54,6 @@ from nmos.node.compatibility import (
     # Phase 2
     check_flow_properties_compatibility,
     check_sender_flow_compatibility,
-    force_active_constraints,
     # Phase 3
     _get_cap_value, _get_cap_str, _get_cap_int, _get_cap_bool, _get_cap_rational,
     # Phase 5
@@ -64,7 +63,7 @@ from nmos.node.compatibility import (
     set_receiver_compatibility_state,
     fix_coded_video_flow,
     validate_active_constraints,
-    force_active_constraints,
+    merge_active_constraints,
     force_flow_properties_compatibility,
     update_sender_to_compliant_flow,
     intersect_constraints_with_caps,
@@ -415,7 +414,7 @@ class TestGetGenericProperties:
 
 @pytest.mark.skipif(not HAS_CCF, reason="MatroxCCF not available")
 class TestConstriction:
-    """Test CCF constriction (force_active_constraints)."""
+    """Test CCF constriction (caps_constrict_by_cons)."""
 
     def test_constriction_narrows_caps(self) -> None:
         """Sender has multiple widths, constraint narrows to 1920."""
@@ -1019,7 +1018,7 @@ class TestCCFDirectComparison:
     """Layer 4: Verify our wrappers produce same results as direct CCF calls."""
 
     def test_constriction_matches_direct_ccf(self) -> None:
-        """force_active_constraints result equals direct caps_constrict_by_cons."""
+        """Direct caps_constrict_by_cons narrows constrained params and keeps the rest."""
         sender_caps = Caps(capsets=[CapSet(
             preference=100, label="sender",
             caps=make_capset(
