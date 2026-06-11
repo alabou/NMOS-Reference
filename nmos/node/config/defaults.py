@@ -392,13 +392,16 @@ def _validate_preference_hierarchy(caps: Any, verbose: bool) -> None:
 
     Rules enforced:
     - Native trunk (highest preference trunk): preference 100
-    - Generic/alternative trunk(s): preference >= 1 (NOT 0)
+    - Generic/alternative trunk(s): preference left as authored
+      (generic matching the native media_type = 1, other generic = 0)
     - Native sub-constraints: preference 100
     - Alternative sub-constraints: preference 0
 
-    A generic trunk with preference 0 is ambiguous with alternative
-    sub-constraints. The builder auto-corrects it to 1 so controllers
-    can distinguish trunk alternatives from sub-constraint alternatives.
+    Trunk and sub-constraint alternatives use the SAME preference scale
+    (native 100, generic-matching-native-media_type 1, other generic 0).
+    They are distinguished by the presence of ``meta:format`` /
+    ``meta:layer`` per BCP-004-01 — NOT by preference value — so a trunk
+    alternative at preference 0 is legitimate and is preserved as-is.
     """
     # Identify trunk constraint sets (no format/layer metadata)
     trunks = [cs for cs in caps.capsets if cs.format is None]
@@ -431,14 +434,12 @@ def _validate_preference_hierarchy(caps: Any, verbose: bool) -> None:
                   f"{native_trunk.preference} → 100")
         native_trunk.preference = 100
 
-    # All other trunks must have preference >= 1
-    for trunk in trunks_sorted[1:]:
-        if trunk.preference < 1:
-            if verbose:
-                print(f"    ! Fixed generic trunk '{trunk.label}' preference: "
-                      f"{trunk.preference} → 1 "
-                      f"(must be >= 1 to distinguish from sub-constraint alternatives)")
-            trunk.preference = 1
+    # Alternative trunks keep their authored preference: a generic
+    # alternative matching the native media_type is 1, any other generic
+    # alternative is 0 — the SAME scale used for sub-constraint
+    # alternatives. Trunk vs sub is told apart by the presence of
+    # meta:format/meta:layer (per BCP-004-01), not by preference value,
+    # so a trunk alternative at preference 0 is valid and left untouched.
 
 
 def _add_ipmx_constraints(capset: Any, verbose: bool) -> None:

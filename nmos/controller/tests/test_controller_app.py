@@ -4075,3 +4075,57 @@ class TestDebugFacility:
             f"{PREFIX}/api/debug/client-event", json=bloated,
         )
         assert resp.status == 413
+
+
+class TestSingleValueWidget:
+    """A single-value cap (single-option enum or pinned min==max range)
+    must round-trip into the IS-11 PUT body — it is a real constraint,
+    and a native conset is *entirely* single-value caps. Regression for
+    the bug where such caps rendered as a bare readonly input with no
+    ``data-param-urn`` and were silently dropped from the PUT."""
+
+    def test_single_enum_emits_single_widget_with_value(self) -> None:
+        from nmos.controller.handlers import _widget_for_constraint
+
+        w = _widget_for_constraint(
+            "urn:x-nmos:cap:format:media_type", {"enum": ["video/H265"]},
+        )
+        assert w["kind"] == "single"
+        assert w["shape"] == "enum"
+        # the JSON machine value the body-builder JSON.parses back
+        assert json.loads(w["value"]) == "video/H265"
+        # a FORMAT cap is assertable (not disabled) so the JS collects it
+        assert w["disabled"] is False
+
+    def test_pinned_range_emits_single_widget_with_value(self) -> None:
+        from nmos.controller.handlers import _widget_for_constraint
+
+        w = _widget_for_constraint(
+            "urn:x-nmos:cap:format:bit_rate", {"minimum": 40000, "maximum": 40000},
+        )
+        assert w["kind"] == "single"
+        assert w["shape"] == "range"
+        assert json.loads(w["value"]) == 40000
+        assert w["disabled"] is False
+
+    def test_transport_single_value_stays_disabled(self) -> None:
+        from nmos.controller.handlers import _widget_for_constraint
+
+        # transport caps are read-only on the caps side — disabled so the
+        # body-builder skips them and never asserts them.
+        w = _widget_for_constraint(
+            "urn:x-nmos:cap:transport:bit_rate",
+            {"minimum": 43200, "maximum": 43200},
+        )
+        assert w["kind"] == "single"
+        assert w["disabled"] is True
+
+    def test_boolean_single_value_value_is_json_bool(self) -> None:
+        from nmos.controller.handlers import _widget_for_constraint
+
+        w = _widget_for_constraint(
+            "urn:x-nmos:cap:transport:st2110_21_sender_type", {"enum": [True]},
+        )
+        # value must JSON-decode to a real bool, not the string "True",
+        # so IS-11 receives a boolean enum.
+        assert json.loads(w["value"]) is True

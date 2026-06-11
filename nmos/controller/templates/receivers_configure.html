@@ -352,6 +352,22 @@
                                            readonly>
                                   </div>
                                   <small class="text-muted">{{ w.min }} … {{ w.max }}</small>
+                                {% elif w.kind == 'single' %}
+                                  {# Single-value cap: uneditable, but it
+                                     carries ``data-param-urn`` + the JSON
+                                     machine value so the body-builder still
+                                     asserts it in the IS-11 PUT. ``shape``
+                                     tells the JS whether to rebuild an
+                                     ``enum`` or a ``minimum/maximum`` pin. #}
+                                  <input type="text"
+                                         class="form-control form-control-sm param-input param-single"
+                                         value="{{ w.display }}"
+                                         data-sender-id="{{ sender.id }}"
+                                         data-param-urn="{{ p.urn }}"
+                                         data-single-shape="{{ w.shape }}"
+                                         data-single-value="{{ w.value }}"
+                                         {% if w.disabled %}disabled{% endif %}
+                                         readonly>
                                 {% else %}
                                   <input type="text"
                                          class="form-control form-control-sm"

@@ -464,6 +464,26 @@
         if (sel.length > 0) constraintSet[urn] = { enum: sel };
         return;
       }
+      // Single-value cap (single-option enum or pinned min==max range).
+      // Uneditable in the UI, but it is a real constraint that MUST be
+      // asserted — e.g. ``media_type=[video/H265]`` pins the codec, and
+      // a native conset is *entirely* single-value caps. ``data-single-
+      // value`` is the JSON-encoded raw typed value; ``data-single-shape``
+      // says whether to rebuild it as an ``enum`` or a ``minimum/maximum``
+      // pin. (Disabled — i.e. transport — single caps were already
+      // skipped above, so they are never asserted.)
+      if (el.classList.contains('param-single')) {
+        const raw = el.getAttribute('data-single-value');
+        let v;
+        try { v = JSON.parse(raw); }
+        catch (_e) { v = raw; }
+        if (el.getAttribute('data-single-shape') === 'range') {
+          constraintSet[urn] = { minimum: v, maximum: v };
+        } else {
+          constraintSet[urn] = { enum: [v] };
+        }
+        return;
+      }
       // Range: the server renders the readonly mirror as the full
       // declared range by default, matching multi-select widgets
       // that default to all enum values. Once the user moves the

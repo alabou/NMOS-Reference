@@ -788,7 +788,13 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
                         else:
                             media.sampling = E.SamplingYCbCr_422.value
 
-            if hasattr(flow_inner, 'Bitrate') and flow_inner.Bitrate.defined:
+            # b=AS carries the transport bitrate (essence + transport overhead).  Read the
+            # sender's transport Bitrate attribute so the SDP matches the published transport
+            # bit_rate (single source — the overhead is applied once when that attribute is set).
+            # Fall back to the flow's essence bitrate if the sender attribute is unset.
+            if hasattr(sender, 'Bitrate') and sender.Bitrate.defined:
+                media.bitrate_kbits = sender.Bitrate.value
+            elif hasattr(flow_inner, 'Bitrate') and flow_inner.Bitrate.defined:
                 media.bitrate_kbits = flow_inner.Bitrate.value
             elif hasattr(flow_inner, 'BitRate') and flow_inner.BitRate.defined:
                 media.bitrate_kbits = flow_inner.BitRate.value

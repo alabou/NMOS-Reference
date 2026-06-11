@@ -457,8 +457,15 @@ class TestMuxLayerCountValidation:
 
 class TestPreferenceValidation:
 
-    def test_generic_trunk_pref_0_auto_corrected_to_1(self) -> None:
-        """A generic trunk with preference 0 should be auto-corrected to 1."""
+    def test_other_generic_trunk_pref_0_preserved(self) -> None:
+        """An 'other generic' trunk alternative at preference 0 is preserved.
+
+        Trunk and sub-constraint alternatives share one preference scale —
+        native 100, generic-matching-native-media_type 1, other generic 0 —
+        and are distinguished by the presence of ``meta:format``/``meta:layer``
+        (per BCP-004-01), NOT by preference value. So a trunk alternative at
+        preference 0 is legitimate and must be left untouched (no bump to 1).
+        """
         try:
             from caps.MatroxCCF import Caps, CapSet, Cap, RangeValue, RangeType, CapFormatMediaType
             from nmos.node.config.defaults import complete_capabilities
@@ -475,7 +482,7 @@ class TestPreferenceValidation:
                     },
                 ),
                 CapSet(
-                    preference=0,  # user mistake — should be >= 1
+                    preference=0,  # intentional: an 'other generic' alternative
                     label="Mux constraints",
                     caps={
                         CapFormatMediaType: Cap(
@@ -490,8 +497,8 @@ class TestPreferenceValidation:
 
             # Native trunk should stay 100
             assert result.capsets[0].preference == 100
-            # Generic trunk should be corrected to 1
-            assert result.capsets[1].preference == 1
+            # 'Other generic' trunk keeps its authored preference 0
+            assert result.capsets[1].preference == 0
 
         except ImportError:
             pytest.skip("MatroxCCF not available")

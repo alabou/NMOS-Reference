@@ -2349,14 +2349,20 @@ def _widget_for_constraint(
     171-201):
 
     * ≥ 2 enum values → ``multiselect``  (``<select multiple>``)
-    * 1 enum value    → ``readonly``     (uneditable text input)
+    * 1 enum value    → ``single``       (uneditable text, value still sent)
     * min / max range with min ≠ max → ``range``  (slider + text)
-    * min == max      → ``readonly``
-    * anything else   → ``readonly`` with ``display='—'``
+    * min == max      → ``single``       (pinned value, still sent)
+    * anything else   → ``readonly`` with ``display='—'`` (nothing sent)
+
+    A ``single`` widget is uneditable in the UI but still carries its
+    machine ``value`` (+ ``shape`` = ``enum``/``range``) so the
+    body-builder re-asserts it in the IS-11 PUT — a single-value cap is
+    a real constraint, and a native conset is *all* single-value caps.
 
     Transport caps (`urn:x-nmos:cap:transport:*` and the Matrox
     extension) render ``disabled=True`` — they're read-only on the
-    caps side per the ``is_transport_cap`` check.
+    caps side per the ``is_transport_cap`` check, and the body-builder
+    skips disabled widgets, so transport caps are never asserted.
     """
     disabled = _is_transport_cap(urn)
     if not isinstance(value, dict):
@@ -2371,10 +2377,19 @@ def _widget_for_constraint(
                     "disabled": True,
                 }
             if len(opts) == 1:
+                # A single-value enum is still a real constraint that MUST
+                # be asserted in the IS-11 PUT (e.g. ``media_type=[video/H265]``
+                # pins the codec; a native conset is *all* single-value caps).
+                # Render it as a ``single`` widget that carries the machine
+                # value so the body-builder can emit ``{"enum": [value]}``.
+                # Transport caps stay ``disabled`` (read-only on the caps
+                # side) and are therefore skipped by the body-builder.
                 return {
-                    "kind": "readonly",
+                    "kind": "single",
+                    "shape": "enum",
                     "display": _simple_value(opts[0]),
-                    "disabled": True,
+                    "value": json.dumps(opts[0]),
+                    "disabled": disabled,
                 }
             # Each option carries both the human-readable ``display``
             # text AND a ``value`` — the JSON-encoded form of the
@@ -2404,9 +2419,16 @@ def _widget_for_constraint(
     if has_min and has_max:
         mn, mx = value["minimum"], value["maximum"]
         if mn == mx:
+            # A pinned range (min == max) is a single concrete value and
+            # must be asserted in the PUT too — emit it as a ``single``
+            # widget of ``range`` shape so the body-builder rebuilds
+            # ``{"minimum": v, "maximum": v}``.
             return {
-                "kind": "readonly", "display": _simple_value(mn),
-                "disabled": True,
+                "kind": "single",
+                "shape": "range",
+                "display": _simple_value(mn),
+                "value": json.dumps(mn),
+                "disabled": disabled,
             }
         return {
             "kind": "range",

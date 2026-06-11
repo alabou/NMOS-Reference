@@ -735,10 +735,12 @@ def _attach_receiver_caps(inner: Any, constraint_sets: list[dict[str, Any]]) -> 
         caps._defined = True
         caps._value.Version.value = _nmos_version_now()
 
-        # Set MediaTypes by deriving from the first trunk constraint set's
+        # Set MediaTypes from the union of every trunk constraint set's
         # media_type enum.  A "trunk" constraint set is one without
         # urn:x-matrox:cap:meta:format (i.e. it describes the top-level
-        # stream, not a sub-flow layer).
+        # stream, not a sub-flow layer).  A multi-codec receiver must list
+        # every media_type it accepts (e.g. H264 + H265), not just the
+        # native's — this field is the receiver's media_types gate.
         if hasattr(caps._value, 'MediaTypes'):
             media_types: list[str] = []
             for cs in constraint_sets:
@@ -747,8 +749,10 @@ def _attach_receiver_caps(inner: Any, constraint_sets: list[dict[str, Any]]) -> 
                     continue
                 mt_cap = cs.get(CapFormatMediaType.s)
                 if mt_cap and "enum" in mt_cap:
-                    media_types = [str(v) for v in mt_cap["enum"]]
-                    break
+                    for v in mt_cap["enum"]:
+                        s = str(v)
+                        if s not in media_types:
+                            media_types.append(s)
             if not media_types:
                 raise ValueError(
                     "Receiver constraint_sets must contain at least one "

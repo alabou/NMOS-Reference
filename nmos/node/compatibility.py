@@ -24,9 +24,9 @@ if TYPE_CHECKING:
 from nmos.enums import (
     EnumRegistry,
     # Formats
-    FormatVideo, FormatAudio, FormatData, FormatMux,
+    FormatVideo, FormatAudio, FormatData, FormatDataEvent, FormatMux,
     # Media types
-    MuxGeneric, MuxNdi, MuxRtsp,
+    MuxGeneric, MuxNdi, MuxRtsp, MuxMpeg2TS, MuxAm824,
     VideoRaw, VideoCodedH264, VideoCodedH265, VideoCodedJxsv,
     AudioRawL8, AudioRawL16, AudioRawL20, AudioRawL24,
     # Clock ref
@@ -108,7 +108,6 @@ SUPPORTED_VIDEO_CONSTRAINTS: list[str] = _META_CONSTRAINTS + [
     CapFormatComponentDepth.s,
     CapFormatBitRate.s, CapFormatConstantBitRate.s,
     CapFormatProfile.s, CapFormatLevel.s, CapFormatSublevel.s,
-    CapTransportSynchronousMedia.s, CapTransportClockRefType.s,
 ]
 
 SUPPORTED_AUDIO_CONSTRAINTS: list[str] = _META_CONSTRAINTS + [
@@ -116,19 +115,13 @@ SUPPORTED_AUDIO_CONSTRAINTS: list[str] = _META_CONSTRAINTS + [
     CapFormatChannelCount.s, CapFormatSampleRate.s, CapFormatSampleDepth.s,
     CapFormatBitRate.s, CapFormatConstantBitRate.s,
     CapFormatProfile.s, CapFormatLevel.s,
-    CapTransportSynchronousMedia.s, CapTransportClockRefType.s,
 ]
 
 SUPPORTED_DATA_CONSTRAINTS: list[str] = _META_CONSTRAINTS + [
     CapFormatMediaType.s,
-    CapTransportSynchronousMedia.s, CapTransportClockRefType.s,
-    CapTransportUsbClass.s,
 ]
 
-SUPPORTED_DATA_EVENT_CONSTRAINTS: list[str] = [
-    CapMetaEnabled.s, CapMetaLabel.s, CapMetaPreference.s,
-    CapMetaLayerEnabled.s, CapMetaLayer.s, CapMetaFormat.s,
-    CapMetaLayerCompatibilityGroups.s,
+SUPPORTED_DATA_EVENT_CONSTRAINTS: list[str] = _META_CONSTRAINTS + [
     CapFormatMediaType.s, CapFormatEventType.s,
 ]
 
@@ -137,17 +130,12 @@ SUPPORTED_MUX_CONSTRAINTS: list[str] = [
     CapMetaLayerCompatibilityGroups.s, CapMetaInfoBlock.s,
     CapFormatMediaType.s,
     CapFormatVideoLayers.s, CapFormatAudioLayers.s, CapFormatDataLayers.s,
-    CapTransportSynchronousMedia.s, CapTransportClockRefType.s,
 ]
 
 # Mux mixed = mux trunk + all sub-flow constraints (supportedMuxMixedConstraints)
-SUPPORTED_MUX_MIXED_CONSTRAINTS: list[str] = [
-    CapMetaEnabled.s, CapMetaLabel.s, CapMetaPreference.s,
-    CapMetaLayerEnabled.s, CapMetaLayer.s, CapMetaFormat.s,
-    CapMetaLayerCompatibilityGroups.s, CapMetaInfoBlock.s,
+SUPPORTED_MUX_MIXED_CONSTRAINTS: list[str] = _META_CONSTRAINTS + [
     CapFormatMediaType.s,
     CapFormatVideoLayers.s, CapFormatAudioLayers.s, CapFormatDataLayers.s,
-    CapTransportSynchronousMedia.s, CapTransportClockRefType.s,
     # Video sub-constraints
     CapFormatGrainRate.s, CapFormatFrameWidth.s, CapFormatFrameHeight.s,
     CapFormatInterlaceMode.s, CapFormatColorspace.s,
@@ -185,6 +173,8 @@ def get_supported_constraints(format_urn: str) -> list[str]:
         return SUPPORTED_AUDIO_CONSTRAINTS
     elif format_urn == FormatData.s:
         return SUPPORTED_DATA_CONSTRAINTS
+    elif format_urn == FormatDataEvent.s:
+        return SUPPORTED_DATA_EVENT_CONSTRAINTS
     elif format_urn == FormatMux.s:
         return SUPPORTED_MUX_MIXED_CONSTRAINTS
     else:
@@ -210,12 +200,9 @@ def get_format_from_media_type(media_type: str) -> str:
         "video/MP2T" → FormatMux.s
         "application/usb" → FormatData.s
     """
-    # application/AM824, application/MP2T, etc. are mux formats.
     # NOTE: video/MP2T is OPAQUE (not supported in this implementation).
-    # There is no MuxVideoMp2t enum — video/MP2T falls to FormatVideo.
     _MUX_MEDIA_TYPES = {
-        "application/am824", MuxGeneric.s,
-        MuxNdi.s, MuxRtsp.s, "application/generic",
+        MuxMpeg2TS.s, MuxAm824.s, MuxGeneric.s, MuxNdi.s, MuxRtsp.s,
     }
     mt = media_type.lower() if media_type else ""
     if mt in _MUX_MEDIA_TYPES:
@@ -235,11 +222,9 @@ def get_class_from_media_type(media_type: str) -> str:
 
     Returns "raw", "coded", or "" for the media class.
     """
-    # application/AM824, application/MP2T, etc. are mux class.
     # NOTE: video/MP2T is OPAQUE (not supported) — not in this set.
     _MUX_CLASS = {
-        "application/am824", MuxGeneric.s,
-        MuxNdi.s, MuxRtsp.s, "application/generic",
+        MuxMpeg2TS.s, MuxAm824.s, MuxGeneric.s, MuxNdi.s, MuxRtsp.s,
     }
     mt = media_type.lower() if media_type else ""
 
@@ -1686,7 +1671,7 @@ def _swap_flow_flavor(
     elif target_class == "raw" and "audio" in mt:
         new_inner = NFlowAudioRawValue()
         new_inner.set_to_default()
-        new_inner.Format.value = FormatAudio
+        new_inner.Format.value = EnumRegistry.get("urn:x-nmos:format:audio")
         new_inner.MediaType.value = EnumRegistry.get(mt)
     elif target_class == "coded" and "video" in mt:
         new_inner = NFlowVideoCodedValue()
@@ -1696,7 +1681,7 @@ def _swap_flow_flavor(
     elif target_class == "coded" and "audio" in mt:
         new_inner = NFlowAudioCodedValue()
         new_inner.set_to_default()
-        new_inner.Format.value = FormatAudio
+        new_inner.Format.value = EnumRegistry.get("urn:x-nmos:format:audio")
         new_inner.MediaType.value = EnumRegistry.get(mt)
 
     if new_inner is None:
