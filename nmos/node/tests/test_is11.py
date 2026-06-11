@@ -3111,9 +3111,11 @@ class TestIS11OriginalFlag:
             "urn:x-nmos:cap:format:frame_width": {"enum": [1920]},
             "urn:x-nmos:cap:format:frame_height": {"enum": [1080]},
             "urn:x-nmos:cap:format:profile": {"enum": ["High-422"]},
+            # Range within the H264 caps envelope (High-422 @ L3 .. HighIntra-422 @ L6.2,
+            # i.e. 40000..3200000 Kbps); a non-exact range must force the minimum.
             "urn:x-nmos:cap:format:bit_rate": {
-                "minimum": 10000,
-                "maximum": 20000,
+                "minimum": 50000,
+                "maximum": 100000,
             },
         }])
         assert err is None, f"Constraint rejected: {err}"
@@ -3124,7 +3126,7 @@ class TestIS11OriginalFlag:
         flow_ptr = _get_sender_flow(node, video_sender)
         caps = get_flow_to_caps(node, flow_ptr)
         actual_br = _get_cap_int(caps, "urn:x-nmos:cap:format:bit_rate")
-        assert actual_br == 10000, (
+        assert actual_br == 50000, (
             "non-exact range bit_rate should force the minimum value, "
             f"got {actual_br}"
         )

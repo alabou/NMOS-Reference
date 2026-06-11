@@ -54,9 +54,9 @@ from nmos.enums import (
     H264ProfileHigh_422, H264ProfileHighIntra_422,
     H265ProfileMain10_422, H265ProfileMain10_444,
     H265ProfileMain10Intra_422, H265ProfileMain10Intra_444,
-    CodecLevel1, CodecLevel2, CodecLevel3, CodecLevel3_1, CodecLevel3_2,
+    CodecLevel3, CodecLevel3_1, CodecLevel3_2,
     CodecLevel4, CodecLevel4_1, CodecLevel4_2, CodecLevel5, CodecLevel5_1,
-    CodecLevel5_2, CodecLevel6, CodecLevel6_1, CodecLevel6_2, CodecLevel7, CodecLevel8,
+    CodecLevel5_2, CodecLevel6, CodecLevel6_1, CodecLevel6_2,
     H265LevelMain3, H265LevelMain3_1, H265LevelMain4, H265LevelHigh4,
     H265LevelMain4_1, H265LevelHigh4_1, H265LevelMain5, H265LevelHigh5,
     H265LevelMain5_1, H265LevelHigh5_1, H265LevelMain5_2, H265LevelHigh5_2,
@@ -66,14 +66,15 @@ from nmos.enums import (
     JxsvProfileMain420_12, JxsvProfileHigh420_12,
     JxsvProfileMain444_12, JxsvProfileHigh444_12,
     JxsvSublevel3bpp, JxsvSublevel4bpp,
-    CodecProfileMain, AacProfileHighQuality, AacProfileNatural, AacProfileAAC,
+    AacProfileHighQuality, AacProfileAAC,
     AacProfileHighEfficiencyAAC, AacProfileHighEfficiencyAACv2,
-    AacProfileLowDelayAAC, AacProfileLowDelayAACv2,
 )
 
 # AES3 channel_order grouping symbols (ST 2110-31): no EnumRegistry enum — plain strings by design.
 _AM824_CHANNEL_ORDER = ["SMPTE2110.(AES3)", "SMPTE2110.(AES3,ST)",
                         "SMPTE2110.(AES3,51)", "SMPTE2110.(AES3,71)"]
+# PCM channel_order grouping symbols (ST 2110-31): 2ch=ST, 6ch=51, 8ch=71 — plain strings by design.
+_PCM_CHANNEL_ORDER = ["SMPTE2110.(ST)", "SMPTE2110.(51)", "SMPTE2110.(71)"]
 
 # ---------------------------------------------------------------------------
 # Common video values shared across templates
@@ -267,6 +268,7 @@ def get_raw_template(*, sub: bool = False) -> dict[str, Any]:
 
 def get_h264_template(*, receiver: bool = False, sub: bool = False) -> dict[str, Any]:
     """Template for video/H264."""
+    from nmos.codec import h264 as _h264
     t: dict[str, Any] = {
         CapFormatMediaType.s: {"enum": [VideoCodedH264.s]},
         CapFormatInterlaceMode.s: {"enum": [Progressive.s]},
@@ -283,7 +285,11 @@ def get_h264_template(*, receiver: bool = False, sub: bool = False) -> dict[str,
             CodecLevel4_1.s, CodecLevel4_2.s, CodecLevel5.s, CodecLevel5_1.s,
             CodecLevel5_2.s, CodecLevel6.s, CodecLevel6_1.s, CodecLevel6_2.s,
         ]},
-        CapFormatBitRate.s: {"minimum": 10000, "maximum": 2000000},
+        # Bounds from the codec level table: High-422 @ level 3 .. HighIntra-422 @ level 6.2
+        CapFormatBitRate.s: {
+            "minimum": _h264.ALL_LEVELS[CodecLevel3].max_bitrate_high_422,
+            "maximum": _h264.ALL_LEVELS[CodecLevel6_2].max_bitrate_high_intra_422,
+        },
         CapFormatConstantBitRate.s: {"enum": [False, True]},
     }
     if not sub:
@@ -304,6 +310,7 @@ def get_h264_template(*, receiver: bool = False, sub: bool = False) -> dict[str,
 
 def get_h265_template(*, receiver: bool = False, sub: bool = False) -> dict[str, Any]:
     """Template for video/H265."""
+    from nmos.codec import h265 as _h265
     t: dict[str, Any] = {
         CapFormatMediaType.s: {"enum": [VideoCodedH265.s]},
         CapFormatInterlaceMode.s: {"enum": [Progressive.s]},
@@ -326,7 +333,11 @@ def get_h265_template(*, receiver: bool = False, sub: bool = False) -> dict[str,
             H265LevelMain6.s, H265LevelHigh6.s, H265LevelMain6_1.s, H265LevelHigh6_1.s,
             H265LevelMain6_2.s, H265LevelHigh6_2.s,
         ]},
-        CapFormatBitRate.s: {"minimum": 6000, "maximum": 4800000},
+        # Bounds from the codec level table: Main10-422 @ level 3 .. Main10Intra-444 @ level 6.2
+        CapFormatBitRate.s: {
+            "minimum": _h265.ALL_LEVELS[H265LevelMain3].max_bitrate_main10_422,
+            "maximum": _h265.ALL_LEVELS[H265LevelHigh6_2].max_bitrate_main10_intra_444,
+        },
         CapFormatConstantBitRate.s: {"enum": [False, True]},
     }
     if not sub:
@@ -347,6 +358,7 @@ def get_h265_template(*, receiver: bool = False, sub: bool = False) -> dict[str,
 
 def get_jxsv_template(*, sub: bool = False) -> dict[str, Any]:
     """Template for video/jxsv."""
+    from nmos.codec import jxsv as _jxsv
     t: dict[str, Any] = {
         CapFormatMediaType.s: {"enum": [VideoCodedJxsv.s]},
         CapFormatInterlaceMode.s: {"enum": [Progressive.s]},
@@ -363,10 +375,14 @@ def get_jxsv_template(*, sub: bool = False) -> dict[str, Any]:
         ]},
         CapFormatLevel.s: {"enum": [JxsvLevel4k1.s, JxsvLevel4k2.s, JxsvLevel4k3.s]},
         CapFormatSublevel.s: {"enum": [JxsvSublevel3bpp.s, JxsvSublevel4bpp.s]},
+        # Bounds from the codec level table: 4k-1 @ 3bpp .. 4k-3 @ 4bpp
+        CapFormatBitRate.s: {
+            "minimum": _jxsv.ALL_LEVELS[JxsvLevel4k1].max_bitrate_sublevel_3bpp,
+            "maximum": _jxsv.ALL_LEVELS[JxsvLevel4k3].max_bitrate_sublevel_4bpp,
+        },
+        CapFormatConstantBitRate.s: {"enum": [False, True]},
     }
-    if sub:
-        t[CapTransportPacketTransmissionMode.s] = {"enum": [NonInterleavedNalUnits.s]}
-    else:
+    if not sub:
         t[CapTransportPacketTransmissionMode.s] = {"enum": [CodeStream.s]}
     return t
 
@@ -376,15 +392,23 @@ def get_jxsv_template(*, sub: bool = False) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def get_pcm_template(*, sub: bool = False) -> dict[str, Any]:
-    """Template for audio/L16, audio/L20, audio/L24."""
-    return {
+    """Template for audio/L16, audio/L20, audio/L24.
+
+    channel_count is 2/6/8 (no 4 — the channel_order grouping has ST/51/71 only).
+    Sub (within MPEG2-TS): 48 kHz only per SMPTE 302M, no channel_order.
+    """
+    t: dict[str, Any] = {
         CapFormatMediaType.s: {"enum": [AudioRawL16.s, AudioRawL20.s, AudioRawL24.s]},
-        CapFormatSampleRate.s: {"enum": [
-            {"numerator": 48000}, {"numerator": 96000},
-        ]},
-        CapFormatChannelCount.s: {"enum": [2, 4, 6, 8]},
+        CapFormatChannelCount.s: {"enum": [2, 6, 8]},
         CapFormatSampleDepth.s: {"enum": [16, 20, 24]},
     }
+    if sub:
+        # SMPTE 302M restricts to 48 kHz
+        t[CapFormatSampleRate.s] = {"enum": [{"numerator": 48000}]}
+    else:
+        t[CapFormatSampleRate.s] = {"enum": [{"numerator": 48000}, {"numerator": 96000}]}
+        t[CapTransportChannelOrder.s] = {"enum": list(_PCM_CHANNEL_ORDER)}
+    return t
 
 
 def get_aac_template(*, sub: bool = False, stereo_only: bool = False) -> dict[str, Any]:
@@ -397,14 +421,10 @@ def get_aac_template(*, sub: bool = False, stereo_only: bool = False) -> dict[st
         CapFormatSampleRate.s: {"enum": [{"numerator": 48000}]},
         CapFormatChannelCount.s: {"enum": channels},
         CapFormatProfile.s: {"enum": [
-            CodecProfileMain.s, AacProfileHighQuality.s, AacProfileNatural.s, AacProfileAAC.s,
+            AacProfileHighQuality.s, AacProfileAAC.s,
             AacProfileHighEfficiencyAAC.s, AacProfileHighEfficiencyAACv2.s,
-            AacProfileLowDelayAAC.s, AacProfileLowDelayAACv2.s,
         ]},
-        CapFormatLevel.s: {"enum": [
-            CodecLevel1.s, CodecLevel2.s, CodecLevel3.s, CodecLevel4.s,
-            CodecLevel5.s, CodecLevel6.s, CodecLevel7.s, CodecLevel8.s,
-        ]},
+        CapFormatLevel.s: {"enum": [CodecLevel4.s]},
         CapFormatBitRate.s: {"maximum": 1728},
         CapFormatConstantBitRate.s: {"enum": [False, True]},
     }
@@ -434,12 +454,7 @@ def get_am824_template(*, sub: bool = False) -> dict[str, Any]:
         # SMPTE 302M restricts to 48 kHz
         t[CapFormatSampleRate.s] = {"enum": [{"numerator": 48000}]}
     else:
-        t[CapFormatSampleRate.s] = {"enum": [
-            {"numerator": 48000},
-            {"numerator": 96000},
-            {"numerator": 44100},
-            {"numerator": 88200},
-        ]}
+        t[CapFormatSampleRate.s] = {"enum": [{"numerator": 48000}, {"numerator": 96000}]}
         # Channel order uses AES3 grouping symbols per ST 2110-31 (no enum — plain strings by design)
         t[CapTransportChannelOrder.s] = {"enum": list(_AM824_CHANNEL_ORDER)}
     return t
