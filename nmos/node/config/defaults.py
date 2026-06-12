@@ -87,6 +87,12 @@ def validate_constraint_sets(
     Prints errors to stdout for user feedback when verbose=True.
 
     Rules enforced:
+    0. Every key must be a known capability URN. A known capability name
+       written under the wrong namespace (e.g. urn:x-nmos: instead of
+       urn:x-matrox:) is an ERROR naming the correct URN — such keys
+       would otherwise be dropped silently and the template would fill
+       the canonical capability instead. A completely unknown key only
+       prints a warning (tolerated as a vendor extension).
     1. At least one CS with preference=100 (native)
     2. Native CS: every parameter has exactly one value
     3. Native CS media_type matches format URN
@@ -111,12 +117,44 @@ def validate_constraint_sets(
     """
     errors: list[str] = []
 
+    # Canonical capability URNs — the node's enum registry is the authority
+    # for capability names and namespaces. (That the CCF's capability
+    # constants agree with the registry is enforced separately, by test.)
+    import nmos.enums as _ne
+    _known_caps = {
+        v.s for n, v in vars(_ne).items()
+        if n.startswith("Cap") and hasattr(v, "s")
+    }
+    # suffix ("transport:channel_order") → canonical URN, to diagnose a
+    # known name written under the wrong namespace
+    _canon_by_suffix = {
+        urn.split(":cap:", 1)[1]: urn
+        for urn in _known_caps if ":cap:" in urn
+    }
+
     has_native = False
 
     for i, cs in enumerate(constraint_sets):
         cs_label = cs.get("urn:x-nmos:cap:meta:label", f"constraint_set[{i}]")
         pref = cs.get("urn:x-nmos:cap:meta:preference", 0)
         is_sub = "urn:x-matrox:cap:meta:format" in cs or cs.get("urn:x-matrox:cap:meta:layer") is not None
+
+        # Rule 0: every key must be a known capability URN
+        if _known_caps:
+            for key in cs:
+                if key in _known_caps:
+                    continue
+                suffix = key.split(":cap:", 1)[1] if ":cap:" in key else None
+                canon = _canon_by_suffix.get(suffix) if suffix else None
+                if canon is not None:
+                    errors.append(
+                        f"[{cs_label}] '{key}' uses the wrong namespace — "
+                        f"the capability is '{canon}'"
+                    )
+                else:
+                    print(f"    ! [{label}/{cs_label}] unknown capability key "
+                          f"'{key}' — not a known capability URN, it will not "
+                          f"behave as a capability")
 
         # Rule 1: detect native
         if pref == 100:

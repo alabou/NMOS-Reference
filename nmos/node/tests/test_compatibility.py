@@ -1104,3 +1104,105 @@ class TestNConstraintToRange:
         rng = _nconstraint_to_range(self._make({"enum": [720, 1280, 1920, 3840]}))
         assert rng.includes_range(RangeValue(values=(1920,), type=RangeType.INT))
         assert not rng.includes_range(RangeValue(values=(1000,), type=RangeType.INT))
+
+
+@pytest.mark.skipif(not HAS_CCF, reason="MatroxCCF not available")
+class TestFixDepthAndFbblevel:
+    """profile → component_depth and profile → fbblevel fix-ups: parameters
+    the user typically leaves unconstrained are corrected to match the
+    (possibly fixed) profile; pinned (original) values never move."""
+
+    def _coded_props(self, media_type: str, profile: str, depth: int,
+                     sampling: str = "YCbCr-4:2:0", fbblevel: str | None = None):
+        from caps.MatroxCCF import Cap, RangeValue, RangeType
+        from caps.MatroxCCF import CapFormatFbblevel
+        props = {
+            CapFormatMediaType: Cap(CapFormatMediaType,
+                RangeValue(values=(media_type,), type=RangeType.STRING)),
+            CapFormatFrameWidth: Cap(CapFormatFrameWidth,
+                RangeValue(values=(1920,), type=RangeType.INT)),
+            CapFormatFrameHeight: Cap(CapFormatFrameHeight,
+                RangeValue(values=(1080,), type=RangeType.INT)),
+            CapFormatColorspace: Cap(CapFormatColorspace,
+                RangeValue(values=("BT709",), type=RangeType.STRING)),
+            CapFormatTransferCharacteristic: Cap(CapFormatTransferCharacteristic,
+                RangeValue(values=("SDR",), type=RangeType.STRING)),
+            CapFormatInterlaceMode: Cap(CapFormatInterlaceMode,
+                RangeValue(values=("progressive",), type=RangeType.STRING)),
+            CapFormatGrainRate: Cap(CapFormatGrainRate,
+                RangeValue(values=(Fraction(60, 1),), type=RangeType.RATIONAL)),
+            CapFormatComponentDepth: Cap(CapFormatComponentDepth,
+                RangeValue(values=(depth,), type=RangeType.INT)),
+            CapFormatColorSampling: Cap(CapFormatColorSampling,
+                RangeValue(values=(sampling,), type=RangeType.STRING)),
+            CapFormatProfile: Cap(CapFormatProfile,
+                RangeValue(values=(profile,), type=RangeType.STRING)),
+            CapFormatLevel: Cap(CapFormatLevel,
+                RangeValue(values=("4",), type=RangeType.STRING)),
+        }
+        if fbblevel is not None:
+            props[CapFormatFbblevel] = Cap(CapFormatFbblevel,
+                RangeValue(values=(fbblevel,), type=RangeType.STRING))
+        return props
+
+    def _con(self, name, values, original=False):
+        from caps.MatroxCCF import Cap, RangeValue, RangeType
+        rtype = RangeType.INT if isinstance(values[0], int) else RangeType.STRING
+        c = Cap(name, RangeValue(values=tuple(values), type=rtype))
+        c.original = original
+        return c
+
+    def test_depth_clamped_to_profile_max(self) -> None:
+        """profile Main (8-bit) pinned, depth unpinned at 10 within [8,10]
+        → depth corrected to 8."""
+        props = self._coded_props("video/H264", "Main", 10)
+        constraints = {
+            CapFormatProfile: self._con(CapFormatProfile, ["Main"], original=True),
+            CapFormatComponentDepth: self._con(CapFormatComponentDepth, [8, 10]),
+        }
+        fix_coded_video_flow(props, constraints)
+        assert props[CapFormatComponentDepth].value.values == (8,)
+
+    def test_pinned_depth_never_moves(self) -> None:
+        props = self._coded_props("video/H264", "Main", 10)
+        constraints = {
+            CapFormatProfile: self._con(CapFormatProfile, ["Main"], original=True),
+            CapFormatComponentDepth: self._con(CapFormatComponentDepth, [10], original=True),
+        }
+        fix_coded_video_flow(props, constraints)
+        assert props[CapFormatComponentDepth].value.values == (10,)
+
+    def test_fbblevel_non_tdc_corrected_to_unrestricted(self) -> None:
+        from caps.MatroxCCF import CapFormatFbblevel
+        props = self._coded_props("video/jxsv", "High444.12", 10,
+                                  sampling="YCbCr-4:4:4", fbblevel="Fbblev8bpp")
+        constraints = {
+            CapFormatProfile: self._con(CapFormatProfile, ["High444.12"], original=True),
+            CapFormatFbblevel: self._con(
+                CapFormatFbblevel, ["Unrestricted", "Fbblev8bpp", "Fbblev12bpp"]),
+        }
+        fix_coded_video_flow(props, constraints)
+        assert props[CapFormatFbblevel].value.values == ("Unrestricted",)
+
+    def test_fbblevel_tdc_keeps_allowed_budget(self) -> None:
+        from caps.MatroxCCF import CapFormatFbblevel
+        props = self._coded_props("video/jxsv", "TDC444.12", 10,
+                                  sampling="YCbCr-4:4:4", fbblevel="Fbblev8bpp")
+        constraints = {
+            CapFormatProfile: self._con(CapFormatProfile, ["TDC444.12"], original=True),
+            CapFormatFbblevel: self._con(
+                CapFormatFbblevel, ["Unrestricted", "Fbblev8bpp", "Fbblev12bpp"]),
+        }
+        fix_coded_video_flow(props, constraints)
+        assert props[CapFormatFbblevel].value.values == ("Fbblev8bpp",)
+
+    def test_fbblevel_pinned_never_moves(self) -> None:
+        from caps.MatroxCCF import CapFormatFbblevel
+        props = self._coded_props("video/jxsv", "High444.12", 10,
+                                  sampling="YCbCr-4:4:4", fbblevel="Fbblev8bpp")
+        constraints = {
+            CapFormatProfile: self._con(CapFormatProfile, ["High444.12"], original=True),
+            CapFormatFbblevel: self._con(CapFormatFbblevel, ["Fbblev8bpp"], original=True),
+        }
+        fix_coded_video_flow(props, constraints)
+        assert props[CapFormatFbblevel].value.values == ("Fbblev8bpp",)

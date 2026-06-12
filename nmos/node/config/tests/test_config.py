@@ -1208,3 +1208,81 @@ class TestParametrizedConstraintPropagation:
 
             _time.sleep(0.01)
             node.force_active_constraints(sender, ac)
+
+
+class TestConstraintKeyNamespaceValidation:
+    """Constraint-set keys must be known capability URNs. A known capability
+    name written under the wrong namespace is an error naming the canonical
+    URN (such keys would otherwise be dropped silently, letting the template
+    fill the canonical capability instead). Fully unknown keys only warn."""
+
+    def _native(self):
+        return {
+            "urn:x-nmos:cap:meta:label": "Native",
+            "urn:x-nmos:cap:meta:preference": 100,
+            "urn:x-nmos:cap:format:media_type": {"enum": ["audio/AM824"]},
+        }
+
+    def test_wrong_namespace_is_an_error_with_suggestion(self) -> None:
+        from nmos.node.config.defaults import validate_constraint_sets
+        cs = [self._native() | {
+            # channel_order is a Matrox extension — x-nmos is the wrong namespace
+            "urn:x-nmos:cap:transport:channel_order": {"enum": ["SMPTE2110.(AES3)"]},
+        }]
+        errors = validate_constraint_sets(cs, "urn:x-nmos:format:audio", "t")
+        ns = [e for e in errors if "wrong namespace" in e]
+        assert ns, f"expected a wrong-namespace error, got: {errors}"
+        assert "urn:x-matrox:cap:transport:channel_order" in ns[0]
+
+    def test_matrox_cap_in_nmos_namespace_reversed(self) -> None:
+        from nmos.node.config.defaults import validate_constraint_sets
+        cs = [self._native() | {
+            # media_type is x-nmos — x-matrox is the wrong namespace
+            "urn:x-matrox:cap:format:frame_width": {"enum": [1920]},
+        }]
+        errors = validate_constraint_sets(cs, "urn:x-nmos:format:audio", "t")
+        ns = [e for e in errors if "wrong namespace" in e]
+        assert ns and "urn:x-nmos:cap:format:frame_width" in ns[0]
+
+    def test_unknown_key_warns_but_does_not_error(self, capsys) -> None:
+        from nmos.node.config.defaults import validate_constraint_sets
+        cs = [self._native() | {"_comment": "free-form note"}]
+        errors = validate_constraint_sets(cs, "urn:x-nmos:format:audio", "t")
+        assert not any("_comment" in e for e in errors)
+        assert "unknown capability key '_comment'" in capsys.readouterr().out
+
+    def test_known_keys_produce_no_findings(self, capsys) -> None:
+        from nmos.node.config.defaults import validate_constraint_sets
+        cs = [self._native() | {
+            "urn:x-matrox:cap:transport:channel_order": {"enum": ["SMPTE2110.(AES3)"]},
+        }]
+        errors = validate_constraint_sets(cs, "urn:x-nmos:format:audio", "t")
+        assert not any("namespace" in e for e in errors)
+        assert "unknown capability key" not in capsys.readouterr().out
+
+
+class TestCapUrnAuthorities:
+    """The node's enum registry is the authority for capability URNs and
+    namespaces; the CCF declares its own constants independently. The two
+    must agree — a drift in either direction means a capability would be
+    validated under one name and converted under another."""
+
+    def test_node_enums_and_ccf_constants_agree(self) -> None:
+        try:
+            import caps.MatroxCCF as CCF
+        except ImportError:
+            pytest.skip("MatroxCCF not available")
+        import nmos.enums as NE
+
+        node_urns = {v.s for n, v in vars(NE).items()
+                     if n.startswith("Cap") and hasattr(v, "s")}
+        ccf_urns = {v for n, v in vars(CCF).items()
+                    if n.startswith("Cap") and isinstance(v, str)}
+
+        only_node = sorted(node_urns - ccf_urns)
+        only_ccf = sorted(ccf_urns - node_urns)
+        assert not only_node and not only_ccf, (
+            "capability URN drift between the node enum registry and the CCF:\n"
+            f"  only in node enums: {only_node}\n"
+            f"  only in CCF:        {only_ccf}"
+        )

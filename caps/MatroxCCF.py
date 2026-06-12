@@ -66,6 +66,7 @@ CapFormatBitRate = "urn:x-nmos:cap:format:bit_rate"
 CapFormatProfile = "urn:x-nmos:cap:format:profile"
 CapFormatLevel = "urn:x-nmos:cap:format:level"
 CapFormatSublevel = "urn:x-nmos:cap:format:sublevel"
+CapFormatFbblevel = "urn:x-nmos:cap:format:fbblevel"
 CapFormatConstantBitRate = "urn:x-nmos:cap:format:constant_bit_rate"
 CapFormatVideoLayers = "urn:x-matrox:cap:format:video_layers"
 CapFormatAudioLayers = "urn:x-matrox:cap:format:audio_layers"
@@ -2579,6 +2580,7 @@ def convert_caps_json_to_caps(caps_json: Dict[str, Any]) -> Caps:
 	    CapFormatProfile: RangeType.STRING,
 	    CapFormatLevel: RangeType.STRING,
 	    CapFormatSublevel: RangeType.STRING,
+	    CapFormatFbblevel: RangeType.STRING,
 	    CapFormatConstantBitRate: RangeType.BOOL,
 	    CapFormatVideoLayers: RangeType.INT,
 	    CapFormatAudioLayers: RangeType.INT,

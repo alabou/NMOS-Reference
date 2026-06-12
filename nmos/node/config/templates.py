@@ -42,7 +42,7 @@ from nmos.enums import (
     CapFormatMediaType, CapFormatInterlaceMode, CapFormatTransferCharacteristic,
     CapFormatConstantBitRate, CapFormatGrainRate, CapFormatFrameWidth,
     CapFormatFrameHeight, CapFormatColorspace, CapFormatColorSampling,
-    CapFormatComponentDepth, CapFormatProfile, CapFormatLevel, CapFormatSublevel,
+    CapFormatComponentDepth, CapFormatProfile, CapFormatLevel, CapFormatSublevel, CapFormatFbblevel,
     CapFormatBitRate, CapFormatSampleDepth, CapFormatSampleRate,
     CapFormatChannelCount, CapTransportPacketTransmissionMode,
     CapTransportParameterSetsTransportMode, CapTransportParameterSetsFlowMode,
@@ -67,6 +67,8 @@ from nmos.enums import (
     JxsvProfileMain420_12, JxsvProfileHigh420_12,
     JxsvProfileMain444_12, JxsvProfileHigh444_12,
     JxsvSublevel3bpp, JxsvSublevel4bpp,
+    JxsvFbblevelUnrestricted, JxsvFbblevelFull, JxsvFbblevel3bpp,
+    JxsvFbblevel4_5bpp, JxsvFbblevel8bpp, JxsvFbblevel12bpp,
     AacProfileHighQuality, AacProfileAAC,
     AacProfileHighEfficiencyAAC, AacProfileHighEfficiencyAACv2,
 )
@@ -107,6 +109,7 @@ class NativeVideo:
     profile: str | None = None
     level: str | None = None
     sublevel: str | None = None
+    fbblevel: str | None = None
     bitrate_kbps: int | None = None
     cbr: bool = False
 
@@ -136,7 +139,7 @@ DEFAULT_NATIVE_H265 = NativeVideo(
     level=H265LevelMain4.s, bitrate_kbps=40000, cbr=False)
 DEFAULT_NATIVE_JXSV = NativeVideo(
     media_type=VideoCodedJxsv.s, profile=JxsvProfileMain420_12.s,
-    level=JxsvLevel4k1.s, sublevel=JxsvSublevel3bpp.s, bitrate_kbps=40000, cbr=False)
+    level=JxsvLevel4k1.s, sublevel=JxsvSublevel3bpp.s, fbblevel=JxsvFbblevelUnrestricted.s, bitrate_kbps=40000, cbr=False)
 
 # Audio native defaults: AAC = 48 kHz, 2 ch, profile AAC, level 2, 128 kbps, CBR on, 24-bit;
 # AM824 = 48 kHz, 2 ch, channel order SMPTE2110.(AES3), 24-bit; PCM = 48 kHz, 2 ch, L24/24-bit.
@@ -189,6 +192,8 @@ def _native_video_caps(nv: NativeVideo) -> dict[str, Any]:
         t[CapFormatLevel.s] = {"enum": [nv.level]}
     if nv.sublevel is not None:
         t[CapFormatSublevel.s] = {"enum": [nv.sublevel]}
+    if nv.fbblevel is not None:
+        t[CapFormatFbblevel.s] = {"enum": [nv.fbblevel]}
     if nv.bitrate_kbps is not None:
         t[CapFormatBitRate.s] = {"enum": [nv.bitrate_kbps]}
     return t
@@ -443,6 +448,7 @@ def get_jxsv_template(*, sub: bool = False) -> dict[str, Any]:
         ]},
         CapFormatLevel.s: {"enum": [JxsvLevel4k1.s, JxsvLevel4k2.s, JxsvLevel4k3.s]},
         CapFormatSublevel.s: {"enum": [JxsvSublevel3bpp.s, JxsvSublevel4bpp.s]},
+        CapFormatFbblevel.s: {"enum": [JxsvFbblevelUnrestricted.s]},
         # Bounds from the codec level table: 4k-1 @ 3bpp .. 4k-3 @ 4bpp
         CapFormatBitRate.s: {
             "minimum": _jxsv.ALL_LEVELS[JxsvLevel4k1].max_bitrate_sublevel_3bpp,

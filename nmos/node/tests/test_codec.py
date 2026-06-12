@@ -230,7 +230,8 @@ class TestJxsvDataTables:
         assert len(jxsv.ALL_LEVELS) == 8
 
     def test_profile_count(self) -> None:
-        assert len(jxsv.ALL_PROFILES) == 6
+        # Main/High 420/444/4444 plus the TDC profile
+        assert len(jxsv.ALL_PROFILES) == 7
 
     def test_ordered_levels_count(self) -> None:
         assert len(jxsv.ORDERED_LEVELS) == 8

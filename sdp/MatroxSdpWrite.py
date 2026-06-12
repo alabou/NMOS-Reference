@@ -590,6 +590,10 @@ def _emit_video_fmtp(sdp: MatroxSdp, out: StringIO, m: MediaDescriptor) -> None:
                 out.write(f"{semi} sublevel={m.sub_level}")
                 semi = ";"
 
+            if m.fbb_level is not None:
+                out.write(f"{semi} fbblevel={m.fbb_level}")
+                semi = ";"
+
             if m.jxsv_packet_mode is not None:
                 value = 1 if m.jxsv_packet_mode == E.Slice else 0
                 out.write(f"{semi} packetmode={value}")

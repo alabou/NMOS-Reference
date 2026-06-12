@@ -32,6 +32,7 @@ class NFlowVideoCodedEnums:
     Profile = EnumRegistry.get("profile")
     Level = EnumRegistry.get("level")
     Sublevel = EnumRegistry.get("sublevel")
+    Fbblevel = EnumRegistry.get("fbblevel")
     Bitrate = EnumRegistry.get("bit_rate")
     ConstantBitrate = EnumRegistry.get("constant_bit_rate")
     pass
@@ -53,6 +54,7 @@ class NFlowVideoCodedValue:
         "Profile",
         "Level",
         "Sublevel",
+        "Fbblevel",
         "Bitrate",
         "ConstantBitrate",
     )
@@ -70,6 +72,7 @@ class NFlowVideoCodedValue:
         self.Profile: NEnum = NEnum()
         self.Level: NEnum = NEnum()
         self.Sublevel: NEnum = NEnum()
+        self.Fbblevel: NEnum = NEnum()
         self.Bitrate: NInt = NInt()
         self.ConstantBitrate: NBool = NBool()
 
@@ -134,6 +137,7 @@ class NFlowVideoCodedValue:
         self.Profile.encode(engine, NFlowVideoCodedEnums.Profile)
         self.Level.encode(engine, NFlowVideoCodedEnums.Level)
         self.Sublevel.encode(engine, NFlowVideoCodedEnums.Sublevel)
+        self.Fbblevel.encode(engine, NFlowVideoCodedEnums.Fbblevel)
         self.Bitrate.encode(engine, NFlowVideoCodedEnums.Bitrate)
         self.ConstantBitrate.encode(engine, NFlowVideoCodedEnums.ConstantBitrate)
         engine.close_struct()
@@ -165,6 +169,8 @@ class NFlowVideoCodedValue:
             self.Level.decode_value(data[NFlowVideoCodedEnums.Level.s])
         if NFlowVideoCodedEnums.Sublevel.s in data:
             self.Sublevel.decode_value(data[NFlowVideoCodedEnums.Sublevel.s])
+        if NFlowVideoCodedEnums.Fbblevel.s in data:
+            self.Fbblevel.decode_value(data[NFlowVideoCodedEnums.Fbblevel.s])
         if NFlowVideoCodedEnums.Bitrate.s in data:
             self.Bitrate.decode_value(data[NFlowVideoCodedEnums.Bitrate.s])
         if NFlowVideoCodedEnums.ConstantBitrate.s in data:
@@ -187,6 +193,7 @@ class NFlowVideoCodedValue:
         o.Profile = self.Profile.clone()
         o.Level = self.Level.clone()
         o.Sublevel = self.Sublevel.clone()
+        o.Fbblevel = self.Fbblevel.clone()
         o.Bitrate = self.Bitrate.clone()
         o.ConstantBitrate = self.ConstantBitrate.clone()
         return o
@@ -327,6 +334,15 @@ class NFlowVideoCoded:
     def set_Sublevel(self, v: Any) -> None:
         assert self._defined, "NFlowVideoCoded must be defined before setting Sublevel"
         _assign_value(self._value.Sublevel, v)
+
+    def get_Fbblevel(self) -> NEnum:
+        if not self._defined:
+            raise NotAvailable("undefined value")
+        return self._value.Fbblevel
+
+    def set_Fbblevel(self, v: Any) -> None:
+        assert self._defined, "NFlowVideoCoded must be defined before setting Fbblevel"
+        _assign_value(self._value.Fbblevel, v)
 
     def get_Bitrate(self) -> NInt:
         if not self._defined:

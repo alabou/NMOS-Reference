@@ -78,7 +78,13 @@ from nmos.enums import (
     TagGroupHint, TagAssetManufacturer, TagAssetProduct, TagAssetInstance, TagAssetFunction,
     # Colorspace / transfer / interlace
     BT601, BT709, BT2020, BT2100, SDR, HLG, PQ,
+    BT601_5, BT709_2, ST2065_1, ST2065_3, XYZ, ALPHA,
     InterlacedTff, InterlacedBff, InterlacedPsf, Progressive,
+    # AAC profiles / extended codec levels
+    AacProfileScalable, AacProfileSpeech, AacProfileSynthetic,
+    AacProfileHighQuality, AacProfileLowDelayAAC, AacProfileLowDelayAACv2, AacProfileNatural,
+    AacProfileMobile, AacProfileAAC, AacProfileHighEfficiencyAAC,
+    AacProfileHighEfficiencyAACv2, CodecLevel7, CodecLevel8,
     # Audio channels / video components
     L, R, C, LFE, Ls, Rs, Lrs, Rrs, Lt, Rt, M1, M2, B, G,
     # H.264 profiles / shared codec levels
@@ -466,6 +472,66 @@ def _get_h265_profile_level_id(
     return 0, profile_id, tier_flag, level_id, f"{compatibility:08X}", f"{constraints:012X}"
 
 
+def _get_sdp_colorimetry(colorspace: str, E: Any) -> tuple[Any, Any]:
+    """Map a flow colorspace to the SDP (colorimetry, RANGE) pair.
+
+    Known colorspaces use the narrow (video) range; an unspecified or
+    unknown colorspace maps to unspecified colorimetry with full range.
+    """
+    _MAP = {
+        BT601.s: E.ColorimetryBT601, BT709.s: E.ColorimetryBT709,
+        BT2020.s: E.ColorimetryBT2020, BT2100.s: E.ColorimetryBT2100,
+        BT601_5.s: E.ColorimetryBT601_5, BT709_2.s: E.ColorimetryBT709_2,
+        ST2065_1.s: E.ColorimetryST2065_1, ST2065_3.s: E.ColorimetryST2065_3,
+        XYZ.s: E.ColorimetryXYZ, ALPHA.s: E.ColorimetryALPHA,
+    }
+    colorimetry = _MAP.get(colorspace)
+    if colorimetry is None:
+        return E.ColorimetryUnspecified.value, E.RangeFull.value
+    return colorimetry.value, E.RangeNarrow.value
+
+
+def _get_aac_profile_level_id(profile: str, level: str) -> str:
+    """Compute the AAC ``profile-level-id`` decimal string (RFC 3640/6416)."""
+    _MAP: dict[tuple[str, str], str] = {}
+
+    def _fill(profile_s: str, level_to_id: dict[str, str]) -> None:
+        for lvl, pid in level_to_id.items():
+            _MAP[(profile_s, lvl)] = pid
+
+    _fill(CodecProfileMain.s, {CodecLevel1.s: "1", CodecLevel2.s: "2",
+                               CodecLevel3.s: "3", CodecLevel4.s: "4"})
+    _fill(AacProfileScalable.s, {CodecLevel1.s: "5", CodecLevel2.s: "6",
+                                 CodecLevel3.s: "7", CodecLevel4.s: "8"})
+    _fill(AacProfileSpeech.s, {CodecLevel1.s: "9", CodecLevel2.s: "10"})
+    _fill(AacProfileSynthetic.s, {CodecLevel1.s: "11", CodecLevel2.s: "12",
+                                  CodecLevel3.s: "13"})
+    _fill(AacProfileHighQuality.s, {CodecLevel1.s: "14", CodecLevel2.s: "15",
+                                    CodecLevel3.s: "16", CodecLevel4.s: "17",
+                                    CodecLevel5.s: "18", CodecLevel6.s: "19",
+                                    CodecLevel7.s: "20", CodecLevel8.s: "21"})
+    _fill(AacProfileLowDelayAAC.s, {CodecLevel1.s: "22", CodecLevel2.s: "23",
+                                    CodecLevel3.s: "24", CodecLevel4.s: "25",
+                                    CodecLevel5.s: "26", CodecLevel6.s: "27",
+                                    CodecLevel7.s: "28", CodecLevel8.s: "29"})
+    _fill(AacProfileNatural.s, {CodecLevel1.s: "30", CodecLevel2.s: "31",
+                                CodecLevel3.s: "32", CodecLevel4.s: "33"})
+    _fill(AacProfileMobile.s, {CodecLevel1.s: "34", CodecLevel2.s: "35",
+                               CodecLevel3.s: "36", CodecLevel4.s: "37",
+                               CodecLevel5.s: "38", CodecLevel6.s: "39"})
+    _fill(AacProfileAAC.s, {CodecLevel1.s: "40", CodecLevel2.s: "41",
+                            CodecLevel4.s: "42", CodecLevel5.s: "43"})
+    _fill(AacProfileHighEfficiencyAAC.s, {CodecLevel2.s: "44", CodecLevel3.s: "45",
+                                          CodecLevel4.s: "46", CodecLevel5.s: "47"})
+    _fill(AacProfileHighEfficiencyAACv2.s, {CodecLevel2.s: "48", CodecLevel3.s: "49",
+                                            CodecLevel4.s: "50", CodecLevel5.s: "51"})
+
+    pid = _MAP.get((profile, level))
+    if pid is None:
+        raise ValueError(f"unsupported AAC profile/level '{profile}'/'{level}' for SDP")
+    return pid
+
+
 def _set_ipmx_timing(media: Any) -> None:
     """Set IPMX timing parameters (htotal, vtotal, measured_pix_clk) from video format.
 
@@ -758,13 +824,7 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
 
             if hasattr(flow_inner, 'Colorspace') and flow_inner.Colorspace.defined:
                 cs = str(flow_inner.Colorspace.value)
-                _colorimetry_map = {
-                    BT601.s: E.ColorimetryBT601,
-                    BT709.s: E.ColorimetryBT709,
-                    BT2020.s: E.ColorimetryBT2020,
-                    BT2100.s: E.ColorimetryBT2100,
-                }
-                media.colorimetry = _colorimetry_map.get(cs, E.ColorimetryBT709).value
+                media.colorimetry, media.color_range = _get_sdp_colorimetry(cs, E)
 
             if hasattr(flow_inner, 'TransferCharacteristic') and flow_inner.TransferCharacteristic.defined:
                 tc = str(flow_inner.TransferCharacteristic.value)
@@ -785,7 +845,13 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
 
             media.sender_type = E.SenderType2110TPW.value
             media.packing_mode = E.PackingMode2110GPM.value
-            media.smpte_standard_number = "ST2110-20:2017"
+            # The 2021 revision is required for the alpha colorimetry and the
+            # ST 2115 LOG S3 transfer characteristic.
+            if (media.colorimetry == E.ColorimetryALPHA.value
+                    or media.transfer_characteristic == E.TransferST2115LOGS3.value):
+                media.smpte_standard_number = "ST2110-20:2021"
+            else:
+                media.smpte_standard_number = "ST2110-20:2017"
 
         elif "Audio" in type_name:
             media.media_name = "audio"
@@ -855,6 +921,91 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
             media.max_p_time_us = media.p_time_us
             media.frame_count = int((media.p_time_us * media.sample_rate) / 1000000)
 
+            # --- AAC fmtp parameters (RFC 3640 generic / RFC 6416 LATM-ADTS) ---
+            if mt in (AudioCodedAac.s, AudioCodedAacLATM.s, AudioCodedAacADTS.s):
+                from sdp.MatroxSdp import AAC_OBJECT_TYPES
+                profile = (str(flow_inner.Profile.value)
+                           if hasattr(flow_inner, 'Profile') and flow_inner.Profile.defined else "")
+                level = (str(flow_inner.Level.value)
+                         if hasattr(flow_inner, 'Level') and flow_inner.Level.defined else "")
+                bitrate_kbps = (flow_inner.Bitrate.value
+                                if hasattr(flow_inner, 'Bitrate') and flow_inner.Bitrate.defined else 0)
+
+                samples_per_frame = 1024
+                ch = media.channels
+                is_latm = mt == AudioCodedAacLATM.s
+                # RFC 6416 (LATM / ADTS) carries the config in band; the
+                # generic RFC 3640 mode carries it out of band in the SDP.
+                out_of_band_config = mt == AudioCodedAac.s
+
+                def _simple(asc_object: int) -> tuple[int, int, str, str]:
+                    asc = (asc_object << 11) | (3 << 7) | (ch << 3) | (1 << 2)
+                    smc = ((0x2000 << 16) + 11 | (asc << 11) | 0x0FC) << 6
+                    return asc, samples_per_frame, f"{smc:012x}", f"{asc:04x}"
+
+                def _extended(asc_object: int) -> tuple[int, int, str, str]:
+                    # SBR / PS envelope around AAC-LC, extension frequency == frequency
+                    lc = AAC_OBJECT_TYPES["LC"]
+                    asc = ((asc_object << 27) | (3 << 23) | (ch << 19) | (3 << 15)
+                           | (lc << 10) | (1 << 9))
+                    smc = ((0x2000 << 25) + 11 | (asc << 11) | 0x0FC) << 5
+                    return asc, samples_per_frame, f"{smc:014x}", f"{asc:08x}"
+
+                def _eld(asc_object: int) -> tuple[int, int, str, str]:
+                    esc = AAC_OBJECT_TYPES["ER_ESCAPE"]
+                    asc = ((esc << 19) | ((asc_object - 32) << 13) | (3 << 9)
+                           | (ch << 5) | (1 << 4))
+                    smc = ((0x2000 << 22) + 11 | (asc << 11) | 0x0FC) << 5
+                    return asc, samples_per_frame // 2, f"{smc:014x}", f"{asc:06x}"
+
+                # profile → (object type emitted in the fmtp, ASC builder)
+                _AAC_PROFILES: dict[str, tuple[int, Any]] = {
+                    CodecProfileMain.s: (AAC_OBJECT_TYPES["Main"],
+                                         lambda: _simple(AAC_OBJECT_TYPES["Main"])),
+                    AacProfileHighQuality.s: (AAC_OBJECT_TYPES["LTP"],
+                                              lambda: _simple(AAC_OBJECT_TYPES["LTP"])),
+                    AacProfileNatural.s: (AAC_OBJECT_TYPES["ER_LTP"],
+                                          lambda: _simple(AAC_OBJECT_TYPES["ER_LTP"])),
+                    AacProfileAAC.s: (AAC_OBJECT_TYPES["LC"],
+                                      lambda: _simple(AAC_OBJECT_TYPES["LC"])),
+                    AacProfileHighEfficiencyAAC.s: (AAC_OBJECT_TYPES["LC"],
+                                                    lambda: _extended(AAC_OBJECT_TYPES["SBR"])),
+                    AacProfileHighEfficiencyAACv2.s: (AAC_OBJECT_TYPES["LC"],
+                                                      lambda: _extended(AAC_OBJECT_TYPES["PS"])),
+                    AacProfileLowDelayAAC.s: (AAC_OBJECT_TYPES["ER_LD"],
+                                              lambda: _simple(AAC_OBJECT_TYPES["ER_LD"])),
+                    AacProfileLowDelayAACv2.s: (AAC_OBJECT_TYPES["ER_ELD"],
+                                                lambda: _eld(AAC_OBJECT_TYPES["ER_ELD"])),
+                }
+                entry = _AAC_PROFILES.get(profile)
+                if entry is None:
+                    raise ValueError(f"unsupported AAC profile '{profile}' for SDP")
+                object_type, build = entry
+                _asc, duration, latm_config, generic_config = build()
+
+                media.p_time_us = (duration * 1000000) // media.sample_rate
+                media.max_p_time_us = media.p_time_us
+                media.aac_constant_duration = duration
+                media.aac_object_type = object_type
+                media.frame_count = samples_per_frame
+                media.codec_profile_level_id = _get_aac_profile_level_id(profile, level)
+                media.aac_config = "" if not out_of_band_config else (
+                    latm_config if is_latm else generic_config)
+                media.aac_config_present = not out_of_band_config
+                media.aac_bitrate = int(bitrate_kbps) * 1000  # bits/sec in the SDP
+
+                if mt == AudioCodedAac.s:
+                    media.aac_stream_type = 5
+                    media.aac_mode = "AAC-hbr"
+                    media.aac_max_displacement = 0        # not implementing interleaved
+                    media.aac_de_interleave_buffer_size = 0
+                    media.aac_size_length = 13
+                    media.aac_index_length = 3
+                    media.aac_index_delta_length = 3
+                    media.aac_cts_delta_length = 0  # only using constant duration
+                    media.aac_dts_delta_length = 0
+                    media.aac_random_access_indication = True
+
         elif "VideoCoded" in type_name:
             media.media_name = "video"
             media.type = E.Video.value
@@ -881,11 +1032,24 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
                 media.height = flow_inner.FrameHeight.value
             if hasattr(flow_inner, 'Colorspace') and flow_inner.Colorspace.defined:
                 cs = str(flow_inner.Colorspace.value)
-                _colorimetry_map = {
-                    BT601.s: E.ColorimetryBT601, BT709.s: E.ColorimetryBT709,
-                    BT2020.s: E.ColorimetryBT2020, BT2100.s: E.ColorimetryBT2100,
-                }
-                media.colorimetry = _colorimetry_map.get(cs, E.ColorimetryBT709).value
+                media.colorimetry, media.color_range = _get_sdp_colorimetry(cs, E)
+
+            if hasattr(flow_inner, 'TransferCharacteristic') and flow_inner.TransferCharacteristic.defined:
+                tc = str(flow_inner.TransferCharacteristic.value)
+                _tcs_map = {SDR.s: E.TransferSDR, PQ.s: E.TransferPQ, HLG.s: E.TransferHLG}
+                if tc in _tcs_map:
+                    media.transfer_characteristic = _tcs_map[tc].value
+
+            if hasattr(flow_inner, 'InterlaceMode') and flow_inner.InterlaceMode.defined:
+                im = str(flow_inner.InterlaceMode.value)
+                if im == InterlacedTff.s:
+                    media.interlaced = True
+                    media.top_field_first = True
+                elif im == InterlacedBff.s:
+                    media.interlaced = True
+                elif im == InterlacedPsf.s:
+                    media.interlaced = True
+                    media.segmented = True
 
             try:
                 flow_core = _get_flow_core(node.flows.get(sender.FlowId.value))
@@ -956,6 +1120,19 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
                 media.h265_sps = ""
                 media.h265_pps = ""
                 media.h26x_max_don_diff = 0  # non-interleaved mode
+            elif mt == VideoCodedJxsv.s:
+                from sdp.MatroxSdp import auto_lookup_enum
+                if hasattr(flow_inner, 'Profile') and flow_inner.Profile.defined:
+                    media.profile = auto_lookup_enum(str(flow_inner.Profile.value))
+                if hasattr(flow_inner, 'Level') and flow_inner.Level.defined:
+                    media.level = auto_lookup_enum(str(flow_inner.Level.value))
+                if hasattr(flow_inner, 'Sublevel') and flow_inner.Sublevel.defined:
+                    media.sub_level = auto_lookup_enum(str(flow_inner.Sublevel.value))
+                if hasattr(flow_inner, 'Fbblevel') and flow_inner.Fbblevel.defined:
+                    media.fbb_level = auto_lookup_enum(str(flow_inner.Fbblevel.value))
+                # Code-stream packetization, sequential transmission only
+                media.jxsv_packet_mode = E.CodeStream.value
+                media.jxsv_trans_mode = E.SequentialOnly.value
 
         elif "Mux" in type_name or "FlowMux" in type_name:
             mt = ""
@@ -2360,6 +2537,8 @@ class Node:
                     fv.Level.value = vc.level
                 if vc.sublevel is not UNSET and hasattr(fv, 'Sublevel'):
                     fv.Sublevel.value = vc.sublevel
+                if vc.fbblevel is not UNSET and hasattr(fv, 'Fbblevel'):
+                    fv.Fbblevel.value = vc.fbblevel
                 if vc.bitrate:
                     fv.Bitrate.value = vc.bitrate
                 fv.ConstantBitrate.value = vc.cbr

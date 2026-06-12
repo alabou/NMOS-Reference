@@ -271,6 +271,7 @@ class MatroxSdpEnums(Enum):
     JxsvProfileMain444_12  = EnumId("Main444.12")
     JxsvProfileMain4444_12 = EnumId("Main4444.12")
     JxsvProfileHigh444_12  = EnumId("High444.12")
+    JxsvProfileTDC444_12   = EnumId("TDC444.12")
     JxsvProfileHigh4444_12 = EnumId("High4444.12")
     JxsvLevel1k1           = EnumId("1k-1")
     JxsvLevel2k1           = EnumId("2k-1")
@@ -286,6 +287,15 @@ class MatroxSdpEnums(Enum):
     JxsvSublevel6bpp       = EnumId("Sublev6bpp")
     JxsvSublevel9bpp       = EnumId("Sublev9bpp")
     JxsvSublevel12bpp      = EnumId("Sublev12bpp")
+    # JPEG XS FBB (frame buffer) levels (ISO/IEC 21122-2,
+    # draft-ietf-avtcore-rtp-jpegxs-3ed-02 §7.1)
+    JxsvFbblevelUnrestricted = EnumId("Unrestricted")
+    JxsvFbblevelFull         = EnumId("FbblevFull")
+    JxsvFbblevel3bpp         = EnumId("Fbblev3bpp")
+    JxsvFbblevel4_5bpp       = EnumId("Fbblev4.5bpp")
+    JxsvFbblevel8bpp         = EnumId("Fbblev8bpp")
+    JxsvFbblevel12bpp        = EnumId("Fbblev12bpp")
+
     H265TxModeSRST = EnumId("SRST")
     H265TxModeMRST = EnumId("MRST")
     H265TxModeMRMT = EnumId("MRMT")
@@ -301,7 +311,7 @@ class MatroxSdpEnums(Enum):
     H265ProfileMain12 = EnumId("Main12")
     H265ProfileMain10_422 = EnumId("Main10-422")
     H265ProfileMain12_422 = EnumId("Main12-422")
-    H265ProfileMain_444 = EnumId("Main444")
+    H265ProfileMain_444 = EnumId("Main-444")
     H265ProfileMain10_444 = EnumId("Main10-444")
     H265ProfileMain12_444 = EnumId("Main12-444")
     H265ProfileMainIntra = EnumId("MainIntra")
@@ -537,6 +547,7 @@ class MediaDescriptor:
         self.profile: Optional[EnumId] = None
         self.level: Optional[EnumId] = None
         self.sub_level: Optional[EnumId] = None
+        self.fbb_level: Optional[EnumId] = None
         self.jxsv_trans_mode: Optional[EnumId] = None
         self.jxsv_packet_mode: Optional[EnumId] = None
         # H264/H265 Shared
@@ -1702,6 +1713,13 @@ class MatroxSdp:
         self.current_media.sub_level = enum
         return None
 
+    def process_parameter_fbblevel(self, value: bytes) -> Optional[str]:
+        enum, err = lookup_enum(value.decode('utf-8'), True)
+        if err:
+            return err
+        self.current_media.fbb_level = enum
+        return None
+
     def process_parameter_did_sdid(self, value: bytes) -> Optional[str]:
         self.current_media.did_sdid = value.decode('utf-8')
         return None
@@ -1969,7 +1987,7 @@ class MatroxSdp:
     def check_sdp_base_requirements(self) -> Optional[str]:
         if not self.username or not self.session_id or not self.session_version or not self.origin_address:
             return "missing o= line"
-        if not self.session_name:
+        if self.session_name is None:
             return "missing s= line"
         if self.primary_media.protocol and self.primary_media.protocol.s in ("RTP/AVP", "TCP/RTP/AVP"):
             if (self.primary_media.port % 2) != 0 and not self.primary_media.rtcp_port:

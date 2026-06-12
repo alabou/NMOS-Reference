@@ -160,6 +160,86 @@
               "YCbCr-4:2:0"
             ]
           }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "H.265 Main-444",
+          "urn:x-nmos:cap:meta:preference": 0,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "video/H265"
+            ]
+          },
+          "urn:x-nmos:cap:format:profile": {
+            "enum": [
+              "Main", "Main-444"
+            ]
+          },
+          "urn:x-nmos:cap:format:component_depth": {
+            "enum": [
+              8
+            ]
+          },
+          "urn:x-nmos:cap:format:color_sampling": {
+            "enum": [
+              "YCbCr-4:2:0", "YCbCr-4:4:4"
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "H.265 Main10-444",
+          "urn:x-nmos:cap:meta:preference": 0,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "video/H265"
+            ]
+          },
+          "urn:x-nmos:cap:format:profile": {
+            "enum": [
+              "Main10", "Main10-444"
+            ]
+          },
+          "urn:x-nmos:cap:format:component_depth": {
+            "enum": [
+              8,
+              10
+            ]
+          },
+          "urn:x-nmos:cap:format:color_sampling": {
+            "enum": [
+              "YCbCr-4:2:0", "YCbCr-4:4:4"
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "JPEG-XS",
+          "urn:x-nmos:cap:meta:preference": 0,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "video/jxsv"
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "JPEG-XS TDC",
+          "urn:x-nmos:cap:meta:preference": 0,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "video/jxsv"
+            ]
+          },
+          "urn:x-nmos:cap:format:profile": {
+            "enum": [
+              "High444.12",
+              "TDC444.12"
+            ]
+          },
+          "urn:x-nmos:cap:format:fbblevel": {
+            "enum": [
+              "Unrestricted",
+              "Fbblev8bpp",
+              "Fbblev12bpp"
+            ]
+          }
         }
       ],
       "privacy_keys": [
@@ -195,6 +275,11 @@
             "enum": [
               2
             ]
+          },
+          "urn:x-matrox:cap:transport:channel_order": {
+            "enum": [
+              "SMPTE2110.(AES3)"
+            ]
           }
         },
         {
@@ -218,6 +303,13 @@
               2,
               4
             ]
+          },
+          "urn:x-matrox:cap:transport:channel_order": {
+            "enum": [
+              "SMPTE2110.(AES3)",
+              "SMPTE2110.(AES3,ST)",
+              "SMPTE2110.(AES3,51)"
+            ]
           }
         },
         {
@@ -239,6 +331,11 @@
           "urn:x-nmos:cap:format:channel_count": {
             "enum": [
               2
+            ]
+          },
+          "urn:x-matrox:cap:transport:channel_order": {
+            "enum": [
+              "SMPTE2110.(ST)"
             ]
           },
           "urn:x-nmos:cap:format:sample_depth": {
@@ -1275,6 +1372,86 @@
               "YCbCr-4:2:0"
             ]
           }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "H.265 Main-444",
+          "urn:x-nmos:cap:meta:preference": 0,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "video/H265"
+            ]
+          },
+          "urn:x-nmos:cap:format:profile": {
+            "enum": [
+              "Main", "Main-444"
+            ]
+          },
+          "urn:x-nmos:cap:format:component_depth": {
+            "enum": [
+              8
+            ]
+          },
+          "urn:x-nmos:cap:format:color_sampling": {
+            "enum": [
+              "YCbCr-4:2:0", "YCbCr-4:4:4"
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "H.265 Main10-444",
+          "urn:x-nmos:cap:meta:preference": 0,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "video/H265"
+            ]
+          },
+          "urn:x-nmos:cap:format:profile": {
+            "enum": [
+              "Main10", "Main10-444"
+            ]
+          },
+          "urn:x-nmos:cap:format:component_depth": {
+            "enum": [
+              8,
+              10
+            ]
+          },
+          "urn:x-nmos:cap:format:color_sampling": {
+            "enum": [
+              "YCbCr-4:2:0", "YCbCr-4:4:4"
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "JPEG-XS",
+          "urn:x-nmos:cap:meta:preference": 0,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "video/jxsv"
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "JPEG-XS TDC",
+          "urn:x-nmos:cap:meta:preference": 0,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "video/jxsv"
+            ]
+          },
+          "urn:x-nmos:cap:format:profile": {
+            "enum": [
+              "High444.12",
+              "TDC444.12"
+            ]
+          },
+          "urn:x-nmos:cap:format:fbblevel": {
+            "enum": [
+              "Unrestricted",
+              "Fbblev8bpp",
+              "Fbblev12bpp"
+            ]
+          }
         }
       ],
       "privacy_keys": [
@@ -1314,6 +1491,11 @@
             "enum": [
               2
             ]
+          },
+          "urn:x-matrox:cap:transport:channel_order": {
+            "enum": [
+              "SMPTE2110.(AES3)"
+            ]
           }
         },
         {
@@ -1336,6 +1518,13 @@
               8,
               2,
               4
+            ]
+          },
+          "urn:x-matrox:cap:transport:channel_order": {
+            "enum": [
+              "SMPTE2110.(AES3)",
+              "SMPTE2110.(AES3,ST)",
+              "SMPTE2110.(AES3,51)"
             ]
           }
         },

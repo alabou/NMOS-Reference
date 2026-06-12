@@ -23,6 +23,7 @@ from nmos.enums import (
     JxsvProfileMain4444_12,
     JxsvProfileHigh444_12,
     JxsvProfileHigh4444_12,
+    JxsvProfileTDC444_12,
     # JXSV levels
     JxsvLevel1k1,
     JxsvLevel2k1,
@@ -122,6 +123,7 @@ ALL_PROFILES: dict[EnumId, ProfileInfo] = {
     JxsvProfileMain4444_12: ProfileInfo(["4:0:0", "4:2:2", "4:4:4", "4:2:2:4", "4:4:4:4"], 12),
     JxsvProfileHigh444_12:  ProfileInfo(["4:0:0", "4:2:2", "4:4:4"], 12),
     JxsvProfileHigh4444_12: ProfileInfo(["4:0:0", "4:2:2", "4:4:4", "4:2:2:4", "4:4:4:4"], 12),
+    JxsvProfileTDC444_12:   ProfileInfo(["4:0:0", "4:2:2", "4:4:4"], 12),
 }
 
 

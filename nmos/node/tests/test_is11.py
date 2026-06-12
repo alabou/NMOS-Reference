@@ -3577,3 +3577,45 @@ class TestProfileCapsetConsistency:
         })
         assert err is not None, f"{profile}@10bit must be unsatisfiable"
         assert self._flow(node, sender) == before
+
+
+@pytest.mark.skipif(not HAS_CCF, reason="MatroxCCF not available")
+class TestCodecSwapAdoptsMissingFormatProps:
+    """A codec change must carry the target codec's format properties even
+    when the current flow does not have them: forcing adopts conset-only
+    format constraints (which derive from the matched capability set), so a
+    flow swapped to JPEG-XS gains sublevel and fbblevel."""
+
+    def test_swap_to_jxsv_fills_sublevel_and_fbblevel(self) -> None:
+        node = _make_node()
+        try:
+            _build_config(node, "config10")
+        except Exception as exc:
+            pytest.skip(f"config10 build failed: {exc}")
+        sender = None
+        for static_id, s in node.senders:
+            fmt = s.Format.value.s if s.Format.defined else ""
+            if "video" in fmt and "mux" not in fmt:
+                sender = s
+                break
+        if sender is None:
+            pytest.skip("No video sender")
+
+        err = node.force_active_constraints(sender, {"constraint_sets": [{
+            "urn:x-nmos:cap:meta:preference": 100,
+            "urn:x-nmos:cap:format:media_type": {"enum": ["video/jxsv"]},
+        }]})
+        assert err is None, f"constraint rejected: {err}"
+
+        from nmos.node.flow_caps import get_flow_to_caps
+        from nmos.node.compatibility import _get_cap_str
+        caps = get_flow_to_caps(node, _get_sender_flow(node, sender))
+        assert _get_cap_str(caps, "urn:x-nmos:cap:format:media_type") == "video/jxsv"
+        sublevel = _get_cap_str(caps, "urn:x-nmos:cap:format:sublevel")
+        fbblevel = _get_cap_str(caps, "urn:x-nmos:cap:format:fbblevel")
+        assert sublevel, "swapped JPEG-XS flow must carry a sublevel"
+        # A plain jxsv constraint merges onto the generic (non-TDC) JPEG-XS
+        # capability set, whose fbblevel is Unrestricted; the 8/12 bpp
+        # fbblevels are declared only by the TDC capability set.
+        assert fbblevel == "Unrestricted", (
+            f"swapped non-TDC JPEG-XS flow must carry fbblevel Unrestricted, got {fbblevel!r}")

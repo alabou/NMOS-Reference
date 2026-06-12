@@ -96,6 +96,7 @@ class VideoCodecParams:
     profile: Any = UNSET          # EnumId
     level: Any = UNSET            # EnumId
     sublevel: Any = UNSET         # EnumId (jxsv only)
+    fbblevel: Any = UNSET         # EnumId (jxsv only)
     bitrate: int = 0
     cbr: bool = False
 

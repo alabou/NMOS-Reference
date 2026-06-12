@@ -360,6 +360,7 @@ JxsvProfileMain444_12 = EnumRegistry.get("Main444.12")
 JxsvProfileMain4444_12 = EnumRegistry.get("Main4444.12")
 JxsvProfileHigh444_12 = EnumRegistry.get("High444.12")
 JxsvProfileHigh4444_12 = EnumRegistry.get("High4444.12")
+JxsvProfileTDC444_12 = EnumRegistry.get("TDC444.12")
 JxsvLevel1k1 = EnumRegistry.get("1k-1")
 JxsvLevel2k1 = EnumRegistry.get("2k-1")
 JxsvLevel4k1 = EnumRegistry.get("4k-1")
@@ -374,6 +375,12 @@ JxsvSublevel4bpp = EnumRegistry.get("Sublev4bpp")
 JxsvSublevel6bpp = EnumRegistry.get("Sublev6bpp")
 JxsvSublevel9bpp = EnumRegistry.get("Sublev9bpp")
 JxsvSublevel12bpp = EnumRegistry.get("Sublev12bpp")
+JxsvFbblevelUnrestricted = EnumRegistry.get("Unrestricted")
+JxsvFbblevelFull = EnumRegistry.get("FbblevFull")
+JxsvFbblevel3bpp = EnumRegistry.get("Fbblev3bpp")
+JxsvFbblevel4_5bpp = EnumRegistry.get("Fbblev4.5bpp")
+JxsvFbblevel8bpp = EnumRegistry.get("Fbblev8bpp")
+JxsvFbblevel12bpp = EnumRegistry.get("Fbblev12bpp")
 
 # === H.264 codec ===
 H264ProfileBaselineConstrained = EnumRegistry.get("BaselineConstrained")
@@ -614,6 +621,7 @@ CapFormatBitRate = EnumRegistry.get("urn:x-nmos:cap:format:bit_rate")
 CapFormatProfile = EnumRegistry.get("urn:x-nmos:cap:format:profile")
 CapFormatLevel = EnumRegistry.get("urn:x-nmos:cap:format:level")
 CapFormatSublevel = EnumRegistry.get("urn:x-nmos:cap:format:sublevel")
+CapFormatFbblevel = EnumRegistry.get("urn:x-nmos:cap:format:fbblevel")
 # === Namespace-dependent capability enums ===
 # Built from nmos/codegen/namespaces.py — changing a namespace there and
 # reloading changes all affected enum URNs.

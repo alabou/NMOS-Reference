@@ -45,7 +45,8 @@ from nmos.enums import (
     InBand, InAndOutOfBand, OutOfBand,
     # Codec profiles / levels
     JxsvProfileMain420_12, JxsvProfileHigh420_12,
-    JxsvProfileMain444_12, JxsvProfileHigh444_12,
+    JxsvProfileMain444_12, JxsvProfileHigh444_12, JxsvProfileTDC444_12,
+    JxsvFbblevelUnrestricted, JxsvFbblevel8bpp, JxsvFbblevel12bpp,
     JxsvLevel4k1, JxsvLevel4k2, JxsvLevel4k3,
     CodecProfileMain, H264ProfileHigh,
     H264ProfileHigh_422, H264ProfileHighIntra_422, H264ProfileHigh10, H264ProfileHigh10Intra,
@@ -69,7 +70,7 @@ from nmos.enums import (
     CapFormatColorspace, CapFormatTransferCharacteristic, CapFormatColorSampling,
     CapFormatComponentDepth, CapFormatChannelCount, CapFormatSampleRate,
     CapFormatSampleDepth, CapFormatBitRate, CapFormatConstantBitRate,
-    CapFormatProfile, CapFormatLevel, CapFormatSublevel,
+    CapFormatProfile, CapFormatLevel, CapFormatSublevel, CapFormatFbblevel,
     CapFormatVideoLayers, CapFormatAudioLayers, CapFormatDataLayers,
     # Capabilities — transport
     CapTransportBitRate, CapTransportPacketTime, CapTransportMaxPacketTime,
@@ -109,6 +110,7 @@ SUPPORTED_VIDEO_CONSTRAINTS: list[str] = _META_CONSTRAINTS + [
     CapFormatComponentDepth.s,
     CapFormatBitRate.s, CapFormatConstantBitRate.s,
     CapFormatProfile.s, CapFormatLevel.s, CapFormatSublevel.s,
+    CapFormatFbblevel.s,
 ]
 
 SUPPORTED_AUDIO_CONSTRAINTS: list[str] = _META_CONSTRAINTS + [
@@ -144,6 +146,7 @@ SUPPORTED_MUX_MIXED_CONSTRAINTS: list[str] = _META_CONSTRAINTS + [
     CapFormatComponentDepth.s,
     CapFormatBitRate.s, CapFormatConstantBitRate.s,
     CapFormatProfile.s, CapFormatLevel.s, CapFormatSublevel.s,
+    CapFormatFbblevel.s,
     # Audio sub-constraints
     CapFormatChannelCount.s, CapFormatSampleRate.s, CapFormatSampleDepth.s,
 ]
@@ -1017,6 +1020,7 @@ def update_coded_video_flow(
     profile = _get_cap_str(compliant_caps, CapFormatProfile.s)
     level = _get_cap_str(compliant_caps, CapFormatLevel.s)
     sublevel = _get_cap_str(compliant_caps, CapFormatSublevel.s)
+    fbblevel = _get_cap_str(compliant_caps, CapFormatFbblevel.s)
 
     sync_media = _get_cap_bool(compliant_caps, CapTransportSynchronousMedia.s)
     clk_ref = _get_cap_str(compliant_caps, CapTransportClockRefType.s)
@@ -1080,6 +1084,8 @@ def update_coded_video_flow(
         fv.Level.value = EnumRegistry.get(level)
     if sublevel:
         fv.Sublevel.value = EnumRegistry.get(sublevel)
+    if fbblevel:
+        fv.Fbblevel.value = EnumRegistry.get(fbblevel)
 
     # Update source clock
     source_id = fv.FlowCore.SourceId.value if fv.FlowCore.SourceId.defined else None
@@ -1355,6 +1361,7 @@ def fix_coded_video_flow(
     profile = _get_str(CapFormatProfile.s)
     level = _get_str(CapFormatLevel.s)
     sublevel = _get_str(CapFormatSublevel.s)
+    fbblevel = _get_str(CapFormatFbblevel.s)
     bit_rate = _get_int(CapFormatBitRate.s)
     sampling = _get_str(CapFormatColorSampling.s)
 
@@ -1376,6 +1383,8 @@ def fix_coded_video_flow(
     original_width = _is_original(CapFormatFrameWidth.s)
     original_height = _is_original(CapFormatFrameHeight.s)
     original_bitrate = _is_original(CapFormatBitRate.s)
+    original_depth = _is_original(CapFormatComponentDepth.s)
+    original_fbblevel = _is_original(CapFormatFbblevel.s)
 
     # Helper: check if a string value is within a constraint's range
     def _value_in_constraint(value: str, constraint_name: str) -> bool:
@@ -1404,11 +1413,12 @@ def fix_coded_video_flow(
             JxsvProfileHigh420_12.s: [SamplingYCbCr_420.s],
             JxsvProfileMain444_12.s: [SamplingYCbCr_444.s, SamplingYCbCr_422.s, SamplingYCbCr_420.s],
             JxsvProfileHigh444_12.s: [SamplingYCbCr_444.s, SamplingYCbCr_422.s, SamplingYCbCr_420.s],
+            JxsvProfileTDC444_12.s: [SamplingYCbCr_444.s, SamplingYCbCr_422.s, SamplingYCbCr_420.s],
         }
         _SAMPLING_TO_PROFILE: dict[str, list[str]] = {
-            SamplingYCbCr_420.s: [JxsvProfileHigh420_12.s, JxsvProfileMain420_12.s],
-            SamplingYCbCr_422.s: [JxsvProfileHigh444_12.s, JxsvProfileMain444_12.s],
-            SamplingYCbCr_444.s: [JxsvProfileHigh444_12.s, JxsvProfileMain444_12.s],
+            SamplingYCbCr_420.s: [JxsvProfileHigh420_12.s, JxsvProfileMain420_12.s, JxsvProfileTDC444_12.s],
+            SamplingYCbCr_422.s: [JxsvProfileHigh444_12.s, JxsvProfileMain444_12.s, JxsvProfileTDC444_12.s],
+            SamplingYCbCr_444.s: [JxsvProfileHigh444_12.s, JxsvProfileMain444_12.s, JxsvProfileTDC444_12.s],
         }
         try_levels = [JxsvLevel4k1.s, JxsvLevel4k2.s, JxsvLevel4k3.s]
 
@@ -1493,6 +1503,51 @@ def fix_coded_video_flow(
         if not fix_sampling():
             fix_profile()
 
+    # --- Depth fix-up ---
+    # A profile bounds the component bit depth (codec profile tables) — e.g.
+    # H.264 Main/High and H.265 Main are 8-bit only. When the (possibly
+    # fixed) profile cannot carry the current depth, lower the depth to the
+    # profile's maximum — provided the constraint set allows that value and
+    # the user did not pin the depth (a pinned depth never moves). Runs
+    # before level selection so the codec level checks validate components
+    # built with the corrected depth.
+    cur_depth = _get_int(CapFormatComponentDepth.s)
+    if cur_depth is not None and profile and not original_depth:
+        if media_type == VideoCodedH264.s:
+            from nmos.codec import h264 as _profile_tbl
+        elif media_type == VideoCodedH265.s:
+            from nmos.codec import h265 as _profile_tbl
+        else:
+            from nmos.codec import jxsv as _profile_tbl
+        info = _profile_tbl.ALL_PROFILES.get(EnumRegistry.get(profile))
+        if (info is not None and cur_depth > info.max_bit_depth
+                and _value_in_constraint(info.max_bit_depth,
+                                         CapFormatComponentDepth.s)):
+            _set_int(CapFormatComponentDepth.s, info.max_bit_depth)
+            if verbose:
+                print(f"    [fix_coded] profile={profile} → depth={info.max_bit_depth}")
+
+    # --- FBB level fix-up (JPEG-XS only) ---
+    # The frame-buffer-budget level depends on the profile family: TDC
+    # profiles may use the 8/12 bpp budgets, every other profile must be
+    # Unrestricted. The fbblevel has no impact on the streaming bitrate, so
+    # it does not participate in the level/bitrate selection below. A
+    # pinned fbblevel never moves.
+    if media_type == VideoCodedJxsv.s and profile and not original_fbblevel:
+        if profile == JxsvProfileTDC444_12.s:
+            allowed = [JxsvFbblevelUnrestricted.s, JxsvFbblevel8bpp.s,
+                       JxsvFbblevel12bpp.s]
+        else:
+            allowed = [JxsvFbblevelUnrestricted.s]
+        cur_fbblevel = _get_str(CapFormatFbblevel.s)
+        if cur_fbblevel not in allowed:
+            for candidate in allowed:
+                if _value_in_constraint(candidate, CapFormatFbblevel.s):
+                    _set_str(CapFormatFbblevel.s, candidate)
+                    if verbose:
+                        print(f"    [fix_coded] profile={profile} → fbblevel={candidate}")
+                    break
+
     # --- Level selection ---
     # Runs only when the constraint set constrains the level: forcing seeds
     # the level with the highest allowed value, and this pass settles on the
@@ -1518,6 +1573,7 @@ def fix_coded_video_flow(
         return  # Cannot fix coded flow without a profile
     profile_e = EnumRegistry.get(profile)
     sublevel_e = EnumRegistry.get(sublevel) if sublevel else None
+    fbblevel_e = EnumRegistry.get(fbblevel) if fbblevel else None
 
     grain_rate_val = properties.get(CapFormatGrainRate.s)
     gr_val = NRationalValue()
@@ -2093,6 +2149,8 @@ def get_sdp_to_caps(
                 _s(CapFormatLevel.s, str(media.level))
             if media.sub_level is not None:
                 _s(CapFormatSublevel.s, str(media.sub_level))
+            if media.fbb_level is not None:
+                _s(CapFormatFbblevel.s, str(media.fbb_level))
             # Packet mode
             if media.jxsv_packet_mode is not None and str(media.jxsv_packet_mode).lower() == CodeStream.s:
                 _s(CapTransportPacketTransmissionMode.s, CodeStream.s)
@@ -2748,6 +2806,36 @@ def force_flow_properties_compatibility(
 
         if failed:
             continue  # Try next constraint set
+
+        # Format properties the flow does not yet carry are adopted from the
+        # constraint set, the same way a defined-but-violating value is
+        # replaced. This is what carries the codec-specific properties across
+        # a codec change — e.g. a flow transitioning to JPEG-XS has no
+        # sublevel/fbblevel to violate, and the merged constraint sets derive
+        # from the capability sets, so the adopted value is the capability's.
+        # Transport constraints never describe flow properties and are
+        # excluded.
+        for con_name, constraint in conset.cons.items():
+            if con_name in compliant:
+                continue
+            if ":cap:format:" not in con_name:
+                continue
+            if constraint.value.infinite:
+                continue
+            if constraint.value.values:
+                if con_name == CapFormatLevel.s:
+                    # Same convention as the replacement path: the level
+                    # seeds at the highest allowed value.
+                    value = constraint.value.values[-1]
+                else:
+                    value = constraint.value.values[0]
+                compliant[con_name] = Cap(con_name, RangeValue(
+                    values=(value,), type=constraint.value.type))
+            else:
+                replacement = _constraint_replacement_value(constraint)
+                if replacement is not None:
+                    compliant[con_name] = Cap(con_name, RangeValue(
+                        values=(replacement,), type=constraint.value.type))
 
         # Apply fix-ups (conset.cons is Dict[str, Constraint], read-only here)
         fix_pcm_sample_depth(compliant, conset.cons, verbose=verbose)

@@ -543,6 +543,7 @@ nflow_video_coded = TypeDesc(
         MemberDesc(name="Profile", type_name="NEnum", json_key="profile", optional=True),
         MemberDesc(name="Level", type_name="NEnum", json_key="level", optional=True),
         MemberDesc(name="Sublevel", type_name="NEnum", json_key="sublevel", optional=True),
+        MemberDesc(name="Fbblevel", type_name="NEnum", json_key="fbblevel", optional=True),
         MemberDesc(name="Bitrate", type_name="NInt", json_key="bit_rate", optional=True),
         MemberDesc(name="ConstantBitrate", type_name="NBool", json_key="constant_bit_rate", optional=True),
     ],

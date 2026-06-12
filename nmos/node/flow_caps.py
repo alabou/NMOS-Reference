@@ -49,7 +49,7 @@ def get_flow_to_caps(node: Any, flow_ptr: Any) -> Any:
             CapFormatComponentDepth,
             CapFormatChannelCount, CapFormatSampleRate, CapFormatSampleDepth,
             CapFormatBitRate, CapFormatConstantBitRate,
-            CapFormatProfile, CapFormatLevel, CapFormatSublevel,
+            CapFormatProfile, CapFormatLevel, CapFormatSublevel, CapFormatFbblevel,
             CapFormatVideoLayers, CapFormatAudioLayers, CapFormatDataLayers,
             CapTransportClockRefType, CapTransportSynchronousMedia,
         )
@@ -257,6 +257,7 @@ def get_flow_to_caps(node: Any, flow_ptr: Any) -> Any:
         _add(_cap_from_enum(CapFormatProfile, flow_val.Profile))
         _add(_cap_from_enum(CapFormatLevel, flow_val.Level))
         _add(_cap_from_enum(CapFormatSublevel, flow_val.Sublevel))
+        _add(_cap_from_enum(CapFormatFbblevel, flow_val.Fbblevel))
         _add_transport_caps(flow_val.FlowCore)
 
     elif isinstance(poly, (NFlowData, NFlowDataValue)):
