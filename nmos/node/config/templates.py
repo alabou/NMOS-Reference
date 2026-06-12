@@ -49,7 +49,7 @@ from nmos.enums import (
     CapTransportUsbClass, CapTransportChannelOrder, CapTransportPacketTime, CapMetaLabel,
     # Constraint values
     Progressive, SDR, BT601, BT709, BT2020,
-    SamplingYCbCr_420, SamplingYCbCr_422, SamplingYCbCr_444,
+    SamplingYCbCr_420, SamplingYCbCr_422, SamplingYCbCr_444, SamplingRGB,
     NonInterleavedNalUnits, SingleNalUnit, CodeStream, NonInterleavedAccessUnits,
     InBand, InAndOutOfBand, OutOfBand, Strict,
     H264ProfileHigh_422, H264ProfileHighIntra_422,
@@ -438,7 +438,7 @@ def get_jxsv_template(*, sub: bool = False) -> dict[str, Any]:
         CapFormatGrainRate.s: {"enum": _COMMON_VIDEO_RATES},
         CapFormatFrameWidth.s: {"enum": _COMMON_VIDEO_WIDTHS},
         CapFormatFrameHeight.s: {"enum": _COMMON_VIDEO_HEIGHTS},
-        CapFormatColorSampling.s: {"enum": [SamplingYCbCr_420.s, SamplingYCbCr_422.s, SamplingYCbCr_444.s]},
+        CapFormatColorSampling.s: {"enum": [SamplingYCbCr_420.s, SamplingYCbCr_422.s, SamplingYCbCr_444.s, SamplingRGB.s]},
         CapFormatTransferCharacteristic.s: {"enum": [SDR.s]},
         CapFormatColorspace.s: {"enum": _COMMON_COLORSPACES},
         CapFormatComponentDepth.s: {"enum": [8, 10]},
