@@ -35,9 +35,7 @@ scope in the plan.
 from __future__ import annotations
 
 import asyncio
-import json as _json
 import logging
-import time as _time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Callable, Literal
 
@@ -51,26 +49,6 @@ from nmos.controller.grouping import (
 )
 
 log = logging.getLogger(__name__)
-
-# TEMP flow-match instrumentation — emits to the --debug-in-depth JSONL
-# log (the dedicated "nmos.controller.debug_trace" logger). No-op when
-# that logger has no handlers (debug tracing off), so production paths
-# are unaffected. Remove once the live flow-match update is confirmed.
-_dbg_logger = logging.getLogger("nmos.controller.debug_trace")
-
-
-def _dbg(kind: str, **fields: Any) -> None:
-    if not _dbg_logger.handlers:
-        return
-    try:
-        _dbg_logger.info(
-            _json.dumps(
-                {"t": round(_time.time(), 6), "kind": kind, **fields},
-                default=str,
-            )
-        )
-    except Exception:
-        pass
 
 
 ResourceKind = Literal["node", "device", "flow", "sender", "receiver", "source"]
@@ -490,13 +468,6 @@ class ResourceCache:
                     fm_payload, fm_changed = (
                         self._recompute_sender_flow_match_locked(rid)
                     )
-                    _dbg(
-                        "sender_upsert", sid=rid,
-                        flow_id=resource.get("flow_id"),
-                        matched_cs_index=(fm_payload or {}).get(
-                            "matched_cs_index"),
-                        fm_changed=fm_changed,
-                    )
 
                 # Attach flow_match when the match changed OR the flow id
                 # repointed (so receiver caps SSE connections recompute
@@ -564,11 +535,6 @@ class ResourceCache:
                     prev is None
                     or (prev or {}).get("version") != resource.get("version")
                 )
-                _dbg(
-                    "flow_upsert", flow_id=rid,
-                    media_type=resource.get("media_type"),
-                    version=resource.get("version"), changed=flow_changed,
-                )
                 try:
                     events.extend(
                         self._flow_match_events_for_flow_locked(
@@ -577,7 +543,6 @@ class ResourceCache:
                     )
                 except Exception:
                     log.exception("flow-match recompute failed")
-                    _dbg("flow_match_error", flow_id=rid)
 
         for ev in events:
             self._fire(ev)
@@ -616,14 +581,22 @@ class ResourceCache:
         if isinstance(flow, dict):
             source = self._sources.get(flow.get("source_id", "") or "")
 
-        match = flow_match_for_sender(flow, source, constraint_sets)
+        # ``cache=self`` enables the mux sub-flow chase (resolve parents +
+        # sub-sources) so a muxed stream greens its trunk AND per-layer CS.
+        match = flow_match_for_sender(
+            flow, source, constraint_sets, cache=self,
+        )
         payload = {
-            "matched_cs_index": match.matched_cs_index,
-            # Canonical per-URN keys of the flow's current operating point
-            # — the configuration page greens the multi-value option whose
-            # value matches. Part of the payload so a value change that
-            # doesn't move the CS index still fires (configure page needs it).
-            "matched_values": flow_value_keys(match.matched_values),
+            # The CS to green: most-specific per part (trunk + mux sub-layers).
+            "matched_cs_indices": list(match.matched_cs_indices),
+            # Per-part canonical per-URN keys of the flow's current operating
+            # point — the configuration page greens the multi-value option
+            # whose value matches (per the CS's own part). Part of the payload
+            # so a value change that doesn't move a matched index still fires.
+            "values_by_part": {
+                pk: flow_value_keys(vals)
+                for pk, vals in match.values_by_part.items()
+            },
         }
         changed = self._flow_match.get(sid) != payload
         self._flow_match[sid] = payload
@@ -663,7 +636,6 @@ class ResourceCache:
         connections recompute their narrowed index on this event.
         """
         events: list[StatusChanged] = []
-        emitted = 0
         for sid, sender in self._senders.items():
             if sender.get("flow_id") != flow_id:
                 continue
@@ -676,9 +648,6 @@ class ResourceCache:
                 events.extend(
                     self._receiver_flow_match_events_locked(sid, payload)
                 )
-                emitted += 1
-        _dbg("flow_match_events", flow_id=flow_id, senders_changed=emitted,
-             total=len(events), force=force)
         return events
 
     def _flow_match_events_for_source_locked(

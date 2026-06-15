@@ -326,7 +326,7 @@
                                           multiple
                                           size="{{ w.options|length if w.options|length < 8 else 8 }}"
                                           data-sender-id="{{ sender.id }}"
-                                          data-param-urn="{{ p.urn }}"
+                                          data-param-urn="{{ p.urn }}" data-cs-part="{{ cs.flow_part }}"
                                           {% if w.disabled %}disabled{% endif %}>
                                     {% for opt in w.options %}
                                       <option value="{{ opt.value }}"
@@ -342,14 +342,14 @@
                                            min="{{ w.min }}" max="{{ w.max }}" step="1"
                                            value="{{ w.value }}"
                                            data-sender-id="{{ sender.id }}"
-                                           data-param-urn="{{ p.urn }}"
+                                           data-param-urn="{{ p.urn }}" data-cs-part="{{ cs.flow_part }}"
                                            {% if w.disabled %}disabled{% endif %}>
                                     <input type="text"
                                            class="form-control form-control-sm param-input param-range-value"
                                            style="width:10rem"
                                            value="{{ w.display }}"
                                            data-sender-id="{{ sender.id }}"
-                                           data-param-urn="{{ p.urn }}"
+                                           data-param-urn="{{ p.urn }}" data-cs-part="{{ cs.flow_part }}"
                                            data-range-min="{{ w.min }}"
                                            data-range-max="{{ w.max }}"
                                            readonly>
@@ -359,7 +359,7 @@
                                      flow's CURRENT value as a green annotation instead. #}
                                   <small class="param-flow-value ml-2{% if not w.flow_value %} d-none{% endif %}"
                                          data-sender-id="{{ sender.id }}"
-                                         data-param-urn="{{ p.urn }}"
+                                         data-param-urn="{{ p.urn }}" data-cs-part="{{ cs.flow_part }}"
                                          data-flow-key="{{ w.flow_value_key or '' }}">{% if w.flow_value %}current: {{ w.flow_value }}{% endif %}</small>
                                 {% elif w.kind == 'single' %}
                                   {# Single-value cap: uneditable, but it
@@ -372,7 +372,7 @@
                                          class="form-control form-control-sm param-input param-single{% if w.flow_match %} flow-match{% endif %}"
                                          value="{{ w.display }}"
                                          data-sender-id="{{ sender.id }}"
-                                         data-param-urn="{{ p.urn }}"
+                                         data-param-urn="{{ p.urn }}" data-cs-part="{{ cs.flow_part }}"
                                          data-flow-key="{{ w.key or '' }}"
                                          data-single-shape="{{ w.shape }}"
                                          data-single-value="{{ w.value }}"

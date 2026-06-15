@@ -4271,9 +4271,9 @@ class TestFlowMatchGreen:
         ]
         assert len(fm_events) == 1
         assert fm_events[0].kind == "sender"
-        assert fm_events[0].flow_match["matched_cs_index"] == 0
+        assert fm_events[0].flow_match["matched_cs_indices"] == [0]
         # The reader exposes the last cached match.
-        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_index"] == 0
+        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_indices"] == [0]
 
     @pytest.mark.asyncio
     async def test_flow_upsert_for_unbound_flow_fires_no_flow_match(
@@ -4322,7 +4322,7 @@ class TestFlowMatchGreen:
         await cache.upsert("flow", _fm_am824_flow())   # flow A = AM824
         await cache.upsert("sender", _fm_sender(caps))  # flow_id = A
         # Initially the AM824 flow matches CS index 0.
-        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_index"] == 0
+        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_indices"] == [0]
 
         # Node constrains to L24: a brand-new flow id, media_type L24,
         # and the sender repointed to it.
@@ -4348,8 +4348,8 @@ class TestFlowMatchGreen:
             if e.resource_id == _FM_SENDER_ID and e.flow_match is not None
         ]
         assert len(fm) == 1
-        assert fm[0].flow_match["matched_cs_index"] == 1
-        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_index"] == 1
+        assert fm[0].flow_match["matched_cs_indices"] == [1]
+        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_indices"] == [1]
 
     @pytest.mark.asyncio
     async def test_receiver_narrowed_index_differs_from_sender_index(
@@ -4359,7 +4359,7 @@ class TestFlowMatchGreen:
         (re-indexed). The live match must be computed against that narrowed
         list — its index can differ from the sender's full-caps index."""
         from nmos.controller.flow_match import (
-            flow_match_index_for_sender,
+            flow_match_indices_for_sender,
             narrowed_constraint_sets_for_pair,
         )
         cache: ResourceCache = controller_client.app["_test_cache"]
@@ -4406,7 +4406,7 @@ class TestFlowMatchGreen:
         await cache.upsert("receiver", receiver)
 
         # Sender's own full-caps match → L24 at index 1.
-        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_index"] == 1
+        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_indices"] == [1]
 
         # The receiver-narrowed set is just [L24] (AM824 dropped).
         narrowed = narrowed_constraint_sets_for_pair(cache, _FM_SENDER_ID, rid)
@@ -4415,7 +4415,7 @@ class TestFlowMatchGreen:
         # Receiver-scoped match → index 0 (NOT the sender's 1). This is the
         # index the receiver caps page rows carry, so the live green lands
         # on the right row.
-        assert flow_match_index_for_sender(cache, _FM_SENDER_ID, narrowed) == 0
+        assert flow_match_indices_for_sender(cache, _FM_SENDER_ID, narrowed) == (0,)
 
     @pytest.mark.asyncio
     async def test_in_place_flow_mutation_recomputes(
@@ -4444,7 +4444,7 @@ class TestFlowMatchGreen:
         await cache.upsert("source", _fm_audio_source(channels=2))
         await cache.upsert("flow", _fm_am824_flow())          # AM824 → idx 0
         await cache.upsert("sender", _fm_sender(caps))
-        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_index"] == 0
+        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_indices"] == [0]
 
         # Same flow id, mutated content (now L24) + bumped version.
         mutated = _fm_am824_flow()
@@ -4464,8 +4464,8 @@ class TestFlowMatchGreen:
             if e.resource_id == _FM_SENDER_ID and e.flow_match is not None
         ]
         assert len(fm) >= 1
-        assert fm[-1].flow_match["matched_cs_index"] == 1
-        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_index"] == 1
+        assert fm[-1].flow_match["matched_cs_indices"] == [1]
+        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_indices"] == [1]
 
     @pytest.mark.asyncio
     async def test_in_place_source_mutation_forces_event(
@@ -4491,7 +4491,7 @@ class TestFlowMatchGreen:
         await cache.upsert("source", src2)
         await cache.upsert("flow", _fm_am824_flow())
         await cache.upsert("sender", _fm_sender(caps))
-        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_index"] == 0
+        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_indices"] == [0]
 
         # In-place source mutation: 2 → 4 channels, bumped version. The
         # sender's full-caps match stays index 0 (4 ∈ [2,4]).
@@ -4512,7 +4512,7 @@ class TestFlowMatchGreen:
             if e.resource_id == _FM_SENDER_ID and e.flow_match is not None
         ]
         assert len(fm) >= 1
-        assert fm[-1].flow_match["matched_cs_index"] == 0
+        assert fm[-1].flow_match["matched_cs_indices"] == [0]
 
     @pytest.mark.asyncio
     async def test_flow_repoints_to_a_different_source(
@@ -4548,7 +4548,7 @@ class TestFlowMatchGreen:
         await cache.upsert("source", src_b)
         await cache.upsert("flow", _fm_am824_flow())          # → source A, 2ch
         await cache.upsert("sender", _fm_sender(caps))
-        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_index"] == 0
+        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_indices"] == [0]
 
         # Flow repoints to source B (same flow id, new source_id + version).
         flow_b_src = _fm_am824_flow()
@@ -4568,8 +4568,8 @@ class TestFlowMatchGreen:
             if e.resource_id == _FM_SENDER_ID and e.flow_match is not None
         ]
         assert len(fm) >= 1
-        assert fm[-1].flow_match["matched_cs_index"] == 1
-        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_index"] == 1
+        assert fm[-1].flow_match["matched_cs_indices"] == [1]
+        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_indices"] == [1]
 
     @pytest.mark.asyncio
     async def test_configure_view_greens_flow_option_and_cs(
@@ -4663,3 +4663,90 @@ class TestFlowMatchGreen:
         # …but the option equal to the flow (2ch) is still green.
         assert cc["2"]["flow_match"] is True
         assert cc["4"]["flow_match"] is False
+
+    @pytest.mark.asyncio
+    async def test_caps_view_greens_mux_trunk_and_sublayers(
+        self, controller_client: TestClient,
+    ) -> None:
+        """A mux sender greens its trunk CS AND each sub-layer CS through
+        _build_caps_view — the cache chases the mux flow's parent sub-flows
+        + sub-sources to match per (format, layer)."""
+        from nmos.controller.handlers import _build_caps_view
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        dev = "5e000000-0000-4000-8000-0000000000d0"
+        mflow = "5e000000-0000-4000-8000-0000000000f0"
+        suba = "5e000000-0000-4000-8000-0000000000f1"
+        subb = "5e000000-0000-4000-8000-0000000000f2"
+        msrc = "5e000000-0000-4000-8000-0000000000e0"
+        srca = "5e000000-0000-4000-8000-0000000000e1"
+        srcb = "5e000000-0000-4000-8000-0000000000e2"
+        snd = "5e000000-0000-4000-8000-0000000000a0"
+
+        def asrc(sid, fmt, ch=0):
+            d = {
+                "id": sid, "version": "0:0", "label": "s", "description": "",
+                "tags": {}, "device_id": dev, "parents": [], "caps": {},
+                "format": fmt, "clock_name": "clk0",
+                "urn:x-matrox:synchronous_media": True,
+            }
+            if ch:
+                d["channels"] = [{"label": f"c{i}", "symbol": "L"} for i in range(ch)]
+            return d
+
+        def sub(fid, src_id, layer):
+            return {
+                "id": fid, "version": "0:0", "label": "sub", "description": "",
+                "tags": {}, "device_id": dev, "parents": [], "source_id": src_id,
+                "format": "urn:x-nmos:format:audio", "media_type": "audio/AM824",
+                "sample_rate": {"numerator": 48000, "denominator": 1},
+                "grain_rate": {"numerator": 48000, "denominator": 1},
+                "urn:x-matrox:layer": layer,
+            }
+
+        await cache.upsert("source", asrc(msrc, "urn:x-nmos:format:mux"))
+        await cache.upsert("source", asrc(srca, "urn:x-nmos:format:audio", 2))
+        await cache.upsert("source", asrc(srcb, "urn:x-nmos:format:audio", 2))
+        await cache.upsert("flow", sub(suba, srca, 0))
+        await cache.upsert("flow", sub(subb, srcb, 1))
+        await cache.upsert("flow", {
+            "id": mflow, "version": "0:0", "label": "mux", "description": "",
+            "tags": {}, "device_id": dev, "parents": [suba, subb],
+            "source_id": msrc, "format": "urn:x-nmos:format:mux",
+            "media_type": "application/AM824",
+            "urn:x-matrox:video_layers": 0, "urn:x-matrox:audio_layers": 2,
+            "urn:x-matrox:data_layers": 0,
+        })
+
+        def sublcs(label, pref, layer, media):
+            return {
+                "urn:x-nmos:cap:meta:label": label,
+                "urn:x-nmos:cap:meta:preference": pref,
+                "urn:x-matrox:cap:meta:format": "urn:x-nmos:format:audio",
+                "urn:x-matrox:cap:meta:layer": layer,
+                "urn:x-nmos:cap:format:media_type": {"enum": media},
+                "urn:x-nmos:cap:format:channel_count": {"enum": [2]},
+            }
+        caps = {"constraint_sets": [
+            {"urn:x-nmos:cap:meta:label": "Native Mux",
+             "urn:x-nmos:cap:meta:preference": 100,
+             "urn:x-nmos:cap:format:media_type": {"enum": ["application/AM824"]}},
+            sublcs("Native Audio sub 0", 100, 0, ["audio/AM824"]),
+            sublcs("PCM sub 0", 0, 0, ["audio/L24"]),
+            sublcs("Native Audio sub 1", 100, 1, ["audio/AM824"]),
+        ]}
+        sender = _make_sender(snd, "dev1", hint="RTP 9:MUX 0",
+                              format="urn:x-nmos:format:mux")
+        sender["flow_id"] = mflow
+        sender["caps"] = caps
+        await cache.upsert("sender", sender)
+
+        view = _build_caps_view(
+            cache, [cache.get_sender(snd)],
+            filters={"by_format": "", "by_layer": "", "by_compatibility": ""},
+        )
+        green = {
+            cs["label"] for cs in view["senders"][0]["constraint_sets"]
+            if cs["flow_match"]
+        }
+        # Trunk + both native sub-layers green; PCM sub 0 (L24) does not.
+        assert green == {"Native Mux", "Native Audio sub 0", "Native Audio sub 1"}

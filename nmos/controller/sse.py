@@ -58,7 +58,7 @@ async def status_events_handler(request: web.Request) -> web.StreamResponse:
     # The narrowing depends only on the declared caps (not the flow), so we
     # narrow ONCE here and re-run only the inclusion check per flow change.
     from nmos.controller.flow_match import (
-        flow_match_index_for_sender,
+        flow_match_indices_for_sender,
         narrowed_constraint_sets_for_pair,
     )
     pair_map: dict[str, str] = {}
@@ -76,17 +76,17 @@ async def status_events_handler(request: web.Request) -> web.StreamResponse:
 
     def _scoped_flow_match(resource_id: str, base: dict | None) -> dict | None:
         """Receiver-scope a flow-match payload for a paired sender:
-        override ``matched_cs_index`` with the index into the NARROWED CS
-        the page shows, while preserving ``matched_values`` (the flow's
+        override ``matched_cs_indices`` with indices into the NARROWED CS
+        the page shows, while preserving ``values_by_part`` (the flow's
         operating point — narrowing-independent, used by the configure
         page). Returns ``base`` unchanged when not a paired sender."""
         if resource_id not in pair_map:
             return base
-        idx = flow_match_index_for_sender(
+        idxs = flow_match_indices_for_sender(
             cache, resource_id, narrowed_cs.get(resource_id),
         )
         out = dict(base or {})
-        out["matched_cs_index"] = idx
+        out["matched_cs_indices"] = list(idxs)
         return out
 
     response = web.StreamResponse(
@@ -158,20 +158,6 @@ async def status_events_handler(request: web.Request) -> web.StreamResponse:
                     event.resource_id, event.flow_match,
                 )
             frame = f"event: status\ndata: {json.dumps(payload)}\n\n"
-            # TEMP flow-match instrumentation: record every frame this
-            # subscriber forwards, so we can see whether a flow_match
-            # frame actually reached a caps-page subscriber. Remove once
-            # the live update is confirmed.
-            _trace = request.app.get("controller_debug_trace")
-            if _trace is not None and _trace.enabled:
-                _trace.emit(
-                    "sse_frame",
-                    subscriber_ids=sorted(filter_ids) if filter_ids else "all",
-                    id=event.resource_id,
-                    has_flow_match="flow_match" in payload,
-                    flow_match=payload.get("flow_match"),
-                    scoped=event.resource_id in pair_map,
-                )
             try:
                 await response.write(frame.encode("utf-8"))
             except (ConnectionResetError, asyncio.CancelledError):

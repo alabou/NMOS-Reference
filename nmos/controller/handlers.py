@@ -2216,19 +2216,20 @@ def _build_caps_view(
             senders_out.append(entry)
             continue
 
-        # Which declared constraint set does this resource's CURRENT flow
-        # sit inside? (Additive — drives only the green-font highlight.)
-        # Resolve the bound flow and, for audio, its source (channel_count
-        # is derived from the source, not the flow). ``matched_cs_index``
-        # aligns with the ``index`` field stamped on each CS dict below.
+        # Which declared constraint set(s) does this resource's CURRENT
+        # stream sit inside? (Additive — drives only the green-font
+        # highlight.) Resolve the bound flow and, for audio, its source
+        # (channel_count is derived from the source). ``cache`` enables the
+        # mux sub-flow chase, so a muxed stream greens its trunk AND
+        # per-layer CS. Indices align with the ``index`` field below.
         flow = cache.get_flow(s.get("flow_id", "") or "")
         source = (
             cache.get_source(flow.get("source_id", "") or "")
             if isinstance(flow, dict) else None
         )
-        matched_cs_index = flow_match_for_sender(
-            flow, source, constraint_sets,
-        ).matched_cs_index
+        matched_cs_indices = set(flow_match_for_sender(
+            flow, source, constraint_sets, cache=cache,
+        ).matched_cs_indices)
 
         for i, cs in enumerate(constraint_sets):
             if not isinstance(cs, dict):
@@ -2304,9 +2305,9 @@ def _build_caps_view(
 
             entry["constraint_sets"].append({
                 "index": i,
-                # True only for the single most-specific CS the current
-                # flow sits inside — the template renders it green.
-                "flow_match": (i == matched_cs_index),
+                # True for a most-specific CS the current stream sits inside
+                # (one per part — trunk + each mux sub-layer). Template greens it.
+                "flow_match": (i in matched_cs_indices),
                 "label": cs.get(_CAPS_META_LABEL, f"set #{i}"),
                 "preference": cs.get(_CAPS_META_PREFERENCE, 0),
                 "meta_format": meta_format,            # display + filter
@@ -2690,9 +2691,21 @@ def _build_configure_view(
             cache.get_source(flow.get("source_id", "") or "")
             if isinstance(flow, dict) else None
         )
-        match = flow_match_for_sender(flow, source, constraint_sets)
-        cs_flow_match = (chosen_index == match.matched_cs_index)
-        flow_vals = match.matched_values            # URN → raw flow value
+        match = flow_match_for_sender(
+            flow, source, constraint_sets, cache=cache,
+        )
+        cs_flow_match = (chosen_index in match.matched_cs_indices)
+        # The chosen CS belongs to one part (trunk, or a mux sub-layer keyed
+        # by its cap:meta:format/layer). Its multi-value options green
+        # against THAT part's operating point — so a muxed sub-layer CS
+        # reflects its own sub-flow, not the trunk.
+        cs_fmt = cs.get(_CAPS_META_FORMAT)
+        cs_layer = _coerce_int(cs.get(_CAPS_META_LAYER))
+        part_key = (
+            "trunk" if (cs_fmt is None and cs_layer is None)
+            else f"{cs_fmt}:{cs_layer}"
+        )
+        flow_vals = match.values_by_part.get(part_key, {})  # URN → raw value
         flow_keys = {
             urn: flow_match_key(v) for urn, v in flow_vals.items()
         }
@@ -2725,6 +2738,10 @@ def _build_configure_view(
             # multi-value option green below is independent of this — it
             # fires whenever an option equals the flow's current value.
             "flow_match":   cs_flow_match,
+            # The CS's part key ("trunk" or "<format>:<layer>") — the live
+            # SSE handler uses it to pick this CS's part's flow values from
+            # the per-part payload when greening multi-value options.
+            "flow_part":    part_key,
             "hash":         _constraint_set_hash(cs),
             "label":        cs.get(_CAPS_META_LABEL, f"set #{chosen_index}"),
             "preference":   cs.get(_CAPS_META_PREFERENCE, 0),

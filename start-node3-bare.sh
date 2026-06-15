@@ -7,13 +7,13 @@ CERT_ROOT="${IPMX_CERT_ROOT:-$SCRIPT_DIR/../Certificates}"
 CERTS="$CERT_ROOT/build.0"
 
 exec python3 nmos_node.py \
-  --nodeSerialNumber SNX00002 \
+  --nodeSerialNumber SNX00003 \
   --nodeAddr 127.0.0.1 \
-  --nodePort 7052 \
+  --nodePort 7053 \
   --nodeDisableTLS \
   --rdsHost 127.0.0.1 \
   --rdsRegistrationPort 8444 \
   --rdsQueryPort 8443 \
   --rdsDisableTLS \
-  --nodeConfig config11
+  --nodeConfig config1
   

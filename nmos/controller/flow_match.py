@@ -82,21 +82,40 @@ def flow_value_keys(matched_values: dict[str, Any]) -> dict[str, str]:
     return {urn: flow_match_key(v) for urn, v in matched_values.items()}
 
 
+def _part_key(fmt: Any, layer: Any) -> str:
+    """Canonical key for a flow 'part'. A standalone/trunk flow is
+    ``"trunk"`` (CCF format/layer both None); a mux **sub-flow** is keyed by
+    its ``(format, layer)`` — e.g. ``"urn:x-nmos:format:audio:0"``. Declared
+    constraint sets carry the same part via ``cap:meta:format`` /
+    ``cap:meta:layer``, so a CS is matched only against the operating point
+    of its own part (CCF ``is_same_part``)."""
+    if fmt is None and layer is None:
+        return "trunk"
+    return f"{fmt}:{layer}"
+
+
 @dataclass(frozen=True)
 class FlowMatch:
-    """Result of matching a flow against a list of declared constraint sets.
+    """Result of matching a resource's CURRENT stream against its declared
+    constraint sets — generalised to muxed streams.
 
-    * ``matched_cs_index`` — the index (into the resource's
-      ``caps.constraint_sets``) of the single most-specific CS the flow falls
-      inside, or ``None`` when the flow matches no CS / is unknown.
-    * ``matched_values`` — the flow's current value per capability URN (read
-      off the converted flow CapSet, so it already includes derived
-      ``color_sampling`` / ``channel_count``). Used by the configuration-page
-      phase to highlight the matching multi-value option.
+    A mux is a tree: the **trunk** flow plus N **sub-flows** (one per
+    ``(format, layer)``), each with its own source. So there can be several
+    matched CS at once — the most-specific trunk CS *and* the most-specific
+    sub-layer CS per layer. A non-mux flow yields at most one (the trunk).
+
+    * ``matched_cs_indices`` — indices (into ``caps.constraint_sets``) of the
+      CS to green: the most-specific match per part. Empty when nothing
+      matches / unknown.
+    * ``values_by_part`` — ``part_key`` → {capability URN → the flow's current
+      value for that part} (off the converted CapSet, so derived
+      ``color_sampling`` / ``channel_count`` are included). The config page
+      greens the multi-value option whose value equals the flow value of the
+      CS's own part.
     """
 
-    matched_cs_index: int | None = None
-    matched_values: dict[str, Any] = field(default_factory=dict)
+    matched_cs_indices: tuple[int, ...] = ()
+    values_by_part: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def flow_caps_from_json(
@@ -161,26 +180,65 @@ def _capset_value_count(capset: Any) -> int:
     return total
 
 
+def _operating_capsets(
+    cache: Any,
+    flow_json: dict[str, Any] | None,
+    source_json: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """The resource's per-part operating points: ``part_key → CapSet``.
+
+    Always the **trunk** (the flow itself). For a **mux** flow (``parents``
+    is a list of sub-flow ids), also each sub-flow — resolved from the
+    ``cache`` (``get_flow``/``get_source``): ``mux flow → parents[i] →
+    sub-flow → source_id → sub-source``. Each sub-flow CapSet carries its
+    ``(format, layer)`` (``get_flow_to_caps`` reads the sub-flow's
+    ``FlowCore.Layer`` + concrete type), which becomes the part key.
+    ``cache=None`` (or a non-mux flow) yields just the trunk.
+    """
+    out: dict[str, Any] = {}
+    trunk = flow_caps_from_json(flow_json, source_json)
+    if trunk is not None:
+        out[_part_key(trunk.format, trunk.layer)] = trunk
+
+    parents = flow_json.get("parents") if isinstance(flow_json, dict) else None
+    if cache is not None and isinstance(parents, list):
+        for pid in parents:
+            sub_flow = cache.get_flow(pid) if pid else None
+            if not isinstance(sub_flow, dict):
+                continue
+            sub_src = cache.get_source(sub_flow.get("source_id", "") or "")
+            sub_caps = flow_caps_from_json(sub_flow, sub_src)
+            if sub_caps is not None:
+                out[_part_key(sub_caps.format, sub_caps.layer)] = sub_caps
+    return out
+
+
 def flow_match_for_sender(
     flow_json: dict[str, Any] | None,
     source_json: dict[str, Any] | None,
     constraint_sets: list[dict[str, Any]] | None,
+    *,
+    cache: Any = None,
 ) -> FlowMatch:
-    """Find the single most-specific declared CS the current flow is in.
+    """Find the most-specific declared CS per part the current stream is in.
 
-    Among the constraint sets whose declared capability set *includes* the
-    flow's operating point, the match is the one with the highest
-    ``urn:x-nmos:cap:meta:preference`` (native = 100 = fully-pinned tip = most
-    specific), breaking ties toward the narrower capset and then list order.
+    For each part (the trunk flow, plus each mux sub-flow when ``cache`` is
+    supplied), among the constraint sets of that SAME part (CCF
+    ``is_same_part`` on format/layer) whose capability set *includes* the
+    part's operating point, pick the one with the highest
+    ``urn:x-nmos:cap:meta:preference`` (native=100 = most specific),
+    tie-breaking toward the narrower capset then list order. The result is
+    the set of those per-part winners.
 
-    Returns ``FlowMatch(None, {})`` when there is no flow, no constraint sets,
-    no match, or MatroxCCF is unavailable.
+    ``cache`` enables the mux sub-flow chase; omit it for a plain trunk-only
+    match. Returns an empty ``FlowMatch`` when there is no flow, no
+    constraint sets, no match, or MatroxCCF is unavailable.
     """
     if not isinstance(constraint_sets, list) or not constraint_sets:
         return FlowMatch()
 
-    flow_capset = flow_caps_from_json(flow_json, source_json)
-    if flow_capset is None:
+    ops = _operating_capsets(cache, flow_json, source_json)
+    if not ops:
         return FlowMatch()
 
     try:
@@ -188,16 +246,24 @@ def flow_match_for_sender(
     except ImportError:
         return FlowMatch()
 
-    try:
-        flow_conset = flow_capset.to_conset()
-    except Exception as exc:
-        log.debug("flow capset → conset failed: %s", exc)
-        return FlowMatch()
+    # Per part: the operating conset + the flow's current per-URN values.
+    op_consets: dict[str, Any] = {}
+    values_by_part: dict[str, dict[str, Any]] = {}
+    for pk, capset in ops.items():
+        try:
+            op_consets[pk] = capset.to_conset()
+        except Exception as exc:
+            log.debug("flow capset → conset failed (%s): %s", pk, exc)
+            continue
+        vals: dict[str, Any] = {}
+        for urn, cap in capset.caps.items():
+            v = getattr(cap.value, "values", None)
+            if v:
+                vals[urn] = v[0]
+        values_by_part[pk] = vals
 
-    # (preference, -value_count, -index) ranks candidates; higher is better.
-    best: tuple[int, int, int] | None = None
-    best_index: int | None = None
-
+    # Most-specific CS per part. (preference, -value_count, -index); higher wins.
+    best: dict[str, tuple[tuple[int, int, int], int]] = {}
     for i, cs in enumerate(constraint_sets):
         if not isinstance(cs, dict):
             continue
@@ -205,30 +271,26 @@ def flow_match_for_sender(
         if declared is None or not getattr(declared, "capsets", None):
             continue
         declared_capset = declared.capsets[0]
+        pk = _part_key(
+            getattr(declared_capset, "format", None),
+            getattr(declared_capset, "layer", None),
+        )
+        op = op_consets.get(pk)
+        if op is None:
+            continue  # no operating point for this CS's part
         try:
-            if not conset_included_in_capset(flow_conset, declared_capset):
+            if not conset_included_in_capset(op, declared_capset):
                 continue
         except Exception as exc:
             log.debug("inclusion test failed for CS %d: %s", i, exc)
             continue
         pref = int(getattr(declared_capset, "preference", 0) or 0)
         rank = (pref, -_capset_value_count(declared_capset), -i)
-        if best is None or rank > best:
-            best = rank
-            best_index = i
+        if pk not in best or rank > best[pk][0]:
+            best[pk] = (rank, i)
 
-    if best_index is None:
-        return FlowMatch()
-
-    # Read the flow's current value per URN off the converted CapSet, so
-    # derived values (color_sampling, channel_count) are already included.
-    matched_values: dict[str, Any] = {}
-    for urn, cap in flow_capset.caps.items():
-        vals = getattr(cap.value, "values", None)
-        if vals:
-            matched_values[urn] = vals[0]
-
-    return FlowMatch(matched_cs_index=best_index, matched_values=matched_values)
+    matched = tuple(sorted(entry[1] for entry in best.values()))
+    return FlowMatch(matched_cs_indices=matched, values_by_part=values_by_part)
 
 
 # ---------------------------------------------------------------------------
@@ -273,25 +335,26 @@ def narrowed_constraint_sets_for_pair(
     return cs if isinstance(cs, list) else None
 
 
-def flow_match_index_for_sender(
+def flow_match_indices_for_sender(
     cache: Any, sender_id: str, constraint_sets: list[dict[str, Any]] | None,
-) -> int | None:
-    """Match the sender's CURRENT flow against ``constraint_sets`` and return
-    the matched index (or ``None``).
+) -> tuple[int, ...]:
+    """Match the sender's CURRENT stream against ``constraint_sets`` and
+    return the set of matched CS indices (per-part winners; see
+    ``flow_match_for_sender``).
 
     Resolves the chain freshly from the stable sender id —
-    ``sender → flow_id → flow → source_id → source`` — then delegates to
-    ``flow_match_for_sender``. Pass the pre-narrowed CS for a receiver caps page
-    (index aligns with the narrowed rows) or the sender's own CS otherwise.
-    ``cache`` is duck-typed (``get_sender`` / ``get_flow`` / ``get_source``).
+    ``sender → flow_id → flow → source_id → source`` (+ mux sub-flows via the
+    cache). Pass the pre-narrowed CS for a receiver caps page (indices align
+    with the narrowed rows) or the sender's own CS otherwise. ``cache`` is
+    duck-typed (``get_sender`` / ``get_flow`` / ``get_source``).
     """
     sender = cache.get_sender(sender_id)
     if sender is None:
-        return None
+        return ()
     flow = cache.get_flow(sender.get("flow_id", "") or "")
     source = None
     if isinstance(flow, dict):
         source = cache.get_source(flow.get("source_id", "") or "")
     return flow_match_for_sender(
-        flow, source, constraint_sets,
-    ).matched_cs_index
+        flow, source, constraint_sets, cache=cache,
+    ).matched_cs_indices

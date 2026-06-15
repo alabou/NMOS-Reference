@@ -82,7 +82,7 @@
           "psk": "000102030405060708090a0b0c0d0e0f"
         }
       ],
-      "linked_receiver_group": "RTSP 2"
+      "linked_receiver_group": "RTSP 3"
     },
     {
       "label": "Net Stream 0 Audio 0",
@@ -134,7 +134,7 @@
           "psk": "000102030405060708090a0b0c0d0e0f"
         }
       ],
-      "linked_receiver_group": "RTSP 2"
+      "linked_receiver_group": "RTSP 3"
     },
     {
       "label": "Net Stream MPEG2-TS 0",
@@ -496,7 +496,7 @@
       "label": "Net Stream RTSP Mux 0",
       "format": "urn:x-nmos:format:mux",
       "transport": "urn:x-matrox:transport:rtsp",
-      "natural_group_index": 2,
+      "natural_group_index": 3,
       "constraint_sets": [
         {
           "urn:x-nmos:cap:meta:label": "Native Mux",
@@ -627,6 +627,180 @@
           "urn:x-nmos:cap:format:media_type": {
             "enum": [
               "audio/AM824"
+            ]
+          }
+        }
+      ],
+      "privacy_keys": [
+        {
+          "key_id": "0001020304050607",
+          "psk": "000102030405060708090a0b0c0d0e0f"
+        },
+        {
+          "key_id": "0000000000000000",
+          "psk": "000100030005000700090f0f0f0f0f0f"
+        }
+      ]
+    },
+    {
+      "label": "Net Stream MPEG2-TS 0",
+      "format": "urn:x-nmos:format:mux",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "natural_group_index": 2,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native Mux",
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "application/MP2T"
+            ]
+          },
+          "urn:x-matrox:cap:format:video_layers": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "urn:x-matrox:cap:format:audio_layers": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "urn:x-matrox:cap:format:data_layers": {
+            "minimum": 0,
+            "maximum": 0
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "Mux constraints",
+          "urn:x-nmos:cap:meta:preference": 1,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "application/MP2T"
+            ]
+          },
+          "urn:x-matrox:cap:format:video_layers": {
+            "minimum": 1,
+            "maximum": 1
+          },
+          "urn:x-matrox:cap:format:audio_layers": {
+            "minimum": 0,
+            "maximum": 1
+          },
+          "urn:x-matrox:cap:format:data_layers": {
+            "minimum": 0,
+            "maximum": 0
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "Native Video sub",
+          "urn:x-nmos:cap:meta:enabled": false,
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-matrox:cap:meta:layer_enabled": true,
+          "urn:x-matrox:cap:meta:format": "urn:x-nmos:format:video",
+          "urn:x-matrox:cap:meta:layer": 0,
+          "urn:x-matrox:cap:meta:layer_compatibility_groups": [
+            0
+          ],
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "video/H264"
+            ]
+          },
+          "urn:x-nmos:cap:format:frame_width": {
+            "enum": [
+              1920
+            ]
+          },
+          "urn:x-nmos:cap:format:frame_height": {
+            "enum": [
+              1080
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "Native Audio sub",
+          "urn:x-nmos:cap:meta:enabled": false,
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-matrox:cap:meta:layer_enabled": true,
+          "urn:x-matrox:cap:meta:format": "urn:x-nmos:format:audio",
+          "urn:x-matrox:cap:meta:layer": 0,
+          "urn:x-matrox:cap:meta:layer_compatibility_groups": [
+            0
+          ],
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/L24"
+            ]
+          },
+          "urn:x-nmos:cap:format:sample_rate": {
+            "enum": [
+              {
+                "numerator": 48000
+              }
+            ]
+          },
+          "urn:x-nmos:cap:format:channel_count": {
+            "enum": [
+              2
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "H.264 sub",
+          "urn:x-nmos:cap:meta:enabled": false,
+          "urn:x-matrox:cap:meta:layer_enabled": true,
+          "urn:x-matrox:cap:meta:format": "urn:x-nmos:format:video",
+          "urn:x-matrox:cap:meta:layer": 0,
+          "urn:x-matrox:cap:meta:layer_compatibility_groups": [
+            0
+          ],
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "video/H264"
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "H.265 sub",
+          "urn:x-nmos:cap:meta:enabled": false,
+          "urn:x-matrox:cap:meta:layer_enabled": true,
+          "urn:x-matrox:cap:meta:format": "urn:x-nmos:format:video",
+          "urn:x-matrox:cap:meta:layer": 0,
+          "urn:x-matrox:cap:meta:layer_compatibility_groups": [
+            0
+          ],
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "video/H265"
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "PCM sub",
+          "urn:x-nmos:cap:meta:enabled": false,
+          "urn:x-matrox:cap:meta:layer_enabled": true,
+          "urn:x-matrox:cap:meta:format": "urn:x-nmos:format:audio",
+          "urn:x-matrox:cap:meta:layer": 0,
+          "urn:x-matrox:cap:meta:layer_compatibility_groups": [
+            0
+          ],
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/L24"
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "AAC sub",
+          "urn:x-nmos:cap:meta:enabled": false,
+          "urn:x-matrox:cap:meta:layer_enabled": true,
+          "urn:x-matrox:cap:meta:format": "urn:x-nmos:format:audio",
+          "urn:x-matrox:cap:meta:layer": 0,
+          "urn:x-matrox:cap:meta:layer_compatibility_groups": [
+            0
+          ],
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/MP4A-ADTS"
             ]
           }
         }

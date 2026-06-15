@@ -397,10 +397,13 @@ class RangeValue:
     def has_enum_exception(self) -> bool:
         return self.values is not None and len(self.values) == 0
     
-    def includes_value(self, val: Union[bool, int, float, Fraction, str]) -> bool:
+    def includes_value(self, val: Union[bool, int, float, Fraction, str], finite: bool = False) -> bool:
         """Used to test membership."""
 
         _verify_value_type(self, val)
+
+        if finite and self.is_infinite():
+            return False
 
         if self.empty:
             return False
@@ -418,12 +421,15 @@ class RangeValue:
 
         return True
 
-    def includes_range(self, other: RangeValue) -> bool:
+    def includes_range(self, other: RangeValue, finite: bool = False) -> bool:
         """
         x <= y for RangeValue (other <= self).
         Means: every value in x is included in y.
         """
         _verify_same_type(self, other)
+
+        if finite and self.is_infinite():
+            return False
 
         if other.empty:
             return True
@@ -2203,7 +2209,7 @@ def range_intersection(r1: RangeValue, r2: RangeValue) -> RangeValue:
 
 from typing import Set
 
-def caps_included_in_caps(x_caps: Caps, y_caps: Caps) -> bool:
+def caps_included_in_caps(x_caps: Caps, y_caps: Caps, finite:bool = False) -> bool:
     """
     Implements x_caps <= y_caps
 
@@ -2215,13 +2221,13 @@ def caps_included_in_caps(x_caps: Caps, y_caps: Caps) -> bool:
 
         capset.check_part_valid()
 
-        if not capset_included_in_caps(capset, y_caps):
+        if not capset_included_in_caps(capset, y_caps, finite):
             # print(f"BECAUSE of CapSet {capset}")
             return False
 
     return True
 
-def capset_included_in_caps(x_capset: CapSet, y_caps: Caps) -> bool:
+def capset_included_in_caps(x_capset: CapSet, y_caps: Caps, finite:bool = False) -> bool:
     """
     Implements x_capset <= y_caps
 
@@ -2236,12 +2242,12 @@ def capset_included_in_caps(x_capset: CapSet, y_caps: Caps) -> bool:
         if not capset.is_same_part(x_capset):
             continue
 
-        if capset_included_in_capset(x_capset, capset):
+        if capset_included_in_capset(x_capset, capset, finite):
             return True
 
     return False
 
-def capset_included_in_capset(x_capset: CapSet, y_capset: CapSet) -> bool:
+def capset_included_in_capset(x_capset: CapSet, y_capset: CapSet, finite:bool = False) -> bool:
     """
     Implements x_capset <= y_capset
 
@@ -2255,12 +2261,12 @@ def capset_included_in_capset(x_capset: CapSet, y_capset: CapSet) -> bool:
     # gather the union or intersection of names
     all_names = namespace_inherit_from_capset(x_capset.namespace(), y_capset)
     for name in all_names:
-        if not cap_included_in_cap(x_capset[name], y_capset[name]):
+        if not cap_included_in_cap(x_capset[name], y_capset[name], finite):
             return False
         
     return True
 
-def cap_included_in_cap(x_cap: Capability, y_cap: Capability) -> bool:
+def cap_included_in_cap(x_cap: Capability, y_cap: Capability, finite:bool = False) -> bool:
     """
     Implements x_cap <= y_cap
     BEGIN
@@ -2276,9 +2282,9 @@ def cap_included_in_cap(x_cap: Capability, y_cap: Capability) -> bool:
     if x_cap.name != y_cap.name:
         return False
 
-    return (y_cap.value.includes_range(x_cap.value))
+    return (y_cap.value.includes_range(x_cap.value, finite))
 
-def cons_included_in_cons(x_cons: Cons, y_cons: Cons) -> bool:
+def cons_included_in_cons(x_cons: Cons, y_cons: Cons, finite:bool = False) -> bool:
     """
     Implements x_cons <= y_cons
 
@@ -2290,12 +2296,12 @@ def cons_included_in_cons(x_cons: Cons, y_cons: Cons) -> bool:
         
         conset.check_part_valid()
 
-        if not conset_included_in_cons(conset, y_cons):
+        if not conset_included_in_cons(conset, y_cons, finite):
             return False
         
     return True
 
-def conset_included_in_cons(x_conset: ConSet, y_cons: Cons) -> bool:
+def conset_included_in_cons(x_conset: ConSet, y_cons: Cons, finite:bool = False) -> bool:
     """
     Implements x_conset <= y_cons
 
@@ -2310,12 +2316,12 @@ def conset_included_in_cons(x_conset: ConSet, y_cons: Cons) -> bool:
         if not conset.is_same_part(x_conset):
             continue
 
-        if conset_included_in_conset(x_conset, conset):
+        if conset_included_in_conset(x_conset, conset, finite):
             return True
     
     return False
 
-def conset_included_in_conset(x_conset: ConSet, y_conset: ConSet) -> bool:
+def conset_included_in_conset(x_conset: ConSet, y_conset: ConSet, finite:bool = False) -> bool:
     """
     Implements x_conset <= y_conset
 
@@ -2329,12 +2335,12 @@ def conset_included_in_conset(x_conset: ConSet, y_conset: ConSet) -> bool:
     # gather the union or intersection of names
     all_names = namespace_inherit_from_conset(x_conset.namespace(), y_conset)
     for name in all_names:
-        if not con_included_in_con(x_conset[name], y_conset[name]):
+        if not con_included_in_con(x_conset[name], y_conset[name], finite):
             return False
         
     return True
 
-def con_included_in_con(x_con: Constraint, y_con: Constraint) -> bool:
+def con_included_in_con(x_con: Constraint, y_con: Constraint, finite:bool = False) -> bool:
     """
     Implements x_con <= y_con
     BEGIN
@@ -2350,10 +2356,10 @@ def con_included_in_con(x_con: Constraint, y_con: Constraint) -> bool:
     if x_con.name != y_con.name:
         return False
 
-    return y_con.value.includes_range(x_con.value)
+    return y_con.value.includes_range(x_con.value, finite)
 
 
-def cons_included_in_caps(x_cons: Cons, y_caps: Caps) -> bool:
+def cons_included_in_caps(x_cons: Cons, y_caps: Caps, finite:bool = False) -> bool:
     """
     Implements x_cons <= y_caps
 
@@ -2365,12 +2371,12 @@ def cons_included_in_caps(x_cons: Cons, y_caps: Caps) -> bool:
 
         conset.check_part_valid()
 
-        if not conset_included_in_caps(conset, y_caps):
+        if not conset_included_in_caps(conset, y_caps, finite):
             return False
         
     return True
 
-def conset_included_in_caps(x_conset: ConSet, y_caps: Caps) -> bool:
+def conset_included_in_caps(x_conset: ConSet, y_caps: Caps, finite:bool = False) -> bool:
     """
     Implements x_conset <= y_caps
 
@@ -2385,12 +2391,12 @@ def conset_included_in_caps(x_conset: ConSet, y_caps: Caps) -> bool:
         if not capset.is_same_part(x_conset):
             continue
 
-        if conset_included_in_capset(x_conset, capset):
+        if conset_included_in_capset(x_conset, capset, finite):
             return True
 
     return False
 
-def conset_included_in_capset(x_conset: ConSet, y_capset: CapSet) -> bool:
+def conset_included_in_capset(x_conset: ConSet, y_capset: CapSet, finite:bool = False) -> bool:
     """
     Implements x_conset <= y_capset
 
@@ -2403,12 +2409,12 @@ def conset_included_in_capset(x_conset: ConSet, y_capset: CapSet) -> bool:
     
     for con in x_conset.cons.values():
         if not con.value.is_infinite():
-            if not con_included_in_cap(con, y_capset[con.name]):
+            if not con_included_in_cap(con, y_capset[con.name], finite):
                 return False
 
     return True
 
-def con_included_in_cap(x_con: Constraint, y_cap: Capability) -> bool:
+def con_included_in_cap(x_con: Constraint, y_cap: Capability, finite:bool = False) -> bool:
     """
     Implements x_con <= y_cap
     BEGIN
@@ -2421,16 +2427,16 @@ def con_included_in_cap(x_con: Constraint, y_cap: Capability) -> bool:
     if y_cap.value.has_enum_exception():
         raise ValueError("capability enum cannot be empty if not None")
 
-    if x_con.name == y_cap.name and (x_con.value.is_infinite() or (y_cap.value.includes_range(x_con.value))):
+    if x_con.name == y_cap.name and (x_con.value.is_infinite() or (y_cap.value.includes_range(x_con.value, finite))):
         return True
 
     return False
 
-def range_included_in_range(x: RangeValue, y: RangeValue) -> bool:
-    return y.includes_range(x)
+def range_included_in_range(x: RangeValue, y: RangeValue, finite:bool = False) -> bool:
+    return y.includes_range(x, finite)
 
-def value_included_in_range(x: Union[bool, int, float, Fraction, str], y: RangeValue) -> bool:
-    return y.includes_value(x)
+def value_included_in_range(x: Union[bool, int, float, Fraction, str], y: RangeValue, finite:bool = False) -> bool:
+    return y.includes_value(x, finite)
 
 def namespace_included_in_namespace(x_ns: Set[str], y_ns: Set[str]) -> bool:
     """

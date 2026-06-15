@@ -108,14 +108,19 @@ def get_sdp_color_sampling(components: list[Any]) -> str:
 def _check_video_color_sampling(
     sampling: str,
     profile_color_sampling: list[str],
+    allow_rgb: bool = False,
 ) -> None:
     """Validate that a color sampling mode is supported by a codec profile.
 
-    The video codecs (H.264, H.265, JXSV) all use the same YCbCr-only
-    check.  RGB is never valid for coded video flows.
+    H.264 and H.265 are treated as YCbCr-only here: RGB is rejected outright
+    (allow_rgb defaults to False). JPEG-XS carries RGB (per VSF TR-08), so its
+    callers pass allow_rgb=True. RGB is colorimetric; structurally it is three
+    full-resolution components (4:4:4), so when allowed it maps to "4:4:4" and
+    is gated on the profile's declared sampling list (only the 444 profiles).
 
     Raises:
-        InvalidParameter: If the sampling format is RGB or unrecognised.
+        InvalidParameter: If the sampling format is RGB (when not allowed) or
+            unrecognised.
         NotAllowed: If the profile does not support the detected sampling.
     """
     # Map SDP sampling strings to the short form stored in profile tables
@@ -124,9 +129,11 @@ def _check_video_color_sampling(
         "YCbCr-4:2:2": "4:2:2",
         "YCbCr-4:2:0": "4:2:0",
     }
+    if allow_rgb:
+        # RGB is the colorimetric form of the 4:4:4 structure.
+        _SAMPLING_MAP["RGB"] = "4:4:4"
     short = _SAMPLING_MAP.get(sampling)
     if short is None:
-        # RGB or unknown — coded video codecs do not support RGB
         raise InvalidParameter("invalid color sampling")
     if short not in profile_color_sampling:
         raise NotAllowed("profile not matching color sampling requirements")
@@ -669,7 +676,7 @@ def check_jxsv_profile(
     if bit_depth > profile_info.max_bit_depth:
         raise NotAllowed("profile not matching bit depth requirements")
 
-    _check_video_color_sampling(sampling, profile_info.color_sampling)
+    _check_video_color_sampling(sampling, profile_info.color_sampling, allow_rgb=True)
 
 
 def check_jxsv_profile_level(
@@ -827,7 +834,7 @@ def select_jxsv_level_from_coded_flow(flow: Any) -> None:
     if bit_depth > profile_info.max_bit_depth:
         raise NotAllowed("profile not matching bit depth requirements")
 
-    _check_video_color_sampling(sampling, profile_info.color_sampling)
+    _check_video_color_sampling(sampling, profile_info.color_sampling, allow_rgb=True)
 
     attr = jxsv.SUBLEVEL_BITRATE_ATTR.get(sublevel)
     if attr is None:

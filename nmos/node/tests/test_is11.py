@@ -1898,32 +1898,60 @@ class TestIS11OutOfRangeAllConfigs:
 # apply random valid constraints and verify the flow is updated correctly.
 # ===========================================================================
 
+import hashlib
 import random as _random_mod
+
+
+def _stable_seed(*parts: object) -> int:
+    """Deterministic 32-bit RNG seed derived from the given parts.
+
+    The fuzz scenarios MUST be reproducible run-to-run. The builtin ``hash()``
+    of strings is salted per process by PYTHONHASHSEED, so seeding an RNG from
+    ``hash((config, sender, scenario))`` made the generated constraint sets —
+    and thus which failures surfaced — vary every invocation. A SHA-256 digest
+    is stable across processes and platforms.
+    """
+    joined = "\x1f".join(str(p) for p in parts)
+    return int.from_bytes(hashlib.sha256(joined.encode("utf-8")).digest()[:4], "big")
+
 
 # Properties that should NOT be constrained (transport, meta, or read-only)
 _TRANSPORT_PREFIXES = ("urn:x-nmos:cap:transport:", "urn:x-matrox:cap:transport:")
 _META_PREFIXES = ("urn:x-nmos:cap:meta:", "urn:x-matrox:cap:meta:")
 
-# Interdependent parameters: within each group, one member must be left
-# unconstrained so the fix-up functions can derive a valid value.
-# We exclude the "dependent" member (the one the fix-up derives).
-#
-# Group 1 — Codec: profile+sampling can be constrained; level is DERIVED
-#   from resolution+bitrate+profile by fixCodedVideoFlow.
-# Group 2 — PCM: media_type determines sample_depth; exclude sample_depth.
-# Group 3 — Video resolution: width+height are OK together from same capset,
-#   but frame_height alone with wrong width is fixed by fixVideoWidthHeight.
-#
-# The "leave open" members (excluded from random selection):
+# DERIVED properties — never constrained by the fuzzer in ANY scenario. Their
+# value is computed by the forcing fix-ups from other properties, so pinning
+# them fights the fix-up and yields an unsatisfiable request.
+#   level/sublevel — derived from resolution+bitrate+profile (fixCodedVideoFlow)
+#   sample_depth   — determined by PCM media_type (L8=8, L16=16, L24=24)
+#   bit_rate       — interacts with level selection
 _INTERDEPENDENT_PROPS = {
-    # Level is derived from resolution+bitrate+profile — must be left open
     "urn:x-nmos:cap:format:level",
     "urn:x-nmos:cap:format:sublevel",
-    # Sample depth is determined by PCM media_type (L8=8, L16=16, L24=24)
     "urn:x-nmos:cap:format:sample_depth",
-    # Bit rate interacts with level selection — leave open for fix-up
     "urn:x-nmos:cap:format:bit_rate",
 }
+
+# INTERDEPENDENT GROUPS — a capability set declares each property's allowed
+# values as an INDEPENDENT enum, so constraining more than one member of a
+# group can request an impossible COMBINATION even though each value is
+# individually valid: e.g. frame_width=3840 + frame_height=480 (not a real
+# resolution), or profile=Main10 + component_depth=8, or profile=High420.12
+# (4:2:0) + color_sampling=RGB. The fuzzer therefore constrains AT MOST ONE
+# member of each group and lets the forcing fix-ups derive the coherent
+# partners (fixVideoWidthHeight derives the missing dimension; fixCodedVideoFlow
+# derives sampling/depth from the profile, or a profile from the sampling).
+_INTERDEPENDENT_GROUPS = (
+    {
+        "urn:x-nmos:cap:format:frame_width",
+        "urn:x-nmos:cap:format:frame_height",
+    },
+    {
+        "urn:x-nmos:cap:format:profile",
+        "urn:x-nmos:cap:format:color_sampling",
+        "urn:x-nmos:cap:format:component_depth",
+    },
+)
 
 
 def _is_format_property(name: str) -> bool:
@@ -1957,6 +1985,9 @@ def _pick_random_constraint_from_capset(
             continue
         if name == "urn:x-nmos:cap:format:media_type":
             continue
+        # Derived properties are never constrained — the fix-ups own them.
+        if name in _INTERDEPENDENT_PROPS:
+            continue
         if restrict_to is not None and name not in restrict_to:
             continue
         if exclude is not None and name in exclude:
@@ -1969,6 +2000,16 @@ def _pick_random_constraint_from_capset(
         if not has_enum and not has_range:
             continue
         candidates.append((name, cap))
+
+    # Collapse each interdependent group to a single representative so the
+    # generated set never requests an impossible combination (see
+    # _INTERDEPENDENT_GROUPS). The forcing fix-ups derive the coherent partners.
+    for group in _INTERDEPENDENT_GROUPS:
+        in_group = [name for name, _ in candidates if name in group]
+        if len(in_group) > 1:
+            keep_name = rng.choice(in_group)
+            candidates = [(n, c) for (n, c) in candidates
+                          if n not in group or n == keep_name]
 
     if not candidates:
         return None
@@ -2390,7 +2431,7 @@ class TestIS11ConstraintForcing:
                 continue
 
             # Deterministic seed per (config, sender, scenario)
-            seed = hash((config_name, sender_id, scenario)) & 0xFFFFFFFF
+            seed = _stable_seed(config_name, sender_id, scenario)
             rng = _random_mod.Random(seed)
 
             # Check if this is a mux sender
@@ -2479,8 +2520,8 @@ class TestIS11StatefulConstraints:
                 continue
 
             # Build two different constraint sets with different seeds
-            seed_a = hash((config_name, sender_id, "seq_A")) & 0xFFFFFFFF
-            seed_b = hash((config_name, sender_id, "seq_B")) & 0xFFFFFFFF
+            seed_a = _stable_seed(config_name, sender_id, "seq_A")
+            seed_b = _stable_seed(config_name, sender_id, "seq_B")
             rng_a = _random_mod.Random(seed_a)
             rng_b = _random_mod.Random(seed_b)
 
@@ -2548,7 +2589,7 @@ class TestIS11StatefulConstraints:
             if caps is None or len(caps.capsets) == 0:
                 continue
 
-            seed = hash((config_name, sender_id, "delete")) & 0xFFFFFFFF
+            seed = _stable_seed(config_name, sender_id, "delete")
             rng = _random_mod.Random(seed)
             cs = _build_constraint_sets_for_scenario(caps, "max_trunk_only", rng)
             if not cs:
@@ -2720,7 +2761,7 @@ class TestIS11StatefulConstraints:
 
             # Pick the first one and build a constraint from it
             target_cs = groups_capsets[0]
-            seed = hash((config_name, sender_id, "groups")) & 0xFFFFFFFF
+            seed = _stable_seed(config_name, sender_id, "groups")
             rng = _random_mod.Random(seed)
             constraint = _pick_random_constraint_from_capset(
                 target_cs, 1, rng, exclude=_INTERDEPENDENT_PROPS,
@@ -3380,10 +3421,16 @@ class TestMergeActiveConstraints:
         assert mc.preference == 100
 
     def test_no_capability_match_errors(self) -> None:
-        """A constraint set fitting no capability set is unsatisfiable."""
+        """A constraint set fitting no capability set is unsatisfiable.
+
+        ``media_type`` pins the probe to H.264 so the bogus profile can't
+        fall through to the uncompressed (video/raw) set, which constrains
+        no profile and would otherwise accept any profile value.
+        """
         node, sender = self._setup_video()
         merged, err = self._merge(node, sender, [{
             "urn:x-nmos:cap:meta:preference": 100,
+            "urn:x-nmos:cap:format:media_type": {"enum": ["video/H264"]},
             "urn:x-nmos:cap:format:profile": {"enum": ["NoSuchProfile"]},
         }])
         assert merged is None
@@ -3473,11 +3520,17 @@ class TestCodecFlavorSwap:
 
     def test_unsatisfiable_constraint_leaves_flow_untouched(self) -> None:
         """A constraint fitting no capability set is rejected and the flow
-        keeps its current configuration."""
+        keeps its current configuration.
+
+        ``media_type`` pins the probe to H.264 so the bogus profile can't
+        fall through to the uncompressed (video/raw) set (which constrains
+        no profile and would otherwise accept any profile value).
+        """
         node, sender = self._setup_h264_video()
         before = self._flow_state(node, sender)
         err = node.force_active_constraints(sender, {"constraint_sets": [{
             "urn:x-nmos:cap:meta:preference": 100,
+            "urn:x-nmos:cap:format:media_type": {"enum": ["video/H264"]},
             "urn:x-nmos:cap:format:profile": {"enum": ["NoSuchProfile"]},
         }]})
         assert err is not None

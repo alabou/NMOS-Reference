@@ -212,7 +212,7 @@ class TestFlowMatchForSender:
         match = flow_match_for_sender(
             _am824_flow(), _audio_source(), [_cs_native_am824()],
         )
-        assert match.matched_cs_index == 0
+        assert match.matched_cs_indices == (0,)
 
     def test_most_specific_cs_wins(self) -> None:
         # Both CS include the AM824/2ch/48k flow; the native (pref 100)
@@ -220,14 +220,14 @@ class TestFlowMatchForSender:
         sets = [_cs_generic_audio(), _cs_native_am824()]
         match = flow_match_for_sender(_am824_flow(), _audio_source(), sets)
         # Native is index 1 in this list.
-        assert match.matched_cs_index == 1
+        assert match.matched_cs_indices == (1,)
 
     def test_no_match_returns_none(self) -> None:
         # 4-channel-only CS cannot include a 2-channel flow.
         cs = _cs_native_am824()
         cs["urn:x-nmos:cap:format:channel_count"] = {"enum": [4]}
         match = flow_match_for_sender(_am824_flow(), _audio_source(), [cs])
-        assert match.matched_cs_index is None
+        assert match.matched_cs_indices == ()
 
     def test_match_hinges_on_source_channel_count(self) -> None:
         # The CS pins channel_count to 8; the flow only matches when the
@@ -239,7 +239,7 @@ class TestFlowMatchForSender:
         stereo = _audio_source()
         assert flow_match_for_sender(
             _am824_flow(), stereo, [cs],
-        ).matched_cs_index is None
+        ).matched_cs_indices == ()
 
         eight = _audio_source()
         eight["channels"] = [
@@ -247,17 +247,17 @@ class TestFlowMatchForSender:
         ]
         assert flow_match_for_sender(
             _am824_flow(), eight, [cs],
-        ).matched_cs_index == 0
+        ).matched_cs_indices == (0,)
 
     def test_matched_values_populated_from_flow_capset(self) -> None:
         match = flow_match_for_sender(
             _am824_flow(), _audio_source(), [_cs_native_am824()],
         )
-        assert match.matched_cs_index == 0
-        assert match.matched_values[
+        assert match.matched_cs_indices == (0,)
+        assert match.values_by_part["trunk"][
             "urn:x-nmos:cap:format:media_type"
         ] == "audio/AM824"
-        assert match.matched_values[
+        assert match.values_by_part["trunk"][
             "urn:x-nmos:cap:format:channel_count"
         ] == 2
 
@@ -265,3 +265,161 @@ class TestFlowMatchForSender:
         assert flow_match_for_sender(None, None, None) == FlowMatch()
         assert flow_match_for_sender(_am824_flow(), _audio_source(), []) == FlowMatch()
         assert flow_match_for_sender(None, None, [_cs_native_am824()]) == FlowMatch()
+
+
+# ---------------------------------------------------------------------------
+# Mux: per-part matching (trunk + sub-layers)
+# ---------------------------------------------------------------------------
+
+_MUX_FLOW = "11111111-0000-4000-8000-00000000aaaa"
+_SUB_A = "22222222-0000-4000-8000-00000000aaaa"
+_SUB_B = "33333333-0000-4000-8000-00000000aaaa"
+_MUX_SRC = "44444444-0000-4000-8000-00000000aaaa"
+_SRC_A = "55555555-0000-4000-8000-00000000aaaa"
+_SRC_B = "66666666-0000-4000-8000-00000000aaaa"
+_DEV = "77777777-0000-4000-8000-00000000aaaa"
+
+
+def _src(sid: str, fmt: str, channels: int = 0) -> dict[str, Any]:
+    d: dict[str, Any] = {
+        "id": sid, "version": "0:0", "label": "s", "description": "",
+        "tags": {}, "device_id": _DEV, "parents": [], "caps": {},
+        "format": fmt, "clock_name": "clk0",
+        "urn:x-matrox:synchronous_media": True,
+    }
+    if channels:
+        d["channels"] = [
+            {"label": f"c{i}", "symbol": "L"} for i in range(channels)
+        ]
+    return d
+
+
+def _mux_flow() -> dict[str, Any]:
+    return {
+        "id": _MUX_FLOW, "version": "0:0", "label": "mux", "description": "",
+        "tags": {}, "device_id": _DEV, "parents": [_SUB_A, _SUB_B],
+        "source_id": _MUX_SRC, "format": "urn:x-nmos:format:mux",
+        "media_type": "application/AM824",
+        "urn:x-matrox:video_layers": 0,
+        "urn:x-matrox:audio_layers": 2,
+        "urn:x-matrox:data_layers": 0,
+    }
+
+
+def _sub_flow(fid: str, src_id: str, layer: int) -> dict[str, Any]:
+    return {
+        "id": fid, "version": "0:0", "label": "sub", "description": "",
+        "tags": {}, "device_id": _DEV, "parents": [], "source_id": src_id,
+        "format": "urn:x-nmos:format:audio", "media_type": "audio/AM824",
+        "sample_rate": {"numerator": 48000, "denominator": 1},
+        "grain_rate": {"numerator": 48000, "denominator": 1},
+        "urn:x-matrox:layer": layer,
+    }
+
+
+def _sub_layer_cs(label, pref, layer, media, channels):
+    return {
+        "urn:x-nmos:cap:meta:label": label,
+        "urn:x-nmos:cap:meta:preference": pref,
+        "urn:x-matrox:cap:meta:format": "urn:x-nmos:format:audio",
+        "urn:x-matrox:cap:meta:layer": layer,
+        "urn:x-nmos:cap:format:media_type": {"enum": media},
+        "urn:x-nmos:cap:format:channel_count": {"enum": channels},
+    }
+
+
+def _mux_constraint_sets():
+    return [
+        {  # 0 — trunk, native
+            "urn:x-nmos:cap:meta:label": "Native Mux",
+            "urn:x-nmos:cap:meta:preference": 100,
+            "urn:x-nmos:cap:format:media_type": {"enum": ["application/AM824"]},
+        },
+        {  # 1 — trunk, generic
+            "urn:x-nmos:cap:meta:label": "Mux constraints",
+            "urn:x-nmos:cap:meta:preference": 1,
+            "urn:x-nmos:cap:format:media_type": {"enum": ["application/AM824"]},
+        },
+        # 2 — audio sub 0, native (matches)
+        _sub_layer_cs("Native Audio sub 0", 100, 0, ["audio/AM824"], [2]),
+        # 3 — audio sub 0, PCM (does NOT match an AM824 sub-flow)
+        _sub_layer_cs("PCM sub 0", 0, 0, ["audio/L24"], [2]),
+        # 4 — audio sub 1, native (matches)
+        _sub_layer_cs("Native Audio sub 1", 100, 1, ["audio/AM824"], [2]),
+    ]
+
+
+class _StubCache:
+    """Minimal duck-typed cache for the mux parent chase — only the readers
+    ``flow_match`` uses (``get_flow`` / ``get_source``)."""
+
+    def __init__(self) -> None:
+        self._flows: dict[str, Any] = {}
+        self._sources: dict[str, Any] = {}
+
+    def get_flow(self, fid):
+        return self._flows.get(fid)
+
+    def get_source(self, sid):
+        return self._sources.get(sid)
+
+
+def _mux_cache() -> _StubCache:
+    c = _StubCache()
+    c._sources[_MUX_SRC] = _src(_MUX_SRC, "urn:x-nmos:format:mux")
+    c._sources[_SRC_A] = _src(_SRC_A, "urn:x-nmos:format:audio", channels=2)
+    c._sources[_SRC_B] = _src(_SRC_B, "urn:x-nmos:format:audio", channels=2)
+    c._flows[_SUB_A] = _sub_flow(_SUB_A, _SRC_A, 0)
+    c._flows[_SUB_B] = _sub_flow(_SUB_B, _SRC_B, 1)
+    c._flows[_MUX_FLOW] = _mux_flow()
+    return c
+
+
+class TestMuxFlowMatch:
+    def test_trunk_and_sublayers_all_match(self) -> None:
+        """A mux greens its most-specific trunk CS AND the most-specific
+        sub-layer CS per (format, layer) — chasing parent sub-flows +
+        sub-sources via the cache."""
+        cache = _mux_cache()
+        m = flow_match_for_sender(
+            _mux_flow(), _src(_MUX_SRC, "urn:x-nmos:format:mux"),
+            _mux_constraint_sets(), cache=cache,
+        )
+        # Native Mux (0) + Native Audio sub 0 (2) + Native Audio sub 1 (4).
+        # PCM sub 0 (3) does not match an AM824 sub-flow.
+        assert m.matched_cs_indices == (0, 2, 4)
+        assert set(m.values_by_part) == {
+            "trunk",
+            "urn:x-nmos:format:audio:0",
+            "urn:x-nmos:format:audio:1",
+        }
+        # Per-part operating values are distinct: trunk is the mux media_type,
+        # each sub-layer is its sub-flow's.
+        assert m.values_by_part["trunk"][
+            "urn:x-nmos:cap:format:media_type"
+        ] == "application/AM824"
+        assert m.values_by_part["urn:x-nmos:format:audio:0"][
+            "urn:x-nmos:cap:format:channel_count"
+        ] == 2
+
+    def test_without_cache_only_trunk_matches(self) -> None:
+        """No cache → no parent chase → only the trunk CS can match."""
+        m = flow_match_for_sender(
+            _mux_flow(), _src(_MUX_SRC, "urn:x-nmos:format:mux"),
+            _mux_constraint_sets(), cache=None,
+        )
+        assert m.matched_cs_indices == (0,)  # Native Mux only
+        assert set(m.values_by_part) == {"trunk"}
+
+    def test_sublayer_no_match_drops_that_part(self) -> None:
+        """If a sub-flow fits no sub-layer CS of its part, that part simply
+        contributes no green (others unaffected)."""
+        cache = _mux_cache()
+        # Sub-flow B becomes 8-channel; no layer-1 CS allows 8ch.
+        cache._sources[_SRC_B] = _src(_SRC_B, "urn:x-nmos:format:audio", channels=8)
+        m = flow_match_for_sender(
+            _mux_flow(), _src(_MUX_SRC, "urn:x-nmos:format:mux"),
+            _mux_constraint_sets(), cache=cache,
+        )
+        # Trunk (0) + sub 0 (2) still match; layer-1 drops out.
+        assert m.matched_cs_indices == (0, 2)

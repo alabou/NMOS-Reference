@@ -37,7 +37,7 @@ from nmos.enums import (
     BT601_5, BT709_2, ST2065_1, ST2065_3, ST428_1,
     SDR, HLG, PQ, LINEAR, BT2100LINPQ, BT2100LINHLG, DENSITY, ST2115LOGS3,
     # Color sampling
-    SamplingYCbCr_420, SamplingYCbCr_422, SamplingYCbCr_444,
+    SamplingYCbCr_420, SamplingYCbCr_422, SamplingYCbCr_444, SamplingRGB,
     # Packet transmission / parameter-set modes
     CodeStream, SliceSequential, SliceOutOfOrder, SingleNalUnit,
     NonInterleavedNalUnits, InterleavedNalUnits,
@@ -1038,9 +1038,13 @@ def update_coded_video_flow(
               f"profile={profile} level={level} bitrate={bit_rate}")
 
     # Build components
-    from nmos.enums import Y, Cb, Cr
+    from nmos.enums import Y, Cb, Cr, R, G, B
     bit_depth = depth if depth else 8
-    if sampling and "4:4:4" in sampling:
+    if sampling and "RGB" in sampling:
+        # RGB is three full-resolution components (structurally 4:4:4).
+        components = _make_ycbcr_components(R, G, B, frame_width, frame_height,
+                                            frame_width, frame_height, bit_depth)
+    elif sampling and "4:4:4" in sampling:
         components = _make_ycbcr_components(Y, Cb, Cr, frame_width, frame_height,
                                             frame_width, frame_height, bit_depth)
     elif sampling and "4:2:0" in sampling:
@@ -1411,14 +1415,15 @@ def fix_coded_video_flow(
         _PROFILE_TO_SAMPLING: dict[str, list[str]] = {
             JxsvProfileMain420_12.s: [SamplingYCbCr_420.s],
             JxsvProfileHigh420_12.s: [SamplingYCbCr_420.s],
-            JxsvProfileMain444_12.s: [SamplingYCbCr_444.s, SamplingYCbCr_422.s, SamplingYCbCr_420.s],
-            JxsvProfileHigh444_12.s: [SamplingYCbCr_444.s, SamplingYCbCr_422.s, SamplingYCbCr_420.s],
-            JxsvProfileTDC444_12.s: [SamplingYCbCr_444.s, SamplingYCbCr_422.s, SamplingYCbCr_420.s],
+            JxsvProfileMain444_12.s: [SamplingYCbCr_444.s, SamplingYCbCr_422.s, SamplingRGB.s],
+            JxsvProfileHigh444_12.s: [SamplingYCbCr_444.s, SamplingYCbCr_422.s, SamplingRGB.s],
+            JxsvProfileTDC444_12.s: [SamplingYCbCr_444.s, SamplingYCbCr_422.s, SamplingYCbCr_420.s, SamplingRGB.s],
         }
         _SAMPLING_TO_PROFILE: dict[str, list[str]] = {
             SamplingYCbCr_420.s: [JxsvProfileHigh420_12.s, JxsvProfileMain420_12.s, JxsvProfileTDC444_12.s],
             SamplingYCbCr_422.s: [JxsvProfileHigh444_12.s, JxsvProfileMain444_12.s, JxsvProfileTDC444_12.s],
             SamplingYCbCr_444.s: [JxsvProfileHigh444_12.s, JxsvProfileMain444_12.s, JxsvProfileTDC444_12.s],
+            SamplingRGB.s: [JxsvProfileHigh444_12.s, JxsvProfileMain444_12.s, JxsvProfileTDC444_12.s],
         }
         try_levels = [JxsvLevel4k1.s, JxsvLevel4k2.s, JxsvLevel4k3.s]
 

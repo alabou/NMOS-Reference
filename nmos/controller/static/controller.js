@@ -1123,14 +1123,14 @@
     return m ? m[1] : null;
   }
 
-  // Move the green flow-match highlight on a capabilities page: the CS
-  // whose index equals ``fm.matched_cs_index`` (for this resource id)
-  // gets ``.flow-match`` on its label cell; every other CS row of the
-  // same resource has it cleared. ``matched_cs_index === null`` clears
-  // all rows (the flow matches no declared CS).
+  // Move the green flow-match highlight on a capabilities page. ``fm`` is
+  // {matched_cs_indices: [int,...]} — the CS to green (most-specific per
+  // part: a muxed stream greens its trunk AND each sub-layer at once). Each
+  // CS row of this resource whose index is in the set gets ``.flow-match``
+  // on its label cell; the rest are cleared. Empty set clears all.
   controller.applyFlowMatch = (resourceId, fm) => {
     if (!resourceId || !fm) return;
-    const matched = fm.matched_cs_index;
+    const matched = (fm.matched_cs_indices || []).map(String);
     document.querySelectorAll(
       `.caps-row[data-caps-row^="${resourceId}-"]`,
     ).forEach(row => {
@@ -1141,8 +1141,7 @@
       if (!label) return;
       const attr = row.getAttribute("data-caps-row");
       const idx = attr.slice(resourceId.length + 1);
-      const isMatch = (matched !== null && String(matched) === idx);
-      label.classList.toggle("flow-match", isMatch);
+      label.classList.toggle("flow-match", matched.includes(idx));
     });
   };
 
@@ -1159,19 +1158,25 @@
   }
 
   // Configuration page: green the multi-value option / single value / range
-  // annotation that equals the flow's CURRENT value, per URN. ``values`` is
-  // {urn: canonical-key} from the SSE flow_match payload. Independent of the
+  // annotation that equals the flow's CURRENT value, per URN. ``valuesByPart``
+  // is {part_key: {urn: canonical-key}} from the SSE payload — each element
+  // carries its CS's ``data-cs-part`` so a muxed sub-layer widget compares
+  // against ITS sub-flow's values, not the trunk's. Independent of the
   // CS-name green (applyFlowMatch) and of the operator's own selection.
-  controller.applyFlowValues = (resourceId, values) => {
-    if (!resourceId || !values) return;
+  controller.applyFlowValues = (resourceId, valuesByPart) => {
+    if (!resourceId || !valuesByPart) return;
+    const want = (el) => {
+      const vals = valuesByPart[el.getAttribute("data-cs-part") || "trunk"];
+      return vals ? vals[el.getAttribute("data-param-urn")] : undefined;
+    };
     // Multi-value <select multiple>: flag the matching <option>.
     document.querySelectorAll(
       `select[data-sender-id="${resourceId}"][data-param-urn]`,
     ).forEach(sel => {
-      const want = values[sel.getAttribute("data-param-urn")];
+      const w = want(sel);
       sel.querySelectorAll("option[data-flow-key]").forEach(opt => {
         opt.classList.toggle(
-          "flow-match", want != null && opt.getAttribute("data-flow-key") === want,
+          "flow-match", w != null && opt.getAttribute("data-flow-key") === w,
         );
       });
     });
@@ -1179,19 +1184,19 @@
     document.querySelectorAll(
       `.param-single[data-sender-id="${resourceId}"][data-param-urn]`,
     ).forEach(inp => {
-      const want = values[inp.getAttribute("data-param-urn")];
+      const w = want(inp);
       inp.classList.toggle(
-        "flow-match", want != null && inp.getAttribute("data-flow-key") === want,
+        "flow-match", w != null && inp.getAttribute("data-flow-key") === w,
       );
     });
     // Range widget: no discrete option — update the current-value annotation.
     document.querySelectorAll(
       `.param-flow-value[data-sender-id="${resourceId}"][data-param-urn]`,
     ).forEach(ann => {
-      const want = values[ann.getAttribute("data-param-urn")];
-      if (want == null) { ann.classList.add("d-none"); return; }
-      ann.setAttribute("data-flow-key", want);
-      ann.textContent = "current: " + _flowKeyDisplay(want);
+      const w = want(ann);
+      if (w == null) { ann.classList.add("d-none"); return; }
+      ann.setAttribute("data-flow-key", w);
+      ann.textContent = "current: " + _flowKeyDisplay(w);
       ann.classList.remove("d-none");
     });
   };
@@ -1267,8 +1272,8 @@
         // Present only on flow-change frames; absent on status-only frames.
         if (data.flow_match) {
           controller.applyFlowMatch(data.id, data.flow_match);
-          if (data.flow_match.matched_values) {
-            controller.applyFlowValues(data.id, data.flow_match.matched_values);
+          if (data.flow_match.values_by_part) {
+            controller.applyFlowValues(data.id, data.flow_match.values_by_part);
           }
         }
         _reconcileConfigureToggles();
