@@ -227,7 +227,7 @@
                     <span class="caps-toggle">▾</span>
                     <code>#{{ cs.index }}</code>
                   </td>
-                  <td>{{ cs.label }}</td>
+                  <td class="cs-label{% if cs.flow_match %} flow-match{% endif %}">{{ cs.label }}</td>
                   <td class="caps-summary">{{ cs.media_type or '—' }}</td>
                   <td>{{ cs.meta_format or '—' }}</td>
                   <td>{{ cs.meta_layer if cs.meta_layer != '' else '—' }}</td>
@@ -285,6 +285,8 @@
                                        numbers stay numbers, etc. #}
                                     {% for opt in w.options %}
                                       <option value="{{ opt.value }}"
+                                              data-flow-key="{{ opt.key }}"
+                                              {% if opt.flow_match %}class="flow-match"{% endif %}
                                               {% if opt.display in w.selected %}selected{% endif %}>{{ opt.display }}</option>
                                     {% endfor %}
                                   </select>
@@ -308,6 +310,12 @@
                                            readonly>
                                   </div>
                                   <small class="text-muted">{{ w.min }} … {{ w.max }}</small>
+                                  {# A slider can't 'select' a discrete value, so show the
+                                     flow's CURRENT value as a green annotation instead. #}
+                                  <small class="param-flow-value ml-2{% if not w.flow_value %} d-none{% endif %}"
+                                         data-sender-id="{{ sender.id }}"
+                                         data-param-urn="{{ p.urn }}"
+                                         data-flow-key="{{ w.flow_value_key or '' }}">{% if w.flow_value %}current: {{ w.flow_value }}{% endif %}</small>
                                 {% elif w.kind == 'single' %}
                                   {# Single-value cap: uneditable, but it
                                      carries ``data-param-urn`` + the JSON
@@ -316,10 +324,11 @@
                                      tells the JS whether to rebuild an
                                      ``enum`` or a ``minimum/maximum`` pin. #}
                                   <input type="text"
-                                         class="form-control form-control-sm param-input param-single"
+                                         class="form-control form-control-sm param-input param-single{% if w.flow_match %} flow-match{% endif %}"
                                          value="{{ w.display }}"
                                          data-sender-id="{{ sender.id }}"
                                          data-param-urn="{{ p.urn }}"
+                                         data-flow-key="{{ w.key or '' }}"
                                          data-single-shape="{{ w.shape }}"
                                          data-single-value="{{ w.value }}"
                                          {% if w.disabled %}disabled{% endif %}

@@ -48,7 +48,6 @@ def _predicate_NFlowAudioRaw(data: dict[str, Any]) -> bool:
         "audio/L16",
         "audio/L20",
         "audio/L24",
-        "audio/AM824",
     }:
         return False
     return True
@@ -62,7 +61,6 @@ def _predicate_NFlowAudioCoded(data: dict[str, Any]) -> bool:
         "audio/L16",
         "audio/L20",
         "audio/L24",
-        "audio/AM824",
     }:
         return False
     if "media_type" not in data:

@@ -27,7 +27,7 @@ from nmos.controller.auth import (
     issue_session_token,
     verify_session_token,
 )
-from nmos.controller.cache import ResourceCache
+from nmos.controller.cache import ResourceCache, StatusChanged
 from nmos.controller.grouping import GROUP_HINT_TAG
 from nmos.node import Node
 
@@ -4129,3 +4129,537 @@ class TestSingleValueWidget:
         # value must JSON-decode to a real bool, not the string "True",
         # so IS-11 receives a boolean enum.
         assert json.loads(w["value"]) is True
+
+
+# Valid UUIDs (the flow/source JSON is decoded through the resource-id
+# validator, unlike the plain cache dicts above).
+_FM_SENDER_ID = "5e000000-0000-4000-8000-000000000001"
+_FM_FLOW_ID = "5e000000-0000-4000-8000-000000000002"
+_FM_SOURCE_ID = "5e000000-0000-4000-8000-000000000003"
+_FM_DEVICE_ID = "5e000000-0000-4000-8000-000000000004"
+
+
+def _fm_audio_source(channels: int = 2) -> dict[str, Any]:
+    return {
+        "id": _FM_SOURCE_ID,
+        "version": "0:0",
+        "label": "fm-src",
+        "description": "",
+        "tags": {},
+        "device_id": _FM_DEVICE_ID,
+        "parents": [],
+        "caps": {},
+        "format": "urn:x-nmos:format:audio",
+        "clock_name": "clk0",
+        "urn:x-matrox:synchronous_media": True,
+        "channels": [
+            {"label": f"c{i}", "symbol": "L"} for i in range(channels)
+        ],
+    }
+
+
+def _fm_am824_flow() -> dict[str, Any]:
+    return {
+        "id": _FM_FLOW_ID,
+        "version": "0:0",
+        "label": "fm-flow",
+        "description": "",
+        "tags": {},
+        "source_id": _FM_SOURCE_ID,
+        "device_id": _FM_DEVICE_ID,
+        "parents": [],
+        "format": "urn:x-nmos:format:audio",
+        "media_type": "audio/AM824",
+        "sample_rate": {"numerator": 48000, "denominator": 1},
+        "grain_rate": {"numerator": 48000, "denominator": 1},
+    }
+
+
+def _fm_caps() -> dict[str, Any]:
+    """Two part-less audio CS: a 2-channel Native AM824 (matches the
+    stereo flow) and a 4-channel-only CS (does not)."""
+    return {
+        "constraint_sets": [
+            {
+                "urn:x-nmos:cap:meta:label": "Native AM824",
+                "urn:x-nmos:cap:meta:preference": 100,
+                "urn:x-nmos:cap:format:media_type": {"enum": ["audio/AM824"]},
+                "urn:x-nmos:cap:format:channel_count": {"enum": [2]},
+            },
+            {
+                "urn:x-nmos:cap:meta:label": "Quad Only",
+                "urn:x-nmos:cap:meta:preference": 0,
+                "urn:x-nmos:cap:format:media_type": {"enum": ["audio/AM824"]},
+                "urn:x-nmos:cap:format:channel_count": {"enum": [4]},
+            },
+        ]
+    }
+
+
+def _fm_sender(caps: dict[str, Any] | None) -> dict[str, Any]:
+    s = _make_sender(
+        _FM_SENDER_ID, "dev1", hint="RTP 5:AUDIO 0",
+        format="urn:x-nmos:format:audio",
+    )
+    s["flow_id"] = _FM_FLOW_ID
+    if caps is not None:
+        s["caps"] = caps
+    return s
+
+
+class TestFlowMatchGreen:
+    """Phase 1: the capabilities page green-fonts the single most-specific
+    constraint set the resource's current flow sits inside, and the cache
+    fires a flow-match event when the bound flow changes."""
+
+    @pytest.mark.asyncio
+    async def test_senders_caps_greens_matching_cs(
+        self, controller_client: TestClient,
+    ) -> None:
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        await cache.upsert("source", _fm_audio_source(channels=2))
+        await cache.upsert("flow", _fm_am824_flow())
+        await cache.upsert("sender", _fm_sender(_fm_caps()))
+
+        resp = await controller_client.get(
+            f"{PREFIX}/senders/caps?sender_ids={_FM_SENDER_ID}",
+        )
+        assert resp.status == 200
+        text = await resp.text()
+        # The stereo flow matches the 2-channel Native AM824 CS (green),
+        # not the 4-channel-only one.
+        assert 'flow-match">Native AM824' in text
+        assert 'flow-match">Quad Only' not in text
+
+    @pytest.mark.asyncio
+    async def test_senders_caps_no_green_when_flow_matches_nothing(
+        self, controller_client: TestClient,
+    ) -> None:
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        # An 8-channel source matches neither the 2- nor 4-channel CS.
+        await cache.upsert("source", _fm_audio_source(channels=8))
+        await cache.upsert("flow", _fm_am824_flow())
+        await cache.upsert("sender", _fm_sender(_fm_caps()))
+
+        resp = await controller_client.get(
+            f"{PREFIX}/senders/caps?sender_ids={_FM_SENDER_ID}",
+        )
+        assert resp.status == 200
+        text = await resp.text()
+        # Check the applied CSS class, not the bare word (the page's
+        # inline script comment legitimately mentions "flow-match").
+        assert "cs-label flow-match" not in text
+
+    @pytest.mark.asyncio
+    async def test_flow_upsert_fires_flow_match_event_for_bound_sender(
+        self, controller_client: TestClient,
+    ) -> None:
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        await cache.upsert("source", _fm_audio_source(channels=2))
+        await cache.upsert("sender", _fm_sender(_fm_caps()))
+
+        events: list[StatusChanged] = []
+        cache.add_status_listener(events.append)
+        try:
+            await cache.upsert("flow", _fm_am824_flow())
+        finally:
+            cache.remove_status_listener(events.append)
+
+        fm_events = [
+            e for e in events
+            if e.resource_id == _FM_SENDER_ID and e.flow_match is not None
+        ]
+        assert len(fm_events) == 1
+        assert fm_events[0].kind == "sender"
+        assert fm_events[0].flow_match["matched_cs_index"] == 0
+        # The reader exposes the last cached match.
+        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_index"] == 0
+
+    @pytest.mark.asyncio
+    async def test_flow_upsert_for_unbound_flow_fires_no_flow_match(
+        self, controller_client: TestClient,
+    ) -> None:
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        await cache.upsert("source", _fm_audio_source(channels=2))
+        # No sender references this flow.
+
+        events: list[StatusChanged] = []
+        cache.add_status_listener(events.append)
+        try:
+            await cache.upsert("flow", _fm_am824_flow())
+        finally:
+            cache.remove_status_listener(events.append)
+
+        assert not [e for e in events if e.flow_match is not None]
+
+    @pytest.mark.asyncio
+    async def test_constraint_repoints_sender_to_new_flow_id(
+        self, controller_client: TestClient,
+    ) -> None:
+        """A constraint change publishes a NEW flow (new id) and repoints
+        the sender's ``flow_id``. The match must recompute off the STABLE
+        sender id when the sender update arrives — not rely on the flow id
+        staying constant."""
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        flow_b_id = "5e000000-0000-4000-8000-00000000000b"
+        caps = {
+            "constraint_sets": [
+                {
+                    "urn:x-nmos:cap:meta:label": "AM824",
+                    "urn:x-nmos:cap:meta:preference": 100,
+                    "urn:x-nmos:cap:format:media_type": {"enum": ["audio/AM824"]},
+                    "urn:x-nmos:cap:format:channel_count": {"enum": [2]},
+                },
+                {
+                    "urn:x-nmos:cap:meta:label": "L24",
+                    "urn:x-nmos:cap:meta:preference": 100,
+                    "urn:x-nmos:cap:format:media_type": {"enum": ["audio/L24"]},
+                    "urn:x-nmos:cap:format:channel_count": {"enum": [2]},
+                },
+            ]
+        }
+        await cache.upsert("source", _fm_audio_source(channels=2))
+        await cache.upsert("flow", _fm_am824_flow())   # flow A = AM824
+        await cache.upsert("sender", _fm_sender(caps))  # flow_id = A
+        # Initially the AM824 flow matches CS index 0.
+        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_index"] == 0
+
+        # Node constrains to L24: a brand-new flow id, media_type L24,
+        # and the sender repointed to it.
+        flow_b = _fm_am824_flow()
+        flow_b["id"] = flow_b_id
+        flow_b["media_type"] = "audio/L24"
+        flow_b["bit_depth"] = 24
+        await cache.upsert("flow", flow_b)
+
+        events: list[StatusChanged] = []
+        cache.add_status_listener(events.append)
+        try:
+            sender_b = _fm_sender(caps)
+            sender_b["flow_id"] = flow_b_id
+            await cache.upsert("sender", sender_b)
+        finally:
+            cache.remove_status_listener(events.append)
+
+        # The sender update (carrying the new flow_id) must drive the
+        # recompute → now matches the L24 CS (index 1).
+        fm = [
+            e for e in events
+            if e.resource_id == _FM_SENDER_ID and e.flow_match is not None
+        ]
+        assert len(fm) == 1
+        assert fm[0].flow_match["matched_cs_index"] == 1
+        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_index"] == 1
+
+    @pytest.mark.asyncio
+    async def test_receiver_narrowed_index_differs_from_sender_index(
+        self, controller_client: TestClient,
+    ) -> None:
+        """Receiver caps pages show the sender∩receiver NARROWED CS list
+        (re-indexed). The live match must be computed against that narrowed
+        list — its index can differ from the sender's full-caps index."""
+        from nmos.controller.flow_match import (
+            flow_match_index_for_sender,
+            narrowed_constraint_sets_for_pair,
+        )
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        rid = "5e000000-0000-4000-8000-0000000000c1"
+        # Sender: AM824 (idx 0) + L24 (idx 1), 2ch each.
+        caps = {
+            "constraint_sets": [
+                {
+                    "urn:x-nmos:cap:meta:label": "AM824",
+                    "urn:x-nmos:cap:meta:preference": 100,
+                    "urn:x-nmos:cap:format:media_type": {"enum": ["audio/AM824"]},
+                    "urn:x-nmos:cap:format:channel_count": {"enum": [2]},
+                },
+                {
+                    "urn:x-nmos:cap:meta:label": "L24",
+                    "urn:x-nmos:cap:meta:preference": 100,
+                    "urn:x-nmos:cap:format:media_type": {"enum": ["audio/L24"]},
+                    "urn:x-nmos:cap:format:channel_count": {"enum": [2]},
+                },
+            ]
+        }
+        flow = _fm_am824_flow()
+        flow["media_type"] = "audio/L24"
+        flow["bit_depth"] = 24
+        await cache.upsert("source", _fm_audio_source(channels=2))
+        await cache.upsert("flow", flow)
+        await cache.upsert("sender", _fm_sender(caps))
+
+        # Receiver supports ONLY L24 → narrowing drops AM824, leaving L24
+        # at narrowed index 0.
+        receiver = _make_receiver(
+            rid, "dev1", format="urn:x-nmos:format:audio",
+        )
+        receiver["caps"] = {
+            "constraint_sets": [
+                {
+                    "urn:x-nmos:cap:meta:label": "R-L24",
+                    "urn:x-nmos:cap:meta:preference": 100,
+                    "urn:x-nmos:cap:format:media_type": {"enum": ["audio/L24"]},
+                    "urn:x-nmos:cap:format:channel_count": {"enum": [2]},
+                }
+            ]
+        }
+        await cache.upsert("receiver", receiver)
+
+        # Sender's own full-caps match → L24 at index 1.
+        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_index"] == 1
+
+        # The receiver-narrowed set is just [L24] (AM824 dropped).
+        narrowed = narrowed_constraint_sets_for_pair(cache, _FM_SENDER_ID, rid)
+        assert narrowed is not None and len(narrowed) == 1
+
+        # Receiver-scoped match → index 0 (NOT the sender's 1). This is the
+        # index the receiver caps page rows carry, so the live green lands
+        # on the right row.
+        assert flow_match_index_for_sender(cache, _FM_SENDER_ID, narrowed) == 0
+
+    @pytest.mark.asyncio
+    async def test_in_place_flow_mutation_recomputes(
+        self, controller_client: TestClient,
+    ) -> None:
+        """Some nodes mutate a flow IN PLACE (same id, new content) instead
+        of publishing a new flow id. The match must still recompute when
+        that flow upsert arrives."""
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        caps = {
+            "constraint_sets": [
+                {
+                    "urn:x-nmos:cap:meta:label": "AM824",
+                    "urn:x-nmos:cap:meta:preference": 100,
+                    "urn:x-nmos:cap:format:media_type": {"enum": ["audio/AM824"]},
+                    "urn:x-nmos:cap:format:channel_count": {"enum": [2]},
+                },
+                {
+                    "urn:x-nmos:cap:meta:label": "L24",
+                    "urn:x-nmos:cap:meta:preference": 100,
+                    "urn:x-nmos:cap:format:media_type": {"enum": ["audio/L24"]},
+                    "urn:x-nmos:cap:format:channel_count": {"enum": [2]},
+                },
+            ]
+        }
+        await cache.upsert("source", _fm_audio_source(channels=2))
+        await cache.upsert("flow", _fm_am824_flow())          # AM824 → idx 0
+        await cache.upsert("sender", _fm_sender(caps))
+        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_index"] == 0
+
+        # Same flow id, mutated content (now L24) + bumped version.
+        mutated = _fm_am824_flow()
+        mutated["media_type"] = "audio/L24"
+        mutated["bit_depth"] = 24
+        mutated["version"] = "1:0"
+
+        events: list[StatusChanged] = []
+        cache.add_status_listener(events.append)
+        try:
+            await cache.upsert("flow", mutated)
+        finally:
+            cache.remove_status_listener(events.append)
+
+        fm = [
+            e for e in events
+            if e.resource_id == _FM_SENDER_ID and e.flow_match is not None
+        ]
+        assert len(fm) >= 1
+        assert fm[-1].flow_match["matched_cs_index"] == 1
+        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_index"] == 1
+
+    @pytest.mark.asyncio
+    async def test_in_place_source_mutation_forces_event(
+        self, controller_client: TestClient,
+    ) -> None:
+        """A Source mutated in place (e.g. channel_count) must fire a
+        flow-match event for affected senders EVEN IF the sender's own
+        full-caps matched index is unchanged — so receiver caps pages
+        (narrowed CS) re-evaluate. Single CS [2,4]ch: 2→4ch keeps the
+        sender match at index 0, but the event must still fire (force)."""
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        caps = {
+            "constraint_sets": [
+                {
+                    "urn:x-nmos:cap:meta:label": "AM824 2/4ch",
+                    "urn:x-nmos:cap:meta:preference": 100,
+                    "urn:x-nmos:cap:format:media_type": {"enum": ["audio/AM824"]},
+                    "urn:x-nmos:cap:format:channel_count": {"enum": [2, 4]},
+                },
+            ]
+        }
+        src2 = _fm_audio_source(channels=2)
+        await cache.upsert("source", src2)
+        await cache.upsert("flow", _fm_am824_flow())
+        await cache.upsert("sender", _fm_sender(caps))
+        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_index"] == 0
+
+        # In-place source mutation: 2 → 4 channels, bumped version. The
+        # sender's full-caps match stays index 0 (4 ∈ [2,4]).
+        src4 = _fm_audio_source(channels=4)
+        src4["version"] = "1:0"
+
+        events: list[StatusChanged] = []
+        cache.add_status_listener(events.append)
+        try:
+            await cache.upsert("source", src4)
+        finally:
+            cache.remove_status_listener(events.append)
+
+        # Even though the matched index is unchanged (0), the content
+        # change forces an event so narrowed/receiver views re-evaluate.
+        fm = [
+            e for e in events
+            if e.resource_id == _FM_SENDER_ID and e.flow_match is not None
+        ]
+        assert len(fm) >= 1
+        assert fm[-1].flow_match["matched_cs_index"] == 0
+
+    @pytest.mark.asyncio
+    async def test_flow_repoints_to_a_different_source(
+        self, controller_client: TestClient,
+    ) -> None:
+        """The SOURCE associated with a flow may change (flow.source_id
+        repoints to a different source). It arrives as a flow content
+        change; the recompute re-resolves the NEW source, so audio
+        channel_count tracks it."""
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        src_b_id = "5e000000-0000-4000-8000-0000000000b5"
+        caps = {
+            "constraint_sets": [
+                {
+                    "urn:x-nmos:cap:meta:label": "AM824 2ch",
+                    "urn:x-nmos:cap:meta:preference": 100,
+                    "urn:x-nmos:cap:format:media_type": {"enum": ["audio/AM824"]},
+                    "urn:x-nmos:cap:format:channel_count": {"enum": [2]},
+                },
+                {
+                    "urn:x-nmos:cap:meta:label": "AM824 8ch",
+                    "urn:x-nmos:cap:meta:preference": 100,
+                    "urn:x-nmos:cap:format:media_type": {"enum": ["audio/AM824"]},
+                    "urn:x-nmos:cap:format:channel_count": {"enum": [8]},
+                },
+            ]
+        }
+        # Source A = 2 channels (the flow's initial source).
+        await cache.upsert("source", _fm_audio_source(channels=2))
+        # Source B = 8 channels, a DIFFERENT source id.
+        src_b = _fm_audio_source(channels=8)
+        src_b["id"] = src_b_id
+        await cache.upsert("source", src_b)
+        await cache.upsert("flow", _fm_am824_flow())          # → source A, 2ch
+        await cache.upsert("sender", _fm_sender(caps))
+        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_index"] == 0
+
+        # Flow repoints to source B (same flow id, new source_id + version).
+        flow_b_src = _fm_am824_flow()
+        flow_b_src["source_id"] = src_b_id
+        flow_b_src["version"] = "1:0"
+
+        events: list[StatusChanged] = []
+        cache.add_status_listener(events.append)
+        try:
+            await cache.upsert("flow", flow_b_src)
+        finally:
+            cache.remove_status_listener(events.append)
+
+        # Re-resolved against source B (8ch) → now matches the 8ch CS.
+        fm = [
+            e for e in events
+            if e.resource_id == _FM_SENDER_ID and e.flow_match is not None
+        ]
+        assert len(fm) >= 1
+        assert fm[-1].flow_match["matched_cs_index"] == 1
+        assert cache.get_flow_match(_FM_SENDER_ID)["matched_cs_index"] == 1
+
+    @pytest.mark.asyncio
+    async def test_configure_view_greens_flow_option_and_cs(
+        self, controller_client: TestClient,
+    ) -> None:
+        """Phase 2: _build_configure_view stamps the CS-name flow_match and,
+        per multi-value param, marks the option equal to the flow's current
+        value (independent of which options are 'selected')."""
+        from nmos.controller.handlers import _build_configure_view
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        caps = {
+            "constraint_sets": [
+                {
+                    "urn:x-nmos:cap:meta:label": "AM824",
+                    "urn:x-nmos:cap:meta:preference": 100,
+                    "urn:x-nmos:cap:format:media_type": {"enum": ["audio/AM824"]},
+                    "urn:x-nmos:cap:format:channel_count": {"enum": [2, 4, 8]},
+                },
+            ]
+        }
+        await cache.upsert("source", _fm_audio_source(channels=2))
+        await cache.upsert("flow", _fm_am824_flow())
+        await cache.upsert("sender", _fm_sender(caps))
+
+        view = _build_configure_view(
+            cache, [cache.get_sender(_FM_SENDER_ID)],
+            {_FM_SENDER_ID: 0},
+            {"by_format": "", "by_layer": "", "by_compatibility": ""},
+        )
+        cs = view["senders"][0]["constraint_set"]
+        # Chosen CS (index 0) IS the matched CS → CS name green.
+        assert cs["flow_match"] is True
+
+        params = {p["urn"]: p for p in cs["params"]}
+        cc = params["urn:x-nmos:cap:format:channel_count"]["widget"]
+        assert cc["kind"] == "multiselect"
+        by_val = {o["value"]: o for o in cc["options"]}
+        # Flow has 2 channels → the "2" option is green, 4 and 8 are not.
+        assert by_val["2"]["flow_match"] is True
+        assert by_val["4"]["flow_match"] is False
+        assert by_val["8"]["flow_match"] is False
+        # Single-value media_type matches the flow → green.
+        mt = params["urn:x-nmos:cap:format:media_type"]["widget"]
+        assert mt["kind"] == "single"
+        assert mt["flow_match"] is True
+
+    @pytest.mark.asyncio
+    async def test_configure_view_cs_not_green_when_not_matched(
+        self, controller_client: TestClient,
+    ) -> None:
+        """If the operator selected a CS that is NOT the most-specific match,
+        the CS name is not green — but a multi-value option equal to the flow
+        is still greened."""
+        from nmos.controller.handlers import _build_configure_view
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        caps = {
+            "constraint_sets": [
+                {   # index 0 = native, the most-specific match
+                    "urn:x-nmos:cap:meta:label": "Native AM824",
+                    "urn:x-nmos:cap:meta:preference": 100,
+                    "urn:x-nmos:cap:format:media_type": {"enum": ["audio/AM824"]},
+                    "urn:x-nmos:cap:format:channel_count": {"enum": [2]},
+                },
+                {   # index 1 = broader; operator picks this one
+                    "urn:x-nmos:cap:meta:label": "AM824 multi",
+                    "urn:x-nmos:cap:meta:preference": 1,
+                    "urn:x-nmos:cap:format:media_type": {"enum": ["audio/AM824"]},
+                    "urn:x-nmos:cap:format:channel_count": {"enum": [2, 4, 8]},
+                },
+            ]
+        }
+        await cache.upsert("source", _fm_audio_source(channels=2))
+        await cache.upsert("flow", _fm_am824_flow())
+        await cache.upsert("sender", _fm_sender(caps))
+
+        # Operator selected CS index 1, but the flow's most-specific match is 0.
+        view = _build_configure_view(
+            cache, [cache.get_sender(_FM_SENDER_ID)],
+            {_FM_SENDER_ID: 1},
+            {"by_format": "", "by_layer": "", "by_compatibility": ""},
+        )
+        cs = view["senders"][0]["constraint_set"]
+        assert cs["index"] == 1
+        assert cs["flow_match"] is False    # selected CS is not the match
+        cc = {
+            o["value"]: o
+            for o in {p["urn"]: p for p in cs["params"]}[
+                "urn:x-nmos:cap:format:channel_count"
+            ]["widget"]["options"]
+        }
+        # …but the option equal to the flow (2ch) is still green.
+        assert cc["2"]["flow_match"] is True
+        assert cc["4"]["flow_match"] is False

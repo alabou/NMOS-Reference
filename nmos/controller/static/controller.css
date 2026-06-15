@@ -308,6 +308,18 @@ code {
 .caps-table .caps-row.is-expanded + .caps-details-row {
   background: #f8f9fa;
 }
+/* Green-font for "this matches the resource's current flow" — used on:
+   the CS-label cell (capabilities + configuration pages), a matching
+   multi-value <option>, a matching single-value input, and the range
+   widget's current-value annotation. Toggled server-side via the
+   templates' flow_match flags and live via controller.js. */
+.cs-label.flow-match,
+option.flow-match,
+.param-single.flow-match,
+.param-flow-value {
+  color: #198754;
+  font-weight: 600;
+}
 
 /* Expanded details row — full parameter list.
  *

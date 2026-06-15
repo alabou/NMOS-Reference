@@ -313,6 +313,13 @@ def _build_video_coded_flow(
     if bitrate is not None:
         inner.Bitrate.value = int(bitrate)
 
+    # constant_bit_rate is a defining property of a coded video flow, so
+    # always publish it: take the config's value when present, else default
+    # to False (VBR). Without this the flow omits constant_bit_rate and the
+    # controller can't reflect it. Mirrors the audio coded builder below.
+    cbr = params.get(CapFormatConstantBitRate.s)
+    inner.ConstantBitrate.value = bool(cbr) if cbr is not None else False
+
     # Auto-select level if not explicitly set
     if not inner.Level.defined:
         from nmos.node.codec import (

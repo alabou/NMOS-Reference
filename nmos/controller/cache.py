@@ -35,7 +35,9 @@ scope in the plan.
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import logging
+import time as _time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Callable, Literal
 
@@ -49,6 +51,26 @@ from nmos.controller.grouping import (
 )
 
 log = logging.getLogger(__name__)
+
+# TEMP flow-match instrumentation — emits to the --debug-in-depth JSONL
+# log (the dedicated "nmos.controller.debug_trace" logger). No-op when
+# that logger has no handlers (debug tracing off), so production paths
+# are unaffected. Remove once the live flow-match update is confirmed.
+_dbg_logger = logging.getLogger("nmos.controller.debug_trace")
+
+
+def _dbg(kind: str, **fields: Any) -> None:
+    if not _dbg_logger.handlers:
+        return
+    try:
+        _dbg_logger.info(
+            _json.dumps(
+                {"t": round(_time.time(), 6), "kind": kind, **fields},
+                default=str,
+            )
+        )
+    except Exception:
+        pass
 
 
 ResourceKind = Literal["node", "device", "flow", "sender", "receiver", "source"]
@@ -277,11 +299,21 @@ def extract_status(
 
 @dataclass(frozen=True)
 class StatusChanged:
-    """Emitted by the cache whenever a sender / receiver's status changes."""
+    """Emitted by the cache whenever a sender / receiver's status changes.
+
+    ``flow_match`` is an OPTIONAL, additive payload carried on events that
+    were triggered by a flow change (the new ``flow`` branch of ``upsert``).
+    When present it is ``{"matched_cs_index": int | None}`` — the index of
+    the declared constraint set the resource's current flow now sits inside,
+    so the capabilities page can move the green highlight without a reload.
+    It defaults to ``None`` on every existing (status-only) construction, so
+    no existing emitter or consumer is affected.
+    """
 
     kind: ResourceKind
     resource_id: str
     status: dict[str, Any]
+    flow_match: dict[str, Any] | None = None
 
 
 StatusListener = Callable[[StatusChanged], None]
@@ -372,6 +404,10 @@ class ResourceCache:
         self._flows: dict[str, dict[str, Any]] = {}
         self._sources: dict[str, dict[str, Any]] = {}
         self._status: dict[str, dict[str, Any]] = {}  # id → status dict
+        # id → last computed flow-match payload ({"matched_cs_index": …}).
+        # Additive: populated only by the ``flow`` branch of ``upsert``;
+        # read by handlers as a fallback when rendering the caps page.
+        self._flow_match: dict[str, dict[str, Any]] = {}
         self._listeners: set[StatusListener] = set()
 
     # ------------------------------------------------------------------
@@ -409,6 +445,7 @@ class ResourceCache:
         events: list[StatusChanged] = []
         async with self._lock:
             store = self._store_for(kind)
+            prev = store.get(rid)
             store[rid] = resource
 
             if kind in ("sender", "receiver"):
@@ -417,11 +454,63 @@ class ResourceCache:
                 # sibling monitor Source.
                 mon = self._find_monitor_source_locked(rid)
                 new_status = extract_status(kind, resource, monitor_source=mon)
-                if self._status.get(rid) != new_status:
+                status_changed = self._status.get(rid) != new_status
+                if status_changed:
                     self._status[rid] = new_status
+
+                # Did the sender repoint to a different flow? On nodes that
+                # publish a new flow id per constraint this is the reliable
+                # "the flow changed" signal, and it fires even when the
+                # sender's own full-caps matched index is unchanged (the
+                # receiver caps page narrows the CS, so its match can move
+                # while the sender's does not — receiver SSE connections
+                # recompute against the narrowed set on this event). Nodes
+                # that mutate in place instead trigger the flow/source
+                # branches (with ``force`` on a content/version change).
+                flow_id_changed = (
+                    kind == "sender"
+                    and (prev or {}).get("flow_id") != resource.get("flow_id")
+                )
+
+                # Flow-match recompute, keyed on the STABLE sender id.
+                # Node implementations differ in how a constraint changes a
+                # stream: some publish a NEW flow (new id) and repoint the
+                # sender's ``flow_id`` (so the SENDER update carries the
+                # change); others mutate the flow/source in place under the
+                # same id (so a FLOW/SOURCE update carries it). The
+                # controller supports both by re-resolving the whole chain
+                # — sender → flow_id → flow → source_id → source — from the
+                # stable sender id on EACH of those upserts (this sender
+                # branch + the flow/source branches below). A sender's
+                # status may be unchanged across the change, so we fire on
+                # a status change OR a flow-match change.
+                fm_payload: dict[str, Any] | None = None
+                fm_changed = False
+                if kind == "sender":
+                    fm_payload, fm_changed = (
+                        self._recompute_sender_flow_match_locked(rid)
+                    )
+                    _dbg(
+                        "sender_upsert", sid=rid,
+                        flow_id=resource.get("flow_id"),
+                        matched_cs_index=(fm_payload or {}).get(
+                            "matched_cs_index"),
+                        fm_changed=fm_changed,
+                    )
+
+                # Attach flow_match when the match changed OR the flow id
+                # repointed (so receiver caps SSE connections recompute
+                # their narrowed index even if the sender's own index held).
+                fire_fm = bool(fm_changed or flow_id_changed)
+                if status_changed or fire_fm:
                     events.append(StatusChanged(
                         kind=kind, resource_id=rid, status=new_status,
+                        flow_match=fm_payload if fire_fm else None,
                     ))
+                if kind == "sender" and fire_fm:
+                    events.extend(
+                        self._receiver_flow_match_events_locked(rid, fm_payload)
+                    )
             elif kind == "source":
                 # Monitor Source upsert: if it claims to monitor a
                 # known sender/receiver, recompute THAT sibling's
@@ -446,9 +535,176 @@ class ResourceCache:
                                 resource_id=sibling_id,
                                 status=new_status,
                             ))
+                # A MEDIA source (channels, clock, …) feeds the flow-match
+                # for any sender whose CURRENT flow references it (audio
+                # channel_count is derived from the source). Re-resolve
+                # from each sender and recompute. ``force`` when the source
+                # CONTENT changed (in-place-mutating nodes) so receiver caps
+                # pages re-evaluate their narrowed match even if the
+                # sender's full-caps match is unchanged.
+                source_changed = (
+                    prev is None
+                    or (prev or {}).get("version") != resource.get("version")
+                )
+                events.extend(
+                    self._flow_match_events_for_source_locked(
+                        rid, force=source_changed,
+                    )
+                )
+            elif kind == "flow":
+                # A flow upsert affects the flow-match of every sender
+                # whose CURRENT ``flow_id`` points at it. Re-resolve from
+                # the sender (the stable id) and recompute. ``force`` when
+                # the flow CONTENT changed (in-place-mutating nodes; some
+                # nodes mutate a flow's properties under the same id rather
+                # than publishing a new flow id) so receiver caps pages
+                # re-evaluate their narrowed match. Wrapped so any failure
+                # is a silent no-op — never breaks the flow upsert.
+                flow_changed = (
+                    prev is None
+                    or (prev or {}).get("version") != resource.get("version")
+                )
+                _dbg(
+                    "flow_upsert", flow_id=rid,
+                    media_type=resource.get("media_type"),
+                    version=resource.get("version"), changed=flow_changed,
+                )
+                try:
+                    events.extend(
+                        self._flow_match_events_for_flow_locked(
+                            rid, force=flow_changed,
+                        )
+                    )
+                except Exception:
+                    log.exception("flow-match recompute failed")
+                    _dbg("flow_match_error", flow_id=rid)
 
         for ev in events:
             self._fire(ev)
+
+    def _recompute_sender_flow_match_locked(
+        self, sid: str,
+    ) -> tuple[dict[str, Any] | None, bool]:
+        """Recompute one sender's flow-match from its STABLE id.
+
+        Resolves the full chain freshly — ``sender → flow_id → flow →
+        source_id → source`` — and matches the current flow against the
+        sender's declared constraint sets. Caches the result under the
+        sender id and returns ``(payload, changed)`` where ``payload`` is
+        ``{"matched_cs_index": int | None}`` (or ``None`` when the sender
+        is unknown / has no caps), and ``changed`` is True when the
+        payload differs from the previously cached one.
+
+        Must be called with ``self._lock`` held.
+        """
+        from nmos.controller.flow_match import (
+            flow_match_for_sender, flow_value_keys,
+        )
+
+        sender = self._senders.get(sid)
+        if sender is None:
+            return None, False
+        caps = sender.get("caps")
+        constraint_sets = (
+            caps.get("constraint_sets") if isinstance(caps, dict) else None
+        )
+        if not constraint_sets:
+            return None, False
+
+        flow = self._flows.get(sender.get("flow_id", "") or "")
+        source = None
+        if isinstance(flow, dict):
+            source = self._sources.get(flow.get("source_id", "") or "")
+
+        match = flow_match_for_sender(flow, source, constraint_sets)
+        payload = {
+            "matched_cs_index": match.matched_cs_index,
+            # Canonical per-URN keys of the flow's current operating point
+            # — the configuration page greens the multi-value option whose
+            # value matches. Part of the payload so a value change that
+            # doesn't move the CS index still fires (configure page needs it).
+            "matched_values": flow_value_keys(match.matched_values),
+        }
+        changed = self._flow_match.get(sid) != payload
+        self._flow_match[sid] = payload
+        return payload, changed
+
+    def _receiver_flow_match_events_locked(
+        self, sender_id: str, payload: dict[str, Any] | None,
+    ) -> list[StatusChanged]:
+        """Mirror a sender's flow-match onto receivers currently
+        subscribed to it (best-effort — a receiver's caps list may be
+        narrowed/re-indexed, so live refresh of a receiver page is not
+        guaranteed pixel-exact). Must hold ``self._lock``."""
+        if payload is None:
+            return []
+        out: list[StatusChanged] = []
+        for rid_r, recv in self._receivers.items():
+            sub = recv.get("subscription") or {}
+            if sub.get("sender_id") != sender_id:
+                continue
+            self._flow_match[rid_r] = payload
+            out.append(StatusChanged(
+                kind="receiver", resource_id=rid_r,
+                status=self._status.get(rid_r, {}), flow_match=payload,
+            ))
+        return out
+
+    def _flow_match_events_for_flow_locked(
+        self, flow_id: str, *, force: bool = False,
+    ) -> list[StatusChanged]:
+        """Recompute + emit flow-match events for every sender whose
+        CURRENT ``flow_id`` equals ``flow_id``. Must hold ``self._lock``.
+
+        ``force`` fires even when a sender's OWN (full-caps) matched index
+        is unchanged — needed for nodes that **mutate a flow in place** (same
+        id, new content): a receiver caps page narrows the CS, so its match
+        can move while the sender's full-caps match holds. Receiver SSE
+        connections recompute their narrowed index on this event.
+        """
+        events: list[StatusChanged] = []
+        emitted = 0
+        for sid, sender in self._senders.items():
+            if sender.get("flow_id") != flow_id:
+                continue
+            payload, changed = self._recompute_sender_flow_match_locked(sid)
+            if (changed or force) and payload is not None:
+                events.append(StatusChanged(
+                    kind="sender", resource_id=sid,
+                    status=self._status.get(sid, {}), flow_match=payload,
+                ))
+                events.extend(
+                    self._receiver_flow_match_events_locked(sid, payload)
+                )
+                emitted += 1
+        _dbg("flow_match_events", flow_id=flow_id, senders_changed=emitted,
+             total=len(events), force=force)
+        return events
+
+    def _flow_match_events_for_source_locked(
+        self, source_id: str, *, force: bool = False,
+    ) -> list[StatusChanged]:
+        """Recompute + emit flow-match events for every sender whose
+        CURRENT flow references ``source_id``. Must hold ``self._lock``.
+        ``force`` as in ``_flow_match_events_for_flow_locked`` — needed for
+        nodes that mutate a Source in place (e.g. channel_count change)."""
+        events: list[StatusChanged] = []
+        for sid, sender in self._senders.items():
+            flow = self._flows.get(sender.get("flow_id", "") or "")
+            if not isinstance(flow, dict):
+                continue
+            if flow.get("source_id") != source_id:
+                continue
+            payload, changed = self._recompute_sender_flow_match_locked(sid)
+            if (changed or force) and payload is not None:
+                events.append(StatusChanged(
+                    kind="sender", resource_id=sid,
+                    status=self._status.get(sid, {}), flow_match=payload,
+                ))
+                events.extend(
+                    self._receiver_flow_match_events_locked(sid, payload)
+                )
+        return events
 
     async def remove(self, kind: ResourceKind, resource_id: str) -> None:
         """Remove a resource. When a monitor Source is removed, the
@@ -634,6 +890,21 @@ class ResourceCache:
 
     def get_flow(self, flow_id: str) -> dict[str, Any] | None:
         return self._flows.get(flow_id)
+
+    def get_source(self, source_id: str) -> dict[str, Any] | None:
+        """Return a Source resource by id, or ``None``.
+
+        Needed by the flow-match path: audio ``channel_count`` is derived
+        from the source's ``channels``, not from the flow itself.
+        """
+        return self._sources.get(source_id or "")
+
+    def get_flow_match(self, resource_id: str) -> dict[str, Any] | None:
+        """Return the last cached flow-match payload for a sender/receiver
+        id (``{"matched_cs_index": …}``), or ``None`` if none computed yet.
+        Populated by the ``flow`` branch of ``upsert``.
+        """
+        return self._flow_match.get(resource_id)
 
     def get_status(self, resource_id: str) -> dict[str, Any]:
         return dict(self._status.get(resource_id, {}))

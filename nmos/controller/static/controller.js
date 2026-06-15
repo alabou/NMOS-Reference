@@ -1114,6 +1114,88 @@
     cell.removeAttribute("title");
   }
 
+  // ``data-caps-row`` is ``"<resource-id>-<cs-index>"``. The resource id
+  // is a UUID (which contains hyphens), and the CS index is the trailing
+  // ``-<digits>`` — strip exactly that to recover the resource id.
+  function _capsRowResourceId(attr) {
+    if (!attr) return null;
+    const m = /^(.*)-\d+$/.exec(attr);
+    return m ? m[1] : null;
+  }
+
+  // Move the green flow-match highlight on a capabilities page: the CS
+  // whose index equals ``fm.matched_cs_index`` (for this resource id)
+  // gets ``.flow-match`` on its label cell; every other CS row of the
+  // same resource has it cleared. ``matched_cs_index === null`` clears
+  // all rows (the flow matches no declared CS).
+  controller.applyFlowMatch = (resourceId, fm) => {
+    if (!resourceId || !fm) return;
+    const matched = fm.matched_cs_index;
+    document.querySelectorAll(
+      `.caps-row[data-caps-row^="${resourceId}-"]`,
+    ).forEach(row => {
+      if (_capsRowResourceId(row.getAttribute("data-caps-row")) !== resourceId) {
+        return;  // prefix guard: a longer id sharing this id's prefix
+      }
+      const label = row.querySelector(".cs-label");
+      if (!label) return;
+      const attr = row.getAttribute("data-caps-row");
+      const idx = attr.slice(resourceId.length + 1);
+      const isMatch = (matched !== null && String(matched) === idx);
+      label.classList.toggle("flow-match", isMatch);
+    });
+  };
+
+  // Derive a human-readable value from a canonical flow-match key
+  // (mirrors flow_match.flow_match_key on the server: "i:43200",
+  // "r:48000/1", "s:video/raw", "b:true"). Used to live-update the range
+  // widget's current-value annotation.
+  function _flowKeyDisplay(key) {
+    if (!key) return "";
+    const i = key.indexOf(":");
+    let v = i >= 0 ? key.slice(i + 1) : key;
+    if (key.startsWith("r:") && v.endsWith("/1")) v = v.slice(0, -2);
+    return v;
+  }
+
+  // Configuration page: green the multi-value option / single value / range
+  // annotation that equals the flow's CURRENT value, per URN. ``values`` is
+  // {urn: canonical-key} from the SSE flow_match payload. Independent of the
+  // CS-name green (applyFlowMatch) and of the operator's own selection.
+  controller.applyFlowValues = (resourceId, values) => {
+    if (!resourceId || !values) return;
+    // Multi-value <select multiple>: flag the matching <option>.
+    document.querySelectorAll(
+      `select[data-sender-id="${resourceId}"][data-param-urn]`,
+    ).forEach(sel => {
+      const want = values[sel.getAttribute("data-param-urn")];
+      sel.querySelectorAll("option[data-flow-key]").forEach(opt => {
+        opt.classList.toggle(
+          "flow-match", want != null && opt.getAttribute("data-flow-key") === want,
+        );
+      });
+    });
+    // Single-value pinned input.
+    document.querySelectorAll(
+      `.param-single[data-sender-id="${resourceId}"][data-param-urn]`,
+    ).forEach(inp => {
+      const want = values[inp.getAttribute("data-param-urn")];
+      inp.classList.toggle(
+        "flow-match", want != null && inp.getAttribute("data-flow-key") === want,
+      );
+    });
+    // Range widget: no discrete option — update the current-value annotation.
+    document.querySelectorAll(
+      `.param-flow-value[data-sender-id="${resourceId}"][data-param-urn]`,
+    ).forEach(ann => {
+      const want = values[ann.getAttribute("data-param-urn")];
+      if (want == null) { ann.classList.add("d-none"); return; }
+      ann.setAttribute("data-flow-key", want);
+      ann.textContent = "current: " + _flowKeyDisplay(want);
+      ann.classList.remove("d-none");
+    });
+  };
+
   let _eventSource = null;
 
   controller.initStatusStream = () => {
@@ -1142,11 +1224,34 @@
       const v = el.getAttribute("data-result-for-receiver");
       if (v) ids.add(v);
     });
+    // Capabilities pages: each CS row carries ``data-caps-row="<id>-<idx>"``.
+    // Subscribe to the owning resource id so the green flow-match
+    // highlight tracks live flow changes. The id is a UUID (which itself
+    // contains hyphens); the CS index is the trailing ``-<digits>``.
+    // Receiver caps pages carry a sender↔receiver pairing on each row
+    // (data-caps-receiver). Collect it so the server can recompute the
+    // flow-match against the receiver-NARROWED CS list (the rows shown),
+    // not the sender's full caps — otherwise the live green lands on the
+    // wrong row when narrowing drops/reorders CS. sender caps pages have
+    // no such attribute and are unaffected.
+    const pairs = [];
+    document.querySelectorAll(".caps-row[data-caps-row]").forEach(el => {
+      const id = _capsRowResourceId(el.getAttribute("data-caps-row"));
+      if (id) ids.add(id);
+      const rid = el.getAttribute("data-caps-receiver");
+      if (id && rid) {
+        const pair = `${id}:${rid}`;
+        if (!pairs.includes(pair)) pairs.push(pair);
+      }
+    });
     if (ids.size === 0) return;
 
     // EventSource has no custom-header support; the admin session
     // cookie is carried automatically as a same-origin credential.
-    const url = `${PREFIX}/api/status-events?ids=${encodeURIComponent(Array.from(ids).join(","))}`;
+    let url = `${PREFIX}/api/status-events?ids=${encodeURIComponent(Array.from(ids).join(","))}`;
+    if (pairs.length) {
+      url += `&pair=${encodeURIComponent(pairs.join(","))}`;
+    }
     try {
       _eventSource = new EventSource(url, { withCredentials: true });
     } catch (err) {
@@ -1157,6 +1262,15 @@
       try {
         const data = JSON.parse(ev.data);
         _applyStatusToRow(data.id, data.status);
+        // Additive: capabilities-page green-highlight (CS name) + the
+        // configuration page's multi-value option / single / range green.
+        // Present only on flow-change frames; absent on status-only frames.
+        if (data.flow_match) {
+          controller.applyFlowMatch(data.id, data.flow_match);
+          if (data.flow_match.matched_values) {
+            controller.applyFlowValues(data.id, data.flow_match.matched_values);
+          }
+        }
         _reconcileConfigureToggles();
         // Privacy panel: the lock on dropdowns + Exclusivity is a
         // function of "is any resource active" — same signal the

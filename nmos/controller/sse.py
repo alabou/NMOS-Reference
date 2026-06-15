@@ -51,6 +51,44 @@ async def status_events_handler(request: web.Request) -> web.StreamResponse:
         s for s in (p.strip() for p in raw_ids.split(",")) if s
     }
 
+    # Receiver caps pages pass a sender↔receiver pairing
+    # (``&pair=<sid>:<rid>,…``). For those senders the flow-match must be
+    # computed against the RECEIVER-NARROWED CS the page rendered, not the
+    # sender's full caps — otherwise the live green lands on the wrong row.
+    # The narrowing depends only on the declared caps (not the flow), so we
+    # narrow ONCE here and re-run only the inclusion check per flow change.
+    from nmos.controller.flow_match import (
+        flow_match_index_for_sender,
+        narrowed_constraint_sets_for_pair,
+    )
+    pair_map: dict[str, str] = {}
+    for tok in request.query.get("pair", "").split(","):
+        tok = tok.strip()
+        if ":" in tok:
+            sid, rid = tok.split(":", 1)
+            sid, rid = sid.strip(), rid.strip()
+            if sid and rid:
+                pair_map[sid] = rid
+    narrowed_cs: dict[str, list | None] = {
+        sid: narrowed_constraint_sets_for_pair(cache, sid, rid)
+        for sid, rid in pair_map.items()
+    }
+
+    def _scoped_flow_match(resource_id: str, base: dict | None) -> dict | None:
+        """Receiver-scope a flow-match payload for a paired sender:
+        override ``matched_cs_index`` with the index into the NARROWED CS
+        the page shows, while preserving ``matched_values`` (the flow's
+        operating point — narrowing-independent, used by the configure
+        page). Returns ``base`` unchanged when not a paired sender."""
+        if resource_id not in pair_map:
+            return base
+        idx = flow_match_index_for_sender(
+            cache, resource_id, narrowed_cs.get(resource_id),
+        )
+        out = dict(base or {})
+        out["matched_cs_index"] = idx
+        return out
+
     response = web.StreamResponse(
         status=200,
         reason="OK",
@@ -80,9 +118,18 @@ async def status_events_handler(request: web.Request) -> web.StreamResponse:
         snapshot_ids |= {r["id"] for r in cache.all_receivers() if r.get("id")}
     for rid in snapshot_ids:
         status = cache.get_status(rid)
-        if not status:
+        # Additive: also seed the last-known flow-match so a caps page
+        # that connects (or reconnects) after the bound flow last changed
+        # gets the current green-highlight target without a reload. Emit a
+        # frame when either a status or a flow-match exists.
+        # Paired (receiver-caps) senders use the narrowed-scoped match;
+        # everyone else uses the cache's last full-caps match.
+        fm = _scoped_flow_match(rid, cache.get_flow_match(rid))
+        if not status and fm is None:
             continue
         payload = {"id": rid, "kind": "", "status": status}
+        if fm is not None:
+            payload["flow_match"] = fm
         frame = f"event: status\ndata: {json.dumps(payload)}\n\n"
         try:
             await response.write(frame.encode("utf-8"))
@@ -100,7 +147,31 @@ async def status_events_handler(request: web.Request) -> web.StreamResponse:
                 "kind": event.kind,
                 "status": event.status,
             }
+            # Additive: carry the flow-match payload only on events that
+            # have one (the cache's flow branch). Status-only frames are
+            # byte-for-byte unchanged. For paired (receiver-caps) senders,
+            # the cache's event signals the flow changed; recompute the
+            # index against the receiver-narrowed CS so it matches the rows
+            # the page rendered.
+            if event.flow_match is not None:
+                payload["flow_match"] = _scoped_flow_match(
+                    event.resource_id, event.flow_match,
+                )
             frame = f"event: status\ndata: {json.dumps(payload)}\n\n"
+            # TEMP flow-match instrumentation: record every frame this
+            # subscriber forwards, so we can see whether a flow_match
+            # frame actually reached a caps-page subscriber. Remove once
+            # the live update is confirmed.
+            _trace = request.app.get("controller_debug_trace")
+            if _trace is not None and _trace.enabled:
+                _trace.emit(
+                    "sse_frame",
+                    subscriber_ids=sorted(filter_ids) if filter_ids else "all",
+                    id=event.resource_id,
+                    has_flow_match="flow_match" in payload,
+                    flow_match=payload.get("flow_match"),
+                    scoped=event.resource_id in pair_map,
+                )
             try:
                 await response.write(frame.encode("utf-8"))
             except (ConnectionResetError, asyncio.CancelledError):

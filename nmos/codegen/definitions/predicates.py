@@ -23,13 +23,15 @@ from __future__ import annotations
 from nmos.enums import (
     FormatVideo, FormatAudio, FormatData, FormatMux,
     VideoRaw, DataSmpte291, DataJson,
-    AudioRawL8, AudioRawL16, AudioRawL20, AudioRawL24, AudioCodedAm824,
+    AudioRawL8, AudioRawL16, AudioRawL20, AudioRawL24,
     Internal, Ptp,
 )
 
 # Comma-joined media-type lists used by the "in"/"notin" comparisons.
+# Raw audio is exactly L8/L16/L20/L24; every other audio media type
+# (AM824, coded formats) is classified as NFlowAudioCoded.
 _RAW_AUDIO_MEDIA_TYPES = ",".join([
-    AudioRawL8.s, AudioRawL16.s, AudioRawL20.s, AudioRawL24.s, AudioCodedAm824.s,
+    AudioRawL8.s, AudioRawL16.s, AudioRawL20.s, AudioRawL24.s,
 ])
 _DATA_MEDIA_TYPES = ",".join([DataSmpte291.s, DataJson.s])
 

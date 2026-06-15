@@ -154,7 +154,8 @@
               {% if sender.constraint_sets %}
                 {% for cs in sender.constraint_sets %}
                   <tr class="caps-row"
-                      data-caps-row="{{ sender.id }}-{{ cs.index }}">
+                      data-caps-row="{{ sender.id }}-{{ cs.index }}"
+                      {% if sender.paired_receiver_id %}data-caps-receiver="{{ sender.paired_receiver_id }}"{% endif %}>
                     <td class="text-center">
                       <label class="m-0">
                         <input type="radio"
@@ -167,7 +168,7 @@
                       <span class="caps-toggle">▸</span>
                       <code>#{{ cs.index }}</code>
                     </td>
-                    <td>{{ cs.label }}</td>
+                    <td class="cs-label{% if cs.flow_match %} flow-match{% endif %}">{{ cs.label }}</td>
                     <td class="caps-summary">{{ cs.media_type or '—' }}</td>
                     <td>{{ cs.meta_format or '—' }}</td>
                     <td>{{ cs.meta_layer if cs.meta_layer != '' else '—' }}</td>
@@ -229,5 +230,8 @@
 {% block scripts %}
 <script>
   controller.initCapsRowClick();
+  // Subscribe to the status/flow-match SSE stream so the green
+  // highlight tracks live flow changes without a page reload.
+  controller.initStatusStream();
 </script>
 {% endblock %}

@@ -240,6 +240,15 @@
               "Fbblev12bpp"
             ]
           }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "Uncompressed",
+          "urn:x-nmos:cap:meta:preference": 0,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "video/raw"
+            ]
+          }
         }
       ],
       "privacy_keys": [
@@ -1450,6 +1459,15 @@
               "Unrestricted",
               "Fbblev8bpp",
               "Fbblev12bpp"
+            ]
+          }
+        },
+        {
+          "urn:x-nmos:cap:meta:label": "Uncompressed",
+          "urn:x-nmos:cap:meta:preference": 0,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "video/raw"
             ]
           }
         }

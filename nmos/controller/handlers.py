@@ -67,6 +67,7 @@ from nmos.controller.compat import (
     pair_by_identity,
     resource_ccf_caps,
 )
+from nmos.controller.flow_match import flow_match_for_sender, flow_match_key
 from nmos.controller.grouping import extract_group_hint
 from nmos.controller.privacy import (
     EXT_PRIVACY_ECDH_CURVE,
@@ -856,6 +857,10 @@ async def receivers_caps(request: web.Request) -> web.Response:
     for s, r in pairs:
         narrowed = filter_sender_cs_by_receiver(s, r)
         if narrowed.get("caps", {}).get("constraint_sets"):
+            # Remember which receiver this narrowed sender is paired with,
+            # so the caps page can tell the SSE the pairing — receiver
+            # live-updates recompute the match against THIS narrowed set.
+            narrowed["paired_receiver_id"] = r.get("id", "") or ""
             filtered_senders.append(narrowed)
     filters = {
         "by_format":        request.query.get("byFormat", "").strip(),
@@ -2195,6 +2200,12 @@ def _build_caps_view(
             "device_address": device_address(dev) or "",
             "constraint_sets": [],
         }
+        # Receiver caps pages pass receiver-narrowed sender copies; carry
+        # the paired receiver id through so the template can hand the
+        # SSE the pairing for receiver-scoped live updates. Absent on
+        # sender caps pages (left empty).
+        if s.get("paired_receiver_id"):
+            entry["paired_receiver_id"] = s["paired_receiver_id"]
 
         caps_json = s.get("caps")
         if not isinstance(caps_json, dict):
@@ -2204,6 +2215,20 @@ def _build_caps_view(
         if not isinstance(constraint_sets, list):
             senders_out.append(entry)
             continue
+
+        # Which declared constraint set does this resource's CURRENT flow
+        # sit inside? (Additive — drives only the green-font highlight.)
+        # Resolve the bound flow and, for audio, its source (channel_count
+        # is derived from the source, not the flow). ``matched_cs_index``
+        # aligns with the ``index`` field stamped on each CS dict below.
+        flow = cache.get_flow(s.get("flow_id", "") or "")
+        source = (
+            cache.get_source(flow.get("source_id", "") or "")
+            if isinstance(flow, dict) else None
+        )
+        matched_cs_index = flow_match_for_sender(
+            flow, source, constraint_sets,
+        ).matched_cs_index
 
         for i, cs in enumerate(constraint_sets):
             if not isinstance(cs, dict):
@@ -2279,6 +2304,9 @@ def _build_caps_view(
 
             entry["constraint_sets"].append({
                 "index": i,
+                # True only for the single most-specific CS the current
+                # flow sits inside — the template renders it green.
+                "flow_match": (i == matched_cs_index),
                 "label": cs.get(_CAPS_META_LABEL, f"set #{i}"),
                 "preference": cs.get(_CAPS_META_PREFERENCE, 0),
                 "meta_format": meta_format,            # display + filter
@@ -2389,6 +2417,7 @@ def _widget_for_constraint(
                     "shape": "enum",
                     "display": _simple_value(opts[0]),
                     "value": json.dumps(opts[0]),
+                    "key": flow_match_key(opts[0]),
                     "disabled": disabled,
                 }
             # Each option carries both the human-readable ``display``
@@ -2401,8 +2430,13 @@ def _widget_for_constraint(
             # Without this, a boolean cap sent back to the Node as
             # ``{"enum": ["True", "False"]}`` (strings) would be
             # rejected — IS-11 expects booleans for a boolean cap.
+            # ``key`` is the canonical flow-match key of the option's typed
+            # value (see flow_match.flow_match_key) — lets the configure
+            # view (server) and the live SSE handler (browser) decide which
+            # option equals the flow's current value, identically.
             display_opts = [
-                {"display": _simple_value(o), "value": json.dumps(o)}
+                {"display": _simple_value(o), "value": json.dumps(o),
+                 "key": flow_match_key(o)}
                 for o in opts
             ]
             # Pre-select every option so a "Constrain" click with no
@@ -2428,6 +2462,7 @@ def _widget_for_constraint(
                 "shape": "range",
                 "display": _simple_value(mn),
                 "value": json.dumps(mn),
+                "key": flow_match_key(mn),
                 "disabled": disabled,
             }
         return {
@@ -2442,6 +2477,35 @@ def _widget_for_constraint(
     # One-sided ranges and unknown shapes — render a readonly
     # placeholder rather than try to edit.
     return {"kind": "readonly", "display": "—", "disabled": True}
+
+
+def _stamp_flow_match_on_widget(
+    widget: dict[str, Any], flow_key: str | None, flow_value: Any,
+) -> None:
+    """Mark, on an already-built widget, which part equals the flow's
+    CURRENT value for this URN (``flow_key`` = its canonical key,
+    ``flow_value`` = its raw value, both ``None`` when the flow doesn't
+    constrain this URN). Additive — leaves the widget's edit behaviour and
+    every existing field untouched; only adds ``flow_match`` flags the
+    template renders green.
+
+      * multiselect → flag the matching option (``option.flow_match``)
+      * single      → flag the widget when its pinned value matches
+      * range       → no discrete option to flag, so expose the flow's
+        current value (``flow_value`` display + ``flow_value_key``) for a
+        green annotation (a slider can't 'select' a value).
+    """
+    if flow_key is None:
+        return
+    kind = widget.get("kind")
+    if kind == "multiselect":
+        for opt in widget.get("options", []):
+            opt["flow_match"] = (opt.get("key") == flow_key)
+    elif kind == "single":
+        widget["flow_match"] = (widget.get("key") == flow_key)
+    elif kind == "range":
+        widget["flow_value"] = _simple_value(flow_value)
+        widget["flow_value_key"] = flow_key
 
 
 def _constraint_set_hash(cs: dict[str, Any]) -> str:
@@ -2614,6 +2678,25 @@ def _build_configure_view(
                 senders_out.append(entry)
                 continue
 
+        # Which CS does the sender's CURRENT flow sit in, and what is its
+        # per-URN operating point? Computed against THIS sender's
+        # constraint_sets — full list on the senders page, receiver-narrowed
+        # list on the receivers page (the narrowed sender copy is what's
+        # passed in), so ``matched_cs_index`` aligns with ``chosen_index``
+        # for both. ``matched_values`` (URN → flow value) drives the green
+        # multi-value option. Flow/source resolved fresh from the sender.
+        flow = cache.get_flow(s.get("flow_id", "") or "")
+        source = (
+            cache.get_source(flow.get("source_id", "") or "")
+            if isinstance(flow, dict) else None
+        )
+        match = flow_match_for_sender(flow, source, constraint_sets)
+        cs_flow_match = (chosen_index == match.matched_cs_index)
+        flow_vals = match.matched_values            # URN → raw flow value
+        flow_keys = {
+            urn: flow_match_key(v) for urn, v in flow_vals.items()
+        }
+
         # Build the decorated CS.
         params: list[dict[str, Any]] = []
         for key, val in cs.items():
@@ -2621,15 +2704,27 @@ def _build_configure_view(
                 continue
             if key in _CAPS_META_KEYS:
                 continue
+            widget = _widget_for_constraint(key, val)
+            _stamp_flow_match_on_widget(widget, flow_keys.get(key),
+                                        flow_vals.get(key))
             params.append({
                 "urn":    key,
                 "name":   _short_param_name(key),
-                "widget": _widget_for_constraint(key, val),
+                # Canonical key of the flow's current value for this URN
+                # (or "" when the flow doesn't constrain it) — the live SSE
+                # handler uses it to re-green the matching option/value.
+                "flow_key": flow_keys.get(key, ""),
+                "widget": widget,
             })
         params.sort(key=lambda p: p["name"])
 
         entry["constraint_set"] = {
             "index":        chosen_index,
+            # True only when the displayed/selected CS IS the most-specific
+            # CS the current flow sits in (greens the CS name). The
+            # multi-value option green below is independent of this — it
+            # fires whenever an option equals the flow's current value.
+            "flow_match":   cs_flow_match,
             "hash":         _constraint_set_hash(cs),
             "label":        cs.get(_CAPS_META_LABEL, f"set #{chosen_index}"),
             "preference":   cs.get(_CAPS_META_PREFERENCE, 0),
