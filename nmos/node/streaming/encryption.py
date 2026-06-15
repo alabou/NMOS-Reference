@@ -297,6 +297,10 @@ class StreamEncryption:
             print(f"      PFS (ECDH):    {_hex(self.key_pfs)} ({len(self.key_pfs) * 8} bits)")
         else:
             print(f"      PFS (ECDH):    none (PSK-only mode)")
+        if self.key_xcl:
+            print(f"      XCL (Resv):    {_hex(self.key_xcl)} ({len(self.key_xcl) * 8} bits)")
+        else:
+            print(f"      XCL (Resv):    nil (no Node Reservation key)")
         print(f"      Key bits:      {self.key_bits}")
         print(f"      → Derived Key: {_hex(self.privacy_key)}")
 
