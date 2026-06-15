@@ -12,6 +12,62 @@
 {%- if by_compatibility != '' %}&byCompatibility={{ by_compatibility }}{% endif %}
 {%- endmacro %}
 
+{# --------------------------------------------------------------------
+   One constraint-set picker row (+ its expandable details row). The
+   radio ``name`` is supplied by the caller so a MUX can group rows into
+   per-part radio sets (one pick per part), exactly like a group's per
+   member rows. ``checked`` pre-selects the most-preferred row of a part.
+   -------------------------------------------------------------------- #}
+{% macro cs_row(sender_id, cs, radio_name, checked) %}
+  <tr class="caps-row" data-caps-row="{{ sender_id }}-{{ cs.index }}">
+    <td class="text-center">
+      <label class="m-0">
+        <input type="radio" name="{{ radio_name }}" value="{{ cs.index }}"
+               {% if checked %}checked{% endif %}>
+      </label>
+    </td>
+    <td class="caps-set-cell">
+      <span class="caps-toggle">▸</span>
+      <code>#{{ cs.index }}</code>
+    </td>
+    <td class="cs-label{% if cs.flow_match %} flow-match{% endif %}">{{ cs.label }}</td>
+    <td class="caps-summary">{{ cs.media_type or '—' }}</td>
+    <td>{{ cs.meta_format or '—' }}</td>
+    <td>{{ cs.meta_layer if cs.meta_layer != '' else '—' }}</td>
+    <td>{{ cs.preference }}</td>
+  </tr>
+  <tr class="caps-details-row"
+      data-caps-details-for="{{ sender_id }}-{{ cs.index }}"
+      hidden>
+    <td></td>
+    <td colspan="6" class="caps-details-cell">
+      {% if cs.params %}
+        <table class="caps-params">
+          <tbody>
+            {% for p in cs.params %}
+              <tr>
+                <td class="caps-detail-name">{{ p.name }}</td>
+                <td class="caps-detail-value">{{ p.value }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="text-muted small">
+          No parameter constraints declared (unconstrained).
+        </div>
+      {% endif %}
+    </td>
+  </tr>
+{% endmacro %}
+
+{# Radio group name for a part: the trunk keeps the plain ``conset_<sid>``
+   key (backward-compatible with non-mux senders); each sub-layer uses
+   ``conset_<sid>::<format>:<layer>``. #}
+{% macro part_radio_name(sender_id, part_key) -%}
+conset_{{ sender_id }}{% if part_key != 'trunk' %}::{{ part_key }}{% endif %}
+{%- endmacro %}
+
 <div class="row">
   <div class="col-12">
     <h3 class="mb-3">Capabilities</h3>
@@ -165,64 +221,31 @@
                 </td>
               </tr>
             </tbody>
+            {% if sender.parts %}
+              {# MUX: one section per part (trunk MUX + each VIDEO/AUDIO/DATA
+                 sub-layer), with a per-part radio group — pick one CS per
+                 part, exactly like a natural group picks one per member. #}
+              {% for part in sender.parts %}
+                <tbody class="device-title-tbody">
+                  <tr class="device-title-row mux-part-row">
+                    <td colspan="7" class="device-title">
+                      <span class="ml-4 mux-part-label">{{ part.label }}</span>
+                    </td>
+                  </tr>
+                </tbody>
+                <tbody class="caps-tbody">
+                  {% for cs in part.constraint_sets %}
+                    {{ cs_row(sender.id, cs,
+                              part_radio_name(sender.id, part.part_key),
+                              loop.first) }}
+                  {% endfor %}
+                </tbody>
+              {% endfor %}
+            {% else %}
             <tbody class="caps-tbody">
               {% if sender.constraint_sets %}
                 {% for cs in sender.constraint_sets %}
-                  <tr class="caps-row"
-                      data-caps-row="{{ sender.id }}-{{ cs.index }}">
-                    <td class="text-center">
-                      <label class="m-0">
-                        <input type="radio"
-                               name="conset_{{ sender.id }}"
-                               value="{{ cs.index }}"
-                               {% if loop.first %}checked{% endif %}>
-                      </label>
-                    </td>
-                    <td class="caps-set-cell">
-                      <span class="caps-toggle">▸</span>
-                      <code>#{{ cs.index }}</code>
-                    </td>
-                    <td class="cs-label{% if cs.flow_match %} flow-match{% endif %}">{{ cs.label }}</td>
-                    <td class="caps-summary">{{ cs.media_type or '—' }}</td>
-                    <td>{{ cs.meta_format or '—' }}</td>
-                    <td>{{ cs.meta_layer if cs.meta_layer != '' else '—' }}</td>
-                    <td>{{ cs.preference }}</td>
-                  </tr>
-                  <tr class="caps-details-row"
-                      data-caps-details-for="{{ sender.id }}-{{ cs.index }}"
-                      hidden>
-                    <td></td>
-                    <td colspan="6" class="caps-details-cell">
-                      {# Nested <table> for the parameter list. The name
-                         column gets ``width: 1%`` so it collapses to the
-                         widest name via the classic HTML-table auto-size
-                         trick; the value column takes the rest. More
-                         robust than CSS grid inside a colspan-ed cell
-                         (some browsers mis-size the fr track there). #}
-                      {% if cs.meta_compat or cs.params %}
-                        <table class="caps-params">
-                          <tbody>
-                            {% if cs.meta_compat %}
-                              <tr>
-                                <td class="caps-detail-name">layer_compatibility_groups</td>
-                                <td class="caps-detail-value">{{ cs.meta_compat | join(', ') }}</td>
-                              </tr>
-                            {% endif %}
-                            {% for p in cs.params %}
-                              <tr>
-                                <td class="caps-detail-name">{{ p.name }}</td>
-                                <td class="caps-detail-value">{{ p.value }}</td>
-                              </tr>
-                            {% endfor %}
-                          </tbody>
-                        </table>
-                      {% else %}
-                        <div class="text-muted small">
-                          No parameter constraints declared (unconstrained).
-                        </div>
-                      {% endif %}
-                    </td>
-                  </tr>
+                  {{ cs_row(sender.id, cs, 'conset_' ~ sender.id, loop.first) }}
                 {% endfor %}
               {% else %}
                 <tr>
@@ -232,6 +255,7 @@
                 </tr>
               {% endif %}
             </tbody>
+            {% endif %}
           {% endfor %}
         </table>
 

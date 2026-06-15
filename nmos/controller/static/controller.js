@@ -402,9 +402,22 @@
   }
 
   function _collectConstraintSetForSender(form, senderId) {
-    // Walk every editable param input for this sender, build a
-    // BCP-004-01 constraint-set object, and wrap it in the IS-11
-    // active-constraints body shape.
+    // A MUX sender renders one caps-row per part (trunk MUX + each
+    // VIDEO/AUDIO/DATA sub-layer); a non-mux sender renders exactly one.
+    // Build one BCP-004-01 constraint set per row — scoping each row's
+    // params by their shared ``data-cs-part`` — and bundle them all into
+    // the IS-11 active-constraints body. A non-mux sender therefore still
+    // yields a single-element ``constraint_sets`` (one row, part "trunk").
+    const rows = Array.from(form.querySelectorAll(
+      `.caps-row[data-sender-id="${senderId}"][data-conset-index]`,
+    ));
+    const sets = rows.map(row => _constraintSetFromRow(form, senderId, row));
+    return { constraint_sets: sets };
+  }
+
+  function _constraintSetFromRow(form, senderId, capsRow) {
+    // Build one BCP-004-01 constraint-set object from a single part's
+    // caps-row + its params.
     //
     // Every emitted constraint_set MUST carry
     // ``urn:x-nmos:cap:meta:preference = 100`` — the Node's
@@ -414,23 +427,19 @@
     // never gets narrowed to match the new constraint. The PUT
     // returns 200 (the constraint is stored), but the sender's
     // ``CompatibilityStatus`` then stays at ``active_constraints_
-    // violation`` and the next PATCH-activate returns 500. 
+    // violation`` and the next PATCH-activate returns 500.
     //
     // Trunk CSs (no meta:layer) emit ``enabled=true``. Sub-layer CSs
     // (meta:layer defined + meta:format) emit ``enabled=false`` +
     // ``layer_enabled=true`` + the format/layer metadata — per
     // ``test_mp2t.py::test_config4a_video_layer_constraint_propagates``.
-    const capsRow = form.querySelector(
-      `.caps-row[data-sender-id="${senderId}"][data-conset-index]`,
-    );
-    const metaFormat = (capsRow
-      ? capsRow.getAttribute('data-cs-meta-format') || ''
-      : ''
-    ).trim();
-    const metaLayerRaw = (capsRow
-      ? capsRow.getAttribute('data-cs-meta-layer') || ''
-      : ''
-    ).trim();
+    //
+    // ``data-cs-part`` (the CS's flow part) scopes param collection to
+    // THIS row, so a MUX's per-part sections don't bleed params into one
+    // another. Defaults to "trunk" for backward compatibility.
+    const part = capsRow.getAttribute('data-cs-part') || 'trunk';
+    const metaFormat = (capsRow.getAttribute('data-cs-meta-format') || '').trim();
+    const metaLayerRaw = (capsRow.getAttribute('data-cs-meta-layer') || '').trim();
     const hasLayer = metaLayerRaw !== '' && !Number.isNaN(Number(metaLayerRaw));
     const isSubLayer = hasLayer && metaFormat !== '' && metaFormat !== 'mux';
 
@@ -447,7 +456,7 @@
     }
 
     form.querySelectorAll(
-      `[data-sender-id="${senderId}"][data-param-urn]`,
+      `[data-sender-id="${senderId}"][data-param-urn][data-cs-part="${part}"]`,
     ).forEach(el => {
       if (el.disabled) return;
       const urn = el.getAttribute('data-param-urn');
@@ -502,7 +511,7 @@
         }
       }
     });
-    return { constraint_sets: [constraintSet] };
+    return constraintSet;
   }
 
   // ``target`` controls which result cell is updated:

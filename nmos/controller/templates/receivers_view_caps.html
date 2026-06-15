@@ -11,6 +11,42 @@
 {%- if by_compatibility != '' %}&byCompatibility={{ by_compatibility }}{% endif %}
 {%- endmacro %}
 
+{# Read-only constraint-set row (+ details) for a receiver's own caps. #}
+{% macro cs_row_ro(resource_id, cs) %}
+  <tr class="caps-row" data-caps-row="{{ resource_id }}-{{ cs.index }}">
+    <td class="caps-set-cell">
+      <span class="caps-toggle">▸</span>
+      <code>#{{ cs.index }}</code>
+    </td>
+    <td class="cs-label{% if cs.flow_match %} flow-match{% endif %}">{{ cs.label }}</td>
+    <td class="caps-summary">{{ cs.media_type or '—' }}</td>
+    <td>{{ cs.meta_format or '—' }}</td>
+    <td>{{ cs.meta_layer if cs.meta_layer != '' else '—' }}</td>
+    <td>{{ cs.preference }}</td>
+  </tr>
+  <tr class="caps-details-row"
+      data-caps-details-for="{{ resource_id }}-{{ cs.index }}" hidden>
+    <td colspan="6" class="caps-details-cell">
+      {% if cs.params %}
+        <table class="caps-params">
+          <tbody>
+            {% for p in cs.params %}
+              <tr>
+                <td class="caps-detail-name">{{ p.name }}</td>
+                <td class="caps-detail-value">{{ p.value }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="text-muted small">
+          No parameter constraints declared (unconstrained).
+        </div>
+      {% endif %}
+    </td>
+  </tr>
+{% endmacro %}
+
 <div class="row">
   <div class="col-12">
     <h3 class="mb-3">Receiver capabilities</h3>
@@ -139,49 +175,26 @@
               </td>
             </tr>
           </tbody>
+          {% if receiver.parts %}
+            {% for part in receiver.parts %}
+              <tbody class="device-title-tbody">
+                <tr class="device-title-row mux-part-row">
+                  <td colspan="6" class="device-title">
+                    <span class="ml-4 mux-part-label">{{ part.label }}</span>
+                  </td>
+                </tr>
+              </tbody>
+              <tbody class="caps-tbody">
+                {% for cs in part.constraint_sets %}
+                  {{ cs_row_ro(receiver.id, cs) }}
+                {% endfor %}
+              </tbody>
+            {% endfor %}
+          {% else %}
           <tbody class="caps-tbody">
             {% if receiver.constraint_sets %}
               {% for cs in receiver.constraint_sets %}
-                <tr class="caps-row"
-                    data-caps-row="{{ receiver.id }}-{{ cs.index }}">
-                  <td class="caps-set-cell">
-                    <span class="caps-toggle">▸</span>
-                    <code>#{{ cs.index }}</code>
-                  </td>
-                  <td class="cs-label{% if cs.flow_match %} flow-match{% endif %}">{{ cs.label }}</td>
-                  <td class="caps-summary">{{ cs.media_type or '—' }}</td>
-                  <td>{{ cs.meta_format or '—' }}</td>
-                  <td>{{ cs.meta_layer if cs.meta_layer != '' else '—' }}</td>
-                  <td>{{ cs.preference }}</td>
-                </tr>
-                <tr class="caps-details-row"
-                    data-caps-details-for="{{ receiver.id }}-{{ cs.index }}"
-                    hidden>
-                  <td colspan="6" class="caps-details-cell">
-                    {% if cs.meta_compat or cs.params %}
-                      <table class="caps-params">
-                        <tbody>
-                          {% if cs.meta_compat %}
-                            <tr>
-                              <td class="caps-detail-name">layer_compatibility_groups</td>
-                              <td class="caps-detail-value">{{ cs.meta_compat | join(', ') }}</td>
-                            </tr>
-                          {% endif %}
-                          {% for p in cs.params %}
-                            <tr>
-                              <td class="caps-detail-name">{{ p.name }}</td>
-                              <td class="caps-detail-value">{{ p.value }}</td>
-                            </tr>
-                          {% endfor %}
-                        </tbody>
-                      </table>
-                    {% else %}
-                      <div class="text-muted small">
-                        No parameter constraints declared (unconstrained).
-                      </div>
-                    {% endif %}
-                  </td>
-                </tr>
+                {{ cs_row_ro(receiver.id, cs) }}
               {% endfor %}
             {% else %}
               <tr>
@@ -191,6 +204,7 @@
               </tr>
             {% endif %}
           </tbody>
+          {% endif %}
         {% endfor %}
       </table>
 

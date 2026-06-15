@@ -4596,7 +4596,7 @@ class TestFlowMatchGreen:
 
         view = _build_configure_view(
             cache, [cache.get_sender(_FM_SENDER_ID)],
-            {_FM_SENDER_ID: 0},
+            {_FM_SENDER_ID: {"trunk": 0}},
             {"by_format": "", "by_layer": "", "by_compatibility": ""},
         )
         cs = view["senders"][0]["constraint_set"]
@@ -4648,7 +4648,7 @@ class TestFlowMatchGreen:
         # Operator selected CS index 1, but the flow's most-specific match is 0.
         view = _build_configure_view(
             cache, [cache.get_sender(_FM_SENDER_ID)],
-            {_FM_SENDER_ID: 1},
+            {_FM_SENDER_ID: {"trunk": 1}},
             {"by_format": "", "by_layer": "", "by_compatibility": ""},
         )
         cs = view["senders"][0]["constraint_set"]
@@ -4738,6 +4738,10 @@ class TestFlowMatchGreen:
                               format="urn:x-nmos:format:mux")
         sender["flow_id"] = mflow
         sender["caps"] = caps
+        # Real IS-04 senders carry NO ``format`` (the registry strips our
+        # NSenderValue convenience field) — mux-ness must derive from the
+        # bound flow, so drop it here to exercise that path.
+        del sender["format"]
         await cache.upsert("sender", sender)
 
         view = _build_caps_view(
@@ -4750,3 +4754,132 @@ class TestFlowMatchGreen:
         }
         # Trunk + both native sub-layers green; PCM sub 0 (L24) does not.
         assert green == {"Native Mux", "Native Audio sub 0", "Native Audio sub 1"}
+
+        # --- MUX rendered as per-part sections (like a group's members) ---
+        entry = view["senders"][0]
+        assert entry["is_mux"] is True
+        parts = entry["parts"]
+        # Ordered: trunk MUX first, then AUDIO by ascending layer.
+        assert [p["label"] for p in parts] == ["MUX", "AUDIO 0", "AUDIO 1"]
+        assert [p["part_key"] for p in parts] == ["trunk", "audio:0", "audio:1"]
+        # Each part holds exactly its own constraint sets.
+        labels = {p["part_key"]: {c["label"] for c in p["constraint_sets"]}
+                  for p in parts}
+        assert labels["trunk"] == {"Native Mux"}
+        assert labels["audio:0"] == {"Native Audio sub 0", "PCM sub 0"}
+        assert labels["audio:1"] == {"Native Audio sub 1"}
+
+    async def test_configure_view_mux_per_part_sections(
+        self, controller_client: TestClient,
+    ) -> None:
+        """A MUX configure view exposes one ``parts`` entry per part, each
+        carrying the operator's per-part chosen constraint set, and the
+        per-part ``conset_<sid>::<part>`` selection is parsed correctly."""
+        from nmos.controller.handlers import (
+            _build_configure_view, _parse_conset_selections,
+        )
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        snd = "5e000000-0000-4000-8000-0000000000b0"
+
+        def sublcs(label, pref, layer, media):
+            return {
+                "urn:x-nmos:cap:meta:label": label,
+                "urn:x-nmos:cap:meta:preference": pref,
+                "urn:x-matrox:cap:meta:format": "urn:x-nmos:format:audio",
+                "urn:x-matrox:cap:meta:layer": layer,
+                "urn:x-nmos:cap:format:media_type": {"enum": media},
+                "urn:x-nmos:cap:format:channel_count": {"enum": [2, 8]},
+            }
+        caps = {"constraint_sets": [
+            {"urn:x-nmos:cap:meta:label": "Native Mux",
+             "urn:x-nmos:cap:meta:preference": 100,
+             "urn:x-nmos:cap:format:media_type": {"enum": ["application/AM824"]}},
+            sublcs("Native Audio sub 0", 100, 0, ["audio/AM824"]),
+            sublcs("PCM sub 0", 0, 0, ["audio/L24"]),
+            sublcs("Native Audio sub 1", 100, 1, ["audio/AM824"]),
+        ]}
+        sender = _make_sender(snd, "dev1", hint="RTP 9:MUX 0",
+                              format="urn:x-nmos:format:mux")
+        sender["caps"] = caps
+        await cache.upsert("sender", sender)
+
+        # Operator picked: trunk #0, audio:0 -> PCM (#2), audio:1 -> #3.
+        from multidict import MultiDict
+        query = MultiDict([
+            (f"conset_{snd}", "0"),
+            (f"conset_{snd}::audio:0", "2"),
+            (f"conset_{snd}::audio:1", "3"),
+        ])
+        sel = _parse_conset_selections(query, [snd])
+        assert sel == {snd: {"trunk": 0, "audio:0": 2, "audio:1": 3}}
+
+        view = _build_configure_view(
+            cache, [cache.get_sender(snd)], sel,
+            {"by_format": "", "by_layer": "", "by_compatibility": ""},
+        )
+        entry = view["senders"][0]
+        assert entry.get("constraint_set") is None  # mux uses parts, not single
+        parts = entry["parts"]
+        assert [p["label"] for p in parts] == ["MUX", "AUDIO 0", "AUDIO 1"]
+        # Each part's section carries the operator's chosen CS.
+        picked = {p["part_key"]: p["constraint_set"]["label"] for p in parts}
+        assert picked == {
+            "trunk": "Native Mux",
+            "audio:0": "PCM sub 0",
+            "audio:1": "Native Audio sub 1",
+        }
+        # The chosen indices are preserved (drive the IS-11 PUT meta).
+        assert {p["part_key"]: p["constraint_set"]["index"] for p in parts} == {
+            "trunk": 0, "audio:0": 2, "audio:1": 3,
+        }
+
+    async def test_mux_caps_and_configure_pages_render_per_part(
+        self, controller_client: TestClient,
+    ) -> None:
+        """End-to-end Jinja render: the caps + configure pages for a MUX
+        sender produce per-part sections (MUX / AUDIO 0 / AUDIO 1), per-part
+        radio groups, and per-part data attributes — no template errors."""
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        snd = "5e000000-0000-4000-8000-0000000000c0"
+
+        def sublcs(label, pref, layer, media):
+            return {
+                "urn:x-nmos:cap:meta:label": label,
+                "urn:x-nmos:cap:meta:preference": pref,
+                "urn:x-matrox:cap:meta:format": "urn:x-nmos:format:audio",
+                "urn:x-matrox:cap:meta:layer": layer,
+                "urn:x-nmos:cap:format:media_type": {"enum": media},
+                "urn:x-nmos:cap:format:channel_count": {"enum": [2, 8]},
+            }
+        sender = _make_sender(snd, "dev1", hint="RTP 9:MUX 0",
+                              format="urn:x-nmos:format:mux")
+        sender["caps"] = {"constraint_sets": [
+            {"urn:x-nmos:cap:meta:label": "Native Mux",
+             "urn:x-nmos:cap:meta:preference": 100,
+             "urn:x-nmos:cap:format:media_type": {"enum": ["application/AM824"]}},
+            sublcs("Native Audio sub 0", 100, 0, ["audio/AM824"]),
+            sublcs("Native Audio sub 1", 100, 1, ["audio/AM824"]),
+        ]}
+        await cache.upsert("sender", sender)
+
+        # Caps page: per-part section headers + per-part radio groups.
+        resp = await controller_client.get(f"{PREFIX}/senders/caps?sender_ids={snd}")
+        assert resp.status == 200
+        text = await resp.text()
+        assert "mux-part-label" in text
+        assert ">MUX<" in text and ">AUDIO 0<" in text and ">AUDIO 1<" in text
+        assert f'name="conset_{snd}"' in text                 # trunk radio
+        assert f'name="conset_{snd}::audio:0"' in text        # sub-layer radio
+        assert f'name="conset_{snd}::audio:1"' in text
+
+        # Configure page: per-part sections, each carrying its data-cs-part.
+        resp = await controller_client.get(
+            f"{PREFIX}/senders/configure?sender_ids={snd}"
+            f"&conset_{snd}=0&conset_{snd}::audio:0=1&conset_{snd}::audio:1=2",
+        )
+        assert resp.status == 200
+        text = await resp.text()
+        assert ">AUDIO 0<" in text and ">AUDIO 1<" in text
+        assert 'data-cs-part="trunk"' in text
+        assert 'data-cs-part="urn:x-nmos:format:audio:0"' in text
+        assert 'data-cs-part="urn:x-nmos:format:audio:1"' in text

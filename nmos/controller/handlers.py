@@ -582,11 +582,39 @@ async def senders_caps(request: web.Request) -> web.Response:
         {
             "active": "senders",
             "senders": selected,
-            "caps_view": _build_caps_view(cache, selected, filters=filters),
+            "caps_view": _build_caps_view(
+                cache, selected, filters=filters, trace=_debug_trace(request),
+            ),
             "filters": filters,
             "sender_ids_csv": ",".join(sid for sid in sender_ids),
         },
     )
+
+
+def _parse_conset_selections(
+    query: Any, sender_ids: list[str],
+) -> dict[str, dict[str, int]]:
+    """Parse per-part constraint-set picks from a caps-form submission.
+
+    ``conset_<sid>`` is the trunk / non-mux choice (part key ``"trunk"``);
+    ``conset_<sid>::<short-format>:<layer>`` is a mux sub-layer's choice
+    (the per-part radio groups emitted by the caps templates). Returns
+    ``{sid: {part_key: chosen_index}}``.
+    """
+    out: dict[str, dict[str, int]] = {}
+    for sid in sender_ids:
+        trunk_key = f"conset_{sid}"
+        sub_prefix = f"{trunk_key}::"
+        val = query.get(trunk_key, "")
+        if val.lstrip("-").isdigit():
+            out.setdefault(sid, {})["trunk"] = int(val)
+        for key in query:
+            if key.startswith(sub_prefix):
+                part_key = key[len(sub_prefix):]
+                v = query.get(key, "")
+                if part_key and v.lstrip("-").isdigit():
+                    out.setdefault(sid, {})[part_key] = int(v)
+    return out
 
 
 async def senders_configure(request: web.Request) -> web.Response:
@@ -594,14 +622,11 @@ async def senders_configure(request: web.Request) -> web.Response:
     client = _remote_client(request)
     forwarded = _forwarded_auth(request)
     sender_ids = _parse_csv(request.query.get("sender_ids"))
-    # Each sender may carry its own constraint-set choice, named
-    # ``conset_<sender_id>`` in the caps-form submission. Collect them
-    # into a {sender_id: index} map.
-    conset_by_sender: dict[str, int] = {}
-    for sid in sender_ids:
-        val = request.query.get(f"conset_{sid}", "")
-        if val.lstrip("-").isdigit():
-            conset_by_sender[sid] = int(val)
+    # Each sender carries its constraint-set choice(s), named
+    # ``conset_<sender_id>`` (trunk) / ``conset_<sender_id>::<part>`` (mux
+    # sub-layers) in the caps-form submission. Collect them into a
+    # {sender_id: {part_key: index}} map.
+    conset_by_sender = _parse_conset_selections(request.query, sender_ids)
     senders: list[dict[str, Any]] = [
         s for s in (cache.get_sender(sid) for sid in sender_ids) if s is not None
     ]
@@ -784,7 +809,7 @@ async def receivers_view_caps(request: web.Request) -> web.Response:
             "active":            "receivers",
             "receivers":         receivers,
             "caps_view":         _build_caps_view(
-                cache, receivers, filters=filters,
+                cache, receivers, filters=filters, trace=_debug_trace(request),
             ),
             "filters":           filters,
             "receiver_ids_csv":  ",".join(receiver_ids),
@@ -875,7 +900,7 @@ async def receivers_caps(request: web.Request) -> web.Response:
             "receivers":         receivers,
             "senders":           filtered_senders,
             "caps_view":         _build_caps_view(
-                cache, filtered_senders, filters=filters,
+                cache, filtered_senders, filters=filters, trace=_debug_trace(request),
             ),
             "filters":           filters,
             "receiver_ids_csv":  ",".join(rid for rid in receiver_ids),
@@ -912,13 +937,10 @@ async def receivers_configure(request: web.Request) -> web.Response:
         raise web.HTTPBadRequest(
             reason="sender_ids and receiver_ids must have matching non-empty counts",
         )
-    # Per-sender ``conset_<sid>`` selections forwarded from the caps
-    # page (same convention as the senders configure page).
-    conset_by_sender: dict[str, int] = {}
-    for sid in sender_ids:
-        val = request.query.get(f"conset_{sid}", "")
-        if val.lstrip("-").isdigit():
-            conset_by_sender[sid] = int(val)
+    # Per-sender per-part ``conset_<sid>`` / ``conset_<sid>::<part>``
+    # selections forwarded from the caps page (same convention as the
+    # senders configure page).
+    conset_by_sender = _parse_conset_selections(request.query, sender_ids)
     receivers: list[dict[str, Any]] = [
         r for r in (cache.get_receiver(rid) for rid in receiver_ids) if r is not None
     ]
@@ -2023,6 +2045,7 @@ _CAPS_PARAM_URN_PREFIXES: tuple[str, ...] = (
 _CAPS_META_KEYS = frozenset({
     _CAPS_META_LABEL,
     _CAPS_META_ENABLED,
+    _CAPS_META_LAYER_ENABLED,
     _CAPS_META_PREFERENCE,
     _CAPS_META_FORMAT,
     _CAPS_META_LAYER,
@@ -2141,11 +2164,74 @@ def _coerce_int(v: Any) -> int | None:
     return None
 
 
+_MUX_PART_FORMAT_ORDER = {"video": 0, "audio": 1, "data": 2}
+
+
+def _resource_is_mux(s: dict[str, Any], flow: Any) -> bool:
+    """Whether a resource should render as per-part MUX sections.
+
+    An IS-04 **sender** carries no ``format`` field — the format lives on its
+    **flow** (our ``NSenderValue`` adds a convenience ``format``, but the
+    registry strips it on publish, so the controller's cached sender has
+    none). So a sender is mux iff its bound flow is a mux flow. A **receiver**
+    carries its own ``format`` (and the receiver-caps page's narrowed sender
+    copies keep the originating sender's ``flow_id``), so the resource's own
+    ``format`` is honoured when present.
+    """
+    if _short_format((s or {}).get("format")) == "mux":
+        return True
+    return isinstance(flow, dict) and _short_format(flow.get("format")) == "mux"
+
+
+def _partition_mux_parts(
+    constraint_sets: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Partition a MUX resource's projected constraint sets into ordered parts.
+
+    A MUX carries a trunk (no own ``cap:meta:format``/``layer``) plus one or
+    more sub-layer constraint sets (tagged with ``cap:meta:format`` +
+    ``cap:meta:layer``). To make a MUX look and behave like a natural group —
+    where each member (VIDEO 0, AUDIO 0, …) is its own section — we group the
+    sets by part: the trunk under ``"MUX"`` and each sub-layer under e.g.
+    ``"VIDEO 0"`` / ``"AUDIO 0"``.
+
+    Each projected constraint-set dict is reused as-is; its ``index`` is
+    preserved so per-part selection (``conset_<sid>::<format>:<layer>``) and
+    the per-part flow-match greening line up. Returns an ordered list of part
+    dicts ``{part_key, label, format, layer, constraint_sets}`` — trunk first,
+    then VIDEO / AUDIO / DATA by ascending layer.
+    """
+    parts: dict[str, dict[str, Any]] = {}
+    for cs in constraint_sets:
+        fmt = cs.get("actual_meta_format", "") or ""
+        layer = cs.get("actual_meta_layer", "")
+        if not fmt and layer == "":
+            key, label, sort_key = "trunk", "MUX", (-1, -1)
+        else:
+            key = f"{fmt}:{layer}"
+            label = f"{fmt.upper()} {layer}"
+            li = int(layer) if str(layer).lstrip("-").isdigit() else 0
+            sort_key = (_MUX_PART_FORMAT_ORDER.get(fmt, 9), li)
+        part = parts.get(key)
+        if part is None:
+            part = {
+                "part_key": key, "label": label, "format": fmt,
+                "layer": layer, "_sort": sort_key, "constraint_sets": [],
+            }
+            parts[key] = part
+        part["constraint_sets"].append(cs)
+    ordered = sorted(parts.values(), key=lambda p: p["_sort"])
+    for part in ordered:
+        part.pop("_sort", None)
+    return ordered
+
+
 def _build_caps_view(
     cache: ResourceCache,
     senders: list[dict[str, Any]],
     *,
     filters: dict[str, str] | None = None,
+    trace: Any = None,
 ) -> dict[str, Any]:
     """Build a per-sender, filtered caps view for the capabilities page.
 
@@ -2198,6 +2284,8 @@ def _build_caps_view(
             "role": role_label,
             "device_serial": device_serial(dev) or "",
             "device_address": device_address(dev) or "",
+            # Set below from the resolved flow (a sender has no own format).
+            "is_mux": False,
             "constraint_sets": [],
         }
         # Receiver caps pages pass receiver-narrowed sender copies; carry
@@ -2227,9 +2315,35 @@ def _build_caps_view(
             cache.get_source(flow.get("source_id", "") or "")
             if isinstance(flow, dict) else None
         )
+        entry["is_mux"] = _resource_is_mux(s, flow)
         matched_cs_indices = set(flow_match_for_sender(
             flow, source, constraint_sets, cache=cache,
         ).matched_cs_indices)
+
+        # debug-in-depth: surface the flow-match DECISION inputs so the green
+        # highlight is explainable from the trace alone (why a CS is/ isn't
+        # green after a constraint). Shows the flow the cache currently binds
+        # to the sender + the per-part operating keys + the matched indices.
+        if trace is not None and getattr(trace, "enabled", False):
+            ops_keys = []
+            try:
+                from nmos.controller.flow_match import _operating_capsets
+                ops_keys = list(_operating_capsets(cache, flow, source).keys())
+            except Exception:
+                pass
+            trace.emit(
+                "caps_flow_match",
+                sid=sid,
+                sender_flow_id=s.get("flow_id"),
+                flow_resolved=isinstance(flow, dict),
+                flow_id=(flow or {}).get("id") if isinstance(flow, dict) else None,
+                flow_format=(flow or {}).get("format") if isinstance(flow, dict) else None,
+                parents=(flow or {}).get("parents") if isinstance(flow, dict) else None,
+                is_mux=entry["is_mux"],
+                operating_parts=ops_keys,
+                n_constraint_sets=len(constraint_sets),
+                matched_cs_indices=sorted(matched_cs_indices),
+            )
 
         for i, cs in enumerate(constraint_sets):
             if not isinstance(cs, dict):
@@ -2336,6 +2450,11 @@ def _build_caps_view(
         entry["constraint_sets"].sort(
             key=lambda cs: (-int(cs["preference"] or 0), cs["index"]),
         )
+        # A MUX resource is rendered as per-part sections (trunk MUX + each
+        # VIDEO/AUDIO/DATA sub-layer), mirroring a natural group's per-member
+        # layout. Non-mux resources keep the flat ``constraint_sets`` list.
+        if entry.get("is_mux"):
+            entry["parts"] = _partition_mux_parts(entry["constraint_sets"])
 
     # Widest parameter name across every displayed constraint set.
     # Surfaced as a CSS custom property so every expanded details block
@@ -2529,23 +2648,117 @@ def _constraint_set_hash(cs: dict[str, Any]) -> str:
     return hashlib.sha256(payload).hexdigest()[:16]
 
 
+def _decorate_configure_cs(
+    s: dict[str, Any],
+    hint: Any,
+    constraint_sets: list[Any],
+    chosen_index: int,
+    match: Any,
+) -> dict[str, Any] | None:
+    """Project one chosen constraint set into the configure-view dict.
+
+    Decorates each parameter constraint with an editable ``widget`` and the
+    flow-match greening, and carries the meta fields. Returns ``None`` when
+    the index is out of range or the set is not visible.
+
+    ``flow_part`` (and the per-part flow-value lookup) uses the **full-URN**
+    part key — the same key ``FlowMatch.values_by_part`` is built on — which
+    is intentionally distinct from the **short** part key the caps-page radio
+    selection uses (``<short-format>:<layer>``).
+    """
+    if not (0 <= chosen_index < len(constraint_sets)):
+        return None
+    cs = constraint_sets[chosen_index]
+    if not isinstance(cs, dict) or not _cs_is_visible(cs):
+        return None
+
+    actual_meta_format = _short_format(cs.get(_CAPS_META_FORMAT))
+    actual_meta_layer = _coerce_int(cs.get(_CAPS_META_LAYER))
+    meta_format = actual_meta_format
+    meta_layer = actual_meta_layer
+    if not meta_format and hint is not None:
+        meta_format = hint.format.lower()
+    if meta_layer is None and hint is not None:
+        meta_layer = hint.role
+    if not meta_format:
+        meta_format = _short_format(s.get("format"))
+    raw_comp = cs.get(_CAPS_META_COMP_GROUPS)
+    meta_compat: list[int] = []
+    if isinstance(raw_comp, list):
+        for c in raw_comp:
+            ci = _coerce_int(c)
+            if ci is not None:
+                meta_compat.append(ci)
+
+    cs_flow_match = (chosen_index in match.matched_cs_indices)
+    cs_fmt = cs.get(_CAPS_META_FORMAT)
+    cs_layer = _coerce_int(cs.get(_CAPS_META_LAYER))
+    part_key = (
+        "trunk" if (cs_fmt is None and cs_layer is None)
+        else f"{cs_fmt}:{cs_layer}"
+    )
+    flow_vals = match.values_by_part.get(part_key, {})
+    flow_keys = {urn: flow_match_key(v) for urn, v in flow_vals.items()}
+
+    params: list[dict[str, Any]] = []
+    for key, val in cs.items():
+        if not isinstance(key, str):
+            continue
+        if key in _CAPS_META_KEYS:
+            continue
+        widget = _widget_for_constraint(key, val)
+        _stamp_flow_match_on_widget(widget, flow_keys.get(key),
+                                    flow_vals.get(key))
+        params.append({
+            "urn":    key,
+            "name":   _short_param_name(key),
+            "flow_key": flow_keys.get(key, ""),
+            "widget": widget,
+        })
+    params.sort(key=lambda p: p["name"])
+
+    return {
+        "index":        chosen_index,
+        "flow_match":   cs_flow_match,
+        "flow_part":    part_key,
+        "hash":         _constraint_set_hash(cs),
+        "label":        cs.get(_CAPS_META_LABEL, f"set #{chosen_index}"),
+        "preference":   cs.get(_CAPS_META_PREFERENCE, 0),
+        "meta_format":  meta_format,
+        "meta_layer":   meta_layer if meta_layer is not None else "",
+        "actual_meta_format": actual_meta_format or "",
+        "actual_meta_layer": (
+            actual_meta_layer if actual_meta_layer is not None else ""
+        ),
+        "meta_compat":  meta_compat,
+        "media_type":   _media_type_first(cs),
+        "params":       params,
+    }
+
+
 def _build_configure_view(
     cache: ResourceCache,
     senders: list[dict[str, Any]],
-    conset_by_sender: dict[str, int],
+    conset_by_sender: dict[str, dict[str, int]],
     filters: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Per-sender view for the configure page.
 
-    Each sender carries exactly ONE constraint set — the one the
-    operator picked on the caps page (``conset_<sid>`` query param).
-    Inside that set, every parameter constraint is decorated with a
+    ``conset_by_sender`` maps ``sid → {part_key: chosen_index}``. A non-mux
+    sender carries a single ``"trunk"`` choice and the entry exposes one
+    ``constraint_set``. A MUX sender carries one choice per part (trunk +
+    each VIDEO/AUDIO/DATA sub-layer) and the entry exposes a ``parts`` list,
+    each with its own decorated ``constraint_set`` — so a MUX is configured
+    section-by-section exactly like a natural group is configured member-by-
+    member.
+
+    Inside each set, every parameter constraint is decorated with a
     ``widget`` dict so the template can render the matching editable
     control (multi-select / range / readonly / text).
 
-    Disabled constraint sets and filter-excluded sets are skipped.
-    Filter rules match the caps-page view (format / layer /
-    compatibility).
+    Disabled constraint sets and filter-excluded sets are skipped. Filters
+    apply to the flat (non-mux) view only; the mux parts view always shows
+    every part (the parts ARE the format/layer breakdown).
     """
     from nmos.controller.grouping import (
         device_address, device_serial, extract_group_hint,
@@ -2617,75 +2830,11 @@ def _build_configure_view(
             for c in mc:
                 has_compat.add(c)
 
-        # Resolve the selected constraint set for this sender.
-        chosen_index = conset_by_sender.get(sid)
-        if chosen_index is None:
-            senders_out.append(entry)
-            continue
-        if not (0 <= chosen_index < len(constraint_sets)):
-            senders_out.append(entry)
-            continue
-        cs = constraint_sets[chosen_index]
-        if not isinstance(cs, dict):
-            senders_out.append(entry)
-            continue
-        if not _cs_is_visible(cs):
-            senders_out.append(entry)
-            continue
-
-        # ``actual_meta_*`` carry ONLY what the published CS itself
-        # declares — no fallbacks. These drive the IS-11
-        # ``/constraints/active`` PUT body so a non-hierarchical CS
-        # (no cap:meta:format / cap:meta:layer) ships a trunk body
-        # (``enabled=true``, no sub-layer markers). Stamping the
-        # natural-group hint onto a trunk CS body causes the Node's
-        # CCF check to return 422 "Non-hierarchical: ConSet … cannot
-        # have format=…/layer=…".
-        #
-        # The display-side ``meta_format`` / ``meta_layer`` below
-        # keep the natural-group fallback so a trunk CS in a grouped
-        # sender (group, MUX, etc.) still renders with a meaningful
-        # role/layer label — UI grouping is independent of wire
-        # truth.
-        actual_meta_format = _short_format(cs.get(_CAPS_META_FORMAT))
-        actual_meta_layer = _coerce_int(cs.get(_CAPS_META_LAYER))
-
-        meta_format = actual_meta_format
-        meta_layer = actual_meta_layer
-        if not meta_format and hint is not None:
-            meta_format = hint.format.lower()
-        if meta_layer is None and hint is not None:
-            meta_layer = hint.role
-        if not meta_format:
-            meta_format = _short_format(s.get("format"))
-        raw_comp = cs.get(_CAPS_META_COMP_GROUPS)
-        meta_compat: list[int] = []
-        if isinstance(raw_comp, list):
-            for c in raw_comp:
-                ci = _coerce_int(c)
-                if ci is not None:
-                    meta_compat.append(ci)
-
-        # Apply filters.
-        if by_format and meta_format != by_format:
-            senders_out.append(entry)
-            continue
-        if by_layer_int is not None:
-            if meta_layer is None or meta_layer != by_layer_int:
-                senders_out.append(entry)
-                continue
-        if by_compat_int is not None:
-            if meta_compat and by_compat_int not in meta_compat:
-                senders_out.append(entry)
-                continue
-
-        # Which CS does the sender's CURRENT flow sit in, and what is its
-        # per-URN operating point? Computed against THIS sender's
-        # constraint_sets — full list on the senders page, receiver-narrowed
-        # list on the receivers page (the narrowed sender copy is what's
-        # passed in), so ``matched_cs_index`` aligns with ``chosen_index``
-        # for both. ``matched_values`` (URN → flow value) drives the green
-        # multi-value option. Flow/source resolved fresh from the sender.
+        # Which CS does the sender's CURRENT flow sit in, and what is each
+        # part's per-URN operating point? Computed once per sender against
+        # THIS sender's constraint_sets (full on the senders page,
+        # receiver-narrowed on the receivers page). Flow/source resolved
+        # fresh from the sender; ``cache`` enables the mux sub-flow chase.
         flow = cache.get_flow(s.get("flow_id", "") or "")
         source = (
             cache.get_source(flow.get("source_id", "") or "")
@@ -2694,71 +2843,92 @@ def _build_configure_view(
         match = flow_match_for_sender(
             flow, source, constraint_sets, cache=cache,
         )
-        cs_flow_match = (chosen_index in match.matched_cs_indices)
-        # The chosen CS belongs to one part (trunk, or a mux sub-layer keyed
-        # by its cap:meta:format/layer). Its multi-value options green
-        # against THAT part's operating point — so a muxed sub-layer CS
-        # reflects its own sub-flow, not the trunk.
-        cs_fmt = cs.get(_CAPS_META_FORMAT)
-        cs_layer = _coerce_int(cs.get(_CAPS_META_LAYER))
-        part_key = (
-            "trunk" if (cs_fmt is None and cs_layer is None)
-            else f"{cs_fmt}:{cs_layer}"
+
+        is_mux = _resource_is_mux(s, flow)
+        # The operator's per-part choices: {part_key: chosen_index}. The trunk
+        # uses part_key "trunk"; mux sub-layers use the short "<format>:<layer>"
+        # key (matching the caps-page radio names).
+        sel = conset_by_sender.get(sid) or {}
+
+        if is_mux:
+            # Group this sender's visible constraint sets into parts (trunk +
+            # each VIDEO/AUDIO/DATA sub-layer), pick one CS per part (the
+            # operator's choice, else the part's most-preferred set), and
+            # decorate each — so a MUX renders as per-part sections like a
+            # group's per-member sections. Filters do not apply to the mux
+            # parts view: the parts ARE the format/layer breakdown.
+            part_order: list[str] = []
+            part_meta: dict[str, dict[str, Any]] = {}
+            for i, cs in enumerate(constraint_sets):
+                if not isinstance(cs, dict) or not _cs_is_visible(cs):
+                    continue
+                pf = _short_format(cs.get(_CAPS_META_FORMAT))
+                pl = _coerce_int(cs.get(_CAPS_META_LAYER))
+                if not pf and pl is None:
+                    pk, label, sort_key = "trunk", "MUX", (-1, -1)
+                else:
+                    pk = f"{pf}:{pl}"
+                    label = f"{pf.upper()} {pl}"
+                    sort_key = (_MUX_PART_FORMAT_ORDER.get(pf, 9), pl or 0)
+                pm = part_meta.get(pk)
+                if pm is None:
+                    pm = {"label": label, "sort": sort_key, "indices": []}
+                    part_meta[pk] = pm
+                    part_order.append(pk)
+                pm["indices"].append(i)
+
+            parts_out: list[dict[str, Any]] = []
+            for pk in sorted(part_order, key=lambda k: part_meta[k]["sort"]):
+                pm = part_meta[pk]
+                chosen_index = sel.get(pk)
+                if chosen_index is None:
+                    # Default to the part's most-preferred visible set.
+                    chosen_index = max(
+                        pm["indices"],
+                        key=lambda j: _coerce_int(
+                            constraint_sets[j].get(_CAPS_META_PREFERENCE)) or 0,
+                    )
+                deco = _decorate_configure_cs(
+                    s, hint, constraint_sets, chosen_index, match,
+                )
+                if deco is None:
+                    continue
+                parts_out.append({
+                    "part_key": pk,
+                    "label": pm["label"],
+                    "constraint_set": deco,
+                })
+            entry["parts"] = parts_out
+            senders_out.append(entry)
+            continue
+
+        # Non-mux: exactly ONE chosen constraint set (trunk part key).
+        chosen_index = sel.get("trunk")
+        if chosen_index is None:
+            senders_out.append(entry)
+            continue
+        deco = _decorate_configure_cs(
+            s, hint, constraint_sets, chosen_index, match,
         )
-        flow_vals = match.values_by_part.get(part_key, {})  # URN → raw value
-        flow_keys = {
-            urn: flow_match_key(v) for urn, v in flow_vals.items()
-        }
+        if deco is None:
+            senders_out.append(entry)
+            continue
 
-        # Build the decorated CS.
-        params: list[dict[str, Any]] = []
-        for key, val in cs.items():
-            if not isinstance(key, str):
+        # Apply filters (flat / non-mux view only).
+        if by_format and deco["meta_format"] != by_format:
+            senders_out.append(entry)
+            continue
+        if by_layer_int is not None:
+            ml = deco["meta_layer"]
+            if ml == "" or ml != by_layer_int:
+                senders_out.append(entry)
                 continue
-            if key in _CAPS_META_KEYS:
+        if by_compat_int is not None:
+            if deco["meta_compat"] and by_compat_int not in deco["meta_compat"]:
+                senders_out.append(entry)
                 continue
-            widget = _widget_for_constraint(key, val)
-            _stamp_flow_match_on_widget(widget, flow_keys.get(key),
-                                        flow_vals.get(key))
-            params.append({
-                "urn":    key,
-                "name":   _short_param_name(key),
-                # Canonical key of the flow's current value for this URN
-                # (or "" when the flow doesn't constrain it) — the live SSE
-                # handler uses it to re-green the matching option/value.
-                "flow_key": flow_keys.get(key, ""),
-                "widget": widget,
-            })
-        params.sort(key=lambda p: p["name"])
 
-        entry["constraint_set"] = {
-            "index":        chosen_index,
-            # True only when the displayed/selected CS IS the most-specific
-            # CS the current flow sits in (greens the CS name). The
-            # multi-value option green below is independent of this — it
-            # fires whenever an option equals the flow's current value.
-            "flow_match":   cs_flow_match,
-            # The CS's part key ("trunk" or "<format>:<layer>") — the live
-            # SSE handler uses it to pick this CS's part's flow values from
-            # the per-part payload when greening multi-value options.
-            "flow_part":    part_key,
-            "hash":         _constraint_set_hash(cs),
-            "label":        cs.get(_CAPS_META_LABEL, f"set #{chosen_index}"),
-            "preference":   cs.get(_CAPS_META_PREFERENCE, 0),
-            "meta_format":  meta_format,
-            "meta_layer":   meta_layer if meta_layer is not None else "",
-            # Wire-truth values — only what the CS itself declares.
-            # The DOM ``data-cs-meta-*`` attributes are stamped from
-            # these so the JS body builder doesn't fabricate
-            # hierarchical markers on a trunk CS.
-            "actual_meta_format": actual_meta_format or "",
-            "actual_meta_layer": (
-                actual_meta_layer if actual_meta_layer is not None else ""
-            ),
-            "meta_compat":  meta_compat,
-            "media_type":   _media_type_first(cs),
-            "params":       params,
-        }
+        entry["constraint_set"] = deco
         senders_out.append(entry)
 
     # Widest parameter name across every sender's selected CS. The
@@ -2768,12 +2938,14 @@ def _build_configure_view(
     # section sizing to its own widest name.
     max_name_len = 0
     for entry in senders_out:
-        cs = entry.get("constraint_set")
-        if not cs:
-            continue
-        for p in cs.get("params", []):
-            if len(p["name"]) > max_name_len:
-                max_name_len = len(p["name"])
+        # A non-mux entry carries one ``constraint_set``; a mux entry carries
+        # a ``parts`` list, each with its own ``constraint_set``.
+        css = [entry["constraint_set"]] if entry.get("constraint_set") else []
+        css += [p["constraint_set"] for p in entry.get("parts", [])]
+        for cs in css:
+            for p in cs.get("params", []):
+                if len(p["name"]) > max_name_len:
+                    max_name_len = len(p["name"])
 
     return {
         "senders":            senders_out,

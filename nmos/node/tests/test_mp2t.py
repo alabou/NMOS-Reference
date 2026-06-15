@@ -517,6 +517,43 @@ class TestMp2tIS11Constraints:
         assert flow_id_before != flow_id_after, \
             "Flow UUID must change after constraint application (Atomic State Changes)"
 
+    def test_uuid_cascade_on_subflows(self) -> None:
+        """Atomic State Changes: the mux SUB-FLOW UUIDs change on a constraint
+        force, not just the trunk. Without per-sub-flow cascade the force
+        mutates a sub-flow in place (same id + version) and the registry's
+        version-gated push never re-sends it — the registry (and the
+        controller's green) stay stale. Mirrors Go forceActiveConstraints,
+        which cascades every flow (trunk + each sub-flow)."""
+        node = _make_node()
+        _build_config(node, "config4a_mux")
+        result = _find_mux_sender(node)
+        assert result is not None
+        _, sender = result
+
+        flow_before = _get_sender_flow(node, sender)
+        parents_before = list(_get_flow_core(flow_before).Parents.value)
+        assert parents_before, "mux flow must have parent sub-flows"
+
+        _apply_constraints(node, sender, [{
+            "urn:x-nmos:cap:meta:preference": 100,
+            "urn:x-nmos:cap:meta:enabled": True,
+            "urn:x-nmos:cap:format:media_type": {"enum": ["application/MP2T"]},
+        }])
+
+        flow_after = _get_sender_flow(node, sender)
+        parents_after = list(_get_flow_core(flow_after).Parents.value)
+        assert parents_after, "mux flow must still have parent sub-flows"
+        # Every sub-flow got a fresh UUID and the trunk's Parents repoint to
+        # them — so the forced sub-flows re-register with the registry.
+        assert set(parents_before).isdisjoint(set(parents_after)), (
+            "sub-flow UUIDs must change after constraint force "
+            f"(before={parents_before} after={parents_after})"
+        )
+        # And the new sub-flow ids resolve to live flows in the node store.
+        for pid in parents_after:
+            assert node.flows.get(str(pid)) is not None, \
+                f"new sub-flow {pid} must exist in the node store"
+
     def test_delete_constraints_resets(self) -> None:
         """DELETE active constraints → sender returns to unconstrained."""
         node = _make_node()

@@ -122,6 +122,22 @@ code {
   font-size: 1.05rem;
   letter-spacing: 0.03em;
 }
+/* MUX part sub-header (trunk MUX + each VIDEO/AUDIO/DATA sub-layer). A
+   MUX is rendered as per-part sections, mirroring a natural group's per
+   member sections; the sub-header sits one indent level in and reads
+   lighter than the resource title above it. */
+.devices-table .mux-part-row td.device-title {
+  background: #fbfcfd;
+  padding-top: 0.3rem;
+  padding-bottom: 0.3rem;
+}
+.devices-table .mux-part-row .mux-part-label {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #6c757d;
+}
 .devices-table .device-title-row .device-address {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.9rem;

@@ -15,7 +15,12 @@
 {# conset_{id}=<idx> fragment so filter links preserve per-sender CS
    picks. #}
 {% set conset_qs %}
-{%- for sid, idx in conset_by_sender.items() -%}&conset_{{ sid }}={{ idx }}{%- endfor -%}
+{%- for sid, picks in conset_by_sender.items() -%}
+  {%- for part_key, idx in picks.items() -%}
+    {%- if part_key == 'trunk' -%}&conset_{{ sid }}={{ idx }}
+    {%- else -%}&conset_{{ sid }}::{{ part_key }}={{ idx }}{%- endif -%}
+  {%- endfor -%}
+{%- endfor -%}
 {% endset %}
 
 <div class="row">
@@ -253,8 +258,24 @@
               </tr>
             </tbody>
 
-            {% if sender.constraint_set %}
-              {% set cs = sender.constraint_set %}
+            {# A MUX renders one section per part (trunk MUX + each
+               VIDEO/AUDIO/DATA sub-layer); a non-mux sender renders its
+               single chosen constraint set as one (header-less) section. #}
+            {% set sections = sender.parts if sender.parts
+                 else ([{'label': '', 'constraint_set': sender.constraint_set}]
+                       if sender.constraint_set else []) %}
+            {% if sections %}
+              {% for section in sections %}
+                {% if section.label %}
+                  <tbody class="device-title-tbody">
+                    <tr class="device-title-row mux-part-row">
+                      <td colspan="8" class="device-title">
+                        <span class="ml-4 mux-part-label">{{ section.label }}</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                {% endif %}
+                {% set cs = section.constraint_set %}
               <tbody class="caps-tbody">
                 <tr class="caps-row is-expanded"
                     data-caps-row="{{ sender.id }}-{{ cs.index }}"
@@ -270,7 +291,8 @@
                        the display fallback here causes the Node to
                        reject the constraint with 422. #}
                     data-cs-meta-format="{{ cs.actual_meta_format or '' }}"
-                    data-cs-meta-layer="{{ cs.actual_meta_layer if cs.actual_meta_layer != '' else '' }}">
+                    data-cs-meta-layer="{{ cs.actual_meta_layer if cs.actual_meta_layer != '' else '' }}"
+                    data-cs-part="{{ cs.flow_part }}">
                   <td class="caps-set-cell">
                     <span class="caps-toggle">▾</span>
                     <code>#{{ cs.index }}</code>
@@ -386,12 +408,6 @@
                               </td>
                             </tr>
                           {% endfor %}
-                          {% if cs.meta_compat %}
-                            <tr>
-                              <td class="caps-detail-name">layer_compatibility_groups</td>
-                              <td class="caps-detail-value">{{ cs.meta_compat | join(', ') }}</td>
-                            </tr>
-                          {% endif %}
                         </tbody>
                       </table>
                     {% else %}
@@ -402,6 +418,7 @@
                   </td>
                 </tr>
               </tbody>
+              {% endfor %}
             {% else %}
               <tbody>
                 <tr>

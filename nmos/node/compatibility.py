@@ -2908,10 +2908,13 @@ def update_sender_to_compliant_flow(
             print(f"  [update_sender_flow] Write-back FAILED: {exc}")
         return False
 
-    # NOTE: UUID cascade (Atomic State Changes) is NOT done here.
-    # It is done in force_active_constraints() AFTER all mutations
-    # (trunk + sub-flows) are complete, to avoid stale ID references
-    # during the mux sub-flow forcing loop.
+    # NOTE: UUID cascade (Atomic State Changes) is NOT done here. Forced
+    # properties are written IN PLACE (Phase 1); the cascade is deferred to
+    # force_active_constraints() AFTER all mutations (trunk + sub-flows) are
+    # complete, to avoid stale ID references during the mux sub-flow forcing
+    # loop. This two-phase split (vs the Go reference's intrinsic per-write
+    # cascade) has error-recovery implications — see
+    # nmos/node/ATOMIC_STATE_CHANGES.md.
     #
     # NOTE: receiver constraint propagation (updateReceiverConstraintsToFlowProperties)
     # is NOT triggered here. It is invoked at the end of update_flow_to_compliant()so

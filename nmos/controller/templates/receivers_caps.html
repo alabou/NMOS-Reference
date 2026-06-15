@@ -10,6 +10,56 @@
 {%- if by_compatibility != '' %}&byCompatibility={{ by_compatibility }}{% endif %}
 {%- endmacro %}
 
+{# One constraint-set picker row (+ details). ``radio_name`` lets a MUX
+   group rows per part; ``paired_receiver_id`` carries the receiver-scoped
+   SSE pairing onto the row (receiver caps pages only). #}
+{% macro cs_row(sender_id, cs, radio_name, checked, paired_receiver_id) %}
+  <tr class="caps-row" data-caps-row="{{ sender_id }}-{{ cs.index }}"
+      {% if paired_receiver_id %}data-caps-receiver="{{ paired_receiver_id }}"{% endif %}>
+    <td class="text-center">
+      <label class="m-0">
+        <input type="radio" name="{{ radio_name }}" value="{{ cs.index }}"
+               {% if checked %}checked{% endif %}>
+      </label>
+    </td>
+    <td class="caps-set-cell">
+      <span class="caps-toggle">▸</span>
+      <code>#{{ cs.index }}</code>
+    </td>
+    <td class="cs-label{% if cs.flow_match %} flow-match{% endif %}">{{ cs.label }}</td>
+    <td class="caps-summary">{{ cs.media_type or '—' }}</td>
+    <td>{{ cs.meta_format or '—' }}</td>
+    <td>{{ cs.meta_layer if cs.meta_layer != '' else '—' }}</td>
+    <td>{{ cs.preference }}</td>
+  </tr>
+  <tr class="caps-details-row"
+      data-caps-details-for="{{ sender_id }}-{{ cs.index }}" hidden>
+    <td></td>
+    <td colspan="6" class="caps-details-cell">
+      {% if cs.params %}
+        <table class="caps-params">
+          <tbody>
+            {% for p in cs.params %}
+              <tr>
+                <td class="caps-detail-name">{{ p.name }}</td>
+                <td class="caps-detail-value">{{ p.value }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="text-muted small">
+          No parameter constraints declared (unconstrained).
+        </div>
+      {% endif %}
+    </td>
+  </tr>
+{% endmacro %}
+
+{% macro part_radio_name(sender_id, part_key) -%}
+conset_{{ sender_id }}{% if part_key != 'trunk' %}::{{ part_key }}{% endif %}
+{%- endmacro %}
+
 <div class="row">
   <div class="col-12">
     <h3 class="mb-3">Capabilities</h3>
@@ -150,59 +200,29 @@
                 </td>
               </tr>
             </tbody>
+            {% if sender.parts %}
+              {% for part in sender.parts %}
+                <tbody class="device-title-tbody">
+                  <tr class="device-title-row mux-part-row">
+                    <td colspan="7" class="device-title">
+                      <span class="ml-4 mux-part-label">{{ part.label }}</span>
+                    </td>
+                  </tr>
+                </tbody>
+                <tbody class="caps-tbody">
+                  {% for cs in part.constraint_sets %}
+                    {{ cs_row(sender.id, cs,
+                              part_radio_name(sender.id, part.part_key),
+                              loop.first, sender.paired_receiver_id) }}
+                  {% endfor %}
+                </tbody>
+              {% endfor %}
+            {% else %}
             <tbody class="caps-tbody">
               {% if sender.constraint_sets %}
                 {% for cs in sender.constraint_sets %}
-                  <tr class="caps-row"
-                      data-caps-row="{{ sender.id }}-{{ cs.index }}"
-                      {% if sender.paired_receiver_id %}data-caps-receiver="{{ sender.paired_receiver_id }}"{% endif %}>
-                    <td class="text-center">
-                      <label class="m-0">
-                        <input type="radio"
-                               name="conset_{{ sender.id }}"
-                               value="{{ cs.index }}"
-                               {% if loop.first %}checked{% endif %}>
-                      </label>
-                    </td>
-                    <td class="caps-set-cell">
-                      <span class="caps-toggle">▸</span>
-                      <code>#{{ cs.index }}</code>
-                    </td>
-                    <td class="cs-label{% if cs.flow_match %} flow-match{% endif %}">{{ cs.label }}</td>
-                    <td class="caps-summary">{{ cs.media_type or '—' }}</td>
-                    <td>{{ cs.meta_format or '—' }}</td>
-                    <td>{{ cs.meta_layer if cs.meta_layer != '' else '—' }}</td>
-                    <td>{{ cs.preference }}</td>
-                  </tr>
-                  <tr class="caps-details-row"
-                      data-caps-details-for="{{ sender.id }}-{{ cs.index }}"
-                      hidden>
-                    <td></td>
-                    <td colspan="6" class="caps-details-cell">
-                      {% if cs.meta_compat or cs.params %}
-                        <table class="caps-params">
-                          <tbody>
-                            {% if cs.meta_compat %}
-                              <tr>
-                                <td class="caps-detail-name">layer_compatibility_groups</td>
-                                <td class="caps-detail-value">{{ cs.meta_compat | join(', ') }}</td>
-                              </tr>
-                            {% endif %}
-                            {% for p in cs.params %}
-                              <tr>
-                                <td class="caps-detail-name">{{ p.name }}</td>
-                                <td class="caps-detail-value">{{ p.value }}</td>
-                              </tr>
-                            {% endfor %}
-                          </tbody>
-                        </table>
-                      {% else %}
-                        <div class="text-muted small">
-                          No parameter constraints declared (unconstrained).
-                        </div>
-                      {% endif %}
-                    </td>
-                  </tr>
+                  {{ cs_row(sender.id, cs, 'conset_' ~ sender.id,
+                            loop.first, sender.paired_receiver_id) }}
                 {% endfor %}
               {% else %}
                 <tr>
@@ -212,6 +232,7 @@
                 </tr>
               {% endif %}
             </tbody>
+            {% endif %}
           {% endfor %}
         </table>
 

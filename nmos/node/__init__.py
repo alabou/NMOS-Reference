@@ -3317,11 +3317,31 @@ class Node:
         flow_ptr = self.flows.get(flow_id) if flow_id else None
 
         # --- Atomic State Changes: UUID cascade ---
-        # Each update*Flow call propagates a new UUID and cascades to
-        # senders/children.
-        # We cascade the main sender flow + its source here (after all
-        # mutations are complete).  Sub-flow cascades are handled by the
-        # main flow's update_flow() which propagates to children's Parents.
+        # NOTE: TWO-PHASE design (forced props written IN PLACE above; cascade
+        # triggered HERE via empty update_source()/update_flow() calls). This
+        # differs materially from the Go reference, where the cascade is
+        # intrinsic to each flow write — a difference that affects error
+        # recovery (no rollback; version-gated silent staleness if a mutated
+        # flow is not cascaded). See nmos/node/ATOMIC_STATE_CHANGES.md before
+        # changing this path.
+        #
+        # Each update_source/update_flow mints a NEW UUID, bumps the version,
+        # and cascades the new id into referencing resources (senders'
+        # FlowId, children's Parents). Only a version-bumped resource is
+        # re-published to the registry, so EVERY flow whose properties the
+        # force path mutated must be cascaded — trunk AND each mux sub-flow.
+        #
+        # A MUX is a tree: the trunk flow plus N parent sub-flows (one per
+        # format/layer), each with its own source. The force path mutates the
+        # sub-flows in place (e.g. an AAC->L24 sub-layer change); without their
+        # own cascade those changes keep the old id+version and NEVER reach the
+        # registry — the registry (and the controller's caps/green) stay stale.
+        # This mirrors Go's forceActiveConstraints, which cascades every flow
+        # (trunk + each sub-flow via updateFlowToCompliantFlow). The cascade
+        # order is sub-flows FIRST: update_flow(sub-flow) repoints THIS trunk's
+        # Parents to the new sub-flow id (the trunk is the sub-flow's child,
+        # see the Children link populated at flow-add), then the trunk cascade
+        # repoints the sender's FlowId.
         if flow_ptr is not None:
             from nmos.node.updates import SourceUpdate, FlowUpdate
 
@@ -3329,23 +3349,39 @@ class Node:
             fv = poly.value if hasattr(poly, 'value') else poly
             fc = fv.FlowCore if hasattr(fv, 'FlowCore') else None
 
-            if fc is not None:
-                # 1. Cascade source UUID
-                source_id = fc.SourceId.value if fc.SourceId.defined else None
-                if source_id:
+            def _cascade_flow_and_source(core: Any) -> None:
+                """Cascade one flow's source + flow UUID (new id + version)."""
+                src_id = core.SourceId.value if core.SourceId.defined else None
+                if src_id:
                     try:
-                        new_src_id = self.update_source(str(source_id), SourceUpdate())
-                        fc.SourceId.value = new_src_id
+                        new_src = self.update_source(str(src_id), SourceUpdate())
+                        core.SourceId.value = new_src
+                    except Exception:
+                        pass
+                dyn_id = core.ResourceCore.Id.value if core.ResourceCore.Id.defined else None
+                if dyn_id:
+                    try:
+                        self.update_flow(str(dyn_id), FlowUpdate())
                     except Exception:
                         pass
 
-                # 2. Cascade flow UUID (updates sender FlowId + child Parents)
-                flow_dynamic_id = fc.ResourceCore.Id.value if fc.ResourceCore.Id.defined else None
-                if flow_dynamic_id:
-                    try:
-                        self.update_flow(str(flow_dynamic_id), FlowUpdate())
-                    except Exception:
-                        pass
+            if fc is not None:
+                # 1. Cascade each mux sub-flow first (format-agnostic — video,
+                # audio and data sub-layers all get a fresh UUID + version and
+                # repoint the trunk's Parents). No-op for a non-mux flow.
+                if fc.Parents.defined:
+                    for parent_id in list(fc.Parents.value):
+                        sub_ptr = self.flows.get(str(parent_id))
+                        if sub_ptr is None:
+                            continue
+                        sub_poly = sub_ptr.get() if hasattr(sub_ptr, 'get') else sub_ptr
+                        sub_fv = sub_poly.value if hasattr(sub_poly, 'value') else sub_poly
+                        sub_fc = sub_fv.FlowCore if hasattr(sub_fv, 'FlowCore') else None
+                        if sub_fc is not None:
+                            _cascade_flow_and_source(sub_fc)
+
+                # 2. Cascade the trunk flow + its source (repoints sender FlowId).
+                _cascade_flow_and_source(fc)
 
         return None
 
