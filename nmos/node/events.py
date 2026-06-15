@@ -208,7 +208,18 @@ def emit_starting(
     queue: asyncio.Queue[EngineEvent] | None,
     resource_id: str, interface_name: str, is_sender: bool,
 ) -> None:
-    """Emit starting events (5 events)."""
+    """Emit starting events (4 events).
+
+    NOTE: the CLOCK domain is intentionally NOT touched here. Stream
+    activation does not mean the resource is clock-locked — that would
+    falsely report ``synchronization_status = Healthy`` (green) for a
+    stream on an internal clock (no PTP). The synchronization facet
+    reflects the EFFECTIVE clock and is driven separately, only when the
+    clock is actually a locked PTP reference: senders from their source's
+    ``clock_name``, receivers from the negotiated SDP ``ts-refclk`` — both
+    at the activation handlers. Absent such an event the sync domain stays
+    ``NC_INACTIVE`` (NotUsed / grey), which is correct for an internal clock.
+    """
     scope = AlertScope.SENDER if is_sender else AlertScope.RECEIVER
     role = "sender" if is_sender else "receiver"
     msg = f"{role} starting"
@@ -218,7 +229,6 @@ def emit_starting(
         (AlertDomain.TRANSPORT, EventId.TRANSPORT_OK),
         (AlertDomain.ESSENCE, EventId.ESSENCE_OK),
         (AlertDomain.LINK, EventId.LINK_OK),
-        (AlertDomain.CLOCK, EventId.CLOCK_OK),
     ]:
         emit_event(queue, EngineEvent(
             domain=domain, scope=scope,
@@ -226,6 +236,27 @@ def emit_starting(
             count=1, id=resource_id, name=interface_name,
             info=msg,
         ))
+
+
+def emit_clock_locked(
+    queue: asyncio.Queue[EngineEvent] | None,
+    resource_id: str, interface_name: str, is_sender: bool,
+) -> None:
+    """Emit a CLOCK_OK event → synchronization_status Healthy (green).
+
+    Emitted by the activation handlers ONLY when the resource's effective
+    clock is a locked PTP reference (sender: its source's clock_name;
+    receiver: the negotiated SDP ts-refclk). For an internal clock no event
+    is emitted, leaving the sync domain at NC_INACTIVE (NotUsed / grey).
+    """
+    scope = AlertScope.SENDER if is_sender else AlertScope.RECEIVER
+    role = "sender" if is_sender else "receiver"
+    emit_event(queue, EngineEvent(
+        domain=AlertDomain.CLOCK, scope=scope,
+        event=EventId.CLOCK_OK, state=EventState.NORMAL,
+        count=1, id=resource_id, name=interface_name,
+        info=f"{role} clock locked (ptp)",
+    ))
 
 
 def emit_stopping(

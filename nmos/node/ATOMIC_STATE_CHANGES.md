@@ -1,4 +1,4 @@
-# Atomic State Changes — architecture difference from the Go reference
+# Atomic State Changes — architecture weakness
 
 **Status:** important / affects error-recovery design. Read before touching the
 IS-11 constraint-force path (`force_active_constraints`,
@@ -9,8 +9,7 @@ IS-11 constraint-force path (`force_active_constraints`,
 NMOS "Atomic State Changes": when a Flow's or Source's content changes, the
 resource is given a **new UUID** (and bumped version). Referencing resources
 (senders' `flow_id`, child flows' `parents`) are repointed to the new id, and
-the old id is garbage-collected after the heartbeat period. The point — quoting
-the Go reference (`nmosNode.go`, `updateFlowNoMutex`):
+the old id is garbage-collected after the heartbeat period. The point :
 
 > in order to have clean transitions in the registry when information changes we
 > change the id of the Flow such that **from the registry it is not possible to
@@ -23,7 +22,7 @@ content has changed but whose dependents haven't caught up).
 
 ## The difference
 
-### Go reference — cascade is INTRINSIC to the update (atomic, per-flow)
+### best design — cascade is INTRINSIC to the update (atomic, per-flow)
 
 `updateFlowToCompliantFlow` writes the forced properties and, when the change
 warrants a new id (e.g. a coded↔raw class change), calls
@@ -56,7 +55,7 @@ edit — the content was already written in Phase 1.
 
 ## Why this matters — error recovery
 
-The two-phase design trades the Go model's per-flow atomicity for the
+The two-phase design trades the best model's per-flow atomicity for the
 "defer the cascade" convenience, and that has real consequences:
 
 1. **No rollback.** Phase 1 overwrites the live flow/source objects in place.
@@ -67,7 +66,7 @@ The two-phase design trades the Go model's per-flow atomicity for the
 2. **Transient inconsistent registry views are possible.** Between the in-place
    write and the (batched, end-of-operation) cascade+`publish()`, the node's
    internal graph has content/id mismatches. This is precisely the situation the
-   Go new-id-per-change rule is designed to make unobservable.
+   new-id-per-change rule is designed to make unobservable.
 
 3. **Silent staleness if a flow is not cascaded.** The registry push is
    **version-gated** (`registry.py`: *only resources whose version changed are
@@ -90,7 +89,7 @@ The two-phase design trades the Go model's per-flow atomicity for the
   doubt, assert the resource's id/version actually changed after the force.
 - Treat the force→cascade sequence as **not** crash-safe. If robust partial-
   failure recovery is ever required, the principled fix is to converge toward
-  the Go model: make the cascade **intrinsic to the write** (route forced writes
+  the best model: make the cascade **intrinsic to the write** (route forced writes
   through `update_flow` / `update_source` so each flow transition is atomic and
   self-publishing), dropping the empty-update trigger. That removes both the
   inconsistent-window and the silent-staleness failure modes — at the cost of

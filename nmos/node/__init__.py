@@ -3617,29 +3617,19 @@ class Node:
         """Return the initial ``MonitorSynchronizationStatus`` for a
         newly-created receiver monitor source.
 
-        Unlike a sender, a receiver has no pre-configured clock
-        reference — it locks to the sender's clock at activation
-        time. So at monitor-init the most honest signal is the
-        Node's own reference-clock state: if the Node publishes any
-        locked PTP clock the receiver WILL be able to synchronise
-        when a stream arrives (green); otherwise there's no external
-        sync source available and NotUsed is correct (grey).
+        A receiver has no clock reference of its own (no ``clock_name``);
+        it locks to the CONNECTED sender's clock, carried in the negotiated
+        stream's SDP ``ts-refclk``. At monitor-init the receiver is idle (not
+        connected → not using any clock), so the seed is ``NotUsed`` (grey).
+        The connected value is driven by the status-monitor: the receiver
+        activation handler emits ``CLOCK_OK`` (→ Healthy) only when the SDP
+        ``ts-refclk`` names a PTP reference (``sdp_ref_clock_is_ptp``); an
+        internal clock emits nothing, so sync stays ``NotUsed``. So sync
+        reflects effective state, not the node's advertised clock list (which
+        would falsely green on the always-advertised ``clk0`` even when
+        nothing uses PTP).
         """
-        from nmos.node.status_monitor import NC_HEALTHY, NC_NOT_USED
-        try:
-            if self.node_value is None or not self.node_value.Clocks.defined:
-                return NC_NOT_USED
-            for clock_val in self.node_value.Clocks._value._inner:
-                wrapper = (
-                    clock_val._inner if hasattr(clock_val, "_inner") else None
-                )
-                if wrapper is None:
-                    continue
-                inner = wrapper._value if hasattr(wrapper, "_value") else None
-                if self._clock_is_locked_ptp(inner):
-                    return NC_HEALTHY
-        except (AttributeError, TypeError):
-            pass
+        from nmos.node.status_monitor import NC_NOT_USED
         return NC_NOT_USED
 
     def _add_monitor_source(

@@ -17,6 +17,29 @@ from typing import Any
 from nmos.node.types import Activation, Privacy
 
 
+def sdp_ref_clock_is_ptp(sdp_text: str) -> bool:
+    """True iff the SDP's ``ts-refclk`` names a PTP reference clock.
+
+    A receiver has no clock of its own — it locks to the connected stream's
+    clock, signalled by the SDP ``ts-refclk`` line (``ptp`` vs ``localmac``/
+    internal). Used to drive the receiver's monitor synchronization_status:
+    PTP → Healthy (green), anything else (localmac/internal, ntp, local,
+    absent) → NotUsed (grey). Returns False on any parse failure.
+    """
+    try:
+        from sdp.MatroxSdp import MatroxSdp, MatroxSdpEnums
+    except ImportError:
+        return False
+    sdp = MatroxSdp()
+    if sdp.decode(sdp_text) is not None:
+        return False
+    media = getattr(sdp, "primary_media", None)
+    if media is None:
+        return False
+    src = getattr(media, "ts_ref_clock_source", None)
+    return src is not None and str(src) == str(MatroxSdpEnums.PTP.value)
+
+
 # ---------------------------------------------------------------------------
 # SDP privacy enum conversion (sdp.EnumId → nmos.enums.EnumId)
 # ---------------------------------------------------------------------------

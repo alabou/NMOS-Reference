@@ -500,6 +500,15 @@ async def handle_patch_sender_staged(request: web.Request) -> web.Response:
         import traceback; traceback.print_exc()
         return error_response(400, f"activation failed: {exc}", request=request)
 
+    # synchronization_status reflects the EFFECTIVE clock, not stream activity
+    # (emit_starting no longer asserts CLOCK_OK). A sender is clock-locked only
+    # if its source's clock_name is a locked PTP clock (clk0); on an internal
+    # clock (clk1) no clock event is emitted and sync stays NotUsed (grey).
+    from nmos.node.events import emit_clock_locked
+    from nmos.node.status_monitor import NC_HEALTHY
+    if node._sender_sync_seed(sender_id) == NC_HEALTHY:
+        emit_clock_locked(node.event_queue, sender_id, "", is_sender=True)
+
     # Build response — construct view, set activation time, then reset staged state
     status = 202 if response.delayed_activation else 200
     view = _make_activation_view(activation, use_active=False)
@@ -720,6 +729,18 @@ async def handle_patch_receiver_staged(request: web.Request) -> web.Response:
         )
     except Exception as exc:
         return error_response(400, f"activation failed: {exc}", request=request)
+
+    # A receiver has no clock of its own — it locks to the connected stream's
+    # clock, signalled by the SDP ``ts-refclk``. synchronization_status reflects
+    # that EFFECTIVE clock (not stream activity): emit CLOCK_OK → Healthy
+    # (green) only when the negotiated SDP names a PTP reference; an internal
+    # clock (localmac) or no stream emits nothing → sync stays NotUsed (grey).
+    # Driven here, where the receiver's SDP is parsed, so it tracks effective
+    # state rather than the node's advertised clock list.
+    from nmos.node.sdp_transport import sdp_ref_clock_is_ptp
+    if transport_file_data is not None and sdp_ref_clock_is_ptp(transport_file_data):
+        from nmos.node.events import emit_clock_locked
+        emit_clock_locked(node.event_queue, receiver_id, "", is_sender=False)
 
     status = 202 if response.delayed_activation else 200
 

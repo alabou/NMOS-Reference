@@ -301,46 +301,79 @@ class TestMonitorSources:
 
         pytest.fail("no monitor source found")
 
-    def test_monitor_sync_status_reflects_node_clock_state(self) -> None:
-        """Seeds `synchronization_status` from the Node's clocks at
-        monitor creation, NOT from activation.
-
-        Regression: before this fix, sync started at NC_INACTIVE and
-        only flipped to NC_HEALTHY when ``emit_starting`` fired
-        (i.e. on the first activation). Inactive resources with a
-        locked PTP clock reported sync=grey in the UI even though
-        the clock was actually locked — inconsistent with the link
-        facet which is seeded HEALTHY at init.
-
-        ``Node.init()`` publishes a default PTP clock with
-        ``Locked=True`` (+ an internal fallback), so every fresh
-        receiver monitor source (which has no pre-configured clock
-        reference of its own and checks whether the Node advertises
-        any locked PTP) must start with
-        ``MonitorSynchronizationStatus=NC_HEALTHY``.
-        """
-        from nmos.node.status_monitor import NC_HEALTHY
+    def test_receiver_sync_seeds_notused(self) -> None:
+        """A receiver has NO clock of its own — it locks to the connected
+        stream's clock (SDP ``ts-refclk``). So an idle/fresh receiver monitor
+        seeds ``NotUsed`` (grey), NOT Healthy: the Node advertising a locked
+        PTP clock (``clk0``) does not mean an idle receiver is using PTP (here
+        every source is forced to the internal ``clk1``). The connected value
+        is driven by the status-monitor at activation (see
+        ``test_sync_facet_decoupled_from_activation``)."""
+        from nmos.node.status_monitor import NC_NOT_USED
         node = _make_node()
-        # Receiver path: looks at node.clocks for any locked PTP.
-        assert node._receiver_sync_seed() == NC_HEALTHY
+        assert node._receiver_sync_seed() == NC_NOT_USED
 
         recv = _make_video_receiver()
         node.add_receiver(recv)
-
         for _, src in node.sources:
             inner = src.get()
-            if inner is None or not hasattr(inner, "MonitorType"):
+            if (inner is None or not hasattr(inner, "MonitorType")
+                    or inner.MonitorType.value != "receiver"):
                 continue
-            if inner.MonitorType.value != "receiver":
-                continue
-            state = inner.MonitorState.value
-            assert state.MonitorSynchronizationStatus.defined
-            assert state.MonitorSynchronizationStatus.value == NC_HEALTHY, (
-                "receiver sync status must start HEALTHY when the Node "
-                "advertises a locked PTP clock"
-            )
+            st = inner.MonitorState.value
+            assert st.MonitorSynchronizationStatus.defined
+            assert st.MonitorSynchronizationStatus.value == NC_NOT_USED
             return
         pytest.fail("no receiver monitor source found")
+
+    def test_sync_facet_decoupled_from_activation(self) -> None:
+        """Stream activation must NOT green the sync facet: ``emit_starting``
+        no longer emits ``CLOCK_OK``, so after the starting events the sync
+        domain stays ``NC_INACTIVE`` (NotUsed / grey) — even though link /
+        transport / essence go Healthy and overall is Healthy (sync ≠ overall).
+        A separate ``CLOCK_OK`` (emitted by the activation handlers only when
+        the effective clock is a locked PTP reference) is what greens it."""
+        import asyncio
+        from nmos.node.events import emit_starting, emit_clock_locked
+        from nmos.node.status_monitor import (
+            ResourceMonitor, NC_HEALTHY, NC_INACTIVE,
+        )
+        for is_sender in (True, False):
+            q: asyncio.Queue = asyncio.Queue()
+            rid = "test-sender" if is_sender else "test-receiver"
+            emit_starting(q, rid, "eth0", is_sender=is_sender)
+            mon = ResourceMonitor(rid, is_sender=is_sender)
+            while not q.empty():
+                mon.process_event(q.get_nowait())
+            mon.tick()
+            # Activation alone: overall Healthy, but sync NOT greened.
+            assert mon.overall_status == NC_HEALTHY
+            assert mon.sync.status == NC_INACTIVE, (
+                "stream activation must not set sync Healthy (internal clock)")
+            # A PTP clock-lock event greens sync.
+            emit_clock_locked(q, rid, "eth0", is_sender=is_sender)
+            mon.process_event(q.get_nowait())
+            mon.tick()
+            assert mon.sync.status == NC_HEALTHY
+
+    def test_sdp_ref_clock_is_ptp(self) -> None:
+        """The receiver-side SDP clock probe: ts-refclk ptp → True,
+        localmac/internal / none / garbage → False. Drives the connected
+        receiver's synchronization_status."""
+        from nmos.node.sdp_transport import sdp_ref_clock_is_ptp
+
+        def _sdp(refclk_line: str) -> str:
+            return (
+                "v=0\r\no=- 1 1 IN IP4 1.1.1.1\r\ns=x\r\nt=0 0\r\n"
+                "m=video 5004 RTP/AVP 96\r\nc=IN IP4 239.0.0.1/64\r\n"
+                f"{refclk_line}\r\n"
+            )
+        assert sdp_ref_clock_is_ptp(
+            _sdp("a=ts-refclk:ptp=IEEE1588-2008:00-00-00-00-00-00-00-00")) is True
+        assert sdp_ref_clock_is_ptp(
+            _sdp("a=ts-refclk:localmac=00-11-22-33-44-55")) is False
+        assert sdp_ref_clock_is_ptp(_sdp("a=recvonly")) is False
+        assert sdp_ref_clock_is_ptp("not an sdp") is False
 
     def test_sender_monitor_sync_follows_source_clock_name(self) -> None:
         """A sender's monitor sync status is determined by the clock

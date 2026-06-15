@@ -132,12 +132,16 @@ class TestUdpLoopback:
 
         event_ids = [e.event for e in events]
 
-        # Lifecycle: activate, 5× starting, stopping, deactivate
+        # Lifecycle: activate, 4× starting, stopping, deactivate
         assert event_ids[0] == EventId.VENDOR_TRANSPORT_ACTIVATE
         assert EventId.VENDOR_ESSENCE_START in event_ids
         assert EventId.TRANSPORT_OK in event_ids
         assert EventId.ESSENCE_OK in event_ids
         assert EventId.LINK_OK in event_ids
-        assert EventId.CLOCK_OK in event_ids
+        # Activation must NOT emit CLOCK_OK — the sync facet reflects the
+        # effective clock (PTP), not stream start, and is driven separately
+        # only when the clock is a locked PTP reference. This loopback sender
+        # is on the internal clock, so no CLOCK_OK is expected.
+        assert EventId.CLOCK_OK not in event_ids
         assert event_ids[-2] == EventId.VENDOR_ESSENCE_STOP
         assert event_ids[-1] == EventId.VENDOR_TRANSPORT_DEACTIVATE
