@@ -6,8 +6,10 @@
 from __future__ import annotations
 
 from nmos.controller.grouping import (
+    ASSET_INSTANCE_ID_TAG,
     GROUP_HINT_TAG,
     GroupHint,
+    asset_instance_id,
     device_address,
     device_serial,
     extract_group_hint,
@@ -108,6 +110,32 @@ class TestDeviceSerial:
 
     def test_none_input(self) -> None:
         assert device_serial(None) is None
+
+    def test_asset_instance_id_tag(self) -> None:
+        # BCP-002-02 instance identifier — vendor-neutral, no SNX pattern.
+        dev = {"tags": {ASSET_INSTANCE_ID_TAG: ["ACME-12AB-0007"]}}
+        assert device_serial(dev) == "ACME-12AB-0007"
+
+    def test_asset_tag_takes_precedence_over_snx(self) -> None:
+        # When both are present the asset tag wins over the SNX fallback.
+        dev = {
+            "description": "box SNX00001",
+            "tags": {ASSET_INSTANCE_ID_TAG: ["VENDOR-XYZ-42"]},
+        }
+        assert device_serial(dev) == "VENDOR-XYZ-42"
+
+    def test_empty_asset_tag_falls_back_to_snx(self) -> None:
+        dev = {
+            "description": "box SNX00001",
+            "tags": {ASSET_INSTANCE_ID_TAG: ["   "]},
+        }
+        assert device_serial(dev) == "SNX00001"
+
+    def test_asset_instance_id_helper(self) -> None:
+        dev = {"tags": {ASSET_INSTANCE_ID_TAG: [" trimmed-me "]}}
+        assert asset_instance_id(dev) == "trimmed-me"
+        assert asset_instance_id({"tags": {}}) is None
+        assert asset_instance_id(None) is None
 
 
 class TestDeviceAddress:

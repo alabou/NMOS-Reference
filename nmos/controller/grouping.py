@@ -23,11 +23,14 @@ Role index identifies a sender's position *within* the group — a stereo
 audio pair has role 0 (L) and role 1 (R). Grouping two related senders
 thus matches by prefix; separating their legs matches by role.
 
-Device serial: NMOS devices expose a human-readable label and a
-``description``; a common convention is to embed the serial number in
-either field. This module exposes a best-effort ``device_serial()``
-helper that pulls the serial from a device's metadata; callers fall
-back to the bare UUID when no serial is found.
+Device serial: the canonical, vendor-neutral serial number is the
+BCP-002-02 *instance identifier* asset tag
+``urn:x-nmos:tag:asset:instance-id/v1.0``. This module's
+``device_serial()`` reads that tag first; when a device does not
+publish it (older or third-party devices) it falls back to a
+best-effort scan of the ``label``/``description``/``tags`` metadata for
+an ``SNXnnnnn`` substring. Callers fall back to the bare UUID when no
+serial is found.
 """
 
 from __future__ import annotations
@@ -36,7 +39,17 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from nmos.enums import TagAssetInstance
+
 GROUP_HINT_TAG = "urn:x-nmos:tag:grouphint/v1.0"
+
+# BCP-002-02 "Asset Distinguishing Information" instance identifier tag. Its
+# value is the device's serial number (per
+# https://specs.amwa.tv/bcp-002-02/releases/v1.0.0/docs/Overview.html#instance-identifier).
+# This is the canonical, vendor-neutral serial and takes precedence over any
+# vendor-specific convention. ``.s`` resolves to
+# ``urn:x-nmos:tag:asset:instance-id/v1.0``.
+ASSET_INSTANCE_ID_TAG = TagAssetInstance.s
 
 # Per NMOS With Natural Groups.md §"Group Hint" (line 36-39) the tag
 # value follows one of two forms:
@@ -181,16 +194,59 @@ def extract_group_hint(resource_tags: Any) -> GroupHint | None:
     return parse_group_hint(raw)
 
 
-def device_serial(device_resource: Any) -> str | None:
-    """Extract an SNX-style serial number from a device resource.
+def _device_tags(device_resource: Any) -> dict[str, list[str]]:
+    """Return a device resource's NMOS tags as ``{name: [values]}``.
 
-    Looks in (in order) the ``description``, ``label``, and any ``tags``
-    values for the first ``SNXnnnnn`` substring. Returns ``None`` when
-    no match is found.
+    Handles both the plain dict form (IS-04 JSON straight from the
+    registry) and the generated typed form (``ResourceCore.Tags`` is an
+    ``NTags``). Returns ``{}`` when no usable tags are present.
+    """
+    if isinstance(device_resource, dict):
+        tags = device_resource.get("tags")
+        return tags if isinstance(tags, dict) else {}
+    try:
+        tags_obj = device_resource.ResourceCore.Tags
+        val = tags_obj.get({})
+        return val if isinstance(val, dict) else {}
+    except Exception:
+        return {}
+
+
+def asset_instance_id(device_resource: Any) -> str | None:
+    """Return the device's BCP-002-02 instance identifier (serial number).
+
+    Reads the ``urn:x-nmos:tag:asset:instance-id/v1.0`` tag — an array of
+    strings per the NMOS tag model — and returns its first non-empty value
+    (stripped), or ``None`` when the tag is absent or empty.
+    """
+    values = _device_tags(device_resource).get(ASSET_INSTANCE_ID_TAG)
+    if isinstance(values, list):
+        for v in values:
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+    return None
+
+
+def device_serial(device_resource: Any) -> str | None:
+    """Extract a device's serial number.
+
+    The BCP-002-02 asset instance-identifier tag
+    ``urn:x-nmos:tag:asset:instance-id/v1.0`` is the canonical,
+    vendor-neutral serial and **takes precedence** over every other
+    source. When that tag is absent (older or third-party devices that do
+    not publish it) the function falls back to scanning the
+    ``description``, ``label`` and any ``tags`` values for the first
+    ``SNXnnnnn`` substring. Returns ``None`` when neither yields a serial.
     """
     if device_resource is None:
         return None
 
+    # 1. BCP-002-02 instance identifier — authoritative, vendor-neutral.
+    serial = asset_instance_id(device_resource)
+    if serial:
+        return serial
+
+    # 2. Fallback: SNX-style serial embedded in description/label/tags.
     fields: list[str] = []
 
     if isinstance(device_resource, dict):
