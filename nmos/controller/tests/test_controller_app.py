@@ -286,8 +286,11 @@ class TestPages:
         # Column headers for the facet dots.
         for heading in ("label", "status", "link", "sync", "conn", "media"):
             assert f">{heading}<" in text
-        # Status badge starts as grey "idle" for inactive resources.
-        assert "is-inactive" in text
+        # These fixture resources publish no BCP-008 monitor, so every
+        # facet renders grey "not-used" (we never synthesize health from
+        # the connection state).
+        assert "is-not-used" in text
+        assert "is-healthy" not in text  # nothing green without a monitor
         # Facet dots present.
         assert 'data-kind="link"' in text
         assert 'data-kind="media"' in text

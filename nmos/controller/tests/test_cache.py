@@ -48,29 +48,32 @@ def _device(did: str, label: str = "dev", serial: str = "SNX00001") -> dict[str,
 
 
 class TestExtractStatus:
-    def test_sender_status_active(self) -> None:
+    def test_sender_status_active_no_monitor_is_grey(self) -> None:
+        # No BCP-008 monitor: ``active`` still reflects the subscription,
+        # but every facet (and overall) is grey ``not-used`` — we never
+        # synthesize ``healthy`` from the connection state.
         st = extract_status(
             "sender",
             {"subscription": {"active": True, "receiver_id": "r1"}},
         )
         assert st["active"] is True
         assert st["peer_id"] == "r1"
-        # Overall uses the BCP-008 ``healthy`` term when active; facet
-        # placeholders mirror it until the status-monitor wiring lands.
-        assert st["overall"] == "healthy"
+        assert st["monitored"] is False
+        assert st["overall"] == "not-used"
         for facet in ("link", "sync", "conn", "media"):
-            assert st[facet] == "healthy"
+            assert st[facet] == "not-used"
 
-    def test_receiver_status_inactive(self) -> None:
+    def test_receiver_status_inactive_no_monitor_is_grey(self) -> None:
         st = extract_status(
             "receiver",
             {"subscription": {"active": False, "sender_id": None}},
         )
         assert st["active"] is False
         assert st["peer_id"] is None
-        assert st["overall"] == "inactive"
+        assert st["monitored"] is False
+        assert st["overall"] == "not-used"
         for facet in ("link", "sync", "conn", "media"):
-            assert st[facet] == "inactive"
+            assert st[facet] == "not-used"
 
     def test_other_kinds_empty(self) -> None:
         assert extract_status("device", {}) == {}
@@ -309,20 +312,24 @@ class TestMonitorLinkage:
         assert st["media"] == "partially-healthy"
 
     @pytest.mark.asyncio
-    async def test_monitor_removal_falls_back_to_placeholder(self) -> None:
+    async def test_monitor_removal_falls_back_to_grey(self) -> None:
         """Removing the monitor Source drops the sibling's per-facet
-        values back to the subscription-based placeholder."""
+        values back to grey ``not-used`` — no monitor means no telemetry,
+        so we do NOT synthesize health from ``subscription.active``."""
         cache = ResourceCache()
         await cache.upsert("sender", _sender("s1", active=True))
         await cache.upsert("source", self._monitor(
             "m1", "sender", "s1", media=3,
         ))
         assert cache.get_status("s1")["media"] == "unhealthy"
+        assert cache.get_status("s1")["monitored"] is True
         await cache.remove("source", "m1")
         st = cache.get_status("s1")
-        # Back to the subscription-mirror placeholder.
-        assert st["media"] == "healthy"   # because subscription.active=True
-        assert st["overall"] == "healthy"
+        # No monitor → grey, even though subscription.active is True.
+        assert st["monitored"] is False
+        assert st["active"] is True
+        assert st["media"] == "not-used"
+        assert st["overall"] == "not-used"
 
     @pytest.mark.asyncio
     async def test_receiver_uses_receiver_specific_attributes(self) -> None:

@@ -120,10 +120,18 @@
         </td>
         <td class="sender-label">{{ m.label }}</td>
         <td class="col-status overall-status">
+          {# When the device publishes a BCP-008 monitor, both colour and
+             active/idle text come from its overall status (as before).
+             With no monitor the colour is grey ("not-used") and the
+             active/idle text tracks subscription.active. #}
           <span class="status-badge is-{{ overall }}"
                 data-resource-id="{{ m.id }}"
                 data-kind="overall">
-            {% if overall in ('inactive', 'not-used') %}idle{% else %}active{% endif %}
+            {% if m.status.monitored %}
+              {% if overall in ('inactive', 'not-used') %}idle{% else %}active{% endif %}
+            {% else %}
+              {% if m.status.active %}active{% else %}idle{% endif %}
+            {% endif %}
           </span>
         </td>
         {% for facet in ('link', 'sync', 'conn', 'media') %}
@@ -169,10 +177,18 @@
         </td>
         <td class="sender-label">{{ m.label }}</td>
         <td class="col-status overall-status">
+          {# When the device publishes a BCP-008 monitor, both colour and
+             active/idle text come from its overall status (as before).
+             With no monitor the colour is grey ("not-used") and the
+             active/idle text tracks subscription.active. #}
           <span class="status-badge is-{{ overall }}"
                 data-resource-id="{{ m.id }}"
                 data-kind="overall">
-            {% if overall in ('inactive', 'not-used') %}idle{% else %}active{% endif %}
+            {% if m.status.monitored %}
+              {% if overall in ('inactive', 'not-used') %}idle{% else %}active{% endif %}
+            {% else %}
+              {% if m.status.active %}active{% else %}idle{% endif %}
+            {% endif %}
           </span>
         </td>
         {% for facet in ('link', 'sync', 'conn', 'media') %}

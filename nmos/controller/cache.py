@@ -37,7 +37,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Callable, Literal
+from typing import Any, AsyncIterator, Callable, Final, Literal
 
 from nmos.controller.grouping import (
     GROUP_HINT_TAG,
@@ -81,12 +81,16 @@ StatusFacet = Literal["overall", "link", "sync", "conn", "media"]
 # ``inactive``. Both display as grey dots but are kept semantically
 # distinct for future tooltip / text labels.
 
+# UI status vocabulary (lowercase-dash CSS tokens). Both render grey.
+_STATUS_INACTIVE: Final[str] = "inactive"   # off / not connected
+_STATUS_NOT_USED: Final[str] = "not-used"   # not reported / no telemetry
+
 _STATUS_ZERO_BY_FACET: dict[StatusFacet, str] = {
-    "overall": "inactive",
-    "link":    "inactive",
-    "conn":    "inactive",   # transmission_status (sender) / connection_status (receiver)
-    "media":   "inactive",   # essence_status     (sender) / stream_status     (receiver)
-    "sync":    "not-used",
+    "overall": _STATUS_INACTIVE,
+    "link":    _STATUS_INACTIVE,
+    "conn":    _STATUS_INACTIVE,   # transmission_status (sender) / connection_status (receiver)
+    "media":   _STATUS_INACTIVE,   # essence_status     (sender) / stream_status     (receiver)
+    "sync":    _STATUS_NOT_USED,
 }
 
 _STATUS_NONZERO: dict[int, str] = {
@@ -229,12 +233,23 @@ def extract_status(
     * ``active``   — ``subscription.active`` (bool).
     * ``peer_id``  — subscription peer id (receiver_id for senders,
                      sender_id for receivers); ``None`` if not set.
-    * ``overall``  — monitor's ``overall_status`` when a monitor is
-                     present; else ``"healthy"`` when active,
-                     ``"inactive"`` otherwise.
-    * ``link`` / ``sync`` / ``conn`` / ``media``
+    * ``monitored`` — ``True`` when a BCP-008 monitor Source backs this
+                     resource. Selects how the UI renders the badge.
+    * ``overall`` / ``link`` / ``sync`` / ``conn`` / ``media``
                    — monitor's per-facet statuses when a monitor is
-                     present; else all four mirror ``overall``.
+                     present. **Without a monitor** (the device does not
+                     implement BCP-008 status monitoring) all five are
+                     ``"not-used"`` (grey): the controller has no telemetry
+                     and MUST NOT synthesize health from the connection
+                     state, which would falsely paint the dots green.
+
+    Badge rule (applied by the template / live JS):
+
+    * monitored   → both the colour and the active/idle text come from the
+                    monitor's ``overall`` status, exactly as before.
+    * not monitored → colours are grey; the active/idle text tracks
+                    ``active`` (``subscription.active``), which is real
+                    connection state available with or without BCP-008.
 
     Anything that isn't a sender or receiver returns an empty dict.
     """
@@ -252,21 +267,29 @@ def extract_status(
     monitor_state = (
         extract_monitor_state(monitor_source) if monitor_source is not None else None
     )
+    # ``monitored`` tells the UI which rule to apply to the active/idle
+    # badge: when monitored, badge text AND colours come from the monitor
+    # (as before); when not, the colours are grey and the badge text
+    # tracks ``subscription.active``.
+    base["monitored"] = monitor_state is not None
     if monitor_state is not None:
         # Real BCP-008 values — ``extract_monitor_state`` already
         # returned the five facet keys keyed to our UI vocabulary.
         base.update(monitor_state)
         return base
 
-    # Placeholder — subscription-based approximation, used until an
-    # IS-04 monitor Source lands in the cache for this resource.
-    overall = "healthy" if active else "inactive"
+    # No monitor Source for this resource — the device does not implement
+    # BCP-008 status monitoring. We have NO health telemetry, so every
+    # facet (and the overall) is reported as grey ``not-used`` rather than
+    # synthesized from ``subscription.active`` (which would paint the dots
+    # green and imply an observed-healthy state we cannot vouch for). The
+    # active/idle badge still tracks ``active`` above.
     base.update({
-        "overall": overall,
-        "link":    overall,
-        "sync":    overall,
-        "conn":    overall,
-        "media":   overall,
+        "overall": _STATUS_NOT_USED,
+        "link":    _STATUS_NOT_USED,
+        "sync":    _STATUS_NOT_USED,
+        "conn":    _STATUS_NOT_USED,
+        "media":   _STATUS_NOT_USED,
     })
     return base
 

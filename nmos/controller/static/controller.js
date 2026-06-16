@@ -1077,19 +1077,24 @@
 
   function _applyStatusToRow(resourceId, status) {
     status = status || {};
-    const overall = status.overall || (status.active ? "healthy" : "inactive");
+    // Colour from the overall status. Do NOT synthesize "healthy" from
+    // ``active`` — a device with no BCP-008 monitor reports "not-used"
+    // (grey) for every facet, and we must not paint it green.
+    const overall = status.overall || "inactive";
 
     const badge = document.querySelector(
       `.status-badge[data-resource-id="${resourceId}"]`,
     );
     if (badge) {
       _setStatusClass(badge, overall);
-      // Idle / not-used states render as "idle"; every other state
-      // renders as "active". The badge always carries text so the
-      // inline-block baseline stays aligned with the .status-dot
-      // siblings — see device_block.html for the matching template.
-      badge.textContent =
-        (overall === "inactive" || overall === "not-used") ? "idle" : "active";
+      // Monitored: active/idle text comes from the monitor's overall
+      // status (idle when inactive/not-used), as before. Not monitored:
+      // colours are grey and the text tracks subscription.active. The
+      // badge always carries text so the inline-block baseline stays
+      // aligned with the .status-dot siblings — see device_block.html.
+      badge.textContent = status.monitored
+        ? ((overall === "inactive" || overall === "not-used") ? "idle" : "active")
+        : (status.active ? "active" : "idle");
     }
 
     for (const facet of FACETS) {
