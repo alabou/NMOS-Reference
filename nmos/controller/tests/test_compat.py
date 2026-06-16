@@ -733,3 +733,75 @@ class TestPairByIdentity:
         pairs = pair_by_identity([s_a1, s_v0, s_a0], [r_v0, r_a0, r_a1])
         assert [p[0]["id"] for p in pairs] == ["s_v0", "s_a0", "s_a1"]
         assert [p[1]["id"] for p in pairs] == ["r_v0", "r_a0", "r_a1"]
+
+
+class TestAbsentVsEmptyCapabilities:
+    """Controller caps policy (sender and receiver alike):
+
+    * ``constraint_sets`` attribute ABSENT (no ``caps``, or ``caps`` without
+      the attribute) → capable of EVERYTHING (universal capset).
+    * present ``[]`` → capable of NOTHING (BCP-004-01: empty array
+      unsatisfiable).
+    * present ``[..]`` → the declared sets (normal CCF).
+    """
+
+    def test_resource_ccf_caps_absent_is_universal(self) -> None:
+        for res in (
+            _make_sender("s1"),                              # caps omitted
+            _make_sender("s2", {}),                          # caps, no constraint_sets
+            _make_sender("s3", {"media_types": ["video/raw"]}),  # media_types only
+        ):
+            caps = resource_ccf_caps(res)
+            assert caps is not None and len(caps.capsets) == 1
+            assert not caps.capsets[0].caps   # empty constraints = universal
+
+    def test_resource_ccf_caps_empty_is_nothing(self) -> None:
+        caps = resource_ccf_caps(_make_sender("s1", {"constraint_sets": []}))
+        assert caps is not None and len(caps.capsets) == 0   # capable of nothing
+
+    def test_is_compatible_absent_vs_present(self) -> None:
+        absent = resource_ccf_caps(_make_sender("s"))        # universal
+        cs = resource_ccf_caps(_make_receiver("r", {"constraint_sets": [
+            {"urn:x-nmos:cap:meta:label": "T"}]}))
+        empty = resource_ccf_caps(_make_receiver("r2", {"constraint_sets": []}))
+        assert is_compatible(absent, cs) is True             # universal ∩ CS = CS
+        assert is_compatible(cs, absent) is True
+        assert is_compatible(empty, cs) is False             # nothing ∩ CS = nothing
+        assert is_compatible(cs, empty) is False
+        assert is_compatible(empty, empty) is False
+
+    def test_filter_absent_sender_shows_receiver_cs(self) -> None:
+        from nmos.controller.compat import filter_sender_cs_by_receiver
+        sender = _make_sender("s1")                          # no caps → universal
+        # Non-mux receiver: one trunk CS (no meta:format/layer) with a real
+        # constraint. universal sender ∩ trunk-CS = that CS.
+        receiver = _make_receiver("r1", {"constraint_sets": [
+            {"urn:x-nmos:cap:meta:label": "RX",
+             "urn:x-nmos:cap:meta:preference": 100,
+             "urn:x-nmos:cap:format:media_type": {"enum": ["audio/L24"]}}]})
+        out = filter_sender_cs_by_receiver(sender, receiver)
+        kept = out["caps"]["constraint_sets"]
+        assert len(kept) == 1
+        # The receiver's constraint flows through (universal ∩ Y = Y).
+        assert kept[0]["urn:x-nmos:cap:format:media_type"] == {"enum": ["audio/L24"]}
+
+    def test_filter_absent_receiver_returns_sender_unchanged(self) -> None:
+        from nmos.controller.compat import filter_sender_cs_by_receiver
+        sender = _make_sender("s1", {"constraint_sets": [
+            {"urn:x-nmos:cap:meta:label": "Trunk"},
+            {"urn:x-nmos:cap:meta:label": "SX",
+             "urn:x-matrox:cap:meta:format": "urn:x-nmos:format:audio",
+             "urn:x-matrox:cap:meta:layer": 0,
+             "urn:x-nmos:cap:format:media_type": {"enum": ["audio/L24"]}}]})
+        receiver = _make_receiver("r1")                      # no caps → universal
+        out = filter_sender_cs_by_receiver(sender, receiver)
+        # universal receiver: sender's caps pass through unchanged.
+        assert len(out["caps"]["constraint_sets"]) == 2
+
+    def test_filter_empty_sender_capable_of_nothing(self) -> None:
+        from nmos.controller.compat import filter_sender_cs_by_receiver
+        sender = _make_sender("s1", {"constraint_sets": []})
+        receiver = _make_receiver("r1", {"constraint_sets": [
+            {"urn:x-nmos:cap:meta:label": "Trunk"}]})
+        out = filter_sender_cs_by_receiver(sender, receiver)
+        assert out["caps"]["constraint_sets"] == []          # nothing to negotiate

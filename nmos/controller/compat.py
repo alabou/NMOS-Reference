@@ -90,13 +90,43 @@ def nmos_caps_json_to_ccf_caps(caps_json: Any) -> Any:
 def resource_ccf_caps(resource: dict[str, Any]) -> Any:
     """Return CCF Caps for an IS-04 sender / receiver JSON resource.
 
-    The caps are embedded under the top-level ``caps`` key per IS-04.
-    For senders without declared caps (BCP-004-01 pre-adoption), the
-    sender field may be missing or contain an empty dict; the helper
-    returns ``None`` and the caller treats it as "no constraint
-    guidance available" (silently-permissive behaviour in that case).
+    Capability semantics (applied to sender and receiver alike):
+
+    * ``constraint_sets`` attribute **absent** (no ``caps``, or a ``caps``
+      object without the ``constraint_sets`` key) → the resource expresses
+      no capabilities and is assumed **capable of everything**: a universal
+      capset (``CapSet(caps={})``). This is a controller policy that goes
+      *beyond* pure CCF/BCP-004-01 — where an absent ``constraint_sets`` is
+      simply undefined — so that an un-described sender/receiver still
+      negotiates rather than being dropped.
+    * ``constraint_sets`` **present, empty ``[]``** → per BCP-004-01 an
+      empty constraint-set array is unsatisfiable, i.e. **capable of
+      nothing** — CCF represents this as zero capsets, which intersects to
+      empty (incompatible).
+    * ``constraint_sets`` **present, non-empty** → the declared sets,
+      handled by normal CCF intersection.
+
+    Returns ``None`` only when CCF is unavailable / conversion fails — the
+    callers treat that as a renderability degradation, not as "absent".
     """
+    if _constraint_sets_absent(resource):
+        # Absent capabilities → universal (capable of everything).
+        try:
+            from caps.MatroxCCF import Caps, CapSet
+        except ImportError:
+            return None
+        return Caps(capsets=[CapSet(caps={}, preference=0, label="*")])
+    # constraint_sets present: [] → capable of nothing; [..] → the sets.
     return nmos_caps_json_to_ccf_caps(resource.get("caps"))
+
+
+def _constraint_sets_absent(resource: dict[str, Any]) -> bool:
+    """True when the resource expresses NO capabilities — no ``caps`` object,
+    or a ``caps`` object without a ``constraint_sets`` attribute. Such a
+    resource is treated as universal (capable of everything). A *present*
+    ``constraint_sets`` (even ``[]``) is NOT absent."""
+    caps_json = resource.get("caps")
+    return not isinstance(caps_json, dict) or "constraint_sets" not in caps_json
 
 
 # ---------------------------------------------------------------------------
@@ -110,12 +140,10 @@ def intersect_caps(sender_caps: Any, receiver_caps: Any) -> Any:
     doesn't depend on `nmos.node.compatibility` directly.
     """
     if sender_caps is None or receiver_caps is None:
-        # Treat missing caps as "cannot say no" — the controller's
-        # policy: if either end declares no caps we keep the pair in
-        # the candidate list and let the user decide. Returning
-        # ``None`` here would DROP the candidate; returning a truthy
-        # "unknown" is the right answer. We use the sentinel
-        # ``UNKNOWN_CAPS`` for this case.
+        # ``resource_ccf_caps`` only returns None when CCF is unavailable /
+        # conversion failed (absent capabilities now map to a universal
+        # capset, NOT None). Degrade to "cannot say no" so a CCF outage
+        # keeps the candidate list renderable rather than dropping pairs.
         return UNKNOWN_CAPS
     try:
         from nmos.node.compatibility import intersect_constraints_with_caps
@@ -490,9 +518,16 @@ def filter_sender_cs_by_receiver(
     result as receiver-narrowed" falls out of the algebra for free
     (INF ∩ Y = Y).
 
-    Degradation (keep the page renderable): receiver has no caps,
-    sender has no constraint_sets, caps conversion fails, or the
-    CCF import is missing — return the sender unchanged.
+    Capability semantics come from ``resource_ccf_caps`` for BOTH sides:
+    an absent ``constraint_sets`` attribute → universal capset (capable of
+    everything), present ``[]`` → capable of nothing, present ``[..]`` → the
+    declared sets. So a sender with no expressed capabilities negotiates
+    against the full receiver caps (universal ∩ receiver = receiver), and a
+    receiver with no expressed capabilities accepts the sender's sets — no
+    special-casing here beyond CCF.
+
+    Degradation (keep the page renderable): CCF unavailable / conversion
+    failure — return the sender unchanged.
     """
     try:
         from caps.MatroxCCF import (
@@ -504,21 +539,22 @@ def filter_sender_cs_by_receiver(
         return sender
 
     r_caps = resource_ccf_caps(receiver)
-    if r_caps is None:
-        return sender  # UNKNOWN_CAPS — keep everything
+    sender_caps_full = resource_ccf_caps(sender)
+    if r_caps is None or sender_caps_full is None:
+        return sender  # CCF unavailable — keep everything (renderable)
+
+    # Receiver with no expressed capabilities is universal: the negotiable
+    # set is the sender's caps UNCHANGED (universal ∩ sender = sender). This
+    # loop is receiver-conset-driven, so a universal receiver (one trunk
+    # conset) would collapse the sender's per-(format,layer) sets and lose
+    # their meta — so return the sender as-is, which IS that intersection.
+    if _constraint_sets_absent(receiver):
+        return sender
 
     orig_any: Any = sender.get("caps") or {}
-    if not isinstance(orig_any, dict):
-        return sender
-    orig: dict[str, Any] = orig_any
-    sets_any: Any = orig.get("constraint_sets")
-    if not isinstance(sets_any, list):
-        return sender
+    orig: dict[str, Any] = orig_any if isinstance(orig_any, dict) else {}
 
-    sender_caps = nmos_caps_json_to_ccf_caps({"constraint_sets": sets_any})
-    if sender_caps is None:
-        return sender
-    sender_caps = sender_caps.get(no_filter=True)           # sort by preference DESC via CCF API
+    sender_caps = sender_caps_full.get(no_filter=True)      # sort by preference DESC via CCF API
     receiver_cons = r_caps.to_cons()
 
     narrowed: list[Any] = []

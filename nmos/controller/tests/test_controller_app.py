@@ -553,6 +553,33 @@ class TestPages:
         assert resp.status == 200
 
     @pytest.mark.asyncio
+    async def test_skip_constraining_link_carries_sender_ids(
+        self, controller_client: TestClient,
+    ) -> None:
+        """Empty-state "Skip constraining" link must carry the originally
+        requested sender_ids. Regression: it was built from the (empty)
+        filtered-senders list, so it emitted ``sender_ids=`` and the
+        configure endpoint then rejected the skip with 400.
+        """
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        rid = "12340000-0000-0000-0000-000000000000"
+        sid = "12341111-1111-1111-1111-111111111111"
+        # Sender with NO caps → no CS overlap with the receiver → the
+        # receivers_caps empty state (the "Skip constraining" path).
+        await cache.upsert("receiver", _make_receiver(rid, "dev1"))
+        await cache.upsert("sender", _make_sender(sid, "dev2"))
+        resp = await controller_client.get(
+            f"{PREFIX}/receivers/caps?receiver_ids={rid}&sender_ids={sid}&mode=single",
+        )
+        assert resp.status == 200
+        text = await resp.text()
+        # Empty state reached, and the skip link carries the sender id
+        # (not an empty sender_ids=).
+        assert "Skip constraining" in text
+        assert f"sender_ids={sid}" in text
+        assert "sender_ids=&" not in text
+
+    @pytest.mark.asyncio
     async def test_receivers_caps_rejects_unmatched_leaf(
         self, controller_client: TestClient,
     ) -> None:

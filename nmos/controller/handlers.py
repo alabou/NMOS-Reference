@@ -904,9 +904,15 @@ async def receivers_caps(request: web.Request) -> web.Response:
             ),
             "filters":           filters,
             "receiver_ids_csv":  ",".join(rid for rid in receiver_ids),
+            # Normal flow: the senders that survived the CS-overlap filter
+            # (the Continue-to-configuration form constrains exactly these).
+            # Empty state (NONE overlapped): fall back to the originally
+            # requested sender_ids so the "Skip constraining" link still
+            # carries them to the configure page — otherwise it would emit
+            # an empty sender_ids and the configure endpoint 400s.
             "sender_ids_csv":    ",".join(
                 s.get("id", "") or "" for s in filtered_senders
-            ),
+            ) if filtered_senders else ",".join(sender_ids),
             "mode":              mode_raw,
         },
     )

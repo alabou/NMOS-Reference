@@ -1206,3 +1206,58 @@ class TestFixDepthAndFbblevel:
         }
         fix_coded_video_flow(props, constraints)
         assert props[CapFormatFbblevel].value.values == ("Fbblev8bpp",)
+
+
+# ---------------------------------------------------------------------------
+# Receiver capability member semantics: absent vs defined-empty vs defined
+#
+# A capability member (media_types / event_types / constraint_sets) that is
+# ABSENT does not constrain the receiver (universal on it); DEFINED-BUT-EMPTY
+# constrains to nothing (accepts nothing). The two are told apart by the
+# generated type's ``.defined`` flag. Caps live on the format-specific value
+# (e.g. NReceiverVideoValue), a sibling of ReceiverCore.
+# ---------------------------------------------------------------------------
+
+class TestReceiverCapMemberSemantics:
+    _BASE = {
+        "id": "12345678-1234-1234-8234-123456789abc",
+        "version": "0:0", "label": "rx", "description": "",
+        "device_id": "22345678-1234-1234-8234-123456789abc",
+        "transport": "urn:x-nmos:transport:rtp.mcast",
+        "format": "urn:x-nmos:format:video", "tags": {},
+        "subscription": {"active": False, "sender_id": None},
+        "interface_bindings": [],
+    }
+
+    def _receiver(self, caps: dict) -> Any:
+        from nmos.types.generated.nreceiver_video import NReceiverVideo
+        from nmos.json.engine import JsonEngine
+        data = dict(self._BASE)
+        data["caps"] = caps
+        o = NReceiverVideo()
+        o.decode(JsonEngine(), data)
+        return o
+
+    def test_media_types_absent_returns_none(self) -> None:
+        # caps present, but no media_types member → absent → unconstrained.
+        from nmos.node.compatibility import _get_receiver_media_types
+        assert _get_receiver_media_types(self._receiver({})) is None
+
+    def test_media_types_defined_empty_returns_empty_list(self) -> None:
+        # media_types: [] → defined-empty → accepts nothing.
+        from nmos.node.compatibility import _get_receiver_media_types
+        assert _get_receiver_media_types(self._receiver({"media_types": []})) == []
+
+    def test_media_types_defined_values(self) -> None:
+        from nmos.node.compatibility import _get_receiver_media_types
+        got = _get_receiver_media_types(self._receiver({"media_types": ["video/raw"]}))
+        assert got == ["video/raw"]
+
+    def test_constraint_sets_defined_flag(self) -> None:
+        from nmos.node.compatibility import _receiver_constraint_sets_defined
+        # caps with media_types but NO constraint_sets → constraint_sets absent.
+        assert _receiver_constraint_sets_defined(
+            self._receiver({"media_types": ["video/raw"]})) is False
+        # constraint_sets: [] → defined (even though empty).
+        assert _receiver_constraint_sets_defined(
+            self._receiver({"constraint_sets": []})) is True

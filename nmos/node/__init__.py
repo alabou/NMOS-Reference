@@ -3318,12 +3318,12 @@ class Node:
 
         # --- Atomic State Changes: UUID cascade ---
         # NOTE: TWO-PHASE design (forced props written IN PLACE above; cascade
-        # triggered HERE via empty update_source()/update_flow() calls). This
-        # differs materially from the Go reference, where the cascade is
-        # intrinsic to each flow write — a difference that affects error
-        # recovery (no rollback; version-gated silent staleness if a mutated
-        # flow is not cascaded). See nmos/node/ATOMIC_STATE_CHANGES.md before
-        # changing this path.
+        # triggered HERE via empty update_source()/update_flow() calls).
+        # Because the cascade is a separate deferred step rather than
+        # intrinsic to each flow write, it affects error recovery (no
+        # rollback; version-gated silent staleness if a mutated flow is not
+        # cascaded). See nmos/node/ATOMIC_STATE_CHANGES.md before changing
+        # this path.
         #
         # Each update_source/update_flow mints a NEW UUID, bumps the version,
         # and cascades the new id into referencing resources (senders'

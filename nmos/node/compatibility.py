@@ -1885,13 +1885,23 @@ def check_receiver_compatibility(
         print(f"  [check_receiver] receiver={receiver_id}")
         print(f"  [check_receiver] Stream caps:\n    {stream_caps}")
 
+    # Capability-matching contract: to be compatible a stream must satisfy
+    # ALL the capability members that are DEFINED (media_types, event_types,
+    # constraint_sets). A member that is ABSENT does not constrain (the
+    # receiver is universal on it); a member that is DEFINED-BUT-EMPTY
+    # constrains to nothing (the receiver accepts nothing). The two are
+    # told apart by the generated types' ``.defined`` flag — the helpers
+    # below return ``None`` for absent and a (possibly empty) list / bool
+    # for defined.
+
     # --- Gate 1: media_types check ---
     # Layers are not subject to media_types constraints — trunk only.
     receiver_media_types = _get_receiver_media_types(receiver)
-    if receiver_media_types:
+    if receiver_media_types is not None:  # defined (empty or not)
         stream_mt = stream_caps.caps.get(CapFormatMediaType)
         if stream_mt is not None and stream_mt.value.values:
             mt_str = str(stream_mt.value.values[0])
+            # Empty list ⇒ nothing matches ⇒ reject (accept-nothing).
             if mt_str not in receiver_media_types:
                 if verbose:
                     print(f"  [check_receiver] REJECTED by media_types: {mt_str} not in {receiver_media_types}")
@@ -1899,7 +1909,7 @@ def check_receiver_compatibility(
 
     # --- Gate 2: event_types check ---
     receiver_event_types = _get_receiver_event_types(receiver)
-    if receiver_event_types:
+    if receiver_event_types is not None:  # defined (empty or not)
         stream_et = stream_caps.caps.get(CapFormatEventType)
         if stream_et is not None and stream_et.value.values:
             et_str = str(stream_et.value.values[0])
@@ -1911,6 +1921,13 @@ def check_receiver_compatibility(
     # --- Gate 3: constraint_sets check ---
     receiver_caps = _get_receiver_ccf_caps(node, receiver)
     if receiver_caps is None or len(receiver_caps.capsets) == 0:
+        # No usable constraint sets. Distinguish absent from defined-empty:
+        #   constraint_sets: []  (defined-empty) ⇒ accept nothing ⇒ reject
+        #   absent               ⇒ unconstrained ⇒ accept
+        if _receiver_constraint_sets_defined(receiver):
+            if verbose:
+                print("  [check_receiver] REJECTED: constraint_sets defined empty (accepts nothing)")
+            return False
         return True  # No constraint_sets = accepts anything
 
     if verbose:
@@ -1925,46 +1942,71 @@ def check_receiver_compatibility(
     return is_included
 
 
-def _get_receiver_media_types(receiver: Any) -> list[str]:
+def _get_receiver_media_types(receiver: Any) -> list[str] | None:
     """Extract media_types from receiver's IS-04 capabilities.
 
-    Returns a list of media type strings, or empty list if undefined.
-    Reads caps.MediaTypes.GetValue().
+    Distinguishes absent from defined-empty via the generated type's
+    ``.defined`` flag (per the capability-matching contract):
+
+      * ``None``  — ``media_types`` ABSENT → does not constrain (universal).
+      * ``[]``    — ``media_types: []`` DEFINED-EMPTY → accepts nothing.
+      * ``[...]`` — defined with values → must match one.
     """
     try:
         poly = receiver.get() if hasattr(receiver, 'get') else receiver
         rv = poly.value if hasattr(poly, 'value') else poly
-        core = getattr(rv, 'ReceiverCore', rv)
-        caps = core.Caps
-        if not caps.defined:
-            return []
+        # Caps is a sibling of ReceiverCore on the format-specific value
+        # (e.g. NReceiverVideoValue), NOT a member of ReceiverCore.
+        caps = getattr(rv, 'Caps', None)
+        if caps is None or not caps.defined:
+            return None
         cv = caps.value
         if not hasattr(cv, 'MediaTypes') or not cv.MediaTypes.defined:
-            return []
+            return None
         return [str(mt) for mt in cv.MediaTypes.value]
     except Exception:
-        return []
+        return None
 
 
-def _get_receiver_event_types(receiver: Any) -> list[str]:
+def _get_receiver_event_types(receiver: Any) -> list[str] | None:
     """Extract event_types from receiver's IS-04 capabilities.
 
-    Returns a list of event type strings, or empty list if undefined.
-    Reads caps.EventTypes.GetValue(). Only data receivers have event_types.
+    Same absent (``None``) vs defined-empty (``[]``) distinction as
+    :func:`_get_receiver_media_types`. Only data receivers have event_types.
     """
     try:
         poly = receiver.get() if hasattr(receiver, 'get') else receiver
         rv = poly.value if hasattr(poly, 'value') else poly
-        core = getattr(rv, 'ReceiverCore', rv)
-        caps = core.Caps
-        if not caps.defined:
-            return []
+        caps = getattr(rv, 'Caps', None)
+        if caps is None or not caps.defined:
+            return None
         cv = caps.value
         if not hasattr(cv, 'EventTypes') or not cv.EventTypes.defined:
-            return []
+            return None
         return [str(et) for et in cv.EventTypes.value]
     except Exception:
-        return []
+        return None
+
+
+def _receiver_constraint_sets_defined(receiver: Any) -> bool:
+    """True when the receiver's ``caps.constraint_sets`` member is present
+    (even if an empty array); False when absent.
+
+    Lets ``check_receiver_compatibility`` tell ``constraint_sets: []``
+    (defined-empty → accept nothing) from an absent member (unconstrained),
+    which the cached CCF caps alone cannot — both yield zero capsets.
+    """
+    try:
+        poly = receiver.get() if hasattr(receiver, 'get') else receiver
+        rv = poly.value if hasattr(poly, 'value') else poly
+        caps = getattr(rv, 'Caps', None)
+        if caps is None or not caps.defined:
+            return False
+        cv = caps.value
+        cs = getattr(cv, 'ConstraintSets', None)
+        return bool(cs is not None and cs.defined)
+    except Exception:
+        return False
 
 
 def _get_receiver_ccf_caps(node: Any, receiver: Any) -> Any:
@@ -2912,8 +2954,8 @@ def update_sender_to_compliant_flow(
     # properties are written IN PLACE (Phase 1); the cascade is deferred to
     # force_active_constraints() AFTER all mutations (trunk + sub-flows) are
     # complete, to avoid stale ID references during the mux sub-flow forcing
-    # loop. This two-phase split (vs the Go reference's intrinsic per-write
-    # cascade) has error-recovery implications — see
+    # loop. This two-phase split — a deferred cascade rather than one
+    # intrinsic to each per-write — has error-recovery implications; see
     # nmos/node/ATOMIC_STATE_CHANGES.md.
     #
     # NOTE: receiver constraint propagation (updateReceiverConstraintsToFlowProperties)
