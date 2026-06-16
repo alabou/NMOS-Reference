@@ -341,6 +341,51 @@ class TestPages:
         ) is not None
 
     @pytest.mark.asyncio
+    async def test_compatible_senders_preselects_subscribed_sender(
+        self, controller_client: TestClient,
+    ) -> None:
+        """The compatible-senders page pre-checks the sender the receiver
+        is currently subscribed to (IS-04 ``subscription.sender_id``)."""
+        import re
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        sub_sid = "11111111-1111-1111-1111-111111111111"  # seeded video sender
+        rid = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+        recv = _make_receiver(rid, "dev2")               # video/rtp — compatible
+        recv["subscription"] = {"active": True, "sender_id": sub_sid}
+        await cache.upsert("receiver", recv)
+        resp = await controller_client.get(
+            f"{PREFIX}/receivers/compatible-senders?receiver_ids={rid}&mode=single",
+        )
+        assert resp.status == 200
+        text = await resp.text()
+        # Subscribed sender appears and its checkbox is pre-checked.
+        assert f'data-ids="{sub_sid}"' in text
+        assert re.search(rf'data-ids="{sub_sid}"[^>]*\bchecked', text) is not None
+        # A different compatible sender is NOT pre-checked.
+        other = "33333333-3333-3333-3333-333333333333"
+        if f'data-ids="{other}"' in text:
+            assert re.search(rf'data-ids="{other}"[^>]*\bchecked', text) is None
+
+    @pytest.mark.asyncio
+    async def test_compatible_senders_no_preselect_when_unsubscribed(
+        self, controller_client: TestClient,
+    ) -> None:
+        """``subscription.sender_id`` null → no sender pre-checked."""
+        import re
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        rid = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
+        recv = _make_receiver(rid, "dev2")
+        recv["subscription"] = {"active": False, "sender_id": None}
+        await cache.upsert("receiver", recv)
+        resp = await controller_client.get(
+            f"{PREFIX}/receivers/compatible-senders?receiver_ids={rid}&mode=single",
+        )
+        assert resp.status == 200
+        text = await resp.text()
+        assert 'class="member-check"' in text          # members render
+        assert re.search(r'class="member-check"[^>]*\bchecked', text) is None
+
+    @pytest.mark.asyncio
     async def test_compatible_senders_group_mode_hides_members(
         self, controller_client: TestClient,
     ) -> None:

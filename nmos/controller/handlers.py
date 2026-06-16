@@ -763,6 +763,14 @@ async def receivers_compatible(request: web.Request) -> web.Response:
             if h is not None:
                 leaves.append(h.role_label)
         subset_leaves_label = ", ".join(sorted(leaves))
+    # Pre-select the sender(s) the selected receiver(s) are currently
+    # subscribed to (IS-04 ``subscription.sender_id``). A null/absent
+    # sender_id means the receiver isn't subscribed → nothing to pre-select.
+    preselect_sender_ids = {
+        sid
+        for r in receivers
+        if (sid := (r.get("subscription") or {}).get("sender_id"))
+    }
     return _render(
         request,
         "receivers_compatible_senders.html",
@@ -773,6 +781,7 @@ async def receivers_compatible(request: web.Request) -> web.Response:
             "mode":                mode,
             "devices":             devices,
             "subset_leaves_label": subset_leaves_label,
+            "preselect_sender_ids": preselect_sender_ids,
             "device_capability":   _device_capability_view(
                 cache, _admin_session(request),
                 [d.device_id for d in devices],

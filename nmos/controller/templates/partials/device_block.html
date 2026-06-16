@@ -23,6 +23,9 @@
                   by the group shape that matched the receiver group).
 #}
 {% set group_only = group_only|default(false) %}
+{# Sender ids to pre-check (the compatible-senders page passes the
+   receivers' current subscription.sender_id set; empty/absent elsewhere). #}
+{% set _preselect = preselect_sender_ids|default([]) %}
 {# Phase 5 capability painting: device_capability[device_id] carries
    the per-Device tls_secure flag + read/write inaccessible_reasons.
    When ``read`` is non-empty we paint every tbody belonging to this
@@ -80,11 +83,17 @@
   {% set ids = group.members | map(attribute='id') | join(',') %}
   <tbody class="group-tbody {{ _device_class }}">
     <tr class="group-header-row">
+      {# Group-mode pre-select: check the group whose members include a
+         sender the receiver is currently subscribed to. (In non-group mode
+         the per-member checkboxes carry the pre-select and the JS keeps the
+         group radio in sync.) #}
+      {% set _grp = namespace(pre=false) %}
+      {% for m in group.members %}{% if m.id in _preselect %}{% set _grp.pre = true %}{% endif %}{% endfor %}
       <td rowspan="{{ span }}" class="group-select">
         <label class="m-0 w-100 h-100 d-flex align-items-center justify-content-center"
                title="Select the whole group">
           <input type="radio" name="_group"
-                 data-ids="{{ ids }}">
+                 data-ids="{{ ids }}"{% if group_only and _grp.pre %} checked{% endif %}>
         </label>
       </td>
       <td colspan="8" class="group-name">
@@ -108,7 +117,7 @@
         <td class="role-select">
           <label class="m-0">
             <input type="checkbox" class="member-check"
-                   data-ids="{{ m.id }}">
+                   data-ids="{{ m.id }}"{% if m.id in _preselect %} checked{% endif %}>
           </label>
         </td>
         <td class="role-name">
@@ -161,7 +170,7 @@
         <td class="role-select">
           <label class="m-0">
             <input type="checkbox" class="member-check"
-                   data-ids="{{ m.id }}">
+                   data-ids="{{ m.id }}"{% if m.id in _preselect %} checked{% endif %}>
           </label>
         </td>
         <td class="role-name">
