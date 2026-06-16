@@ -745,6 +745,8 @@ class TestPages:
         # CS label + media type render.
         assert "Receiver-Native-PCM" in text
         assert "audio/L24" in text
+        # The resource GUID is shown in the device header (caps-guid).
+        assert f'<code class="caps-guid">{rid}</code>' in text
         # No form / no radio / no configure link (read-only).
         assert 'name="conset' not in text
         assert 'type="radio"' not in text

@@ -191,12 +191,11 @@ conset_{{ sender_id }}{% if part_key != 'trunk' %}::{{ part_key }}{% endif %}
                     <strong class="device-serial">{{ sender.role }}</strong>
                   {% endif %}
                   <span class="ml-3">{{ sender.label }}</span>
-                  {% if sender.device_serial or sender.device_address %}
-                    <span class="ml-3 text-muted small">
-                      {% if sender.device_serial %}{{ sender.device_serial }}{% endif %}
-                      {% if sender.device_address %} · {{ sender.device_address }}{% endif %}
-                    </span>
-                  {% endif %}
+                  <span class="ml-3 text-muted small">
+                    {% if sender.device_serial %}{{ sender.device_serial }}{% endif %}
+                    {% if sender.device_address %} · {{ sender.device_address }}{% endif %}
+                    {% if sender.device_serial or sender.device_address %} · {% endif %}<code class="caps-guid">{{ sender.id }}</code>
+                  </span>
                 </td>
               </tr>
             </tbody>

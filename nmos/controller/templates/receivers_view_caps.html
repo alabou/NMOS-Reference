@@ -166,12 +166,11 @@
                   <strong class="device-serial">{{ receiver.role }}</strong>
                 {% endif %}
                 <span class="ml-3">{{ receiver.label }}</span>
-                {% if receiver.device_serial or receiver.device_address %}
-                  <span class="ml-3 text-muted small">
-                    {% if receiver.device_serial %}{{ receiver.device_serial }}{% endif %}
-                    {% if receiver.device_address %} · {{ receiver.device_address }}{% endif %}
-                  </span>
-                {% endif %}
+                <span class="ml-3 text-muted small">
+                  {% if receiver.device_serial %}{{ receiver.device_serial }}{% endif %}
+                  {% if receiver.device_address %} · {{ receiver.device_address }}{% endif %}
+                  {% if receiver.device_serial or receiver.device_address %} · {% endif %}<code class="caps-guid">{{ receiver.id }}</code>
+                </span>
               </td>
             </tr>
           </tbody>

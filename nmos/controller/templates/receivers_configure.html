@@ -231,12 +231,11 @@
                     <strong class="device-serial">{{ sender.role }}</strong>
                   {% endif %}
                   <span class="ml-3">{{ sender.label }}</span>
-                  {% if sender.device_serial or sender.device_address %}
-                    <span class="ml-3 text-muted small">
-                      {% if sender.device_serial %}{{ sender.device_serial }}{% endif %}
-                      {% if sender.device_address %} · {{ sender.device_address }}{% endif %}
-                    </span>
-                  {% endif %}
+                  <span class="ml-3 text-muted small">
+                    {% if sender.device_serial %}{{ sender.device_serial }}{% endif %}
+                    {% if sender.device_address %} · {{ sender.device_address }}{% endif %}
+                    {% if sender.device_serial or sender.device_address %} · {% endif %}<code class="caps-guid">{{ sender.id }}</code>
+                  </span>
                   {% if paired_receiver %}
                     {# Identify the paired receiver by its node's
                        serial and ``host:port`` rather than the raw
@@ -249,9 +248,7 @@
                       &rarr; receiver:
                       {%- if paired_receiver.device_serial %} {{ paired_receiver.device_serial }}{%- endif %}
                       {%- if paired_receiver.device_address %} {{ paired_receiver.device_address }}{%- endif %}
-                      {%- if not (paired_receiver.device_serial or paired_receiver.device_address) %}
-                        {{ paired_receiver.label or paired_receiver.id[:8] + '…' }}
-                      {%- endif %}
+                      <code class="caps-guid">{{ paired_receiver.id }}</code>
                     </div>
                   {% endif %}
                 </td>
