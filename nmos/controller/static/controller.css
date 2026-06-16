@@ -396,6 +396,18 @@ option.flow-match,
   color: #212529;
   overflow-wrap: anywhere;
 }
+/* The 0.35rem ``padding-top`` above optically aligns the name with the
+ * first line of a value-cell *widget* (``.form-control`` has its own top
+ * padding + border). On the read-only capabilities pages the value is
+ * PLAIN TEXT with no such padding, so that nudge pushes the name ~0.25rem
+ * below its value. Reset it to the value cell's own top padding for rows
+ * with no widget — leaving the configure page (always a widget) unchanged.
+ * Wrapped in :not(:has()) so unsupported browsers simply keep the prior
+ * behaviour (configure stays aligned; no regression). */
+.caps-table .caps-params tr:not(:has(.caps-detail-value .form-control))
+    .caps-detail-name {
+  padding-top: 0.1rem;
+}
 
 /* Filter-dropdown bar at the top of the caps page. */
 .caps-filters .dropdown-menu {
