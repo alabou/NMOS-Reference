@@ -127,13 +127,22 @@ def get_flow_to_caps(node: Any, flow_ptr: Any) -> Any:
             caps[cap.name] = cap
 
     # --- Extract source-level properties (clock, sync) ---
-    def _get_source_sync(flow_core: Any) -> tuple[str, bool]:
+    def _get_source_sync(flow_core: Any) -> tuple[str, bool | None]:
         """Get clock name and synchronous_media from the flow's source.
 
-        Any undefined value is treated as a fatal error — this is internal
-        data from the pipeline builder so all fields must be set.
+        ``clock_name`` is a REQUIRED IS-04 source member, read as-is (an
+        undefined value is a genuine spec violation and stays fatal).
 
-        Returns (clock_name, synchronous_media).
+        ``synchronous_media`` (``urn:x-matrox:synchronous_media``) is an
+        OPTIONAL source member, so it is returned as ``None`` when absent
+        rather than read raw. The node's own pipeline-built sources always
+        set it (node behaviour unchanged), but this function is reused by the
+        controller on arbitrary registry sources from other products/vendors
+        that may legitimately omit it — an unguarded ``.value`` would raise
+        ``NotAvailable`` and abort the whole flow→caps conversion, leaving the
+        resource with no caps and no flow-match.
+
+        Returns (clock_name, synchronous_media | None).
         """
         source_id = flow_core.SourceId.value
         source_ptr = node.sources.get(source_id)
@@ -145,8 +154,11 @@ def get_flow_to_caps(node: Any, flow_ptr: Any) -> Any:
         src_val = src_inner.value if hasattr(src_inner, 'value') else src_inner
         src_core = getattr(src_val, 'SourceCore', src_val)
 
-        sync_media: bool = src_core.SynchronousMedia.value
         clk_name: str = str(src_core.ClockName.value)
+        sync_media: bool | None = (
+            src_core.SynchronousMedia.value
+            if src_core.SynchronousMedia.defined else None
+        )
         return clk_name, sync_media
 
     def _add_transport_caps(flow_core: Any) -> None:
@@ -160,7 +172,10 @@ def get_flow_to_caps(node: Any, flow_ptr: Any) -> Any:
             clk_name, sync_media = _get_source_sync(flow_core)
             ptp_str = "ptp" if clk_name == "clk0" else "internal"
             _add(_cap_str(CapTransportClockRefType, ptp_str))
-            _add(_cap_bool(CapTransportSynchronousMedia, sync_media))
+            # Optional source member — omit the cap when the source doesn't
+            # declare it (rather than inventing a value).
+            if sync_media is not None:
+                _add(_cap_bool(CapTransportSynchronousMedia, sync_media))
 
     # --- Dispatch by flow type ---
 

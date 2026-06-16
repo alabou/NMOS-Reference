@@ -175,6 +175,24 @@ class TestFlowCapsFromJson:
     def test_garbage_flow_returns_none(self) -> None:
         assert flow_caps_from_json({"id": "not-a-uuid"}, None) is None
 
+    def test_source_without_synchronous_media_still_builds(self) -> None:
+        # synchronous_media (urn:x-matrox:synchronous_media) is an OPTIONAL
+        # source member; third-party sources (e.g. Matrox ConvertIP) may omit
+        # it. The conversion must NOT abort — it builds the format caps and
+        # simply omits the synchronous_media cap (regression: an unguarded
+        # read raised NotAvailable → None → no green CS / no values).
+        src = _video_source()
+        src.pop("urn:x-matrox:synchronous_media", None)
+        caps = flow_caps_from_json(_video_raw_flow(), src)
+        assert caps is not None
+        # Format caps still present (proves the conversion didn't abort).
+        assert "urn:x-nmos:cap:format:media_type" in caps.caps
+        assert "urn:x-nmos:cap:format:color_sampling" in caps.caps
+        # clock_ref_type still derived from the (required) clock_name…
+        assert "urn:x-matrox:cap:transport:clock_ref_type" in caps.caps
+        # …but synchronous_media is omitted, not invented.
+        assert "urn:x-matrox:cap:transport:synchronous_media" not in caps.caps
+
 
 # ---------------------------------------------------------------------------
 # flow_match_for_sender
