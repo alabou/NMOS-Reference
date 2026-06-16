@@ -38,6 +38,19 @@ from nmos.api.tr10_tls import apply_tr10_tls_restrictions
 # CLI argument parsing
 # ---------------------------------------------------------------------------
 
+def _host_arg(value: str) -> str:
+    """argparse ``type`` for host / address options.
+
+    Strips surrounding whitespace so a stray space in a launch script or
+    env var — e.g. ``--rdsHost ' 192.168.1.1'`` from a default like
+    ``"${3:- 192.168.1.1}"`` — cannot turn a valid IP into an unresolvable
+    hostname (aiohttp would otherwise fail with "Name or service not
+    known"). Applied to the network host/address args; ports use
+    ``type=int``, which already tolerates surrounding whitespace.
+    """
+    return value.strip()
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     p = argparse.ArgumentParser(
@@ -47,7 +60,8 @@ def parse_args() -> argparse.Namespace:
 
     # --- Registry (single, simplified from rds0/rds1/rds2) ---
     g = p.add_argument_group("Registry (RDS)")
-    g.add_argument("--rdsHost", default="", help="RDS server host or IP (empty=no registry)")
+    g.add_argument("--rdsHost", type=_host_arg, default="",
+                   help="RDS server host or IP (empty=no registry)")
     g.add_argument("--rdsRegistrationPort", type=int, default=8447, help="RDS registration port")
     g.add_argument("--rdsQueryPort", type=int, default=8446,
                    help="RDS query API port (controller UI bootstrap)")
@@ -64,7 +78,8 @@ def parse_args() -> argparse.Namespace:
 
     # --- Node server ---
     g = p.add_argument_group("Node Server")
-    g.add_argument("--nodeAddr", default="127.0.0.1", help="Node server bind address")
+    g.add_argument("--nodeAddr", type=_host_arg, default="127.0.0.1",
+                   help="Node server bind address")
     g.add_argument("--nodePort", type=int, default=5050, help="Node server port")
     g.add_argument("--nodeCertificate", default="", help="Server certificate (*.chain.pem)")
     g.add_argument("--nodeKey", default="", help="Server private key")
@@ -144,7 +159,8 @@ def parse_args() -> argparse.Namespace:
     # --- OAuth2 ---
     g = p.add_argument_group("OAuth2")
     g.add_argument("--oauth2", action="store_true", help="Enable OAuth2.0 authorization")
-    g.add_argument("--oauth2Host", default="", help="OAuth2 server host")
+    g.add_argument("--oauth2Host", type=_host_arg, default="",
+                   help="OAuth2 server host")
     g.add_argument("--oauth2Port", type=int, default=4444, help="OAuth2 server port")
     g.add_argument("--oauth2CertificateName",
                    default="Example.Company.Device.Server.example.com",

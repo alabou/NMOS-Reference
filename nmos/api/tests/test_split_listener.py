@@ -107,6 +107,31 @@ class TestControlPortDefaulting:
         assert ns.controlTrustedRootCA == []
 
 
+class TestHostArgWhitespaceStripping:
+    """Host/address args strip surrounding whitespace so a stray space in
+    a launch script (e.g. a default like ``"${3:- 192.168.1.1}"``) can't
+    turn a valid IP into an unresolvable hostname ("Name or service not
+    known"). Ports use ``type=int`` and already tolerate whitespace."""
+
+    def test_rds_host_leading_space_stripped(self) -> None:
+        ns = _run_parse_args(["--rdsHost", " 192.168.112.142"])
+        assert ns.rdsHost == "192.168.112.142"
+
+    def test_node_addr_surrounding_space_stripped(self) -> None:
+        ns = _run_parse_args(["--nodeAddr", " 127.0.0.1 "])
+        assert ns.nodeAddr == "127.0.0.1"
+
+    def test_oauth2_host_space_stripped(self) -> None:
+        ns = _run_parse_args(["--oauth2Host", "  host.example  "])
+        assert ns.oauth2Host == "host.example"
+
+    def test_clean_defaults_unaffected(self) -> None:
+        ns = _run_parse_args([])
+        assert ns.rdsHost == ""
+        assert ns.nodeAddr == "127.0.0.1"
+        assert ns.oauth2Host == ""
+
+
 # ---------------------------------------------------------------------------
 # 2) App-factory route separation
 # ---------------------------------------------------------------------------
