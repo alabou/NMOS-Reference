@@ -19,51 +19,114 @@ from nmos.controller.grouping import (
 
 
 class TestParseGroupHint:
-    """Per ``specs/NMOS With Natural Groups.md`` §"Group Hint" the tag
-    value follows one of two forms. Natural-group identity is
-    ``(transport, group_index)``; format and role identify members."""
+    """Base reference ``specs/NMOS With Natural Groups.md`` §"Group Hint":
+    ``"<group-name> <group-index>:<role-in-group> <role-index>"``. The
+    parser relaxes around that form for non-conforming third-party devices.
+    Group identity is the normalised text before the first ``:`` (``key``);
+    ``(format, role)`` identify a member; non-recognised role tokens make a
+    hint *not groupable* (no format/role, raw ``role_name`` kept)."""
+
+    # --- Conforming / groupable -------------------------------------------
 
     def test_video_hint(self) -> None:
         hint = parse_group_hint("RTP 3:VIDEO 0")
         assert hint == GroupHint(
-            transport="RTP", group_index=3, format="VIDEO", role=0,
+            group_name="RTP 3", role_name="VIDEO 0",
+            groupable=True, format="VIDEO", role=0,
         )
-        assert hint.key == ("RTP", 3)
+        assert hint.key == "RTP 3"
+        assert hint.role_label == "VIDEO 0"
         assert str(hint) == "RTP 3:VIDEO 0"
 
     def test_audio_hint(self) -> None:
         hint = parse_group_hint("SRT 0:AUDIO 2")
         assert hint is not None
-        assert hint.transport == "SRT"
-        assert hint.group_index == 0
+        assert hint.key == "SRT 0"
         assert hint.format == "AUDIO"
         assert hint.role == 2
 
     def test_role_index_omitted_defaults_to_zero(self) -> None:
         # Spec line 57: when <role-index> is absent the role is 0.
         hint = parse_group_hint("RTP 0:VIDEO")
-        assert hint is not None
+        assert hint is not None and hint.groupable
         assert hint.role == 0
 
     def test_case_insensitive_format_normalised_to_upper(self) -> None:
         # Spec line 53: <role-in-group> comparison is case-insensitive.
-        # We normalise the stored form to uppercase for stable equality.
-        hint = parse_group_hint("RTP 0:audio 1")
+        hint = parse_group_hint("rtp 0:audio 1")
         assert hint is not None
         assert hint.format == "AUDIO"
+        assert hint.key == "RTP 0"  # group name also upper-normalised
 
-    def test_malformed_returns_none(self) -> None:
+    # --- Non-conforming relaxations (still groupable) ---------------------
+
+    def test_format_abbreviations(self) -> None:
+        # vid/aud/anc are accepted and normalised to the canonical token.
+        assert parse_group_hint("RTP 2:VID 1").format == "VIDEO"
+        assert parse_group_hint("SRT 1:AUD").format == "AUDIO"
+        assert parse_group_hint("IP 4:ANC 2").format == "DATA"
+        assert parse_group_hint("IP 0:Ancillary").format == "DATA"
+
+    def test_dash_or_underscore_role_separator(self) -> None:
+        for s in ("RTP 3:VIDEO-0", "RTP 3:VIDEO_0"):
+            hint = parse_group_hint(s)
+            assert hint is not None and hint.groupable
+            assert hint.format == "VIDEO" and hint.role == 0
+
+    def test_arbitrary_group_name(self) -> None:
+        # The group name need not be a transport — anything before ':'.
+        hint = parse_group_hint("Camera Group 2:VIDEO 0")
+        assert hint is not None and hint.groupable
+        assert hint.key == "CAMERA GROUP 2"
+
+    def test_trailing_scope_is_ignored(self) -> None:
+        # BCP-002-01 generic form may append ":<group-scope>".
+        hint = parse_group_hint("RTP 3:VIDEO 0:device")
+        assert hint is not None
+        assert hint.key == "RTP 3" and hint.format == "VIDEO" and hint.role == 0
+
+    def test_relaxed_group_index_forms(self) -> None:
+        # Previously-rejected forms are now groupable: the group index is
+        # not split out for identity, so a numeric/garbage group name and a
+        # non-numeric role index are tolerated (role index defaults to 0).
+        assert parse_group_hint("123 0:VIDEO").groupable is True
+        assert parse_group_hint("RTP X:VIDEO 0").key == "RTP X"
+        assert parse_group_hint("RTP 0:VIDEO X").role == 0
+
+    # --- Not groupable -----------------------------------------------------
+
+    def test_unrecognised_role_is_not_groupable(self) -> None:
+        hint = parse_group_hint("RTP 0:THERMAL 1")
+        assert hint is not None
+        assert hint.groupable is False
+        assert hint.format is None and hint.role is None
+        # Raw post-':' text is preserved for display.
+        assert hint.role_name == "THERMAL 1"
+        assert hint.role_label == "THERMAL 1"
+        # group-name still available (for display), but never grouped.
+        assert hint.key == "RTP 0"
+
+    def test_unrecognised_role_arbitrary_name(self) -> None:
+        hint = parse_group_hint("My Stream:telemetry")
+        assert hint is not None and hint.groupable is False
+        assert hint.role_label == "telemetry"
+
+    # --- Unparseable -------------------------------------------------------
+
+    def test_returns_none(self) -> None:
+        # No ':' → no group/role split to work with.
         assert parse_group_hint("") is None
         assert parse_group_hint("no colon") is None
-        assert parse_group_hint("RTP X:VIDEO 0") is None
-        assert parse_group_hint("RTP 0:VIDEO X") is None
-        # Non-letter transport name rejected (spec: [A-Za-z]+).
-        assert parse_group_hint("123 0:VIDEO") is None
+
+    def test_group_index_property_for_usb_tiebreak(self) -> None:
+        # Best-effort trailing integer; USB hints are conforming "USB N".
+        assert parse_group_hint("USB 0:VIDEO 0").group_index == 0
+        assert parse_group_hint("USB 7:AUDIO 1").group_index == 7
 
     def test_whitespace_tolerated(self) -> None:
         hint = parse_group_hint("  RTP 1:VIDEO 0  ")
         assert hint is not None
-        assert hint.group_index == 1
+        assert hint.key == "RTP 1"
 
 
 class TestExtractGroupHint:
@@ -71,7 +134,7 @@ class TestExtractGroupHint:
         tags = {GROUP_HINT_TAG: ["RTP 5:VIDEO 0"]}
         hint = extract_group_hint(tags)
         assert hint is not None
-        assert hint.key == ("RTP", 5)
+        assert hint.key == "RTP 5"
 
     def test_from_dict_string_value(self) -> None:
         # Some registries store the bare string (not wrapped in a list).

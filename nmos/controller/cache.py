@@ -322,22 +322,21 @@ class GroupedResource:
 class NaturalGroupView:
     """A natural group shared by senders / receivers on the same device.
 
-    ``hint_key`` is ``(transport, group_index)`` — the natural-group
-    identifier. Members of the group may be of different formats (AUDIO
-    + VIDEO + MUX …) and each member carries its own ``(format, role)``
-    pair via its ``hint``.
+    ``hint_key`` is the group identity — the normalised group-name string
+    (``GroupHint.key``, e.g. ``"RTP 3"``). Members of the group may be of
+    different formats (AUDIO + VIDEO + MUX …) and each member carries its
+    own ``(format, role)`` pair via its ``hint``.
     """
 
     device_id: str
     device_serial: str
     device_label: str
-    hint_key: tuple[str, int]  # (transport, group_index)
+    hint_key: str  # group identity = GroupHint.key (e.g. "RTP 3")
     members: list[GroupedResource] = field(default_factory=list)
 
     @property
     def display_name(self) -> str:
-        transport, group_index = self.hint_key
-        return f"{transport} {group_index}"
+        return self.hint_key
 
 
 @dataclass
@@ -960,7 +959,11 @@ class ResourceCache:
                 status=dict(self._status.get(rid, {})),
             )
 
-            if hint is None:
+            # Only groupable hints define a natural group. A hint whose
+            # role token isn't a recognised format (third-party/non-conforming)
+            # carries no reliable (format, role) and is left ungrouped — it
+            # still displays its raw role text via hint.role_label.
+            if hint is None or not hint.groupable:
                 view.ungrouped.append(grouped)
                 continue
 
@@ -981,9 +984,9 @@ class ResourceCache:
 
         # Sort inside each group by (format, role, id) so multi-format
         # groups (e.g. RTP 0 with both AUDIO and VIDEO members) present a
-        # stable "AUDIO 0, AUDIO 1, VIDEO 0" order. Groups by
-        # (transport, group_index). Devices by serial (empty serial last
-        # so the UI stays stable when some devices don't advertise one).
+        # stable "AUDIO 0, AUDIO 1, VIDEO 0" order. Groups by group-name
+        # key (hint_key). Devices by serial (empty serial last so the UI
+        # stays stable when some devices don't advertise one).
         for view in by_device.values():
             for g in view.groups:
                 g.members.sort(key=lambda m: (

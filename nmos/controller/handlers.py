@@ -738,9 +738,9 @@ async def receivers_compatible(request: web.Request) -> web.Response:
         seen_keys: set[tuple[str, tuple[str, int]]] = set()
         for r in receivers:
             hint = extract_group_hint(r.get("tags"))
-            if hint is None:
+            if hint is None or not hint.groupable:
                 raise web.HTTPBadRequest(
-                    reason="subset mode: receiver lacks a group hint",
+                    reason="subset mode: receiver lacks a groupable group hint",
                 )
             seen_keys.add((r.get("device_id", "") or "", hint.key))
         if len(seen_keys) > 1:
@@ -761,7 +761,7 @@ async def receivers_compatible(request: web.Request) -> web.Response:
         for r in receivers:
             h = extract_group_hint(r.get("tags"))
             if h is not None:
-                leaves.append(f"{h.format} {h.role}")
+                leaves.append(h.role_label)
         subset_leaves_label = ", ".join(sorted(leaves))
     return _render(
         request,
@@ -2274,9 +2274,7 @@ def _build_caps_view(
     for s in senders:
         sid = s.get("id", "") or ""
         hint = extract_group_hint(s.get("tags"))
-        role_label = (
-            f"{hint.format} {hint.role}" if hint is not None else ""
-        )
+        role_label = hint.role_label if hint is not None else ""
         dev = cache.get_device(s.get("device_id", "") or "") or {}
         entry: dict[str, Any] = {
             "id": sid,
@@ -2376,12 +2374,12 @@ def _build_caps_view(
             # we downcase to match.
             meta_format = actual_meta_format
             meta_layer = actual_meta_layer
-            if not meta_format and hint is not None:
+            if not meta_format and hint is not None and hint.groupable:
                 meta_format = hint.format.lower()
-            if meta_layer is None and hint is not None:
+            if meta_layer is None and hint is not None and hint.groupable:
                 meta_layer = hint.role
-            # Final fallback when there's no group hint at all — use the
-            # sender's own IS-04 ``format`` URN.
+            # Final fallback when there's no (groupable) group hint — use
+            # the sender's own IS-04 ``format`` URN.
             if not meta_format:
                 meta_format = _short_format(s.get("format"))
 
@@ -2676,9 +2674,9 @@ def _decorate_configure_cs(
     actual_meta_layer = _coerce_int(cs.get(_CAPS_META_LAYER))
     meta_format = actual_meta_format
     meta_layer = actual_meta_layer
-    if not meta_format and hint is not None:
+    if not meta_format and hint is not None and hint.groupable:
         meta_format = hint.format.lower()
-    if meta_layer is None and hint is not None:
+    if meta_layer is None and hint is not None and hint.groupable:
         meta_layer = hint.role
     if not meta_format:
         meta_format = _short_format(s.get("format"))
@@ -2778,9 +2776,7 @@ def _build_configure_view(
     for s in senders:
         sid = s.get("id", "") or ""
         hint = extract_group_hint(s.get("tags"))
-        role_label = (
-            f"{hint.format} {hint.role}" if hint is not None else ""
-        )
+        role_label = hint.role_label if hint is not None else ""
         dev = cache.get_device(s.get("device_id", "") or "") or {}
         status = cache.get_status(sid)
         entry: dict[str, Any] = {
@@ -2810,9 +2806,9 @@ def _build_configure_view(
                 continue
             mf = _short_format(cs.get(_CAPS_META_FORMAT))
             ml = _coerce_int(cs.get(_CAPS_META_LAYER))
-            if not mf and hint is not None:
+            if not mf and hint is not None and hint.groupable:
                 mf = hint.format.lower()
-            if ml is None and hint is not None:
+            if ml is None and hint is not None and hint.groupable:
                 ml = hint.role
             if not mf:
                 mf = _short_format(s.get("format"))
@@ -2972,11 +2968,10 @@ def _grouped_summary(view: Any) -> dict[str, Any]:
 
 
 def _natural_group_summary(g: NaturalGroupView) -> dict[str, Any]:
-    """Per spec §"Senders"/"Receivers" the group identity is just
-    (transport, group_index). Format lives on each member."""
+    """Per spec §"Senders"/"Receivers" the group identity is the
+    group-name string (``hint_key``). Format lives on each member."""
     return {
-        "transport": g.hint_key[0],
-        "group_index": g.hint_key[1],
+        "group_name": g.hint_key,
         "display_name": g.display_name,
         "members": [_grouped_resource_summary(m) for m in g.members],
     }
@@ -2986,9 +2981,13 @@ def _grouped_resource_summary(m: GroupedResource) -> dict[str, Any]:
     return {
         "id": m.id,
         "label": m.label,
-        "description": m.description,
+        # format/role are populated only for groupable members; non-groupable
+        # hints carry no reliable format/role (both None). role_label always
+        # gives a display string (canonical "VIDEO 0" or the raw role text).
         "format": m.hint.format if m.hint is not None else None,
         "role": m.hint.role if m.hint is not None else None,
+        "role_label": m.hint.role_label if m.hint is not None else "",
+        "description": m.description,
         "status": m.status,
     }
 
@@ -3321,7 +3320,7 @@ def _receiver_state_map(
 #
 #   * USB — a USB-transport resource that is ALONE in its natural
 #     group on its Node in its direction (no other same-direction
-#     resource shares the ``(transport, group_index)`` key).
+#     resource shares the group-name key).
 #   * TB  — an audio resource that is ALONE in its natural group on
 #     its Node in its direction.
 #   * A/V/D (``avd``) — everything else.
@@ -3411,7 +3410,7 @@ def _alone_in_group_members(
 ) -> list[dict[str, Any]]:
     """Return resources on ``node_id`` in the given direction that
     are ALONE in their natural group — the single same-direction
-    member of their ``(transport, group_index)`` key on this Node.
+    member of their group-name key on this Node.
 
     Shared by USB and TB detection. The caller layers its own
     format/transport filter on top (USB by transport URN, TB by
@@ -3422,10 +3421,10 @@ def _alone_in_group_members(
         r for r in pool
         if _resource_owner_node_id(cache, r) == node_id
     ]
-    by_group: dict[tuple[str, int], list[dict[str, Any]]] = {}
+    by_group: dict[str, list[dict[str, Any]]] = {}
     for r in on_node:
         hint = extract_group_hint(r.get("tags"))
-        if hint is None:
+        if hint is None or not hint.groupable:
             continue
         by_group.setdefault(hint.key, []).append(r)
     out: list[dict[str, Any]] = []
@@ -3501,12 +3500,13 @@ def _classify_selection(
         if "audio" in (first.get("format") or "").lower():
             node_id = _resource_owner_node_id(cache, first)
             hint = extract_group_hint(first.get("tags"))
-            if node_id and hint is not None:
+            if node_id and hint is not None and hint.groupable:
                 same_group = [
                     r for r in cache.all_receivers()
                     if _resource_owner_node_id(cache, r) == node_id
-                    and extract_group_hint(r.get("tags")) is not None
-                    and extract_group_hint(r.get("tags")).key == hint.key  # type: ignore[union-attr]
+                    and (rh := extract_group_hint(r.get("tags"))) is not None
+                    and rh.groupable
+                    and rh.key == hint.key
                 ]
                 if len(same_group) == 1:
                     return GROUP_TB
@@ -3637,12 +3637,13 @@ def _avd_pair_transport(
         # Skip TB-shape candidates (audio alone in group) — TB is
         # also reverse-class, not A/V/D.
         hint = extract_group_hint(s.get("tags"))
-        if hint is not None:
+        if hint is not None and hint.groupable:
             same_group = [
                 x for x in cache.all_senders()
                 if _resource_owner_node_id(cache, x) == recv_node
-                and extract_group_hint(x.get("tags")) is not None
-                and extract_group_hint(x.get("tags")).key == hint.key  # type: ignore[union-attr]
+                and (xh := extract_group_hint(x.get("tags"))) is not None
+                and xh.groupable
+                and xh.key == hint.key
             ]
             fmt = (s.get("format") or "").lower()
             if len(same_group) == 1 and "audio" in fmt:
@@ -3800,10 +3801,10 @@ def _receivers_as_natural_group(
 
     members: list[GroupedResource] = []
     first_device_id = ""
-    hint_key: tuple[str, int] | None = None
+    hint_key: str | None = None
     for r in receivers:
         hint = extract_group_hint(r.get("tags"))
-        if hint is None:
+        if hint is None or not hint.groupable:
             continue
         if hint_key is None:
             hint_key = hint.key
@@ -3873,7 +3874,10 @@ def _member_compatible_with_all(
         # role-index is deliberately NOT checked — see docstring.
         from nmos.controller.grouping import extract_group_hint
         r_hint = extract_group_hint(r.get("tags"))
-        if s_hint is not None and r_hint is not None:
+        # Only compare hint-format when BOTH sides actually declare one —
+        # non-groupable hints carry format=None (no declared format).
+        if (s_hint is not None and s_hint.groupable
+                and r_hint is not None and r_hint.groupable):
             if s_hint.format != r_hint.format:
                 return False
         if not is_compatible(s_caps, resource_ccf_caps(r)):

@@ -113,7 +113,8 @@ class TestCompatibleSenderGroups:
                 device_serial="",
                 device_label="",
                 hint=GroupHint(
-                    transport="RTP", group_index=0, format="AUDIO", role=role,
+                    group_name="RTP 0", role_name=f"AUDIO {role}",
+                    groupable=True, format="AUDIO", role=role,
                 ),
                 resource=res,
             )
@@ -192,8 +193,8 @@ class TestCompatibleSenderGroups:
                     id=r["id"], label=r["label"], description="",
                     device_id=dev, device_serial="", device_label="",
                     hint=GroupHint(
-                        transport="RTP", group_index=0,
-                        format=fmt, role=role,
+                        group_name="RTP 0", role_name=f"{fmt} {role}",
+                        groupable=True, format=fmt, role=role,
                     ),
                     resource=r,
                 ))
@@ -535,7 +536,8 @@ def _mixed_group(
             id=r["id"], label=r["label"], description="",
             device_id=device_id, device_serial="", device_label="",
             hint=GroupHint(
-                transport="RTP", group_index=0, format=fmt, role=role,
+                group_name="RTP 0", role_name=f"{fmt} {role}",
+                groupable=True, format=fmt, role=role,
             ),
             resource=r,
         ))

@@ -113,7 +113,7 @@
         </td>
         <td class="role-name">
           {% if m.hint %}
-            {{ m.hint.format }} {{ m.hint.role }}
+            {{ m.hint.role_label }}
           {% else %}
             <span class="text-muted">—</span>
           {% endif %}
@@ -156,7 +156,17 @@
                    data-ids="{{ m.id }}">
           </label>
         </td>
-        <td class="role-name"><span class="text-muted">—</span></td>
+        <td class="role-name">
+          {# Ungrouped members include non-groupable hints (third-party
+             role tokens we can't map to a format). Show the raw role text
+             via role_label so the operator still sees something in place
+             of "<role> <role-index>"; a bare em-dash when there's no hint. #}
+          {% if m.hint %}
+            <span class="text-muted">{{ m.hint.role_label }}</span>
+          {% else %}
+            <span class="text-muted">—</span>
+          {% endif %}
+        </td>
         <td class="sender-label">{{ m.label }}</td>
         <td class="col-status overall-status">
           <span class="status-badge is-{{ overall }}"

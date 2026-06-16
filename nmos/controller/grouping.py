@@ -4,24 +4,27 @@
 """Natural-group + device-serial helpers for the controller UI.
 
 NMOS senders and receivers each declare their "natural group" via the
-``urn:x-nmos:tag:grouphint/v1.0`` tag on their ResourceCore. The tag
-value follows the format emitted by
-[nmos.node.types.NaturalGroups.get_group_hint](../node/types.py):
+``urn:x-nmos:tag:grouphint/v1.0`` tag on their ResourceCore. The base
+reference is ``specs/NMOS With Natural Groups.md`` §"Group Hint":
 
-    ``"{TRANSPORT_NAME} {group_index}:{FORMAT_LABEL} {role_index}"``
+    ``"<group-name> <group-index>:<role-in-group> <role-index>"``
 
-e.g. ``"RTP 3:VIDEO 0"`` — transport RTP, natural group 3, VIDEO
-format, role 0 (first sender in that group).
+e.g. ``"RTP 3:VIDEO 0"`` — group "RTP 3", VIDEO format, role 0 (first
+sender in that group). ``parse_group_hint`` relaxes this base form to
+also accept non-conforming third-party devices (arbitrary group names,
+``vid``/``aud``/``anc`` abbreviations, ``-``/``_`` role separators, a
+trailing ``:device`` scope); see that function's docstring.
 
 Two senders / receivers are members of the **same natural group** when:
 
   1. They belong to the same owning device (same ``device_id``), and
-  2. They share the same ``(transport, group_index, format_label)``
-     prefix (the ``"RTP 3:VIDEO"`` portion of the hint).
+  2. They share the same group identity — the normalised text *before*
+     the first ``:`` (``GroupHint.key``, e.g. ``"RTP 3"``).
 
-Role index identifies a sender's position *within* the group — a stereo
-audio pair has role 0 (L) and role 1 (R). Grouping two related senders
-thus matches by prefix; separating their legs matches by role.
+Within a group, ``(format, role)`` identifies a member — a stereo audio
+pair has role 0 (L) and role 1 (R). A hint whose role token is not a
+recognised format is **not groupable**: it carries no ``format``/``role``
+and its resource is left ungrouped.
 
 Device serial: the canonical, vendor-neutral serial number is the
 BCP-002-02 *instance identifier* asset tag
@@ -85,70 +88,174 @@ def strip_transport_prefix(value: Any) -> str:
 #   "RTP 3:VIDEO"      — role-index omitted, defaults to 0
 # Character classes are tightened to the spec (letters-only for the
 # two textual segments; digits-only for the two numeric segments).
-_HINT_RE = re.compile(
-    r"^\s*"
-    r"(?P<transport>[A-Za-z]+)"
-    r"\s+"
-    r"(?P<group_index>\d+)"
-    r":"
-    r"(?P<format>[A-Za-z]+)"
-    r"(?:\s+(?P<role>\d+))?"
-    r"\s*$"
-)
-
 # Matches "...SNXnnnnn..." — SNX-style serial form.
 _SERIAL_RE = re.compile(r"\b(SNX\d{5,})\b")
+
+# Spec §Format (line 53): the canonical <role-in-group> tokens. Per the
+# spec the format MUST be one of these and comparison is case-insensitive;
+# the role label SHOULD be uppercase. We store the canonical UPPERCASE form
+# so leg-matching (`(format, role)`) and the lowercased cap:meta:format
+# sites are stable regardless of input casing.
+#
+# To support non-conforming third-party devices we ALSO accept the common
+# abbreviations seen in the field — "VID" for video, "AUD" for audio, and
+# "ANC"/"ANCILLARY" for the ancillary-data role (the spec already allows
+# "ANC" in place of "DATA", line 53). The key is normalised to the
+# canonical token so members group and pair identically.
+_FORMAT_SYNONYMS: dict[str, str] = {
+    "VIDEO": "VIDEO", "VID": "VIDEO",
+    "AUDIO": "AUDIO", "AUD": "AUDIO",
+    "DATA": "DATA", "ANC": "DATA", "ANCILLARY": "DATA",
+    "MUX": "MUX",
+}
+
+# Within the role segment (after the ':') some devices separate the
+# role-in-group from the role-index with '-' or '_' instead of a space
+# (e.g. "VIDEO-0", "AUDIO_1"). Normalise those to spaces before tokenising.
+# We do this for the role segment ONLY — group names may legitimately
+# contain '-'/'_' and we keep them verbatim for the group key.
+_ROLE_SEP_RE = re.compile(r"[-_]+")
+
+# Trailing decimal run of a group name — a best-effort group-index used
+# ONLY for the USB/Thunderbolt "smallest natural_group_index wins"
+# tie-break (handlers `_resource_group_index`); never for group identity.
+# Defaults to a large sentinel when the group name carries no number so
+# unnumbered groups sort last.
+_TRAILING_INT_RE = re.compile(r"(\d+)\s*$")
+_NO_GROUP_INDEX: int = 10**9
 
 
 @dataclass(frozen=True)
 class GroupHint:
     """Parsed ``grouphint/v1.0`` tag value.
 
-    ``key`` is the tuple used to group senders / receivers that belong
-    to the same natural group: ``(transport, group_index)``. Format
-    and role are deliberately **not** part of the key — a single
-    natural group (e.g. ``RTP 0``) contains members of multiple
-    formats (AUDIO + VIDEO + ...), each distinguishable by its own
-    ``(format, role)`` pair.
+    The spec form is ``"<group-name> <group-index>:<role-in-group> <role-index>"``.
+    To interoperate with non-conforming third-party devices we relax the
+    parse around that base form, and split hints into two tiers:
+
+    * **groupable** — the role segment (after the ``:``) names a known
+      format (``VIDEO``/``AUDIO``/``DATA``/``MUX``, incl. ``vid``/``aud``/
+      ``anc`` abbreviations and any capitalisation). Such a hint yields a
+      reliable ``format`` and ``role`` (the role-index, defaulting to 0 per
+      spec line 57 when omitted), so its members can be grouped and paired.
+    * **not groupable** — the role token is not a recognised format. We
+      cannot derive a ``format``/``role`` (both ``None``); the resource is
+      left ungrouped. ``role_name`` preserves the raw post-``:`` text so the
+      UI can still display something in place of ``<role> <role-index>``.
+
+    ``key`` is the **group identity**: the whole normalised text *before*
+    the first ``:`` (e.g. ``"RTP 3"``). Per the user's direction the group
+    index is not split out for identity — any two members sharing that
+    string belong to the same natural group, which lets the group name be
+    an arbitrary vendor string, not just a transport name.
     """
 
-    transport: str
-    group_index: int
-    format: str
-    role: int
+    group_name: str          # normalised text before ':' — the group identity
+    role_name: str           # raw text after ':' (scope stripped) — for display
+    groupable: bool
+    format: str | None       # canonical VIDEO/AUDIO/DATA/MUX — only when groupable
+    role: int | None         # role-index/layer (explicit or 0) — only when groupable
 
     @property
-    def key(self) -> tuple[str, int]:
-        return (self.transport, self.group_index)
+    def key(self) -> str:
+        """Group identity — the normalised group-name string."""
+        return self.group_name
+
+    @property
+    def group_index(self) -> int:
+        """Best-effort trailing integer of the group name. Used ONLY for the
+        USB/Thunderbolt tie-break (``_resource_group_index``); never for
+        identity. ``_NO_GROUP_INDEX`` when the name carries no number."""
+        m = _TRAILING_INT_RE.search(self.group_name)
+        return int(m.group(1)) if m else _NO_GROUP_INDEX
+
+    @property
+    def role_label(self) -> str:
+        """Human-readable role label for the member's row. Groupable hints
+        render ``"<FORMAT> <role-index>"`` (e.g. ``"VIDEO 0"``); non-groupable
+        hints render the raw ``role_name`` so the UI never shows a blank in
+        place of ``<role> <role-index>``."""
+        if self.groupable:
+            return f"{self.format} {self.role}"
+        return self.role_name
 
     def __str__(self) -> str:
-        return f"{self.transport} {self.group_index}:{self.format} {self.role}"
+        return f"{self.group_name}:{self.role_name}"
+
+
+def _normalise_group_name(text: str) -> str:
+    """Collapse internal whitespace and uppercase — a stable group key.
+
+    All members of one group carry the same literal before-``:`` text, so a
+    consistent normalisation keeps the key stable without needing to isolate
+    a group-index. Uppercasing matches the spec's RECOMMENDED casing and the
+    historical ``transport`` field (which was uppercased)."""
+    return " ".join(text.split()).upper()
 
 
 def parse_group_hint(value: str) -> GroupHint | None:
-    """Parse a ``grouphint/v1.0`` tag value. Returns ``None`` on malformed.
+    """Parse a ``grouphint/v1.0`` tag value. Returns ``None`` when the value
+    has no ``:`` separator (no group/role split to work with).
 
-    Per spec line 57, the role-index segment is optional — when absent
-    the role is 0. Per spec line 53, ``<role-in-group>`` comparison is
-    case-insensitive; we normalise the stored format to uppercase so
-    equality and sort order are stable regardless of input casing.
+    The base reference is ``specs/NMOS With Natural Groups.md`` §"Group Hint".
+    We relax around it for non-conforming devices:
+
+    * The optional trailing ``:<group-scope>`` (e.g. ``":device"``, BCP-002-01)
+      is stripped and ignored — the spec scope is always ``device``.
+    * The group name (before the first ``:``) is accepted verbatim — any
+      vendor string, not just a ``[A-Za-z]+`` transport name.
+    * Within the role segment ``-``/``_`` are treated as the role separator.
+    * The role-in-group is mapped through ``_FORMAT_SYNONYMS`` (incl.
+      ``vid``/``aud``/``anc`` and any casing). A recognised format makes the
+      hint **groupable** with a reliable ``role`` (explicit, or 0 per spec
+      line 57 when omitted). An unrecognised role token makes the hint
+      **not groupable**: ``format``/``role`` are ``None`` and ``role_name``
+      carries the raw text for display only.
     """
     if not value:
         return None
-    m = _HINT_RE.match(value)
-    if not m:
-        return None
-    try:
-        role_str = m.group("role")
-        role = int(role_str) if role_str is not None else 0
+    # Strip an optional trailing ":<scope>" (BCP-002-01). The structural
+    # form is "<group>:<role>[:<scope>]"; anything past the second ':' is
+    # the scope and is ignored.
+    parts = value.split(":")
+    if len(parts) < 2:
+        return None  # no ':' → no group/role split
+    group_raw = parts[0]
+    role_raw = parts[1]
+
+    group_name = _normalise_group_name(group_raw)
+    role_name = role_raw.strip()
+    if not group_name:
+        return None  # nothing usable as a group identity
+
+    # Tokenise the role segment: "<role-in-group> [<role-index>]", with
+    # '-'/'_' accepted as the separator.
+    role_tokens = _ROLE_SEP_RE.sub(" ", role_name).split()
+    fmt: str | None = None
+    if role_tokens:
+        fmt = _FORMAT_SYNONYMS.get(role_tokens[0].upper())
+
+    if fmt is None:
+        # Role-in-group not recognised → not groupable; keep raw text only.
         return GroupHint(
-            transport=m.group("transport").upper(),
-            group_index=int(m.group("group_index")),
-            format=m.group("format").upper(),
-            role=role,
+            group_name=group_name,
+            role_name=role_name,
+            groupable=False,
+            format=None,
+            role=None,
         )
-    except (ValueError, TypeError):
-        return None
+
+    # Groupable: role-index is the next numeric token, else 0 (spec line 57).
+    role_index = 0
+    if len(role_tokens) >= 2 and role_tokens[1].isdigit():
+        role_index = int(role_tokens[1])
+    return GroupHint(
+        group_name=group_name,
+        role_name=role_name,
+        groupable=True,
+        format=fmt,
+        role=role_index,
+    )
 
 
 def extract_group_hint(resource_tags: Any) -> GroupHint | None:

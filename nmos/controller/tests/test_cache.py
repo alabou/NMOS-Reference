@@ -365,7 +365,7 @@ class TestGroupedViews:
         # members coexist inside it.
         assert len(v1.groups) == 1
         g = v1.groups[0]
-        assert g.hint_key == ("RTP", 0)
+        assert g.hint_key == "RTP 0"
         assert g.display_name == "RTP 0"
         # Members sorted by (format, role, id): AUDIO 0, VIDEO 0, VIDEO 1.
         assert [(m.hint.format, m.hint.role) for m in g.members if m.hint] == [
@@ -382,6 +382,24 @@ class TestGroupedViews:
         views = cache.senders_grouped()
         assert len(views) == 1
         assert len(views[0].ungrouped) == 1
+
+    @pytest.mark.asyncio
+    async def test_non_groupable_hint_goes_to_ungrouped(self) -> None:
+        # A hint whose role token isn't a recognised format (third-party
+        # device) can't be grouped — it lands in ``ungrouped`` and keeps its
+        # raw role text for display, NOT in a natural group.
+        cache = ResourceCache()
+        await cache.upsert("device", _device("d1"))
+        await cache.upsert(
+            "sender", _sender("odd", device_id="d1", hint="RTP 0:THERMAL 1"),
+        )
+        views = cache.senders_grouped()
+        assert len(views) == 1
+        assert views[0].groups == []
+        assert len(views[0].ungrouped) == 1
+        m = views[0].ungrouped[0]
+        assert m.hint is not None and m.hint.groupable is False
+        assert m.hint.role_label == "THERMAL 1"
 
     @pytest.mark.asyncio
     async def test_device_address_and_transports(self) -> None:

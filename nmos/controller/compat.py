@@ -435,9 +435,9 @@ def pair_by_identity(
     s_by_leaf: dict[tuple[str, int], dict[str, Any]] = {}
     for s in senders:
         hint = extract_group_hint(s.get("tags"))
-        if hint is None:
+        if hint is None or not hint.groupable:
             raise ValueError(
-                f"sender {s.get('id', '?')!r} has no group hint — "
+                f"sender {s.get('id', '?')!r} has no groupable group hint — "
                 "cannot pair by identity",
             )
         key = (hint.format, hint.role)
@@ -452,9 +452,9 @@ def pair_by_identity(
     pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for r in receivers:
         hint = extract_group_hint(r.get("tags"))
-        if hint is None:
+        if hint is None or not hint.groupable:
             raise ValueError(
-                f"receiver {r.get('id', '?')!r} has no group hint — "
+                f"receiver {r.get('id', '?')!r} has no groupable group hint — "
                 "cannot pair by identity",
             )
         key = (hint.format, hint.role)
