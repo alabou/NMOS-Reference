@@ -215,12 +215,81 @@
     });
   }
 
-  controller.initSelection = (formId) => {
+  // ------------------------------------------------------------------
+  // Selection memory (sessionStorage)
+  // ------------------------------------------------------------------
+  //
+  // The Senders / Receivers list pages remember the operator's last
+  // selection so it is restored when they navigate back, for the
+  // lifetime of the browser session (cleared on close). Opt-in via
+  // ``initSelection(formId, {remember: true})``. The compatible-senders
+  // page does NOT opt in — it keeps its server-side subscribed-sender
+  // pre-select untouched.
+
+  function _selectionKey(formId) {
+    return `nmos.selection.${formId}`;
+  }
+
+  function _findByDataIds(form, selector, dataIds) {
+    return Array.from(form.querySelectorAll(selector))
+      .find(el => el.getAttribute("data-ids") === dataIds) || null;
+  }
+
+  function _saveSelection(form, formId) {
+    try {
+      const groupRadio = form.querySelector('input[name="_group"]:checked');
+      const members = Array.from(form.querySelectorAll("input.member-check:checked"))
+        .map(cb => cb.getAttribute("data-ids"));
+      sessionStorage.setItem(_selectionKey(formId), JSON.stringify({
+        group: groupRadio ? groupRadio.getAttribute("data-ids") : null,
+        members: members,
+      }));
+    } catch (e) {
+      // sessionStorage may be unavailable (private mode / disabled) — the
+      // feature degrades to "no memory" rather than throwing.
+    }
+  }
+
+  function _restoreSelection(form, formId) {
+    let saved;
+    try {
+      const raw = sessionStorage.getItem(_selectionKey(formId));
+      if (!raw) return;
+      saved = JSON.parse(raw);
+    } catch (e) {
+      return;
+    }
+    if (!saved) return;
+    let restored = false;
+    // A saved group selection takes priority: if that group radio still
+    // exists, select it and its members (mirrors the radio-change cascade).
+    if (saved.group) {
+      const radio = _findByDataIds(form, 'input[name="_group"]', saved.group);
+      if (radio) {
+        radio.checked = true;
+        _uncheckAllMembers(form);
+        _setCheckboxesChecked(form, _groupMemberIds(radio), true);
+        restored = true;
+      }
+    }
+    // Otherwise restore the individual members that still exist (ids that
+    // have since left the registry are simply skipped).
+    if (!restored && Array.isArray(saved.members)) {
+      saved.members.forEach(id => {
+        const cb = _findByDataIds(form, "input.member-check", id);
+        if (cb) { cb.checked = true; restored = true; }
+      });
+    }
+    if (restored) _recomputeGroupRadios(form);
+  }
+
+  controller.initSelection = (formId, opts) => {
     const form = document.getElementById(formId);
     if (!form) {
       console.warn(`[nmos-controller] initSelection: form '${formId}' not found`);
       return;
     }
+    const remember = !!(opts && opts.remember);
 
     const groupRadios = form.querySelectorAll('input[name="_group"]');
     const memberChecks = form.querySelectorAll("input.member-check");
@@ -252,6 +321,19 @@
         _recomputeGroupRadios(form);
       });
     });
+
+    if (remember) {
+      // Persist on any user-driven selection change. The cascade helpers
+      // above mutate other checkboxes programmatically (no change event),
+      // so this form-level listener fires once per real interaction —
+      // after those handlers run — capturing the final selection state.
+      form.addEventListener("change", () => _saveSelection(form, formId));
+      // Restore the last session selection. These list pages carry no
+      // server-side pre-select, so this is their only selection source;
+      // restoring sets checkboxes programmatically (no change event), so
+      // it does not clobber the saved state.
+      _restoreSelection(form, formId);
+    }
   };
 
   // ------------------------------------------------------------------

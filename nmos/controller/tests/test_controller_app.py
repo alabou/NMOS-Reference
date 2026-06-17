@@ -5240,6 +5240,25 @@ class TestResourceInspector:
         assert f"/controller/receivers/{self._RID}/monitor" in rtext
 
     @pytest.mark.asyncio
+    async def test_list_views_opt_into_selection_memory(
+        self, controller_client: TestClient,
+    ) -> None:
+        # The Senders / Receivers list pages remember the last selection
+        # (sessionStorage, opt-in via the ``remember`` flag).
+        stext = await (await controller_client.get(f"{PREFIX}/senders")).text()
+        assert "controller.initSelection('senders-form', { remember: true })" in stext
+        rtext = await (await controller_client.get(f"{PREFIX}/receivers")).text()
+        assert "controller.initSelection('receivers-form', { remember: true })" in rtext
+        # The compatible-senders page must NOT opt in — it keeps its
+        # server-side subscribed-sender pre-select instead.
+        cs = await controller_client.get(
+            f"{PREFIX}/receivers/compatible-senders?receiver_ids={self._RID}&mode=single",
+        )
+        cstext = await cs.text()
+        assert "controller.initSelection('compatible-senders-form')" in cstext
+        assert "remember" not in cstext
+
+    @pytest.mark.asyncio
     async def test_is11_status_live(self, controller_client: TestClient) -> None:
         remote: RemoteNodeClient = controller_client.app["_test_remote_stub"]
         remote.get_sender_is11_status = AsyncMock(  # type: ignore[method-assign]

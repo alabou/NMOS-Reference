@@ -65,7 +65,7 @@
 {% endblock %}
 {% block scripts %}
 <script>
-  controller.initSelection('senders-form');
+  controller.initSelection('senders-form', { remember: true });
   controller.initStatusStream();
 </script>
 {% endblock %}
