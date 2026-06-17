@@ -23,7 +23,7 @@ import json
 import logging
 import ssl
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
 import aiohttp
 
@@ -83,6 +83,20 @@ class RemoteCallResult:
     body: Any
     error: str | None = None
     www_authenticate: str = ""
+
+
+# Timeout for every outbound call to a remote Node. ``total`` bounds a
+# reachable-but-slow Node's whole response; ``sock_connect`` bounds the
+# TCP handshake so an UNREACHABLE Node fails fast. Without the connect
+# cap, a registered Node whose host silently drops SYNs (powered off /
+# firewalled / stale registry entry) makes interactive pages that fetch
+# live state (e.g. /receivers/configure) hang for the full ``total`` —
+# observed as a multi-second UI freeze. A healthy LAN Node connects in
+# well under a second, so 3 s leaves a wide margin while failing dead
+# Nodes ~3x faster than the old 10 s.
+NODE_REQUEST_TIMEOUT: Final[aiohttp.ClientTimeout] = aiohttp.ClientTimeout(
+    total=10, sock_connect=3,
+)
 
 
 class RemoteNodeClient:
@@ -639,7 +653,7 @@ class RemoteNodeClient:
                 # redirect is expected; if one comes back, we want to
                 # see it in the logs rather than silently follow.
                 allow_redirects=False,
-                timeout=aiohttp.ClientTimeout(total=10),
+                timeout=NODE_REQUEST_TIMEOUT,
             ) as resp:
                 if expect_text or resp.content_type.startswith("text/"):
                     body: Any = await resp.text()

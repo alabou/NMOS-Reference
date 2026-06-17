@@ -1091,6 +1091,13 @@ class StatusEventStream:
                 return
             yield event
 
+    async def next_event(self) -> StatusChanged | None:
+        """Await the next queued event, or ``None`` once ``close()`` has
+        pushed its sentinel. Lets the SSE handler wrap the wait in
+        ``asyncio.wait_for`` so it can periodically check for client
+        disconnect instead of parking forever on an idle subscription."""
+        return await self._queue.get()
+
     def close(self) -> None:
         self._cache.remove_status_listener(self._listener)
         self._queue.put_nowait(None)

@@ -1366,6 +1366,50 @@ class TestPages:
         assert "nmos_controller.config.v3." in js
 
     @pytest.mark.asyncio
+    async def test_controller_js_updates_all_result_cells_for_resource(
+        self, controller_client: TestClient,
+    ) -> None:
+        """``_applyStatusToRow`` MUST update EVERY result cell for a
+        resource, not just the first. A mux sender on the configure page
+        renders one ``.result-cell[data-result-for]`` per constraint-set
+        row; updating only the first (querySelector) left stale
+        ``data-live-active="true"`` cells, so ``_reconcileConfigureToggles``
+        kept the Activate toggle green after a deactivate until a reload.
+        """
+        resp = await controller_client.get(f"{PREFIX}/static/controller.js")
+        assert resp.status == 200
+        js = await resp.text()
+        # Both the sender and receiver result-cell columns are updated via
+        # querySelectorAll(...).forEach — never a single querySelector.
+        assert js.count(
+            "forEach(cell => _updateStateCell(cell, !!status.active))"
+        ) >= 2
+        # Guard against regression to the single-cell (first-match) bug.
+        assert "const senderCell = document.querySelector(" not in js
+        assert "const receiverCell = document.querySelector(" not in js
+
+    @pytest.mark.asyncio
+    async def test_controller_js_releases_sse_socket_when_hidden(
+        self, controller_client: TestClient,
+    ) -> None:
+        """The status-event EventSource MUST be closed when the page is
+        hidden / navigated away / bfcached, and reopened on return. An
+        EventSource holds one of the browser's ~6 HTTP/1.1 sockets-per-host
+        for its whole life; pages kept alive after navigation otherwise
+        exhaust the pool and stall the next navigation for tens of seconds.
+        """
+        resp = await controller_client.get(f"{PREFIX}/static/controller.js")
+        assert resp.status == 200
+        js = await resp.text()
+        assert "_closeStatusStream" in js
+        # Released on unload/bfcache (pagehide) and tab-hide (visibility),
+        # reclaimed on pageshow / becoming visible.
+        assert 'addEventListener("pagehide", _closeStatusStream)' in js
+        assert 'addEventListener("pageshow", _openStatusStream)' in js
+        assert 'addEventListener("visibilitychange"' in js
+        assert "_eventSource.close()" in js
+
+    @pytest.mark.asyncio
     async def test_configure_toggles_reflect_any_active_constrained(
         self, controller_client: TestClient,
     ) -> None:
@@ -2320,6 +2364,19 @@ class TestJsonApi:
 # ---------------------------------------------------------------------------
 
 class TestProxy:
+    def test_node_request_timeout_fails_fast_on_unreachable(self) -> None:
+        """Outbound Node calls must cap the TCP connect so an unreachable
+        Node fails fast instead of hanging interactive pages (e.g.
+        /receivers/configure live fetches) for the full ``total`` — the
+        observed multi-second UI freeze. ``sock_connect`` must be set and
+        well below ``total``.
+        """
+        from nmos.controller.api_client import NODE_REQUEST_TIMEOUT
+        assert NODE_REQUEST_TIMEOUT.sock_connect is not None
+        assert NODE_REQUEST_TIMEOUT.sock_connect <= 3
+        assert NODE_REQUEST_TIMEOUT.total == 10
+        assert NODE_REQUEST_TIMEOUT.sock_connect < NODE_REQUEST_TIMEOUT.total
+
     @pytest.mark.asyncio
     async def test_activate_sender_calls_remote(
         self, controller_client: TestClient,
@@ -2692,6 +2749,45 @@ class TestSse:
         assert active_true_seen, (
             "expected an active=True status event for the upserted sender; "
             f"raw stream was: {received!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_status_events_detaches_listener_on_disconnect(
+        self, controller_client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A client that disconnects (navigates away) MUST have its listener
+        detached promptly — not leak a parked handler. Leaked SSE handlers
+        hold half-open sockets that exhaust the browser's per-host pool and
+        stall later navigations. Shorten the detection cadence so the test
+        is fast.
+        """
+        import nmos.controller.sse as sse_mod
+        monkeypatch.setattr(sse_mod, "KEEPALIVE_INTERVAL_S", 0.05)
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        sid = "11111111-1111-1111-1111-111111111111"
+
+        before = len(cache._listeners)
+        resp = await controller_client.get(
+            f"{PREFIX}/api/status-events?ids={sid}",
+        )
+        assert resp.status == 200
+        # The stream registers its listener in StatusEventStream.__init__,
+        # before the snapshot — reading a byte ensures the handler is live.
+        await resp.content.read(1)
+        assert len(cache._listeners) == before + 1, "listener not registered"
+
+        # Client navigates away / drops the connection.
+        resp.close()
+
+        # The handler must notice (transport closing / keepalive write fail)
+        # and detach within a few detection cycles.
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            if len(cache._listeners) == before:
+                break
+        assert len(cache._listeners) == before, (
+            "SSE listener leaked after client disconnect — the handler is "
+            "still parked, holding the connection open"
         )
 
 

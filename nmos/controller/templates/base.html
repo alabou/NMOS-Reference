@@ -4,12 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}NMOS Controller{% endblock %}</title>
+  {# Self-hosted vendor assets — NO external CDN. An NMOS controller runs
+     on isolated media networks with no internet; CDN <link>s in <head>
+     are render-blocking and would blank the UI for tens of seconds (or
+     forever) when unreachable. Served from /controller/static/vendor/. #}
   <link rel="stylesheet"
-        href="https://stackpath.bootstrapcdn.com/bootstrap/4.2.1/css/bootstrap.min.css">
+        href="/controller/static/vendor/bootstrap.min.css?v=57">
   <link rel="stylesheet"
-        href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+        href="/controller/static/vendor/bootstrap-icons.css?v=57">
   <link rel="stylesheet"
-        href="/controller/static/controller.css?v=53">
+        href="/controller/static/controller.css?v=57">
 </head>
 <body class="bg-light">
   <nav class="navbar navbar-dark bg-dark mb-4">
@@ -43,9 +47,9 @@
 
   {# Bootstrap JS bundle (popper + collapse + dropdown). Loaded here so
      every page has dropdowns/collapse available; CSS is already in head. #}
-  <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js"></script>
-  <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.2.1/js/bootstrap.bundle.min.js"></script>
-  <script src="/controller/static/controller.js?v=53"></script>
+  <script src="/controller/static/vendor/jquery.slim.min.js?v=57"></script>
+  <script src="/controller/static/vendor/bootstrap.bundle.min.js?v=57"></script>
+  <script src="/controller/static/controller.js?v=57"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

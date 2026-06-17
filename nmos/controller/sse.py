@@ -32,7 +32,12 @@ from nmos.controller.cache import ResourceCache, StatusEventStream
 log = logging.getLogger(__name__)
 
 
-KEEPALIVE_INTERVAL_S = 15.0
+# Also the disconnect-detection cadence: the SSE handler wakes every
+# interval to probe ``transport.is_closing()`` and emit a keepalive, so an
+# abandoned connection is detached + closed within this long (vs. leaking
+# forever under the old park-on-events design). Kept short so leaked
+# sockets don't accumulate against the browser's per-host pool.
+KEEPALIVE_INTERVAL_S = 5.0
 
 
 async def status_events_handler(request: web.Request) -> web.StreamResponse:
@@ -137,11 +142,39 @@ async def status_events_handler(request: web.Request) -> web.StreamResponse:
             stream.close()
             return response
 
-    # Keepalive pings so the connection isn't killed by intermediaries.
-    keepalive_task = asyncio.create_task(_keepalive_loop(response))
-
+    # Single forwarding loop that ALSO (a) emits a periodic keepalive and
+    # (b) detects client disconnect, so an abandoned EventSource (the
+    # operator navigated away) is closed within ``KEEPALIVE_INTERVAL_S``.
+    #
+    # The previous design parked here on ``stream.events()`` until the next
+    # matching status change. For an IDLE subscription that change never
+    # came, so when the client went away the handler stayed parked forever:
+    # the listener was never detached and the half-open socket lingered.
+    # Those leaked connections accumulate and exhaust the browser's
+    # per-host HTTP/1.1 socket pool (~6), stalling the operator's NEXT
+    # navigation for tens of seconds. Wrapping the wait in ``wait_for`` lets
+    # us wake on a short cadence to (i) probe ``transport.is_closing()`` and
+    # (ii) send a keepalive whose write fails once the peer is gone —
+    # either path breaks the loop so ``finally`` detaches + closes promptly.
     try:
-        async for event in stream.events():
+        while True:
+            transport = request.transport
+            if transport is None or transport.is_closing():
+                break
+            try:
+                event = await asyncio.wait_for(
+                    stream.next_event(), timeout=KEEPALIVE_INTERVAL_S,
+                )
+            except asyncio.TimeoutError:
+                # No event this interval — send a keepalive; a write error
+                # means the client has gone.
+                try:
+                    await response.write(b": keepalive\n\n")
+                except (ConnectionResetError, asyncio.CancelledError):
+                    break
+                continue
+            if event is None:  # close() sentinel
+                break
             payload = {
                 "id": event.resource_id,
                 "kind": event.kind,
@@ -163,7 +196,6 @@ async def status_events_handler(request: web.Request) -> web.StreamResponse:
             except (ConnectionResetError, asyncio.CancelledError):
                 break
     finally:
-        keepalive_task.cancel()
         stream.close()
         try:
             await response.write_eof()
@@ -171,16 +203,3 @@ async def status_events_handler(request: web.Request) -> web.StreamResponse:
             pass
 
     return response
-
-
-async def _keepalive_loop(response: web.StreamResponse) -> None:
-    """Periodic SSE comment line to keep the TCP connection alive."""
-    try:
-        while True:
-            await asyncio.sleep(KEEPALIVE_INTERVAL_S)
-            try:
-                await response.write(b": keepalive\n\n")
-            except (ConnectionResetError, asyncio.CancelledError):
-                return
-    except asyncio.CancelledError:
-        return

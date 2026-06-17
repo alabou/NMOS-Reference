@@ -500,6 +500,14 @@ option.flow-match,
   opacity: 0.65;
 }
 
+/* A navigation form's submit button while its navigation is in flight —
+   locked against rapid re-submission (see the re-submit guard in
+   controller.js). */
+.is-submitting {
+  cursor: progress;
+  opacity: 0.65;
+}
+
 .result-cell {
   font-size: 0.82rem;
   white-space: nowrap;

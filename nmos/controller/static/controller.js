@@ -104,7 +104,74 @@
     document.addEventListener("click", _capture, true);
     document.addEventListener("submit", _capture, true);
     document.addEventListener("change", _capture, true);
+
+    // ── Page-load timing instrumentation (removed) ─────────────────────
+    // To diagnose a slow page transition, re-add a window "load" listener
+    // here that posts the Navigation Timing breakdown to the debug log via
+    // controller.logClientEvent("perf", {...}). It pins a slow load to a
+    // PHASE — straight from the server log, no devtools needed:
+    //   stalled  = nav.connectStart  - nav.startTime    // socket pool / queueing
+    //   connect  = nav.connectEnd    - nav.connectStart
+    //   ttfb     = nav.responseStart - nav.requestStart  // server
+    //   response = nav.responseEnd   - nav.responseStart // download
+    //   dom      = nav.domComplete   - nav.responseEnd   // render + scripts
+    //   total    = nav.loadEventEnd  - nav.startTime
+    // where ``const nav = performance.getEntriesByType("navigation")[0]``.
+    // For a slow LCP, also log the slow SUBRESOURCES (e.g. a render-blocking
+    // CDN asset): performance.getEntriesByType("resource") filtered to
+    // ``r.duration > 1000`` → logClientEvent("perf_res", {url, dur_ms, kind}).
+    // (A high "stalled" phase points at HTTP/1.1 socket-pool exhaustion —
+    // see the EventSource socket-release wiring in initStatusStream.)
   }
+
+  // ------------------------------------------------------------------
+  // Navigation-form re-submit guard
+  // ------------------------------------------------------------------
+  //
+  // Every selection / "Continue to configuration" button submits a GET
+  // that NAVIGATES to the next page. Browsers cancel an in-flight
+  // navigation when a new one starts, so rapidly re-clicking the button
+  // makes each click abort the previous navigation before it commits —
+  // the page never advances (it was never slow: a single click always
+  // works; only the mashing cancels it). The log shows the symptom
+  // exactly: N clicks but only the final navigation's GET ever reaches
+  // the server. Lock the form on its first real submit and drop further
+  // submits until it navigates (or a short safety timeout re-enables it).
+  //
+  // A blocked submit (HTML5 validation, or an onclick guard like
+  // ``submitSelection`` returning false) never fires the ``submit``
+  // event, so this only locks forms that are genuinely navigating.
+  let _navLocked = new WeakSet();
+  const _unlockForm = (form) => {
+    _navLocked.delete(form);
+    form.querySelectorAll('button[type="submit"], input[type="submit"]')
+      .forEach(b => { b.disabled = false; b.classList.remove("is-submitting"); });
+  };
+  document.addEventListener("submit", (evt) => {
+    const form = evt.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    if (_navLocked.has(form)) { evt.preventDefault(); return; }
+    _navLocked.add(form);
+    // Dim the submit controls on the NEXT tick — after the navigation has
+    // begun — so disabling never cancels the submit we just allowed.
+    setTimeout(() => {
+      form.querySelectorAll('button[type="submit"], input[type="submit"]')
+        .forEach(b => { b.disabled = true; b.classList.add("is-submitting"); });
+    }, 0);
+    // Self-heal: if no navigation actually happened (an error page with
+    // no URL change, an expired-session 401, …) re-enable after a few
+    // seconds so the button is never left permanently dead.
+    setTimeout(() => _unlockForm(form), 4000);
+  }, false);
+  window.addEventListener("pageshow", (evt) => {
+    // bfcache back/forward restores the page with JS state intact — reset
+    // the lock so a navigated-back form submits again.
+    if (evt.persisted) {
+      _navLocked = new WeakSet();
+      document.querySelectorAll("button.is-submitting, input.is-submitting")
+        .forEach(b => { b.disabled = false; b.classList.remove("is-submitting"); });
+    }
+  });
 
   // Beacon — visible on the browser console when the file is loaded.
   // If you tweak selection / caps behaviour and the old symptoms
@@ -1164,26 +1231,32 @@
     // (grey) for every facet, and we must not paint it green.
     const overall = status.overall || "inactive";
 
-    const badge = document.querySelector(
-      `.status-badge[data-resource-id="${resourceId}"]`,
-    );
-    if (badge) {
-      _setStatusClass(badge, overall);
+    // A single resource can be rendered in MULTIPLE rows on one page:
+    // a mux sender on the configure page has one result cell PER
+    // constraint-set row. Every selector here must therefore update
+    // ALL matches, not just the first. Using querySelector left the
+    // 2nd+ cells with a stale ``data-live-active``, so the any-wise OR
+    // in ``_reconcileConfigureToggles`` kept the Activate toggle green
+    // after a deactivate until a full page reload.
+    const badgeText = status.monitored
       // Monitored: active/idle text comes from the monitor's overall
-      // status (idle when inactive/not-used), as before. Not monitored:
-      // colours are grey and the text tracks subscription.active. The
-      // badge always carries text so the inline-block baseline stays
-      // aligned with the .status-dot siblings — see device_block.html.
-      badge.textContent = status.monitored
-        ? ((overall === "inactive" || overall === "not-used") ? "idle" : "active")
-        : (status.active ? "active" : "idle");
-    }
+      // status (idle when inactive/not-used). Not monitored: colours are
+      // grey and the text tracks subscription.active. The badge always
+      // carries text so the inline-block baseline stays aligned with the
+      // .status-dot siblings — see device_block.html.
+      ? ((overall === "inactive" || overall === "not-used") ? "idle" : "active")
+      : (status.active ? "active" : "idle");
+    document.querySelectorAll(
+      `.status-badge[data-resource-id="${resourceId}"]`,
+    ).forEach(badge => {
+      _setStatusClass(badge, overall);
+      badge.textContent = badgeText;
+    });
 
     for (const facet of FACETS) {
-      const dot = document.querySelector(
+      document.querySelectorAll(
         `.status-dot[data-resource-id="${resourceId}"][data-kind="${facet}"]`,
-      );
-      if (dot) _setStatusClass(dot, status[facet] || "inactive");
+      ).forEach(dot => _setStatusClass(dot, status[facet] || "inactive"));
     }
 
     // Configure-page state cells. Sender column uses
@@ -1193,14 +1266,12 @@
     // configure page. ``data-live-active`` caches the live value so
     // ``_reconcileConfigureToggles`` can compute the any-wise OR
     // without re-parsing textContent.
-    const senderCell = document.querySelector(
+    document.querySelectorAll(
       `.result-cell[data-result-for="${resourceId}"]`,
-    );
-    if (senderCell) _updateStateCell(senderCell, !!status.active);
-    const receiverCell = document.querySelector(
+    ).forEach(cell => _updateStateCell(cell, !!status.active));
+    document.querySelectorAll(
       `.result-cell[data-result-for-receiver="${resourceId}"]`,
-    );
-    if (receiverCell) _updateStateCell(receiverCell, !!status.active);
+    ).forEach(cell => _updateStateCell(cell, !!status.active));
   }
 
   function _updateStateCell(cell, isActive) {
@@ -1299,7 +1370,17 @@
 
   let _eventSource = null;
 
-  controller.initStatusStream = () => {
+  function _closeStatusStream() {
+    if (_eventSource) {
+      try { _eventSource.close(); } catch (_e) { /* ignore */ }
+      _eventSource = null;
+    }
+  }
+
+  function _openStatusStream() {
+    // Already open, or the page is hidden (a background/bfcached page must
+    // not hold a socket — see the lifecycle wiring in initStatusStream).
+    if (_eventSource || document.hidden) return;
     // Collect ids from every place the page might render a live
     // status indicator:
     //   * ``.status-badge[data-resource-id]`` — listing pages.
@@ -1385,6 +1466,28 @@
     _eventSource.onerror = () => {
       // Leave the connection alone — EventSource auto-reconnects.
     };
+  }
+
+  controller.initStatusStream = () => {
+    _openStatusStream();
+    // Release the SSE socket whenever this page is not the active,
+    // foreground page, and reclaim it when it is again.
+    //
+    // An EventSource holds ONE of the browser's ~6 HTTP/1.1 sockets-per-
+    // host for its entire life. A page the browser keeps alive after you
+    // navigate away (bfcache, or a lingering connection) otherwise keeps
+    // that socket — measured at ~65 s each here — and a handful of them
+    // exhaust the pool, so the NEXT navigation has no socket to send on
+    // and STALLS for tens of seconds (the reported ~20-45 s caps→configure
+    // delay; the browser's own Navigation Timing showed it all in
+    // "stalled"). Closing on pagehide/visibility-hidden frees the socket
+    // immediately; the snapshot on reconnect re-syncs state on return.
+    window.addEventListener("pagehide", _closeStatusStream);   // unload + bfcache
+    window.addEventListener("pageshow", _openStatusStream);    // incl. bfcache restore
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) _closeStatusStream();
+      else _openStatusStream();
+    });
   };
 
   // ------------------------------------------------------------------
