@@ -102,7 +102,7 @@ from nmos.enums import (
     InBand, OutOfBand, Strict,
     # Compatibility status
     Unconstrained, Constrained, ActiveConstraintsViolation, Unknown,
-    CompliantStream, NonCompliantStream,
+    CompliantStream, NonCompliantStream, NoEssence, AwaitingEssence,
     # Protocols / clock / transport params / sender type
     Http, Https, Ptp, Internal, IEEE1588_2008, SourceIp, SenderType2110TPW,
 )
@@ -3138,12 +3138,10 @@ class Node:
         # violated" — the first transition to violation still fires,
         # but the first compute-to-healthy is silent (matches the
         # "back to healthy" wording in the user's brief).
-        prev_was_violated = False
+        prev_state = ""
         if (hasattr(sender, 'CompatibilityStatus')
                 and sender.CompatibilityStatus.defined):
-            prev_was_violated = sender.CompatibilityStatus.value is (
-                EnumRegistry.get(ActiveConstraintsViolation.s)
-            )
+            prev_state = str(sender.CompatibilityStatus.value)
 
         status = check_sender_flow_compatibility(self, sender_id, verbose=True)
 
@@ -3157,11 +3155,16 @@ class Node:
         if hasattr(sender, 'CompatibilityStatus'):
             sender.CompatibilityStatus.value = EnumRegistry.get(result)
 
+        # IS-11 sender state → essence facet tiers. ``no_essence`` /
+        # ``awaiting_essence`` map to PARTIALLY_HEALTHY (the node does not
+        # yet *produce* those states, but the mapping is in place for when
+        # it does).
         self._emit_is11_transition_if_needed(
             sender_id, is_sender=True,
-            prev_was_violated=prev_was_violated,
+            prev_state=prev_state,
             new_result=result,
             violation_states=(ActiveConstraintsViolation.s,),
+            partial_states=(NoEssence.s, AwaitingEssence.s),
             healthy_states=(Constrained.s, Unconstrained.s),
             role="sender",
         )
@@ -3170,20 +3173,35 @@ class Node:
 
     def _emit_is11_transition_if_needed(
         self, resource_id: Any, *, is_sender: bool,
-        prev_was_violated: bool, new_result: str,
+        prev_state: str, new_result: str,
         violation_states: tuple[str, ...],
+        partial_states: tuple[str, ...],
         healthy_states: tuple[str, ...],
         role: str,
     ) -> None:
         """Emit the IS-11 compatibility transition edge (sender or
-        receiver) on the Node's ``event_queue`` when the state just
-        crossed the violation / non-violation line.
+        receiver) on the Node's ``event_queue`` when the state crosses a
+        BCP-008 essence/stream TIER boundary.
+
+        Three tiers map the IS-11 state to the essence/stream facet:
+          * ``violation`` → UNHEALTHY  (sender ``active_constraints_violation``;
+            receiver ``non_compliant_stream``)
+          * ``partial``   → PARTIALLY_HEALTHY (sender ``no_essence`` /
+            ``awaiting_essence``; receivers declare none)
+          * ``healthy``   → HEALTHY (everything else, incl. unconstrained /
+            constrained / compliant / unknown)
+
+        The previous state's tier is compared to the new state's tier and
+        an event is emitted only on a tier CHANGE (an unset/empty
+        ``prev_state`` counts as ``healthy``, so the first settle-to-healthy
+        is silent while the first move to partial/violation fires). This
+        keeps the status-monitor's "worse" hysteresis honest — see
+        ``status_monitor.process_one_domain``.
 
         Called from both ``set_sender_compatibility_state`` and
-        ``set_receiver_compatibility_state`` — the only differences
-        between the two paths are the allowed state-name tuples and
-        the ``is_sender`` flag (which picks ``AlertScope.SENDER`` or
-        ``AlertScope.RECEIVER`` in the emitter).
+        ``set_receiver_compatibility_state`` — the only differences are the
+        allowed state-name tuples and ``is_sender`` (picking
+        ``AlertScope.SENDER`` / ``AlertScope.RECEIVER`` in the emitter).
 
         No-op if the Node was constructed without an event queue
         (e.g. some unit tests) — debug instrumentation must never
@@ -3198,26 +3216,39 @@ class Node:
         if not resource_id_str:
             return
 
-        if new_result in violation_states and not prev_was_violated:
-            emit_is11_compatibility_event(
-                queue, resource_id_str, is_sender=is_sender, violated=True,
-                info=(
-                    f"active constraints violation on {role} "
-                    f"{resource_id_str}"
-                ) if is_sender else (
-                    f"non-compliant stream on {role} {resource_id_str}"
-                ),
-            )
-        elif new_result in healthy_states and prev_was_violated:
-            emit_is11_compatibility_event(
-                queue, resource_id_str, is_sender=is_sender, violated=False,
-                info=(
-                    f"{role} constraints satisfied on {role} "
-                    f"{resource_id_str}"
-                ) if is_sender else (
-                    f"stream compliant on {role} {resource_id_str}"
-                ),
-            )
+        def _tier(state: str) -> str:
+            if state in violation_states:
+                return "violation"
+            if state in partial_states:
+                return "partial"
+            return "healthy"
+
+        prev_tier = _tier(prev_state)
+        new_tier = _tier(new_result)
+        if new_tier == prev_tier:
+            return
+
+        infos = {
+            "violation": (
+                f"active constraints violation on {role} {resource_id_str}"
+                if is_sender else
+                f"non-compliant stream on {role} {resource_id_str}"
+            ),
+            "partial": (
+                f"awaiting essence on {role} {resource_id_str}"
+                if is_sender else
+                f"stream pending on {role} {resource_id_str}"
+            ),
+            "healthy": (
+                f"constraints satisfied on {role} {resource_id_str}"
+                if is_sender else
+                f"stream compliant on {role} {resource_id_str}"
+            ),
+        }
+        emit_is11_compatibility_event(
+            queue, resource_id_str, is_sender=is_sender,
+            tier=new_tier, info=infos[new_tier],
+        )
 
     def check_sender_flow_compatibility(self, sender: Any) -> Any:
         """Check if sender's flow is compatible with its capabilities.
@@ -3424,13 +3455,11 @@ class Node:
 
         # Snapshot previous state BEFORE recomputation — see sender
         # counterpart for the transition-only rationale.
-        prev_was_noncompliant = False
+        prev_state = ""
         if (core is not None
                 and hasattr(core, 'CompatibilityStatus')
                 and core.CompatibilityStatus.defined):
-            prev_was_noncompliant = core.CompatibilityStatus.value is (
-                EnumRegistry.get(NonCompliantStream.s)
-            )
+            prev_state = str(core.CompatibilityStatus.value)
 
         status = check_stream_compatibility(self, receiver_id, verbose=True)
 
@@ -3447,11 +3476,14 @@ class Node:
         except Exception:
             pass
 
+        # Receiver has no partial tier — compliant/unknown → healthy,
+        # non_compliant → violation (2-tier preserved).
         self._emit_is11_transition_if_needed(
             receiver_id, is_sender=False,
-            prev_was_violated=prev_was_noncompliant,
+            prev_state=prev_state,
             new_result=result,
             violation_states=(NonCompliantStream.s,),
+            partial_states=(),
             healthy_states=(CompliantStream.s, Unknown.s),
             role="receiver",
         )

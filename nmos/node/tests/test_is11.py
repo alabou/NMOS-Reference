@@ -359,6 +359,56 @@ class TestCompatibilityStateEmitsEssenceEvent:
         monitor.process_event(ok_event)
         assert monitor.essence.internal_status == NC_HEALTHY
 
+    def test_partial_event_maps_to_partially_healthy(self) -> None:
+        """The IS-11 sender ``no_essence`` / ``awaiting_essence`` states map
+        to ``NC_PARTIALLY_HEALTHY`` on the essence facet via the new
+        ``VENDOR_ESSENCE_CONSTRAINT_PARTIAL`` event."""
+        from nmos.node.events import (
+            EngineEvent, EventId, AlertDomain, AlertScope, EventState,
+        )
+        from nmos.node.status_monitor import (
+            ResourceMonitor, NC_PARTIALLY_HEALTHY,
+        )
+        monitor = ResourceMonitor(resource_id="sender-test", is_sender=True)
+        partial = EngineEvent(
+            domain=AlertDomain.VENDOR_ESSENCE, scope=AlertScope.SENDER,
+            event=EventId.VENDOR_ESSENCE_CONSTRAINT_PARTIAL,
+            state=EventState.WARNING, count=1,
+            id="sender-test", name="*", info="awaiting essence",
+        )
+        monitor.process_event(partial)
+        assert monitor.essence.internal_status == NC_PARTIALLY_HEALTHY
+
+    def test_sender_partial_states_emit_partial_edge(self) -> None:
+        """The IS-11→essence mapping emits a PARTIAL edge for the
+        ``no_essence`` / ``awaiting_essence`` sender states. (The node
+        doesn't *produce* these states yet — the mapping is wired ahead of
+        that, per the request.)"""
+        from nmos.node.events import EventId, AlertScope, EventState
+        from nmos.enums import (
+            NoEssence, AwaitingEssence, Constrained, Unconstrained,
+            ActiveConstraintsViolation,
+        )
+        node = _make_node()
+        for state in (NoEssence.s, AwaitingEssence.s):
+            _drain_queue(node)
+            node._emit_is11_transition_if_needed(
+                "sender-x", is_sender=True,
+                prev_state=Constrained.s, new_result=state,
+                violation_states=(ActiveConstraintsViolation.s,),
+                partial_states=(NoEssence.s, AwaitingEssence.s),
+                healthy_states=(Constrained.s, Unconstrained.s),
+                role="sender",
+            )
+            events = _drain_queue(node)
+            ids = _event_kinds(events)
+            assert ids.count(int(EventId.VENDOR_ESSENCE_CONSTRAINT_PARTIAL)) == 1
+            assert int(EventId.VENDOR_ESSENCE_CONSTRAINT_VIOLATED) not in ids
+            ev = next(e for e in events
+                      if int(e.event) == int(EventId.VENDOR_ESSENCE_CONSTRAINT_PARTIAL))  # type: ignore[attr-defined]
+            assert ev.scope == AlertScope.SENDER  # type: ignore[attr-defined]
+            assert ev.state == EventState.WARNING  # type: ignore[attr-defined]
+
     def test_queue_full_drops_silently(self) -> None:
         """Saturate ``event_queue`` and confirm the transition emit
         doesn't raise and ``CompatibilityStatus`` still updates.

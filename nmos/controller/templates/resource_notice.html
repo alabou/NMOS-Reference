@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-12">
+    <h3 class="mb-3">{{ title }}</h3>
+    <div class="alert alert-info">{{ message }}</div>
+    <a href="#" onclick="history.back();return false;" class="btn btn-link">← Back</a>
+  </div>
+</div>
+{% endblock %}

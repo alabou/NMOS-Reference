@@ -107,6 +107,9 @@ def get_essence_new_state(event: EngineEvent) -> int:
                EventId.VENDOR_ESSENCE_BASE, EventId.VENDOR_ESSENCE_STOP,
                EventId.VENDOR_ESSENCE_CONSTRAINT_VIOLATED):
         return NC_UNHEALTHY
+    elif eid == EventId.VENDOR_ESSENCE_CONSTRAINT_PARTIAL:
+        # IS-11 sender no_essence / awaiting_essence — amber, not a fault.
+        return NC_PARTIALLY_HEALTHY
     elif eid in (EventId.ESSENCE_OK, EventId.VENDOR_ESSENCE_START,
                  EventId.VENDOR_ESSENCE_CONSTRAINT_OK):
         return NC_HEALTHY

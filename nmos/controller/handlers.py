@@ -412,6 +412,10 @@ def _render(
     debug_enabled = bool(trace is not None and getattr(trace, "enabled", False))
     ctx = dict(context)
     ctx.setdefault("debug_enabled", debug_enabled)
+    # ``self_url`` lets read-only pages render a "Refresh" link that simply
+    # re-requests the current URL (re-reads the cache / re-fetches live data)
+    # with no JavaScript.
+    ctx.setdefault("self_url", request.path_qs)
     template = env.get_template(template_name)
     html = template.render(**ctx)
     return web.Response(text=html, content_type="text/html")
@@ -4026,3 +4030,450 @@ def _build_compatible_senders_view(
                 ungrouped=kept_ungrouped,
             ))
     return devices
+
+
+# ---------------------------------------------------------------------------
+# NMOS resource inspector — read-only visibility pages
+#
+# Per-row buttons on the Senders/Receivers lists link here. Two data classes:
+#   * registry-sourced (flow/source/device/node) — read from the cache, which
+#     the registry websocket keeps current; "Refresh" re-reads on reload.
+#   * dynamic (transport params, SDP) — fetched LIVE from the node's IS-05
+#     connection API on each load (never cached), reusing the remote-call path.
+# ---------------------------------------------------------------------------
+
+def _pretty(resource: Any) -> str | None:
+    """Pretty-print a cached resource dict for the raw-JSON panel, or None."""
+    if resource is None:
+        return None
+    try:
+        return json.dumps(resource, indent=2, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(resource)
+
+
+def _param_value_str(value: Any) -> str:
+    """Full string form of an IS-05 transport-parameter value (untruncated)."""
+    if value is None:
+        return "null"          # IS-05 "auto" — shown literally for debugging
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _truncate_mid(text: str, limit: int = 32) -> str:
+    """Shorten ``text`` to at most ``limit`` chars with an ellipsis in the
+    MIDDLE (the ``...`` counts toward the limit). Keeps the head and tail —
+    enough to recognise long opaque values (ECDH keys, key generators)
+    without widening the column. Full value stays available via a tooltip."""
+    if len(text) <= limit:
+        return text
+    keep = limit - 3                 # chars left for head + tail around "..."
+    head = (keep + 1) // 2
+    tail = keep - head
+    return f"{text[:head]}...{text[-tail:]}"
+
+
+def _fmt_param_value(value: Any) -> str:
+    """Display form of a transport-parameter value for the inspector table —
+    middle-truncated so long keys don't blow out the column width."""
+    return _truncate_mid(_param_value_str(value))
+
+
+def _fmt_constraint(constraint: Any) -> str:
+    """Render an IS-05 parameter-constraint object (``minimum``/``maximum``/
+    ``enum``/``pattern``) compactly, or ``—`` when unconstrained."""
+    if not isinstance(constraint, dict) or not constraint:
+        return "—"
+    enum = constraint.get("enum")
+    mn = constraint.get("minimum")
+    mx = constraint.get("maximum")
+    pattern = constraint.get("pattern")
+    # An enum is by far the common case; show its values bare. Only when it
+    # coexists with a range/pattern (a complex constraint) do we prefix
+    # "one of:" to keep the parts distinguishable.
+    has_other = mn is not None or mx is not None or bool(pattern)
+    parts: list[str] = []
+    if isinstance(enum, list):
+        vals = ", ".join(_fmt_param_value(x) for x in enum)
+        parts.append(f"one of: {vals}" if has_other else vals)
+    if mn is not None and mx is not None:
+        parts.append(f"{mn} – {mx}")
+    elif mn is not None:
+        parts.append(f"≥ {mn}")
+    elif mx is not None:
+        parts.append(f"≤ {mx}")
+    if pattern:
+        parts.append(f"matches {pattern}")
+    return "; ".join(parts) if parts else "—"
+
+
+async def flow_detail(request: web.Request) -> web.Response:
+    """Flow page: the flow's fields, a Show-source link, and — for a mux —
+    its sub-flows (each linking to its own flow page)."""
+    cache = _cache(request)
+    flow_id = request.match_info["flow_id"]
+    flow = cache.get_flow(flow_id)
+    source = cache.get_source(flow.get("source_id", "") or "") if flow else None
+    sub_flows: list[dict[str, Any]] = []
+    if flow is not None:
+        for pid in (flow.get("parents") or []):
+            sub_flows.append({"id": pid, "flow": cache.get_flow(pid)})
+    return _render(request, "flow_detail.html", {
+        "active": "", "resource_id": flow_id,
+        "resource": flow, "resource_json": _pretty(flow),
+        "source": source, "sub_flows": sub_flows,
+    })
+
+
+async def source_detail(request: web.Request) -> web.Response:
+    """Source page: the source's fields and — for a mux source — its
+    sub-sources (each linking to its own source page), mirroring the mux
+    flow page's sub-flows."""
+    cache = _cache(request)
+    source_id = request.match_info["source_id"]
+    source = cache.get_source(source_id)
+    sub_sources: list[dict[str, Any]] = []
+    if source is not None:
+        for pid in (source.get("parents") or []):
+            sub_sources.append({"id": pid, "source": cache.get_source(pid)})
+    return _render(request, "source_detail.html", {
+        "active": "", "resource_id": source_id,
+        "resource": source, "resource_json": _pretty(source),
+        "sub_sources": sub_sources,
+    })
+
+
+async def device_detail(request: web.Request) -> web.Response:
+    cache = _cache(request)
+    device_id = request.match_info["device_id"]
+    device = cache.get_device(device_id)
+    node = cache.node_for_device(device_id) if device else None
+    node_id = (node or {}).get("id") or (device or {}).get("node_id") or ""
+    links = [{
+        "label": "Show node",
+        "href": f"/controller/nodes/{node_id}" if node_id else "",
+        "enabled": bool(node_id),
+    }]
+    return _render(request, "resource_detail.html", {
+        "active": "", "heading": "Device", "resource_id": device_id,
+        "resource": device, "resource_json": _pretty(device), "links": links,
+    })
+
+
+async def node_detail(request: web.Request) -> web.Response:
+    cache = _cache(request)
+    node_id = request.match_info["node_id"]
+    node = cache.get_node(node_id)
+    return _render(request, "resource_detail.html", {
+        "active": "", "heading": "Node", "resource_id": node_id,
+        "resource": node, "resource_json": _pretty(node), "links": [],
+    })
+
+
+async def sender_flow_redirect(request: web.Request) -> web.Response:
+    """Resolve a sender's current flow and 302 to its flow page."""
+    cache = _cache(request)
+    sender = cache.get_sender(request.match_info["sender_id"])
+    flow_id = (sender or {}).get("flow_id") if sender else None
+    if flow_id:
+        # Return (not raise) the redirect — the shared CORS middleware
+        # rewrites raised HTTPExceptions into JSON and strips Location.
+        return web.Response(status=302,
+                            headers={"Location": f"/controller/flows/{flow_id}"})
+    return _render(request, "resource_notice.html", {
+        "active": "senders", "title": "No flow",
+        "message": "This sender has no associated flow (flow_id is null).",
+    })
+
+
+async def receiver_flow_redirect(request: web.Request) -> web.Response:
+    """Resolve a receiver's subscribed sender's flow and 302 to its flow page.
+    Flows are sender-side, so a receiver's "flow" is the flow of the sender it
+    is currently subscribed to (``subscription.sender_id``)."""
+    cache = _cache(request)
+    receiver = cache.get_receiver(request.match_info["receiver_id"])
+    sub = (receiver or {}).get("subscription") or {}
+    sender_id = sub.get("sender_id")
+    if sender_id:
+        sender = cache.get_sender(sender_id)
+        flow_id = (sender or {}).get("flow_id") if sender else None
+        if flow_id:
+            return web.Response(
+                status=302,
+                headers={"Location": f"/controller/flows/{flow_id}"})
+    return _render(request, "resource_notice.html", {
+        "active": "receivers", "title": "No flow",
+        "message": "This receiver is not subscribed to a sender, so there is "
+                   "no flow to show.",
+    })
+
+
+async def _transport_detail(request: web.Request, kind: str) -> web.Response:
+    """Live IS-05 active transport parameters for a sender/receiver (all legs).
+    Never cached — fetched from the node on each load. The receiver's SDP is
+    embedded in its active ``transport_file``; the sender's is on a separate
+    endpoint (a Show-SDP link points at it)."""
+    cache = _cache(request)
+    rid = request.match_info[f"{kind}_id"]
+    res = cache.get_sender(rid) if kind == "sender" else cache.get_receiver(rid)
+    ctx: dict[str, Any] = {
+        "active": f"{kind}s", "kind": kind, "resource_id": rid,
+        "label": (res or {}).get("label", "") if res else "",
+        "legs": [], "error": "", "has_sdp": False,
+    }
+    if res is None:
+        ctx["error"] = "Resource not found in the controller's cache."
+        return _render(request, "transport_detail.html", ctx)
+    device = cache.get_device(res.get("device_id", "") or "")
+    client = _remote_client(request)
+    base = client.connection_api_base(device) if device else None
+    if base is None:
+        ctx["error"] = ("This device does not publish a connection-management "
+                        "control URL, so transport parameters cannot be fetched.")
+        return _render(request, "transport_detail.html", ctx)
+    forwarded = _headers_with_reservation(request, device.get("id", "") or "")
+    trace_id = _trace_id(request)
+    # Fetch constraints + staged + active in parallel (all dynamic, never
+    # cached). Active is required to render the legs; constraints/staged
+    # degrade to "unavailable" if the node doesn't serve them.
+    if kind == "sender":
+        cons_c = client.get_sender_constraints(base, rid, forwarded, trace_id=trace_id)
+        staged_c = client.get_sender_staged(base, rid, forwarded, trace_id=trace_id)
+        active_c = client.get_sender_active(base, rid, forwarded, trace_id=trace_id)
+    else:
+        cons_c = client.get_receiver_constraints(base, rid, forwarded, trace_id=trace_id)
+        staged_c = client.get_receiver_staged(base, rid, forwarded, trace_id=trace_id)
+        active_c = client.get_receiver_active(base, rid, forwarded, trace_id=trace_id)
+    cons_r, staged_r, active_r = await asyncio.gather(cons_c, staged_c, active_c)
+
+    if active_r.status != 200 or not isinstance(active_r.body, dict):
+        env = _remote_envelope(active_r, request=request, device_id=device.get("id", "") or "")
+        ctx["error"] = env.get("message") or "Failed to fetch active transport parameters."
+        return _render(request, "transport_detail.html", ctx)
+    active = active_r.body
+    active_legs = active.get("transport_params") or []
+    staged_ok = staged_r.status == 200 and isinstance(staged_r.body, dict)
+    staged_legs = (staged_r.body.get("transport_params") or []) if staged_ok else []
+    cons_ok = cons_r.status == 200 and isinstance(cons_r.body, list)
+    cons_legs = cons_r.body if cons_ok else []
+
+    legs: list[dict[str, Any]] = []
+    for i, a_params in enumerate(active_legs):
+        a_params = a_params if isinstance(a_params, dict) else {}
+        s_params = staged_legs[i] if i < len(staged_legs) and isinstance(staged_legs[i], dict) else {}
+        c_params = cons_legs[i] if i < len(cons_legs) and isinstance(cons_legs[i], dict) else {}
+        # Union of param names: constraint keys first, then any staged/active extras.
+        names: list[str] = []
+        seen: set[str] = set()
+        for d in (c_params, s_params, a_params):
+            for k in d:
+                if k not in seen:
+                    seen.add(k)
+                    names.append(k)
+        rows = [{
+            "name": k,
+            "constraint": _fmt_constraint(c_params.get(k)),
+            "staged": _fmt_param_value(s_params[k]) if k in s_params else "—",
+            "staged_full": _param_value_str(s_params[k]) if k in s_params else "",
+            "active": _fmt_param_value(a_params[k]) if k in a_params else "—",
+            "active_full": _param_value_str(a_params[k]) if k in a_params else "",
+        } for k in names]
+        legs.append({"index": i, "rows": rows})
+    ctx["legs"] = legs
+    ctx["constraints_available"] = cons_ok
+    ctx["staged_available"] = staged_ok
+
+    if kind == "sender":
+        ctx["has_sdp"] = True            # downloadable from the transportfile endpoint
+    else:
+        tf = active.get("transport_file") or {}
+        ctx["has_sdp"] = bool(isinstance(tf, dict) and tf.get("data"))
+    return _render(request, "transport_detail.html", ctx)
+
+
+async def sender_transport_detail(request: web.Request) -> web.Response:
+    return await _transport_detail(request, "sender")
+
+
+async def receiver_transport_detail(request: web.Request) -> web.Response:
+    return await _transport_detail(request, "receiver")
+
+
+async def _sdp_view(request: web.Request, kind: str) -> web.Response:
+    """Live SDP transport file. Sender: GET the IS-05 transportfile endpoint.
+    Receiver: the SDP is embedded in its active ``transport_file.data``."""
+    cache = _cache(request)
+    rid = request.match_info[f"{kind}_id"]
+    res = cache.get_sender(rid) if kind == "sender" else cache.get_receiver(rid)
+    ctx: dict[str, Any] = {
+        "active": f"{kind}s", "kind": kind, "resource_id": rid,
+        "sdp": "", "sdp_type": "application/sdp", "error": "",
+    }
+    if res is None:
+        ctx["error"] = "Resource not found in the controller's cache."
+        return _render(request, "sdp_view.html", ctx)
+    device = cache.get_device(res.get("device_id", "") or "")
+    client = _remote_client(request)
+    base = client.connection_api_base(device) if device else None
+    if base is None:
+        ctx["error"] = ("This device does not publish a connection-management "
+                        "control URL, so the SDP cannot be fetched.")
+        return _render(request, "sdp_view.html", ctx)
+    forwarded = _headers_with_reservation(request, device.get("id", "") or "")
+    trace_id = _trace_id(request)
+    if kind == "sender":
+        result = await client.get_sender_transportfile(base, rid, forwarded, trace_id=trace_id)
+        if result.status == 200 and isinstance(result.body, str):
+            ctx["sdp"] = result.body
+        else:
+            env = _remote_envelope(result, request=request, device_id=device.get("id", "") or "")
+            ctx["error"] = env.get("message") or "Failed to fetch the SDP transport file."
+    else:
+        result = await client.get_receiver_active(base, rid, forwarded, trace_id=trace_id)
+        if result.status == 200 and isinstance(result.body, dict):
+            tf = result.body.get("transport_file") or {}
+            if isinstance(tf, dict) and tf.get("data"):
+                ctx["sdp"] = tf.get("data") or ""
+                ctx["sdp_type"] = tf.get("type") or "application/sdp"
+            else:
+                ctx["error"] = ("This receiver has no embedded SDP transport "
+                                "file (it may not be subscribed).")
+        else:
+            env = _remote_envelope(result, request=request, device_id=device.get("id", "") or "")
+            ctx["error"] = env.get("message") or "Failed to fetch the receiver's active state."
+    return _render(request, "sdp_view.html", ctx)
+
+
+async def sender_sdp_view(request: web.Request) -> web.Response:
+    return await _sdp_view(request, "sender")
+
+
+async def receiver_sdp_view(request: web.Request) -> web.Response:
+    return await _sdp_view(request, "receiver")
+
+
+async def _is11_status_detail(request: web.Request, kind: str) -> web.Response:
+    """Live IS-11 stream-compatibility status for a sender/receiver
+    (``state``), fetched from the node's streamcompatibility API. Never
+    cached. Graceful when the device doesn't implement IS-11."""
+    cache = _cache(request)
+    rid = request.match_info[f"{kind}_id"]
+    res = cache.get_sender(rid) if kind == "sender" else cache.get_receiver(rid)
+    ctx: dict[str, Any] = {
+        "active": f"{kind}s", "kind": kind, "resource_id": rid,
+        "label": (res or {}).get("label", "") if res else "",
+        "state": "", "status_json": None, "debug_text": None, "error": "",
+    }
+    if res is None:
+        ctx["error"] = "Resource not found in the controller's cache."
+        return _render(request, "is11_status.html", ctx)
+    device = cache.get_device(res.get("device_id", "") or "")
+    client = _remote_client(request)
+    base = client.streamcompat_api_base(device) if device else None
+    if base is None:
+        ctx["error"] = ("This device does not implement the IS-11 "
+                        "stream-compatibility API.")
+        return _render(request, "is11_status.html", ctx)
+    forwarded = _headers_with_reservation(request, device.get("id", "") or "")
+    trace_id = _trace_id(request)
+    if kind == "sender":
+        result = await client.get_sender_is11_status(base, rid, forwarded, trace_id=trace_id)
+    else:
+        result = await client.get_receiver_is11_status(base, rid, forwarded, trace_id=trace_id)
+    if result.status != 200 or not isinstance(result.body, dict):
+        env = _remote_envelope(result, request=request, device_id=device.get("id", "") or "")
+        ctx["error"] = env.get("message") or "Failed to fetch IS-11 status."
+        return _render(request, "is11_status.html", ctx)
+    ctx["state"] = str(result.body.get("state", "") or "")
+    # Surface a vendor ``debug`` attribute (when the node returns one) as its
+    # own readable section — strings as-is, objects/arrays pretty-printed.
+    debug = result.body.get("debug")
+    if isinstance(debug, str):
+        ctx["debug_text"] = debug
+    elif debug is not None:
+        ctx["debug_text"] = _pretty(debug)
+    else:
+        ctx["debug_text"] = None
+    ctx["status_json"] = _pretty(result.body)
+    return _render(request, "is11_status.html", ctx)
+
+
+async def sender_is11_status(request: web.Request) -> web.Response:
+    return await _is11_status_detail(request, "sender")
+
+
+async def receiver_is11_status(request: web.Request) -> web.Response:
+    return await _is11_status_detail(request, "receiver")
+
+
+# Human labels for the BCP-008 facets. The transport/essence facets are
+# named differently for senders vs receivers in the spec.
+_MONITOR_FACETS: Final[list[tuple[str, str, str]]] = [
+    # (facet key, sender label, receiver label)
+    ("overall", "Overall", "Overall"),
+    ("link", "Link", "Link"),
+    ("sync", "Synchronization", "Synchronization"),
+    ("conn", "Transmission", "Connection"),
+    ("media", "Essence", "Stream"),
+]
+
+# UI facet → the ``monitor_state`` transition-counter attribute, per kind.
+# The names mirror the spec's status attributes (transmission/connection,
+# essence/stream differ between senders and receivers). ``overall`` has no
+# counter of its own.
+_MONITOR_COUNTER_BY_KIND: Final[dict[str, dict[str, str]]] = {
+    "sender": {
+        "link": "link_counter",
+        "sync": "synchronization_counter",
+        "conn": "transmission_counter",
+        "media": "essence_counter",
+    },
+    "receiver": {
+        "link": "link_counter",
+        "sync": "synchronization_counter",
+        "conn": "connection_counter",
+        "media": "stream_counter",
+    },
+}
+
+
+async def _monitor_detail(request: web.Request, kind: str) -> web.Response:
+    """Detailed BCP-008 status-monitoring page for a sender/receiver:
+    the per-facet statuses (overall/link/sync/conn/media), the overall
+    message, and the raw monitor Source (with counters). Registry-sourced
+    (read from the cache); Refresh re-reads."""
+    cache = _cache(request)
+    rid = request.match_info[f"{kind}_id"]
+    res = cache.get_sender(rid) if kind == "sender" else cache.get_receiver(rid)
+    status = cache.get_status(rid)
+    monitor = cache.monitor_source_for(rid)
+    # Per-facet transition counters live on the monitor Source's
+    # ``monitor_state`` (absent when the device implements no BCP-008 monitor).
+    mstate = (monitor or {}).get("monitor_state") or {}
+    counter_attr = _MONITOR_COUNTER_BY_KIND[kind]
+    facets = [
+        {"label": (s_label if kind == "sender" else r_label),
+         "value": status.get(key, ""),
+         "counter": (mstate.get(counter_attr[key]) if key in counter_attr else None)}
+        for key, s_label, r_label in _MONITOR_FACETS
+    ]
+    return _render(request, "monitor_detail.html", {
+        "active": f"{kind}s", "kind": kind, "resource_id": rid,
+        "label": (res or {}).get("label", "") if res else "",
+        "found": res is not None,
+        "facets": facets,
+        "overall_message": status.get("overall_message", ""),
+        "monitored": bool(status.get("monitored")),
+        "is_active": bool(status.get("active")),
+        "peer_id": status.get("peer_id") or "",
+        "monitor_json": _pretty(monitor),
+    })
+
+
+async def sender_monitor_detail(request: web.Request) -> web.Response:
+    return await _monitor_detail(request, "sender")
+
+
+async def receiver_monitor_detail(request: web.Request) -> web.Response:
+    return await _monitor_detail(request, "receiver")

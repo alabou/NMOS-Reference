@@ -1,0 +1,12 @@
+{# Renders a cached NMOS resource for the inspector pages: the raw IS-04 JSON
+   (pretty-printed by the handler into ``resource_json``), or a "not found"
+   notice when the resource isn't in the controller's cache.
+   Expects: ``resource`` (dict | None) and ``resource_json`` (str | None). #}
+{% if resource is none %}
+  <div class="alert alert-warning">
+    Not found in the controller's cache. It may not be registered, or the
+    registry may not have published it yet.
+  </div>
+{% else %}
+  <pre class="resource-json">{{ resource_json }}</pre>
+{% endif %}

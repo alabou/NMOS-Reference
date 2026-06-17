@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ heading }} {{ resource_id }}{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-12">
+    <h3 class="mb-3">{{ heading }} <code>{{ resource_id }}</code></h3>
+
+    {% if links %}
+      <div class="mb-3">
+        {% for link in links %}
+          {% if link.enabled %}
+            <a class="btn btn-sm btn-outline-primary" href="{{ link.href }}">{{ link.label }}</a>
+          {% else %}
+            <span class="btn btn-sm btn-outline-secondary disabled">{{ link.label }}</span>
+          {% endif %}
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {% include "partials/resource_body.html" %}
+
+    <div class="mt-3">
+      <a href="{{ self_url }}" class="btn btn-link">Refresh</a>
+      <a href="#" onclick="history.back();return false;" class="btn btn-link">← Back</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

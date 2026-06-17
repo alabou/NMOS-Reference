@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Status monitoring — {{ kind }} {{ resource_id }}{% endblock %}
+{% block content %}
+<div class="row">
+  <div class="col-12">
+    <h3 class="mb-1">Status monitoring</h3>
+    <p class="text-muted">
+      {{ kind | capitalize }} <code>{{ resource_id }}</code>
+      {%- if label %} · {{ label }}{% endif %}
+    </p>
+
+    {% if not found %}
+      <div class="alert alert-warning">Not found in the controller's cache.</div>
+    {% else %}
+      <p class="mb-2">
+        <span class="badge badge-{{ 'success' if is_active else 'secondary' }}">
+          {{ 'active' if is_active else 'idle' }}</span>
+        <span class="badge badge-{{ 'info' if monitored else 'secondary' }} ml-1">
+          {{ 'BCP-008 monitored' if monitored else 'no monitor (status from subscription)' }}</span>
+        {%- if peer_id %} <span class="ml-2 text-muted small">peer: <code>{{ peer_id }}</code></span>{% endif %}
+      </p>
+
+      <table class="table table-sm" style="max-width: 32rem;">
+        <thead><tr><th>Facet</th><th>Status</th><th>Counter</th></tr></thead>
+        <tbody>
+          {% for f in facets %}
+            <tr>
+              <td>{{ f.label }}</td>
+              <td>
+                <span class="status-dot is-{{ f.value or 'inactive' }}"></span>
+                <span class="ml-1">{{ f.value or '—' }}</span>
+              </td>
+              <td class="text-monospace">
+                {{ f.counter if f.counter is not none else '—' }}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      {% if overall_message %}
+        <p class="text-muted"><strong>Overall status message:</strong> {{ overall_message }}</p>
+      {% endif %}
+
+      {% if monitor_json %}
+        <h5 class="mt-3">Monitor source</h5>
+        <pre class="resource-json">{{ monitor_json }}</pre>
+      {% else %}
+        <p class="text-muted small">No BCP-008 monitor Source for this resource
+          — the facets above reflect the subscription-derived defaults.</p>
+      {% endif %}
+    {% endif %}
+
+    <div class="mt-3">
+      <a href="{{ self_url }}" class="btn btn-link">Refresh</a>
+      <a href="#" onclick="history.back();return false;" class="btn btn-link">← Back</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -193,7 +193,10 @@ def extract_monitor_state(
     result: dict[str, Any] = {}
     for facet, attr in attr_map.items():
         result[facet] = decode_status_code(state.get(attr), facet)
-    msg = state.get("overall_message")
+    # The serialized monitor_state attribute is ``overall_status_message``
+    # (NMonitorState.MonitorOverallStatusMessage); expose it under the UI's
+    # ``overall_message`` key.
+    msg = state.get("overall_status_message")
     if isinstance(msg, str) and msg:
         result["overall_message"] = msg
     return result
@@ -899,6 +902,19 @@ class ResourceCache:
 
     def get_status(self, resource_id: str) -> dict[str, Any]:
         return dict(self._status.get(resource_id, {}))
+
+    def monitor_source_for(self, resource_id: str) -> dict[str, Any] | None:
+        """Return the BCP-008 monitor Source whose ``monitor_sibling_id``
+        is ``resource_id`` (the sender/receiver it monitors), or ``None``.
+
+        Lock-free best-effort read (like ``get_status`` / ``get_source``);
+        used by the detailed-status-monitoring inspector page to show the
+        full ``monitor_state`` (per-facet status + counters + messages)."""
+        for src in self._sources.values():
+            sibling_id, _kind = _monitor_sibling_of(src)
+            if sibling_id == resource_id:
+                return src
+        return None
 
     def all_senders(self) -> list[dict[str, Any]]:
         """Return every sender, each with ``format`` resolved from its

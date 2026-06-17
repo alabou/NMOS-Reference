@@ -4960,3 +4960,383 @@ class TestFlowMatchGreen:
         assert 'data-cs-part="trunk"' in text
         assert 'data-cs-part="urn:x-nmos:format:audio:0"' in text
         assert 'data-cs-part="urn:x-nmos:format:audio:1"' in text
+
+
+# ---------------------------------------------------------------------------
+# NMOS resource inspector — per-row links + detail pages
+# ---------------------------------------------------------------------------
+
+class TestResourceInspector:
+    _SID = "11111111-1111-1111-1111-111111111111"   # seeded sender on dev1
+    _RID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"    # seeded receiver on dev1
+
+    @pytest.mark.asyncio
+    async def test_senders_list_has_inspector_actions(
+        self, controller_client: TestClient,
+    ) -> None:
+        resp = await controller_client.get(f"{PREFIX}/senders")
+        assert resp.status == 200
+        text = await resp.text()
+        assert 'class="col-actions"' in text                 # column present
+        assert f"/controller/senders/{self._SID}/transport" in text
+        assert f"/controller/senders/{self._SID}/flow" in text
+        assert "/controller/devices/dev1" in text
+
+    @pytest.mark.asyncio
+    async def test_receivers_list_flow_disabled_when_unsubscribed(
+        self, controller_client: TestClient,
+    ) -> None:
+        # Seeded receiver aaaa has subscription.sender_id = None.
+        resp = await controller_client.get(f"{PREFIX}/receivers")
+        assert resp.status == 200
+        text = await resp.text()
+        assert f"/controller/receivers/{self._RID}/transport" in text
+        # Unsubscribed → no flow link, a disabled flow control instead.
+        assert f"/controller/receivers/{self._RID}/flow" not in text
+        assert "Receiver is not subscribed to a sender" in text
+
+    @pytest.mark.asyncio
+    async def test_receiver_flow_link_present_when_subscribed(
+        self, controller_client: TestClient,
+    ) -> None:
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        rid = "abcd0000-0000-4000-8000-000000000001"
+        recv = _make_receiver(rid, "dev1")
+        recv["subscription"] = {"active": True, "sender_id": self._SID}
+        await cache.upsert("receiver", recv)
+        resp = await controller_client.get(f"{PREFIX}/receivers")
+        text = await resp.text()
+        assert f"/controller/receivers/{rid}/flow" in text
+
+    @pytest.mark.asyncio
+    async def test_compatible_senders_has_no_actions_column(
+        self, controller_client: TestClient,
+    ) -> None:
+        resp = await controller_client.get(
+            f"{PREFIX}/receivers/compatible-senders?receiver_ids={self._RID}&mode=single",
+        )
+        assert resp.status == 200
+        text = await resp.text()
+        assert 'class="col-actions"' not in text              # gating holds
+
+    @pytest.mark.asyncio
+    async def test_flow_detail_with_source(
+        self, controller_client: TestClient,
+    ) -> None:
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        await cache.upsert("source", {"id": "src-vid", "label": "S"})
+        await cache.upsert("flow", {
+            "id": "flow-vid", "label": "F", "format": "urn:x-nmos:format:video",
+            "source_id": "src-vid", "parents": [],
+        })
+        resp = await controller_client.get(f"{PREFIX}/flows/flow-vid")
+        assert resp.status == 200
+        text = await resp.text()
+        assert "/controller/sources/src-vid" in text          # Show source
+        # ids appear in the heading/links and the raw-JSON panel (the panel
+        # HTML-escapes quotes, so assert on the ids, not quoted JSON).
+        assert "flow-vid" in text and "src-vid" in text
+
+    @pytest.mark.asyncio
+    async def test_flow_detail_mux_lists_subflows(
+        self, controller_client: TestClient,
+    ) -> None:
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        await cache.upsert("flow", {"id": "sub-a", "media_type": "video/H265"})
+        await cache.upsert("flow", {"id": "sub-b", "media_type": "audio/L24"})
+        await cache.upsert("flow", {
+            "id": "mux-1", "format": "urn:x-nmos:format:mux",
+            "parents": ["sub-a", "sub-b"],
+        })
+        resp = await controller_client.get(f"{PREFIX}/flows/mux-1")
+        assert resp.status == 200
+        text = await resp.text()
+        assert "Sub-flows (2)" in text
+        assert "/controller/flows/sub-a" in text
+        assert "/controller/flows/sub-b" in text
+
+    @pytest.mark.asyncio
+    async def test_source_detail_mux_lists_subsources(
+        self, controller_client: TestClient,
+    ) -> None:
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        await cache.upsert("source", {
+            "id": "ssub-a", "format": "urn:x-nmos:format:video", "label": "V"})
+        await cache.upsert("source", {
+            "id": "ssub-b", "format": "urn:x-nmos:format:audio", "label": "A"})
+        await cache.upsert("source", {
+            "id": "smux-1", "format": "urn:x-nmos:format:mux",
+            "parents": ["ssub-a", "ssub-b"]})
+        resp = await controller_client.get(f"{PREFIX}/sources/smux-1")
+        assert resp.status == 200
+        text = await resp.text()
+        assert "Sub-sources (2)" in text
+        assert "/controller/sources/ssub-a" in text
+        assert "/controller/sources/ssub-b" in text
+
+    @pytest.mark.asyncio
+    async def test_device_detail_links_node(
+        self, controller_client: TestClient,
+    ) -> None:
+        resp = await controller_client.get(f"{PREFIX}/devices/dev1")
+        assert resp.status == 200
+        text = await resp.text()
+        assert "/controller/nodes/node-SNX00001" in text      # Show node
+
+    @pytest.mark.asyncio
+    async def test_node_and_source_detail_render(
+        self, controller_client: TestClient,
+    ) -> None:
+        assert (await controller_client.get(
+            f"{PREFIX}/nodes/node-SNX00001")).status == 200
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        await cache.upsert("source", {"id": "src-x", "label": "X"})
+        resp = await controller_client.get(f"{PREFIX}/sources/src-x")
+        assert resp.status == 200
+        assert "src-x" in await resp.text()
+
+    @pytest.mark.asyncio
+    async def test_unknown_resource_not_found(
+        self, controller_client: TestClient,
+    ) -> None:
+        resp = await controller_client.get(f"{PREFIX}/flows/does-not-exist")
+        assert resp.status == 200
+        assert "Not found in the controller's cache" in await resp.text()
+
+    @pytest.mark.asyncio
+    async def test_sender_flow_redirect(
+        self, controller_client: TestClient,
+    ) -> None:
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        sender = _make_sender("ee000000-0000-4000-8000-000000000001", "dev1")
+        sender["flow_id"] = "flow-of-sender"
+        await cache.upsert("sender", sender)
+        resp = await controller_client.get(
+            f"{PREFIX}/senders/ee000000-0000-4000-8000-000000000001/flow",
+            allow_redirects=False,
+        )
+        assert resp.status == 302
+        assert resp.headers["Location"] == "/controller/flows/flow-of-sender"
+
+    @pytest.mark.asyncio
+    async def test_receiver_flow_redirect_and_notice(
+        self, controller_client: TestClient,
+    ) -> None:
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        sender = _make_sender("ee000000-0000-4000-8000-000000000002", "dev1")
+        sender["flow_id"] = "flow-rx"
+        await cache.upsert("sender", sender)
+        rid = "abcd0000-0000-4000-8000-000000000002"
+        recv = _make_receiver(rid, "dev1")
+        recv["subscription"] = {"active": True,
+                                "sender_id": "ee000000-0000-4000-8000-000000000002"}
+        await cache.upsert("receiver", recv)
+        resp = await controller_client.get(
+            f"{PREFIX}/receivers/{rid}/flow", allow_redirects=False)
+        assert resp.status == 302
+        assert resp.headers["Location"] == "/controller/flows/flow-rx"
+        # Unsubscribed seeded receiver → notice, not a redirect.
+        resp2 = await controller_client.get(
+            f"{PREFIX}/receivers/{self._RID}/flow", allow_redirects=False)
+        assert resp2.status == 200
+        assert "not subscribed" in await resp2.text()
+
+    def test_param_value_middle_truncation(self) -> None:
+        from nmos.controller.handlers import _fmt_param_value, _truncate_mid
+        short = "239.0.0.1"
+        assert _fmt_param_value(short) == short            # short values untouched
+        assert _fmt_param_value(True) == "true"
+        assert _fmt_param_value(None) == "null"
+        # A long opaque value (e.g. an ECDH key) → ≤32 chars with mid "...".
+        key = "A" * 60 + "Z" * 4
+        out = _fmt_param_value(key)
+        assert len(out) == 32 and "..." in out
+        assert out.startswith("A") and out.endswith("Z")
+        # Exactly at the limit is not truncated; one over is.
+        assert _truncate_mid("x" * 32) == "x" * 32
+        assert len(_truncate_mid("x" * 33)) == 32
+
+    def test_constraint_formatting(self) -> None:
+        from nmos.controller.handlers import _fmt_constraint
+        # enum alone → bare values (no "one of:" noise — the common case).
+        assert _fmt_constraint({"enum": ["a", "b"]}) == "a, b"
+        # enum + range → "one of:" prefix keeps the parts distinguishable.
+        assert _fmt_constraint(
+            {"enum": ["a", "b"], "minimum": 1, "maximum": 9}) == "one of: a, b; 1 – 9"
+        # range / pattern / empty.
+        assert _fmt_constraint({"minimum": 1, "maximum": 9}) == "1 – 9"
+        assert _fmt_constraint({"maximum": 9}) == "≤ 9"
+        assert _fmt_constraint({"pattern": "^x$"}) == "matches ^x$"
+        assert _fmt_constraint({}) == "—"
+
+    @pytest.mark.asyncio
+    async def test_sender_transport_detail_live(
+        self, controller_client: TestClient,
+    ) -> None:
+        remote: RemoteNodeClient = controller_client.app["_test_remote_stub"]
+        leg = {"destination_ip": "239.0.0.1", "destination_port": 5004}
+        remote.get_sender_constraints = AsyncMock(  # type: ignore[method-assign]
+            return_value=RemoteCallResult(status=200, body=[
+                {"destination_port": {"minimum": 5000, "maximum": 5999}},
+            ]),
+        )
+        remote.get_sender_staged = AsyncMock(  # type: ignore[method-assign]
+            return_value=RemoteCallResult(status=200, body={"transport_params": [leg]}),
+        )
+        remote.get_sender_active = AsyncMock(  # type: ignore[method-assign]
+            return_value=RemoteCallResult(status=200, body={"transport_params": [leg]}),
+        )
+        resp = await controller_client.get(
+            f"{PREFIX}/senders/{self._SID}/transport")
+        assert resp.status == 200
+        text = await resp.text()
+        assert "Legs (1)" in text
+        # Per-leg table with Constraint / Staged / Active columns.
+        assert "<th>Parameter</th>" in text
+        assert "<th>Constraint</th>" in text
+        assert "<th>Staged</th>" in text and "<th>Active</th>" in text
+        assert "destination_port" in text
+        assert "5000" in text and "5999" in text     # constraint range
+        assert "239.0.0.1" in text                    # staged + active value
+        assert f"/controller/senders/{self._SID}/sdp" in text   # Show SDP
+
+    @pytest.mark.asyncio
+    async def test_sender_sdp_live(
+        self, controller_client: TestClient,
+    ) -> None:
+        remote: RemoteNodeClient = controller_client.app["_test_remote_stub"]
+        remote.get_sender_transportfile = AsyncMock(  # type: ignore[method-assign]
+            return_value=RemoteCallResult(status=200, body="v=0\r\no=- 1 1 IN IP4 x\r\n"),
+        )
+        resp = await controller_client.get(f"{PREFIX}/senders/{self._SID}/sdp")
+        assert resp.status == 200
+        assert "v=0" in await resp.text()
+
+    @pytest.mark.asyncio
+    async def test_receiver_sdp_embedded_live(
+        self, controller_client: TestClient,
+    ) -> None:
+        remote: RemoteNodeClient = controller_client.app["_test_remote_stub"]
+        remote.get_receiver_active = AsyncMock(  # type: ignore[method-assign]
+            return_value=RemoteCallResult(status=200, body={
+                "transport_params": [{}],
+                "transport_file": {"type": "application/sdp",
+                                   "data": "v=0\r\ns=rx-sdp\r\n"},
+            }),
+        )
+        resp = await controller_client.get(f"{PREFIX}/receivers/{self._RID}/sdp")
+        assert resp.status == 200
+        assert "rx-sdp" in await resp.text()
+
+    @pytest.mark.asyncio
+    async def test_list_view_has_is11_and_monitor_links(
+        self, controller_client: TestClient,
+    ) -> None:
+        text = await (await controller_client.get(f"{PREFIX}/senders")).text()
+        assert f"/controller/senders/{self._SID}/is11" in text
+        assert f"/controller/senders/{self._SID}/monitor" in text   # overall badge link
+        rtext = await (await controller_client.get(f"{PREFIX}/receivers")).text()
+        assert f"/controller/receivers/{self._RID}/is11" in rtext
+        assert f"/controller/receivers/{self._RID}/monitor" in rtext
+
+    @pytest.mark.asyncio
+    async def test_is11_status_live(self, controller_client: TestClient) -> None:
+        remote: RemoteNodeClient = controller_client.app["_test_remote_stub"]
+        remote.get_sender_is11_status = AsyncMock(  # type: ignore[method-assign]
+            return_value=RemoteCallResult(status=200, body={"state": "constrained"}),
+        )
+        resp = await controller_client.get(f"{PREFIX}/senders/{self._SID}/is11")
+        assert resp.status == 200
+        text = await resp.text()
+        assert "IS-11 stream-compatibility status" in text
+        assert "constrained" in text
+
+    @pytest.mark.asyncio
+    async def test_is11_status_shows_debug(
+        self, controller_client: TestClient,
+    ) -> None:
+        # A vendor ``debug`` attribute on the status body is surfaced as its
+        # own labelled section (objects pretty-printed under "Debug").
+        remote: RemoteNodeClient = controller_client.app["_test_remote_stub"]
+        remote.get_sender_is11_status = AsyncMock(  # type: ignore[method-assign]
+            return_value=RemoteCallResult(status=200, body={
+                "state": "active_constraints_violation",
+                "debug": {"violated": "video width", "active": 3840, "max": 1920},
+            }),
+        )
+        resp = await controller_client.get(f"{PREFIX}/senders/{self._SID}/is11")
+        assert resp.status == 200
+        text = await resp.text()
+        assert "Debug" in text
+        assert "violated" in text          # debug object pretty-printed
+        assert "video width" in text
+
+    @pytest.mark.asyncio
+    async def test_is11_status_no_streamcompat(
+        self, controller_client: TestClient,
+    ) -> None:
+        # A sender whose device exposes NO stream-compat control → IS-11 N/A.
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        await cache.upsert("device", _make_device("dev-nois11", compat_href=None))
+        sid = "cccc0000-0000-4000-8000-000000000001"
+        await cache.upsert("sender", _make_sender(sid, "dev-nois11"))
+        resp = await controller_client.get(f"{PREFIX}/senders/{sid}/is11")
+        assert resp.status == 200
+        assert "does not implement the IS-11" in await resp.text()
+
+    @pytest.mark.asyncio
+    async def test_monitor_detail_no_monitor(
+        self, controller_client: TestClient,
+    ) -> None:
+        resp = await controller_client.get(f"{PREFIX}/senders/{self._SID}/monitor")
+        assert resp.status == 200
+        text = await resp.text()
+        assert "Status monitoring" in text
+        # Sender facet labels.
+        for label in ("Overall", "Link", "Synchronization", "Transmission", "Essence"):
+            assert label in text
+        assert "no monitor" in text                 # no BCP-008 source seeded
+
+    @pytest.mark.asyncio
+    async def test_monitor_detail_with_monitor_source(
+        self, controller_client: TestClient,
+    ) -> None:
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        sid = "cccc0000-0000-4000-8000-000000000002"
+        await cache.upsert("sender", _make_sender(sid, "dev1"))
+        await cache.upsert("source", {
+            "id": "mon-src-1", "format": "urn:x-nmos:format:data",
+            "monitor_type": "sender", "monitor_sibling_id": sid,
+            "monitor_state": {
+                "overall_status": 1, "link_status": 1,
+                "synchronization_status": 1, "transmission_status": 1,
+                "essence_status": 1,
+                "link_counter": 2, "synchronization_counter": 0,
+                "transmission_counter": 5, "essence_counter": 7,
+                "overall_status_message": "all facets nominal",
+            },
+        })
+        resp = await controller_client.get(f"{PREFIX}/senders/{sid}/monitor")
+        assert resp.status == 200
+        text = await resp.text()
+        assert "BCP-008 monitored" in text
+        assert "healthy" in text                    # decoded facet status
+        assert "mon-src-1" in text                  # raw monitor source shown
+        assert "Counter" in text                    # per-facet counter column
+        assert "all facets nominal" in text         # overall status message
+
+    @pytest.mark.asyncio
+    async def test_transport_detail_node_error_shows_message(
+        self, controller_client: TestClient,
+    ) -> None:
+        remote: RemoteNodeClient = controller_client.app["_test_remote_stub"]
+        err = RemoteCallResult(status=0, body=None, error="connect refused")
+        remote.get_sender_constraints = AsyncMock(return_value=err)  # type: ignore[method-assign]
+        remote.get_sender_staged = AsyncMock(return_value=err)       # type: ignore[method-assign]
+        remote.get_sender_active = AsyncMock(return_value=err)       # type: ignore[method-assign]
+        resp = await controller_client.get(
+            f"{PREFIX}/senders/{self._SID}/transport")
+        assert resp.status == 200
+        text = await resp.text()
+        # Active fetch failed → inline error (constraints/staged irrelevant).
+        assert "alert-danger" in text and "connect refused" in text

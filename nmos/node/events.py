@@ -137,6 +137,10 @@ class EventId(IntEnum):
     # only emit logic.
     VENDOR_ESSENCE_CONSTRAINT_VIOLATED = 13003
     VENDOR_ESSENCE_CONSTRAINT_OK = 13004
+    # Partial/amber edge — the IS-11 sender states ``no_essence`` /
+    # ``awaiting_essence`` map to ``NC_PARTIALLY_HEALTHY`` on the essence
+    # facet (there is no essence yet, but it isn't a constraint violation).
+    VENDOR_ESSENCE_CONSTRAINT_PARTIAL = 13005
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +280,7 @@ def emit_stopping(
 
 def emit_is11_compatibility_event(
     queue: asyncio.Queue[EngineEvent] | None,
-    resource_id: str, is_sender: bool, violated: bool, info: str,
+    resource_id: str, is_sender: bool, tier: str, info: str,
 ) -> None:
     """Emit the IS-11 compatibility transition as a vendor-essence event.
 
@@ -291,14 +295,19 @@ def emit_is11_compatibility_event(
             status-monitor task).
         resource_id: the sender or receiver UUID.
         is_sender: picks ``AlertScope.SENDER`` / ``AlertScope.RECEIVER``.
-        violated: True to fire the UNHEALTHY edge, False for the
-            HEALTHY-recovery edge.
+        tier: the target essence tier — ``"violation"`` (UNHEALTHY),
+            ``"partial"`` (PARTIALLY_HEALTHY, e.g. sender
+            ``no_essence``/``awaiting_essence``), or ``"healthy"``
+            (recovery edge).
         info: human-readable ``overall_status_message`` text.
     """
     scope = AlertScope.SENDER if is_sender else AlertScope.RECEIVER
-    if violated:
+    if tier == "violation":
         event_id = EventId.VENDOR_ESSENCE_CONSTRAINT_VIOLATED
         state = EventState.ERROR
+    elif tier == "partial":
+        event_id = EventId.VENDOR_ESSENCE_CONSTRAINT_PARTIAL
+        state = EventState.WARNING
     else:
         event_id = EventId.VENDOR_ESSENCE_CONSTRAINT_OK
         state = EventState.NORMAL

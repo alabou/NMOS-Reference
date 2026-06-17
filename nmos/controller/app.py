@@ -730,6 +730,35 @@ def _register_routes(app: web.Application) -> None:
     app.router.add_get(f"{prefix}/receivers/configure",
                        handlers.receivers_configure)
 
+    # NMOS resource inspector (read-only detail pages). Dynamic transport /
+    # SDP pages fetch live from the node; flow/source/device/node read the
+    # cache. The 3-segment dynamic paths don't collide with the 2-segment
+    # static ones above (e.g. /senders/caps).
+    app.router.add_get(f"{prefix}/senders/{{sender_id}}/transport",
+                       handlers.sender_transport_detail)
+    app.router.add_get(f"{prefix}/receivers/{{receiver_id}}/transport",
+                       handlers.receiver_transport_detail)
+    app.router.add_get(f"{prefix}/senders/{{sender_id}}/sdp",
+                       handlers.sender_sdp_view)
+    app.router.add_get(f"{prefix}/receivers/{{receiver_id}}/sdp",
+                       handlers.receiver_sdp_view)
+    app.router.add_get(f"{prefix}/senders/{{sender_id}}/is11",
+                       handlers.sender_is11_status)
+    app.router.add_get(f"{prefix}/receivers/{{receiver_id}}/is11",
+                       handlers.receiver_is11_status)
+    app.router.add_get(f"{prefix}/senders/{{sender_id}}/monitor",
+                       handlers.sender_monitor_detail)
+    app.router.add_get(f"{prefix}/receivers/{{receiver_id}}/monitor",
+                       handlers.receiver_monitor_detail)
+    app.router.add_get(f"{prefix}/senders/{{sender_id}}/flow",
+                       handlers.sender_flow_redirect)
+    app.router.add_get(f"{prefix}/receivers/{{receiver_id}}/flow",
+                       handlers.receiver_flow_redirect)
+    app.router.add_get(f"{prefix}/flows/{{flow_id}}", handlers.flow_detail)
+    app.router.add_get(f"{prefix}/sources/{{source_id}}", handlers.source_detail)
+    app.router.add_get(f"{prefix}/devices/{{device_id}}", handlers.device_detail)
+    app.router.add_get(f"{prefix}/nodes/{{node_id}}", handlers.node_detail)
+
     # JSON list / compat endpoints
     app.router.add_get(f"{prefix}/api/senders", handlers.api_list_senders)
     app.router.add_get(f"{prefix}/api/receivers", handlers.api_list_receivers)

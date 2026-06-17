@@ -90,8 +90,39 @@ code {
 .devices-table .col-role-select    { width: 2.1rem; }
 .devices-table .col-role-name      { width: 7rem; }
 .devices-table .col-label          { width: auto; }
+.devices-table .col-actions        { width: 16rem; }
 .devices-table .col-status         { width: 5rem; }
 .devices-table .col-dot            { width: 3rem; }
+
+/* Per-row NMOS-resource inspector links (transport / flow / device). Compact
+   so the trio fits the col-actions cell without crowding the status dots. */
+.row-actions .btn {
+  padding: 0.05rem 0.4rem;
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
+/* The overall-status badge doubles as a link to the detailed status-
+   monitoring page on the list views. Keep it looking like the badge
+   (no underline / inherited colour), just clickable. */
+.status-badge-link,
+.status-badge-link:hover {
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* Inspector detail pages: raw IS-04 JSON / SDP / transport-param panels. */
+.resource-json {
+  background: #f6f8fa;
+  border: 1px solid #e1e4e8;
+  border-radius: 4px;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.8rem;
+  white-space: pre;
+  overflow-x: auto;
+  max-height: 32rem;
+}
 
 /* Column-header row (thead). */
 .devices-table .devices-header-row th {

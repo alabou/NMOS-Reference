@@ -23,6 +23,7 @@
             <col class="col-role-select"  style="width:2.1rem">
             <col class="col-role-name"    style="width:7rem">
             <col class="col-label">
+            <col class="col-actions"      style="width:13rem">
             <col class="col-status"       style="width:5rem">
             <col class="col-dot"          style="width:3rem">
             <col class="col-dot"          style="width:3rem">
@@ -35,6 +36,7 @@
               <th class="col-role-select"></th>
               <th class="col-role-name"></th>
               <th class="col-label">label</th>
+              <th class="col-actions">resources</th>
               <th class="col-status">status</th>
               <th class="col-dot">link</th>
               <th class="col-dot">sync</th>
@@ -42,6 +44,7 @@
               <th class="col-dot">media</th>
             </tr>
           </thead>
+          {% set inspect = true %}{% set kind = 'receiver' %}
           {% for dev in devices %}
             {% include "partials/device_block.html" with context %}
           {% endfor %}

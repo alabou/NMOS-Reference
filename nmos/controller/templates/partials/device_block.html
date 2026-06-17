@@ -26,6 +26,10 @@
 {# Sender ids to pre-check (the compatible-senders page passes the
    receivers' current subscription.sender_id set; empty/absent elsewhere). #}
 {% set _preselect = preselect_sender_ids|default([]) %}
+{# ``inspect`` adds a per-row actions column (transport/flow/device links).
+   Only the Senders/Receivers LIST views set it (and ``kind``); the shared
+   compatible-senders / caps pages leave it false so their layout is unchanged. #}
+{% set inspect = inspect|default(false) %}
 {# Phase 5 capability painting: device_capability[device_id] carries
    the per-Device tls_secure flag + read/write inaccessible_reasons.
    When ``read`` is non-empty we paint every tbody belonging to this
@@ -96,7 +100,7 @@
                  data-ids="{{ ids }}"{% if group_only and _grp.pre %} checked{% endif %}>
         </label>
       </td>
-      <td colspan="8" class="group-name">
+      <td colspan="{{ 9 if inspect else 8 }}" class="group-name">
         {{ group.display_name }}
         {% if group_only %}
           {# Summarise the member roles next to the group name so
@@ -128,11 +132,38 @@
           {% endif %}
         </td>
         <td class="sender-label">{{ m.label }}</td>
+        {% if inspect %}
+        <td class="col-actions">
+          {% set _sub = (m.resource or {}).get('subscription') or {} %}
+          <div class="btn-group btn-group-sm row-actions" role="group">
+            <a class="btn btn-outline-secondary"
+               href="/controller/{{ kind }}s/{{ m.id }}/transport"
+               title="Transport parameters (live)">transport</a>
+            {% if kind == 'sender' or _sub.get('sender_id') %}
+              <a class="btn btn-outline-secondary"
+                 href="/controller/{{ kind }}s/{{ m.id }}/flow"
+                 title="Flow">flow</a>
+            {% else %}
+              <span class="btn btn-outline-secondary disabled"
+                    title="Receiver is not subscribed to a sender">flow</span>
+            {% endif %}
+            <a class="btn btn-outline-secondary"
+               href="/controller/devices/{{ m.device_id }}"
+               title="Device">device</a>
+            <a class="btn btn-outline-secondary"
+               href="/controller/{{ kind }}s/{{ m.id }}/is11"
+               title="IS-11 stream-compatibility status (live)">is-11</a>
+          </div>
+        </td>
+        {% endif %}
         <td class="col-status overall-status">
           {# When the device publishes a BCP-008 monitor, both colour and
              active/idle text come from its overall status (as before).
              With no monitor the colour is grey ("not-used") and the
              active/idle text tracks subscription.active. #}
+          {% if inspect %}<a class="status-badge-link"
+             href="/controller/{{ kind }}s/{{ m.id }}/monitor"
+             title="Detailed status monitoring">{% endif %}
           <span class="status-badge is-{{ overall }}"
                 data-resource-id="{{ m.id }}"
                 data-kind="overall">
@@ -141,7 +172,7 @@
             {% else %}
               {% if m.status.active %}active{% else %}idle{% endif %}
             {% endif %}
-          </span>
+          </span>{% if inspect %}</a>{% endif %}
         </td>
         {% for facet in ('link', 'sync', 'conn', 'media') %}
           {% set fv = m.status.get(facet, 'inactive') %}
@@ -162,7 +193,7 @@
   <tbody class="group-tbody group-tbody-ungrouped {{ _device_class }}">
     <tr class="group-header-row">
       <td rowspan="{{ span }}" class="group-select group-select-empty"></td>
-      <td colspan="8" class="group-name">Ungrouped</td>
+      <td colspan="{{ 9 if inspect else 8 }}" class="group-name">Ungrouped</td>
     </tr>
     {% for m in dev.ungrouped %}
       {% set overall = m.status.get('overall', 'inactive') %}
@@ -185,11 +216,38 @@
           {% endif %}
         </td>
         <td class="sender-label">{{ m.label }}</td>
+        {% if inspect %}
+        <td class="col-actions">
+          {% set _sub = (m.resource or {}).get('subscription') or {} %}
+          <div class="btn-group btn-group-sm row-actions" role="group">
+            <a class="btn btn-outline-secondary"
+               href="/controller/{{ kind }}s/{{ m.id }}/transport"
+               title="Transport parameters (live)">transport</a>
+            {% if kind == 'sender' or _sub.get('sender_id') %}
+              <a class="btn btn-outline-secondary"
+                 href="/controller/{{ kind }}s/{{ m.id }}/flow"
+                 title="Flow">flow</a>
+            {% else %}
+              <span class="btn btn-outline-secondary disabled"
+                    title="Receiver is not subscribed to a sender">flow</span>
+            {% endif %}
+            <a class="btn btn-outline-secondary"
+               href="/controller/devices/{{ m.device_id }}"
+               title="Device">device</a>
+            <a class="btn btn-outline-secondary"
+               href="/controller/{{ kind }}s/{{ m.id }}/is11"
+               title="IS-11 stream-compatibility status (live)">is-11</a>
+          </div>
+        </td>
+        {% endif %}
         <td class="col-status overall-status">
           {# When the device publishes a BCP-008 monitor, both colour and
              active/idle text come from its overall status (as before).
              With no monitor the colour is grey ("not-used") and the
              active/idle text tracks subscription.active. #}
+          {% if inspect %}<a class="status-badge-link"
+             href="/controller/{{ kind }}s/{{ m.id }}/monitor"
+             title="Detailed status monitoring">{% endif %}
           <span class="status-badge is-{{ overall }}"
                 data-resource-id="{{ m.id }}"
                 data-kind="overall">
@@ -198,7 +256,7 @@
             {% else %}
               {% if m.status.active %}active{% else %}idle{% endif %}
             {% endif %}
-          </span>
+          </span>{% if inspect %}</a>{% endif %}
         </td>
         {% for facet in ('link', 'sync', 'conn', 'media') %}
           {% set fv = m.status.get(facet, 'inactive') %}

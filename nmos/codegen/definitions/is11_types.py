@@ -35,7 +35,7 @@ ninput_status = TypeDesc(
     name="NInputStatus",
     members=[
         MemberDesc(name="State", type_name="NEnum", json_key="state", assertion="CheckInputStatusState"),
-        MemberDesc(name="Debug", type_name="NNullString", json_key="debug"),
+        MemberDesc(name="Debug", type_name="NNullString", json_key="debug", optional=True),
     ],
 )
 
@@ -67,7 +67,7 @@ noutput_status = TypeDesc(
     name="NOutputStatus",
     members=[
         MemberDesc(name="State", type_name="NEnum", json_key="state", assertion="CheckOutputStatusState"),
-        MemberDesc(name="Debug", type_name="NNullString", json_key="debug"),
+        MemberDesc(name="Debug", type_name="NNullString", json_key="debug", optional=True),
     ],
 )
 

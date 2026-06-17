@@ -293,6 +293,35 @@ class RemoteNodeClient:
         url = _join(base_url, f"senders/{sender_id}/constraints/active/")
         return await self._request("GET", url, forwarded_headers, trace_id=trace_id)
 
+    async def get_sender_is11_status(
+        self,
+        base_url: str,
+        sender_id: str,
+        forwarded_headers: dict[str, str],
+        *,
+        trace_id: str = "",
+    ) -> RemoteCallResult:
+        """GET {is11_base}/senders/{id}/status/ — the IS-11 sender
+        compatibility status (``state``: unconstrained / constrained /
+        active_constraints_violation / no_essence / awaiting_essence).
+        Read-only; used by the inspector's IS-11 page."""
+        url = _join(base_url, f"senders/{sender_id}/status/")
+        return await self._request("GET", url, forwarded_headers, trace_id=trace_id)
+
+    async def get_receiver_is11_status(
+        self,
+        base_url: str,
+        receiver_id: str,
+        forwarded_headers: dict[str, str],
+        *,
+        trace_id: str = "",
+    ) -> RemoteCallResult:
+        """GET {is11_base}/receivers/{id}/status/ — the IS-11 receiver
+        stream-compatibility status (``state``: unknown / compliant_stream /
+        non_compliant_stream). Symmetric to ``get_sender_is11_status``."""
+        url = _join(base_url, f"receivers/{receiver_id}/status/")
+        return await self._request("GET", url, forwarded_headers, trace_id=trace_id)
+
     async def patch_sender_staged(
         self,
         base_url: str,
@@ -413,6 +442,33 @@ class RemoteNodeClient:
         ``get_sender_constraints``.
         """
         url = _join(base_url, f"single/receivers/{receiver_id}/constraints/")
+        return await self._request("GET", url, forwarded_headers, trace_id=trace_id)
+
+    async def get_sender_staged(
+        self,
+        base_url: str,
+        sender_id: str,
+        forwarded_headers: dict[str, str],
+        *,
+        trace_id: str = "",
+    ) -> RemoteCallResult:
+        """GET /single/senders/{id}/staged/ — the sender's staged (pending)
+        IS-05 transport params (mirrors ``get_sender_active``). Read-only;
+        used by the transport-parameters inspector page."""
+        url = _join(base_url, f"single/senders/{sender_id}/staged/")
+        return await self._request("GET", url, forwarded_headers, trace_id=trace_id)
+
+    async def get_receiver_staged(
+        self,
+        base_url: str,
+        receiver_id: str,
+        forwarded_headers: dict[str, str],
+        *,
+        trace_id: str = "",
+    ) -> RemoteCallResult:
+        """GET /single/receivers/{id}/staged/ — the receiver's staged
+        IS-05 transport params. Symmetric to ``get_sender_staged``."""
+        url = _join(base_url, f"single/receivers/{receiver_id}/staged/")
         return await self._request("GET", url, forwarded_headers, trace_id=trace_id)
 
     # ------------------------------------------------------------------

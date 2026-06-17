@@ -195,8 +195,11 @@ class TestExtractMonitorState:
         assert extract_monitor_state(None) is None  # type: ignore[arg-type]
 
     def test_overall_message_preserved(self) -> None:
+        # The serialized monitor_state attribute is ``overall_status_message``
+        # (NMonitorState.MonitorOverallStatusMessage); the UI exposes it under
+        # ``overall_message``.
         src = self._receiver_source()
-        src["monitor_state"]["overall_message"] = "stream locked"
+        src["monitor_state"]["overall_status_message"] = "stream locked"
         out = extract_monitor_state(src)
         assert out is not None
         assert out["overall_message"] == "stream locked"
