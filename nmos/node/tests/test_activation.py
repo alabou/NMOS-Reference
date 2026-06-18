@@ -332,3 +332,41 @@ class TestFlipActivation:
 
         # Active should now have the staged value
         assert activation.active[0].DestinationIp.value == "239.1.2.3"
+
+
+class TestSubscriptionPeerIdNulledWhenInactive:
+    """IS-04: a subscription's ``sender_id`` (Receiver) / ``receiver_id``
+    (Sender) MUST be null in all cases except where the resource is currently
+    configured to receive-from / transmit-to an NMOS peer — i.e. only while
+    active. ``_active_peer_id`` enforces that on (de)activation.
+    """
+
+    class _Field:
+        def __init__(self, value: object, defined: bool = True) -> None:
+            self.value = value
+            self.defined = defined
+
+    class _Staged:
+        def __init__(self, **fields: object) -> None:
+            for k, v in fields.items():
+                setattr(self, k, v)
+
+    _SID = "11111111-1111-1111-1111-111111111111"
+
+    def test_returns_staged_id_when_enabled(self) -> None:
+        from nmos.node.activation_engine import _active_peer_id
+        staged = self._Staged(SenderId=self._Field(self._SID))
+        assert _active_peer_id(staged, "SenderId", master_enable=True) == self._SID
+
+    def test_forced_null_when_disabled_even_if_staged_id_present(self) -> None:
+        # The deactivation case: staged still carries the id, but master_enable
+        # is false → the subscription id MUST be null.
+        from nmos.node.activation_engine import _active_peer_id
+        staged = self._Staged(SenderId=self._Field(self._SID))
+        assert _active_peer_id(staged, "SenderId", master_enable=False) is None
+
+    def test_null_when_field_absent_or_undefined(self) -> None:
+        from nmos.node.activation_engine import _active_peer_id
+        staged = self._Staged(SenderId=self._Field(self._SID, defined=False))
+        assert _active_peer_id(staged, "SenderId", master_enable=True) is None
+        assert _active_peer_id(self._Staged(), "ReceiverId", master_enable=True) is None

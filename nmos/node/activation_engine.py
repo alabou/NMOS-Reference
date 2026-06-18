@@ -478,6 +478,24 @@ def resolve_noop(active: Any, sender_index: int, receiver_index: int, leg: Any) 
 # 4. Do activation (orchestrate with atomic rollback)
 # ---------------------------------------------------------------------------
 
+def _active_peer_id(staged_state: Any, field_name: str, master_enable: bool) -> Any:
+    """The peer id to store in an IS-04 sender/receiver ``subscription``.
+
+    IS-04: the subscription's ``sender_id`` (Receiver) / ``receiver_id``
+    (Sender) MUST be null in all cases except where the resource is currently
+    configured to receive-from / transmit-to an NMOS peer — i.e. only while
+    active. So the staged id is honoured ONLY when ``master_enable`` is true;
+    on deactivation this returns ``None``, forcing the subscription id back to
+    null (and with it, e.g., a controller's flow tracking that keys off it).
+    """
+    if not master_enable:
+        return None
+    field = getattr(staged_state, field_name, None)
+    if field is None or not getattr(field, "defined", False):
+        return None
+    return field.value
+
+
 def do_activation(
     node: Any,  # Node (avoiding circular import)
     resource_id: str,
@@ -552,25 +570,22 @@ def do_activation(
             node.sdp.remove(static_id)
 
         # Step 4: Update IS-04 subscription (updateReceiverSubscription/updateSenderSubscription)
+        # IS-04: the subscription peer id MUST be null unless active, so it is
+        # read from the staged state ONLY when master_enable is true (see
+        # ``_active_peer_id``) — on deactivation it is forced back to null.
         if is_sender:
             from nmos.node.updates import SenderUpdate
-            # Read receiver_id from staged_state if present
-            receiver_id = None
-            if hasattr(activation.staged_state, 'ReceiverId') and activation.staged_state.ReceiverId.defined:
-                receiver_id = activation.staged_state.ReceiverId.value
             node.update_sender(resource_id, SenderUpdate(
                 subscription_active=master_enable,
-                subscription_receiver_id=receiver_id,
+                subscription_receiver_id=_active_peer_id(
+                    activation.staged_state, "ReceiverId", master_enable),
             ))
         else:
             from nmos.node.updates import ReceiverUpdate
-            # Read sender_id from staged_state if present
-            sender_id_val = None
-            if hasattr(activation.staged_state, 'SenderId') and activation.staged_state.SenderId.defined:
-                sender_id_val = activation.staged_state.SenderId.value
             node.update_receiver(resource_id, ReceiverUpdate(
                 subscription_active=master_enable,
-                subscription_sender_id=sender_id_val,
+                subscription_sender_id=_active_peer_id(
+                    activation.staged_state, "SenderId", master_enable),
             ))
 
         # Step 4b: Sync privacy params from active transport params → activation.privacy

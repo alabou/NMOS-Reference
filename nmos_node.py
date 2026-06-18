@@ -34,6 +34,16 @@ from aiohttp import web
 
 from nmos.api.tr10_tls import apply_tr10_tls_restrictions
 
+# Access-log format for the node API: aiohttp's default plus ``%Tf`` — the
+# time taken to serve each request, in seconds (floating fraction). aiohttp's
+# default format omits request duration, so the node access log could only be
+# read for completion timestamps; appending ``%Tf`` lets per-request handler
+# latency (e.g. a slow PATCH) be read straight from nmos-node.log without any
+# external tooling.
+_NODE_ACCESS_LOG_FORMAT = (
+    '%a %t "%r" %s %b "%{Referer}i" "%{User-Agent}i" %Tf'
+)
+
 # ---------------------------------------------------------------------------
 # CLI argument parsing
 # ---------------------------------------------------------------------------
@@ -533,7 +543,9 @@ async def go_node_server(
     # NMOS API requests are sub-second and won't be impacted; the
     # SSE stream gets closed abruptly and the browser auto-reconnects
     # on the next page load.
-    runner = web.AppRunner(app, shutdown_timeout=2.0)
+    runner = web.AppRunner(
+        app, shutdown_timeout=2.0, access_log_format=_NODE_ACCESS_LOG_FORMAT,
+    )
     await runner.setup()
     control_runner: web.AppRunner | None = None
     if control_app is not None:
@@ -730,7 +742,9 @@ async def go_controller_server(
     # 60 s of grace would block process exit until either the SSE
     # handler returned or the operator hit Ctrl-C a second time.
     server_ssl = build_controller_ui_ssl_context(args)
-    runner = web.AppRunner(app, shutdown_timeout=2.0)
+    runner = web.AppRunner(
+        app, shutdown_timeout=2.0, access_log_format=_NODE_ACCESS_LOG_FORMAT,
+    )
     await runner.setup()
 
     rds_tasks: list[asyncio.Task[Any]] = []
