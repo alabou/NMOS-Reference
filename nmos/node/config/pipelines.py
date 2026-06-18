@@ -123,6 +123,40 @@ def build_pipeline(
 # Simple pipeline: Source → Flow → Sender
 # ---------------------------------------------------------------------------
 
+def _couple_flow_grain_rate_to_source(source: Any, flow: Any) -> None:
+    """Initialise a flow's rate from its source so the two are IDENTICAL by
+    construction.
+
+    A flow and its source describe the same temporal stream and must not be
+    initialised from independent inputs. The source's grain_rate is taken
+    from the operating-point capset (one concrete value); a flow left to
+    itself samples its OWN rate capability through
+    ``extract_params_from_capset`` → ``next(iter(rv.enumerated))`` — a
+    non-deterministic set iteration that can land on an unrelated rate
+    (e.g. a video/raw flow at 30000/1001 while its source is 60/1). Copying
+    the source's value onto the flow guarantees they match.
+
+    Rate fields differ by format:
+      * video / mux : the rate lives in ``FlowCore.grain_rate``.
+      * audio       : the source carries ``grain_rate`` while the flow
+                      carries BOTH ``grain_rate`` (flow_core) and the
+                      audio-specific ``sample_rate``. This node stores the
+                      sample rate as the source's grain_rate, so we sync
+                      both of the flow's fields to it — otherwise the flow's
+                      ``sample_rate`` (the field that matters for audio)
+                      could still diverge.
+    """
+    from nmos.node import _get_source_core, _get_flow_core
+    src_gr = _get_source_core(source).GrainRate
+    if not src_gr.defined:
+        return
+    _get_flow_core(flow).GrainRate.set_value(src_gr.value.clone())
+    # Audio flows additionally carry sample_rate — keep it identical too.
+    inner = flow.get() if hasattr(flow, "get") else flow
+    if inner is not None and hasattr(inner, "SampleRate"):
+        inner.SampleRate.set_value(src_gr.value.clone())
+
+
 def _build_simple_sender(
     node: Any, config: dict[str, Any], caps: Any, verbose: bool,
     linked_receiver_id: str | None = None,
@@ -167,6 +201,8 @@ def _build_simple_sender(
     else:
         flow = build_data_flow(params, source_dynamic, config)
 
+    # A flow and its source must carry the same grain_rate (see helper).
+    _couple_flow_grain_rate_to_source(source, flow)
     flow_static = node.add_flow(flow)
 
     # Build sender
@@ -251,6 +287,12 @@ def _build_raw_coded_sender(
         coded_flow = build_video_flow(coded_params, source_dynamic, config)
     else:
         coded_flow = build_video_flow(params, source_dynamic, config)
+
+    # Both flavors share the one source — each must carry its grain_rate
+    # (otherwise the raw flow, whose capset offers many rates, samples an
+    # arbitrary one via set iteration and diverges from the source).
+    _couple_flow_grain_rate_to_source(source, raw_flow)
+    _couple_flow_grain_rate_to_source(source, coded_flow)
 
     # Add flows (raw + coded linked)
     # For now, add them separately and link
@@ -376,6 +418,8 @@ def _build_mux_sender(
             else:
                 continue
 
+            # Each sub-flow must share its sub-source's grain_rate.
+            _couple_flow_grain_rate_to_source(sub_src, sub_flow)
             sub_source_ids.append(sub_src_static)
             sub_flow_ids.append(sub_flow_static)
 
@@ -396,6 +440,7 @@ def _build_mux_sender(
         if mt_enum:
             mux_params[CapFormatMediaType.s] = mt_enum[0]
     mux_flow = build_mux_flow(mux_params, mux_src_dynamic, sub_flow_ids, node, config)
+    _couple_flow_grain_rate_to_source(mux_source, mux_flow)
     mux_flow_static = node.add_flow(mux_flow)
 
     # Set layer counts on mux flow — these are metadata about how many layers
