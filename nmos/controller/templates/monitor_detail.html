@@ -27,8 +27,10 @@
             <tr>
               <td>{{ f.label }}</td>
               <td>
+                {# Dot colour from the health-family token; the TEXT is the
+                   facet's own vocabulary (link → AllUp/SomeDown/AllDown). #}
                 <span class="status-dot is-{{ f.value or 'inactive' }}"></span>
-                <span class="ml-1">{{ f.value or '—' }}</span>
+                <span class="ml-1">{{ (f.display | default(f.value)) or '—' }}</span>
               </td>
               <td class="text-monospace">
                 {{ f.counter if f.counter is not none else '—' }}

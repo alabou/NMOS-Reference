@@ -4171,6 +4171,50 @@ async def node_detail(request: web.Request) -> web.Response:
     })
 
 
+async def sender_detail(request: web.Request) -> web.Response:
+    """The sender's own IS-04 resource as JSON, with Show-flow / Show-device
+    cross-links."""
+    cache = _cache(request)
+    sid = request.match_info["sender_id"]
+    sender = cache.get_sender(sid)
+    flow_id = (sender or {}).get("flow_id") or ""
+    device_id = (sender or {}).get("device_id") or ""
+    links = [
+        {"label": "Show flow",
+         "href": f"/controller/flows/{flow_id}" if flow_id else "",
+         "enabled": bool(flow_id)},
+        {"label": "Show device",
+         "href": f"/controller/devices/{device_id}" if device_id else "",
+         "enabled": bool(device_id)},
+    ]
+    return _render(request, "resource_detail.html", {
+        "active": "senders", "heading": "Sender", "resource_id": sid,
+        "resource": sender, "resource_json": _pretty(sender), "links": links,
+    })
+
+
+async def receiver_detail(request: web.Request) -> web.Response:
+    """The receiver's own IS-04 resource as JSON, with Show-device and (when
+    subscribed) Show-subscribed-sender cross-links."""
+    cache = _cache(request)
+    rid = request.match_info["receiver_id"]
+    receiver = cache.get_receiver(rid)
+    device_id = (receiver or {}).get("device_id") or ""
+    sub_sender = ((receiver or {}).get("subscription") or {}).get("sender_id") or ""
+    links = [
+        {"label": "Show device",
+         "href": f"/controller/devices/{device_id}" if device_id else "",
+         "enabled": bool(device_id)},
+        {"label": "Show subscribed sender",
+         "href": f"/controller/senders/{sub_sender}/resource" if sub_sender else "",
+         "enabled": bool(sub_sender)},
+    ]
+    return _render(request, "resource_detail.html", {
+        "active": "receivers", "heading": "Receiver", "resource_id": rid,
+        "resource": receiver, "resource_json": _pretty(receiver), "links": links,
+    })
+
+
 async def sender_flow_redirect(request: web.Request) -> web.Response:
     """Resolve a sender's current flow and 302 to its flow page."""
     cache = _cache(request)
@@ -4438,6 +4482,34 @@ _MONITOR_COUNTER_BY_KIND: Final[dict[str, dict[str, str]]] = {
 }
 
 
+# BCP-008-01 ``link_status`` has its OWN vocabulary (NcLinkStatus) rather
+# than the Healthy/PartiallyHealthy/Unhealthy family the other facets use:
+# the integer codes are 1=AllUp, 2=SomeDown, 3=AllDown (0=Inactive). The
+# cache maps every facet onto one health palette for DOT COLOUR (is-<value>),
+# but the detail page shows link's real up/down text. Display labels only —
+# colour still tracks the health-family token in ``value``.
+_LINK_STATUS_LABELS: Final[dict[int, str]] = {
+    0: "inactive",
+    1: "all up",
+    2: "some down",
+    3: "all down",
+}
+
+
+def _facet_display_label(key: str, health_value: str, mstate: dict[str, Any]) -> str:
+    """Text shown for a facet on the monitor detail page. The ``link`` facet
+    uses its NcLinkStatus up/down vocabulary (decoded from the raw
+    ``link_status`` integer); every other facet shows the health-family
+    token (same as its dot colour). Falls back to ``health_value`` when the
+    raw code is absent (no monitor) or unrecognised."""
+    if key != "link":
+        return health_value
+    try:
+        return _LINK_STATUS_LABELS.get(int(mstate.get("link_status")), health_value)
+    except (TypeError, ValueError):
+        return health_value
+
+
 async def _monitor_detail(request: web.Request, kind: str) -> web.Response:
     """Detailed BCP-008 status-monitoring page for a sender/receiver:
     the per-facet statuses (overall/link/sync/conn/media), the overall
@@ -4454,7 +4526,10 @@ async def _monitor_detail(request: web.Request, kind: str) -> web.Response:
     counter_attr = _MONITOR_COUNTER_BY_KIND[kind]
     facets = [
         {"label": (s_label if kind == "sender" else r_label),
+         # ``value`` is the health-family token → drives the dot COLOUR.
          "value": status.get(key, ""),
+         # ``display`` is the TEXT shown; link uses its up/down vocabulary.
+         "display": _facet_display_label(key, status.get(key, ""), mstate),
          "counter": (mstate.get(counter_attr[key]) if key in counter_attr else None)}
         for key, s_label, r_label in _MONITOR_FACETS
     ]

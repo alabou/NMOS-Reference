@@ -90,7 +90,7 @@ code {
 .devices-table .col-role-select    { width: 2.1rem; }
 .devices-table .col-role-name      { width: 7rem; }
 .devices-table .col-label          { width: auto; }
-.devices-table .col-actions        { width: 16rem; }
+.devices-table .col-actions        { width: 18rem; }  /* fits 5 action buttons */
 .devices-table .col-status         { width: 5rem; }
 .devices-table .col-dot            { width: 3rem; }
 

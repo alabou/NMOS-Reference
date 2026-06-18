@@ -5192,6 +5192,34 @@ class TestResourceInspector:
         assert "src-x" in await resp.text()
 
     @pytest.mark.asyncio
+    async def test_sender_and_receiver_resource_detail(
+        self, controller_client: TestClient,
+    ) -> None:
+        # The sender's / receiver's own IS-04 resource as JSON.
+        resp = await controller_client.get(f"{PREFIX}/senders/{self._SID}/resource")
+        assert resp.status == 200
+        stext = await resp.text()
+        assert "Sender" in stext and self._SID in stext
+        assert "/controller/devices/dev1" in stext       # Show-device cross-link
+
+        resp = await controller_client.get(f"{PREFIX}/receivers/{self._RID}/resource")
+        assert resp.status == 200
+        rtext = await resp.text()
+        assert "Receiver" in rtext and self._RID in rtext
+
+    @pytest.mark.asyncio
+    async def test_list_views_have_resource_button(
+        self, controller_client: TestClient,
+    ) -> None:
+        # "sender" / "receiver" button in the resources column → IS-04 JSON.
+        stext = await (await controller_client.get(f"{PREFIX}/senders")).text()
+        assert f"/controller/senders/{self._SID}/resource" in stext
+        assert "IS-04 sender resource (JSON)" in stext
+        rtext = await (await controller_client.get(f"{PREFIX}/receivers")).text()
+        assert f"/controller/receivers/{self._RID}/resource" in rtext
+        assert "IS-04 receiver resource (JSON)" in rtext
+
+    @pytest.mark.asyncio
     async def test_unknown_resource_not_found(
         self, controller_client: TestClient,
     ) -> None:
@@ -5439,6 +5467,37 @@ class TestResourceInspector:
         assert "mon-src-1" in text                  # raw monitor source shown
         assert "Counter" in text                    # per-facet counter column
         assert "all facets nominal" in text         # overall status message
+        # link_status uses its own NcLinkStatus vocabulary (1 == AllUp),
+        # NOT the health family — shown as up/down text.
+        assert "all up" in text
+
+    @pytest.mark.asyncio
+    async def test_monitor_detail_link_status_uses_updown_vocabulary(
+        self, controller_client: TestClient,
+    ) -> None:
+        """``link_status`` must render as AllUp/SomeDown/AllDown, not the
+        Healthy/PartiallyHealthy/Unhealthy family used by the other facets.
+        Degraded link (2 == SomeDown) shows 'some down' while its dot still
+        takes the partially-healthy colour.
+        """
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        sid = "cccc0000-0000-4000-8000-000000000003"
+        await cache.upsert("sender", _make_sender(sid, "dev1"))
+        await cache.upsert("source", {
+            "id": "mon-src-2", "format": "urn:x-nmos:format:data",
+            "monitor_type": "sender", "monitor_sibling_id": sid,
+            "monitor_state": {
+                "overall_status": 2, "link_status": 2,
+                "synchronization_status": 1, "transmission_status": 1,
+                "essence_status": 1,
+            },
+        })
+        resp = await controller_client.get(f"{PREFIX}/senders/{sid}/monitor")
+        assert resp.status == 200
+        text = await resp.text()
+        assert "some down" in text                  # link's up/down vocabulary
+        # the dot colour still comes from the health palette
+        assert "is-partially-healthy" in text
 
     @pytest.mark.asyncio
     async def test_transport_detail_node_error_shows_message(

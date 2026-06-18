@@ -754,6 +754,10 @@ def _register_routes(app: web.Application) -> None:
                        handlers.sender_flow_redirect)
     app.router.add_get(f"{prefix}/receivers/{{receiver_id}}/flow",
                        handlers.receiver_flow_redirect)
+    app.router.add_get(f"{prefix}/senders/{{sender_id}}/resource",
+                       handlers.sender_detail)
+    app.router.add_get(f"{prefix}/receivers/{{receiver_id}}/resource",
+                       handlers.receiver_detail)
     app.router.add_get(f"{prefix}/flows/{{flow_id}}", handlers.flow_detail)
     app.router.add_get(f"{prefix}/sources/{{source_id}}", handlers.source_detail)
     app.router.add_get(f"{prefix}/devices/{{device_id}}", handlers.device_detail)

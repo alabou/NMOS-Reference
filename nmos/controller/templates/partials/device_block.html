@@ -148,6 +148,9 @@
                     title="Receiver is not subscribed to a sender">flow</span>
             {% endif %}
             <a class="btn btn-outline-secondary"
+               href="/controller/{{ kind }}s/{{ m.id }}/resource"
+               title="IS-04 {{ kind }} resource (JSON)">{{ kind }}</a>
+            <a class="btn btn-outline-secondary"
                href="/controller/devices/{{ m.device_id }}"
                title="Device">device</a>
             <a class="btn btn-outline-secondary"
@@ -231,6 +234,9 @@
               <span class="btn btn-outline-secondary disabled"
                     title="Receiver is not subscribed to a sender">flow</span>
             {% endif %}
+            <a class="btn btn-outline-secondary"
+               href="/controller/{{ kind }}s/{{ m.id }}/resource"
+               title="IS-04 {{ kind }} resource (JSON)">{{ kind }}</a>
             <a class="btn btn-outline-secondary"
                href="/controller/devices/{{ m.device_id }}"
                title="Device">device</a>
