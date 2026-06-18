@@ -3637,6 +3637,33 @@ class TestCodecFlavorSwap:
         assert err is not None
         assert self._flow_state(node, sender) == before
 
+    def test_constraint_error_types_match_is11_status_codes(self) -> None:
+        """check_active_constraints surfaces the IS-11 400-vs-422 distinction
+        as distinct error types, which the PUT handler maps to status codes:
+
+        * an unsupported Parameter Constraint URN (a malformed request the spec
+          maps to HTTP 400) → InvalidParameter
+        * supported URNs whose values no capability set can satisfy (HTTP 422)
+          → NotAllowed
+
+        The handler maps NotAllowed→422 and every other error→400, so swapping
+        these types would regress AMWA IS-11 test_06_01."""
+        from nmos.errors import InvalidParameter, NotAllowed
+        node, sender = self._setup_h264_video()
+
+        # Unsupported URN → InvalidParameter (→ HTTP 400)
+        _, _, err = node.check_active_constraints(sender, {"constraint_sets": [
+            {"urn:x-nmos:cap:not:existing": {"enum": [""]}}]})
+        assert isinstance(err, InvalidParameter), f"got {type(err).__name__}: {err}"
+
+        # Supported URNs, unsatisfiable values → NotAllowed (→ HTTP 422)
+        _, _, err = node.check_active_constraints(sender, {"constraint_sets": [{
+            "urn:x-nmos:cap:meta:preference": 100,
+            "urn:x-nmos:cap:format:media_type": {"enum": ["video/H264"]},
+            "urn:x-nmos:cap:format:profile": {"enum": ["NoSuchProfile"]},
+        }]})
+        assert isinstance(err, NotAllowed), f"got {type(err).__name__}: {err}"
+
     def test_empty_constraint_sets_resets_to_unconstrained(self) -> None:
         """PUT of an empty constraint_sets array removes the constraints."""
         node, sender = self._setup_h264_video()

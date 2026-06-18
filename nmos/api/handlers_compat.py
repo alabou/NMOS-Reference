@@ -17,6 +17,7 @@ from aiohttp import web
 
 from nmos.api.response import json_response, error_response
 from nmos.api.middleware import check_exclusive_authorization
+from nmos.errors import NotAllowed
 from nmos.json.engine import JsonEngine
 
 
@@ -144,9 +145,11 @@ async def handle_put_sender_constraints_active(request: web.Request) -> web.Resp
     sender capabilities, forces flow update, and sets compatibility status.
 
     Returns 200 with the applied constraints, or:
-    - 400 on invalid JSON
+    - 400 on invalid JSON, an unsupported Parameter Constraint URN, or a
+      schema validation failure
     - 404 if sender not found
-    - 422 if constraints violate capabilities
+    - 422 if every URN is supported but the Sender cannot satisfy the values
+    - 423 if the Sender is currently active (locked)
     """
     node = request.app["node"]
     sender_id = request.match_info["senderId"]
@@ -186,7 +189,14 @@ async def handle_put_sender_constraints_active(request: web.Request) -> web.Resp
     except Exception as exc:
         return error_response(500, f"cannot apply active constraints: {exc}", request=request)
     if err is not None:
-        return error_response(422, str(err), request=request)
+        # IS-11 reserves 422 for the narrow case where the request is
+        # well-formed and every Parameter Constraint URN is supported, but no
+        # capability set can satisfy the requested values — the constraint
+        # algebra surfaces that as NotAllowed. Every other rejection (an
+        # unsupported URN, a schema/layer failure, or any unexpected error) is
+        # a malformed request → 400.
+        code = 422 if isinstance(err, NotAllowed) else 400
+        return error_response(code, str(err), request=request)
 
     # bump IS-04 sender version after constraint change
     import time

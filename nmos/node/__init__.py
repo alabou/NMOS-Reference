@@ -3086,12 +3086,20 @@ class Node:
         sender_id = sender.ResourceCore.Id.value if hasattr(sender, 'ResourceCore') else ""
         active_cons = self._constraints_to_ccf(active_constraints)
 
-        # Step 1: Validate names/metadata and normalize (includes mux layer validation)
+        # Step 1: Validate names/metadata and normalize (includes mux layer
+        # validation). A failure here is either an unsupported Parameter
+        # Constraint URN or a schema/layer validation failure — both are
+        # malformed-request errors that IS-11 maps to HTTP 400, so surface them
+        # as InvalidParameter (capability inclusion is NOT checked at this
+        # stage; see validate_active_constraints).
         validated_cons, err = _validate(self, sender_id, active_cons, verbose=True)
         if err is not None:
-            return None, None, NotAllowed(f"active constraints not compliant: {err}")
+            return None, None, InvalidParameter(f"active constraints not compliant: {err}")
 
-        # Step 2: Merge each constraint set onto the capability set it fits
+        # Step 2: Merge each constraint set onto the capability set it fits. A
+        # failure here means the request is well-formed and every URN is
+        # supported, but no capability set can satisfy the requested values —
+        # IS-11 maps this to HTTP 422, so keep it as NotAllowed.
         merged_cons, err = _merge(self, sender_id, validated_cons, verbose=True)
         if err is not None:
             return None, None, NotAllowed(f"active constraints not compliant: {err}")
