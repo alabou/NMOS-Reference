@@ -496,6 +496,24 @@ def _active_peer_id(staged_state: Any, field_name: str, master_enable: bool) -> 
     return field.value
 
 
+def _receiver_transport_file_sdp(activation: Activation) -> str | None:
+    """The SDP text from a Receiver's active transport_file, or None.
+
+    The IS-05 PATCH delivers the stream description in ``transport_file``
+    (``application/sdp``); after the staged→active flip it lives at
+    ``active_state.TransportFile.value.Data``. This is the SDP the Receiver
+    has accepted and must verify for IS-11 stream compatibility.
+    """
+    tf = getattr(activation.active_state, "TransportFile", None)
+    if tf is None or not getattr(tf, "defined", False):
+        return None
+    tfv = getattr(tf, "value", None)
+    data = getattr(tfv, "Data", None) if tfv is not None else None
+    if data is not None and getattr(data, "defined", False):
+        return data.value
+    return None
+
+
 def do_activation(
     node: Any,  # Node (avoiding circular import)
     resource_id: str,
@@ -568,6 +586,46 @@ def do_activation(
         elif is_sender and has_sdp and not master_enable:
             # Deactivating: clear SDP
             node.sdp.remove(static_id)
+
+        elif not is_sender:
+            # Receiver branch. NOTE: do NOT gate on ``has_sdp`` — that flag is
+            # sender-centric ("the node generates an SDP for this resource")
+            # and the receiver PATCH path always passes has_sdp=False, even
+            # though the Receiver very much has an SDP: the incoming
+            # transport_file. Gating on it here left the status permanently
+            # ``unknown``.
+            #
+            # The incoming stream's SDP arrives in the transport_file
+            # (IS-05 PATCH). Cache it — keyed by the receiver,
+            # the same way a sender's generated SDP is — so the IS-11
+            # stream-compatibility check has something to verify, then
+            # ALWAYS (re)evaluate. This moves the receiver status off the
+            # permanent "unknown":
+            #   * valid SDP, within caps   → compliant_stream
+            #   * valid SDP, outside caps  → non_compliant_stream
+            #   * no SDP / unparseable SDP → unknown (evaluation can't run)
+            # On deactivation the cache is dropped, so it returns to unknown.
+            # A Receiver derives no registry state from the SDP, so this
+            # cache is its only home. The store is best-effort: a malformed
+            # incoming SDP must not roll back an otherwise-valid activation —
+            # it just leaves nothing cached, so the status evaluates to
+            # unknown rather than a stale value.
+            try:
+                if master_enable:
+                    sdp_text = _receiver_transport_file_sdp(activation)
+                    node.sdp.remove(static_id)
+                    if sdp_text:
+                        node._store_parsed_sdp(static_id, sdp_text)
+                else:
+                    node.sdp.remove(static_id)
+            except Exception:
+                node.sdp.remove(static_id)
+            try:
+                receiver = node.receivers.get(static_id)
+                if receiver is not None:
+                    node.set_receiver_compatibility_state(receiver)
+            except Exception:
+                pass
 
         # Step 4: Update IS-04 subscription (updateReceiverSubscription/updateSenderSubscription)
         # IS-04: the subscription peer id MUST be null unless active, so it is

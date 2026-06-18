@@ -959,6 +959,57 @@ class TestIS11ReceiverSdpCompatibility:
         assert status in ("compliant_stream", "non_compliant_stream", "unknown"), \
             f"Expected a valid status, got {status}"
 
+    def test_activation_caches_receiver_sdp_and_leaves_unknown(
+        self, monkeypatch: "pytest.MonkeyPatch",
+    ) -> None:
+        """Activation must cache the receiver's incoming transport_file SDP so
+        IS-11 leaves ``unknown`` → compliant/non_compliant once the PATCH is
+        accepted, and drop it (→ ``unknown``) on deactivation.
+
+        Regression: the SDP-store in ``do_activation`` was sender-only, so a
+        receiver's SDP was never cached → ``get_sdp_to_caps`` found nothing →
+        the status was permanently ``unknown`` even while active with an SDP.
+        Prior tests passed only because they injected the SDP by hand
+        (``_inject_sdp``), bypassing this activation wiring.
+        """
+        if not self.has_node:
+            pytest.skip("Config1 build failed")
+        import nmos.node.activation_engine as ae
+        from nmos.node.store import to_static_id
+        from nmos.types.generated.ntransport_file import NTransportFileValue
+
+        # No real streaming in a unit test.
+        monkeypatch.setattr(ae, "_manage_engine_lifecycle", lambda *a, **k: None)
+
+        result = self._get_first_receiver()
+        if result is None:
+            pytest.skip("No receivers")
+        recv_id, recv = result
+        static_id = to_static_id(recv_id)
+        activation = self.node.receiver_activation.get(static_id)
+        assert activation is not None
+
+        tfv = NTransportFileValue()
+        tfv.set_to_default()
+        tfv.Data.value = self._make_raw_video_sdp(1920, 1080, 60, 1, 10, "YCbCr-4:2:2")
+        activation.active_state.TransportFile.set_value(tfv)
+
+        # Activate: SDP cached, status evaluated (NOT the old permanent unknown).
+        ae.do_activation(self.node, recv_id, activation,
+                         master_enable=True, is_sender=False, has_sdp=False)
+        assert self.node.sdp.get(static_id) is not None, \
+            "receiver's transport_file SDP was not cached on activation"
+        assert self.node.set_receiver_compatibility_state(recv) in (
+            "compliant_stream", "non_compliant_stream",
+        ), "status is still 'unknown' after activating with an SDP"
+
+        # Deactivate: SDP dropped, status back to unknown (no stream).
+        ae.do_activation(self.node, recv_id, activation,
+                         master_enable=False, is_sender=False, has_sdp=False)
+        assert self.node.sdp.get(static_id) is None, \
+            "receiver SDP was not cleared on deactivation"
+        assert self.node.set_receiver_compatibility_state(recv) == "unknown"
+
 
 # ===========================================================================
 # Step 4D: Format transition tests
