@@ -1442,7 +1442,7 @@ class MatroxSdp:
     def process_setup(self, value: Optional[bytes]) -> Optional[str]:
         """a=setup: RFC 4145 connection role. The writer emits "passive" for
         TCP-based transports (e.g. USB, RTSP); accept the standard roles. There
-        is no model field — the node is always the passive (listening) side —
+        is no model field - the node is always the passive (listening) side -
         so this validates the role and otherwise ignores it."""
         role = value.decode('utf-8') if value else ""
         if role not in ("active", "passive", "actpass", "holdconn"):
