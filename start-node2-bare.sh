@@ -15,5 +15,5 @@ exec python3 nmos_node.py \
   --rdsRegistrationPort 8444 \
   --rdsQueryPort 8443 \
   --rdsDisableTLS \
-  --nodeConfig config11
+  --nodeConfig config10
   

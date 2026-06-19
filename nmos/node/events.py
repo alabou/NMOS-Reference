@@ -338,7 +338,9 @@ def emit_transport_error(
             domain=AlertDomain.LINK, scope=scope,
             event=EventId.LINK_DOWN, state=EventState.INACTIVE,
             count=1, id=resource_id, name=interface_name,
-            info="link down",
+            # Carry the specific cause (e.g. "connect error: …") so the link
+            # message names the real fault, not a generic "link down".
+            info=info or "link down",
         ))
 
 

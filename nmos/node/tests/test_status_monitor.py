@@ -319,8 +319,9 @@ class TestResourceMonitor:
 
         assert mon.overall_message == "link down on eth0"
 
-    def test_overall_message_cleared_on_healthy(self) -> None:
-        """Clear message when transitioning from unhealthy to healthy."""
+    def test_overall_message_breadcrumb_on_healthy(self) -> None:
+        """BCP-008-01: on recovery to Healthy the prior fault is RETAINED as a
+        'Previously: ' breadcrumb (not blanked)."""
         mon = ResourceMonitor("test-sender", is_sender=True)
 
         # Activate + make unhealthy
@@ -332,11 +333,52 @@ class TestResourceMonitor:
         mon.tick()
         assert mon.overall_message == "link down"
 
-        # Recover
+        # Recover → message retained as a breadcrumb, not cleared
         mon.process_event(self._make_event(AlertDomain.LINK, EventId.LINK_OK))
         mon.link.internal_time = time.monotonic() - 10.0
         mon.tick()
-        assert mon.overall_message == ""  # Cleared on recovery
+        assert mon.overall_message == "Previously: link down"
+
+    def test_fresh_fault_replaces_previously_breadcrumb(self) -> None:
+        """A new fault overwrites a 'Previously: ' breadcrumb so the overall
+        message always reflects the CURRENT problem (the breadcrumb means
+        no active fault)."""
+        mon = ResourceMonitor("test-sender", is_sender=True)
+        mon.process_event(self._make_event(AlertDomain.VENDOR_TRANSPORT, EventId.VENDOR_TRANSPORT_ACTIVATE))
+        # Simulate a post-recovery breadcrumb already in place.
+        mon.overall_message = "Previously: link down"
+
+        # A fresh fault must REPLACE the breadcrumb, not be suppressed by it.
+        mon.process_event(EngineEvent(AlertDomain.LINK, AlertScope.SENDER, EventId.LINK_DOWN,
+                                      EventState.ERROR, 1, "test-sender", "*", "cable unplugged"))
+        mon.activation_time = time.monotonic() - 10.0
+        mon.tick()
+        assert mon.overall_message == "cable unplugged"
+
+    def test_status_message_is_length_bounded(self) -> None:
+        """Status messages are clipped so they stay readable in UI/model."""
+        from nmos.node.status_monitor import _clip_status_message, MAX_STATUS_MESSAGE_LEN
+        assert _clip_status_message("short cause") == "short cause"
+        long_msg = "x" * (MAX_STATUS_MESSAGE_LEN + 50)
+        clipped = _clip_status_message(long_msg)
+        assert len(clipped) == MAX_STATUS_MESSAGE_LEN
+        assert clipped.endswith("...")
+
+    def test_emit_transport_error_link_event_carries_cause(self) -> None:
+        """emit_transport_error(link_down=True) propagates the specific cause to
+        the LINK event, so the message names the real fault (e.g. a USB connect
+        error), not a generic 'link down'."""
+        import asyncio
+        from nmos.node.events import emit_transport_error
+        q: asyncio.Queue = asyncio.Queue()
+        emit_transport_error(q, "test-receiver", "lo", is_sender=False,
+                             info="connect error: refused", link_down=True)
+        events = []
+        while not q.empty():
+            events.append(q.get_nowait())
+        link_events = [e for e in events if e.domain == AlertDomain.LINK]
+        assert link_events, "expected a LINK event"
+        assert link_events[0].info == "connect error: refused"
 
     def test_shared_activation_time_delays_link(self) -> None:
         """BCP-008: After activation, ALL domain worse transitions are delayed

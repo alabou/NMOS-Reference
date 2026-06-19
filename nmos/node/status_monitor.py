@@ -51,6 +51,28 @@ NC_NOT_USED = 0
 # Reporting delay in seconds (BCP-008: fixed at 3 seconds)
 STATUS_REPORTING_DELAY = 3.0
 
+# BCP-008-01 (docs/Overview.md): on recovery to Healthy from a
+# (Partially)Unhealthy state, implementations are RECOMMENDED to RETAIN the
+# prior status message by prepending "Previously: " rather than clearing it,
+# so an operator can still see what the fault WAS. A fresh fault supersedes
+# that breadcrumb. Messages are length-bounded so they stay readable in the
+# controller UI and the NcStatusMonitor model.
+_PREVIOUSLY_PREFIX = "Previously: "
+MAX_STATUS_MESSAGE_LEN = 200
+
+
+def _clip_status_message(msg: str) -> str:
+    """Bound a status message to MAX_STATUS_MESSAGE_LEN (head + ellipsis)."""
+    if len(msg) <= MAX_STATUS_MESSAGE_LEN:
+        return msg
+    return msg[: MAX_STATUS_MESSAGE_LEN - 3].rstrip() + "..."
+
+
+def _is_status_breadcrumb(msg: str) -> bool:
+    """True when ``msg`` is a 'Previously: ' recovery breadcrumb — i.e. there
+    is no active fault, so a new fault may overwrite it."""
+    return msg.startswith(_PREVIOUSLY_PREFIX)
+
 
 # ---------------------------------------------------------------------------
 # Event → Status Converters (get*NewState functions)
@@ -260,9 +282,16 @@ class ResourceMonitor:
         domain = event.domain
 
         def _on_worse(event: EngineEvent) -> None:
-            """On worse transition: set overall_message to event.info if empty."""
-            if not self.overall_message and event.info:
-                self.overall_message = event.info
+            """On a worse transition, record the fault cause in overall_message.
+
+            A fresh fault overwrites an empty message OR a 'Previously: '
+            recovery breadcrumb (the breadcrumb means no active fault); an
+            existing active-fault message is kept (first-fault-wins)."""
+            if event.info and (
+                not self.overall_message
+                or _is_status_breadcrumb(self.overall_message)
+            ):
+                self.overall_message = _clip_status_message(event.info)
 
         def _route_to_domain(
             domain_state: DomainState, new_state: int, evt: EngineEvent,
@@ -374,8 +403,12 @@ class ResourceMonitor:
             self.activation_time = domain_state.activation_time
             if u:
                 changed = True
-            if w and not self.overall_message and domain_state.last_event_info:
-                self.overall_message = domain_state.last_event_info
+            if w and domain_state.last_event_info and (
+                not self.overall_message
+                or _is_status_breadcrumb(self.overall_message)
+            ):
+                self.overall_message = _clip_status_message(
+                    domain_state.last_event_info)
 
         if changed:
             changed |= self._recompute_overall()
@@ -391,8 +424,15 @@ class ResourceMonitor:
         if new_overall != self.overall_status:
             prev = self.overall_status
             self.overall_status = new_overall
-            # Clear message when transitioning to healthy
-            if prev > NC_HEALTHY and new_overall <= NC_HEALTHY:
+            if prev > NC_HEALTHY and new_overall == NC_HEALTHY:
+                # BCP-008-01: retain the prior fault as a "Previously: "
+                # breadcrumb on recovery to Healthy (don't blank it).
+                if self.overall_message and not _is_status_breadcrumb(
+                        self.overall_message):
+                    self.overall_message = _clip_status_message(
+                        _PREVIOUSLY_PREFIX + self.overall_message)
+            elif prev > NC_HEALTHY and new_overall == NC_INACTIVE:
+                # Went inactive (deactivated) — no active fault to describe.
                 self.overall_message = ""
             return True
         return False
