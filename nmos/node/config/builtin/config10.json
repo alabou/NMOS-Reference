@@ -791,6 +791,78 @@
           "psk": "000102030405060708090a0b0c0d0e0f"
         }
       ]
+    },
+    {
+      "label": "Net Stream USB 0",
+      "format": "urn:x-nmos:format:data",
+      "transport": "urn:x-nmos:transport:usb",
+      "natural_group_index": 2,
+      "ipmx": true,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native USB",
+          "urn:x-nmos:cap:meta:enabled": true,
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "application/usb"
+            ]
+          },
+          "urn:x-nmos:cap:transport:usb_class": {
+            "enum": [
+              3
+            ]
+          }
+        }
+      ],
+      "privacy_keys": [
+        {
+          "key_id": "0001020304050607",
+          "psk": "000102030405060708090a0b0c0d0e0f"
+        }
+      ]
+    },
+    {
+      "label": "Net Stream TB Audio 0",
+      "format": "urn:x-nmos:format:audio",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "natural_group_index": 3,
+      "ipmx": true,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native TB Audio",
+          "urn:x-nmos:cap:meta:enabled": true,
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/L24"
+            ]
+          },
+          "urn:x-nmos:cap:format:sample_rate": {
+            "enum": [
+              {
+                "numerator": 48000
+              }
+            ]
+          },
+          "urn:x-nmos:cap:format:channel_count": {
+            "enum": [
+              1
+            ]
+          },
+          "urn:x-nmos:cap:format:sample_depth": {
+            "enum": [
+              24
+            ]
+          }
+        }
+      ],
+      "privacy_keys": [
+        {
+          "key_id": "0001020304050607",
+          "psk": "000102030405060708090a0b0c0d0e0f"
+        }
+      ]
     }
   ],
   "receivers": [
@@ -1581,6 +1653,78 @@
         {
           "key_id": "0000000000000000",
           "psk": "000100030005000700090f0f0f0f0f0f"
+        }
+      ]
+    },
+    {
+      "label": "Net Stream USB 0",
+      "format": "urn:x-nmos:format:data",
+      "transport": "urn:x-nmos:transport:usb",
+      "natural_group_index": 2,
+      "ipmx": true,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native USB",
+          "urn:x-nmos:cap:meta:enabled": true,
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "application/usb"
+            ]
+          },
+          "urn:x-nmos:cap:transport:usb_class": {
+            "enum": [
+              3
+            ]
+          }
+        }
+      ],
+      "privacy_keys": [
+        {
+          "key_id": "0001020304050607",
+          "psk": "000102030405060708090a0b0c0d0e0f"
+        }
+      ]
+    },
+    {
+      "label": "Net Stream TB Audio 0",
+      "format": "urn:x-nmos:format:audio",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "natural_group_index": 3,
+      "ipmx": true,
+      "constraint_sets": [
+        {
+          "urn:x-nmos:cap:meta:label": "Native TB Audio",
+          "urn:x-nmos:cap:meta:enabled": true,
+          "urn:x-nmos:cap:meta:preference": 100,
+          "urn:x-nmos:cap:format:media_type": {
+            "enum": [
+              "audio/L24"
+            ]
+          },
+          "urn:x-nmos:cap:format:sample_rate": {
+            "enum": [
+              {
+                "numerator": 48000
+              }
+            ]
+          },
+          "urn:x-nmos:cap:format:channel_count": {
+            "enum": [
+              1
+            ]
+          },
+          "urn:x-nmos:cap:format:sample_depth": {
+            "enum": [
+              24
+            ]
+          }
+        }
+      ],
+      "privacy_keys": [
+        {
+          "key_id": "0001020304050607",
+          "psk": "000102030405060708090a0b0c0d0e0f"
         }
       ]
     }

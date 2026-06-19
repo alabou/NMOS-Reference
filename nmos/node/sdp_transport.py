@@ -114,16 +114,25 @@ def process_receiver_sdp_transport_file(
     activation: Activation,
     sdp_text: str,
     leg_index: int = 0,
+    transport_str: str = "",
 ) -> dict[str, Any]:
     """Parse an SDP transport file and extract transport parameters.
 
-    Uses MatroxSdp.decode() to parse, then extracts:
-    - SourceIp from source filter
-    - MulticastIp from connection address (if multicast)
-    - DestinationPort from media port
-    - Privacy params from privacy descriptor
+    Uses MatroxSdp.decode() to parse, then extracts transport params in a
+    transport-aware way:
 
-    Returns a dict of field_name → value to be patched into staged params.
+    - Connection-oriented transports (USB / RTSP / RTP-TCP / NDI): the
+      receiver *connects* to the sender's endpoint, which the SDP carries in
+      its connection (``c=``) and media (``m=``) lines → ``SourceIp`` /
+      ``SourcePort``.
+    - Multicast RTP / UDP: ``SourceIp`` from the source filter, ``MulticastIp``
+      from the (multicast) connection address, ``DestinationPort`` from the
+      media port.
+
+    Privacy params come from the privacy descriptor in both cases.
+
+    Returns a dict of field_name → value; the caller applies only the fields
+    the PATCH left unset (fill-if-unset).
     """
     try:
         from sdp.MatroxSdp import MatroxSdp
@@ -142,27 +151,41 @@ def process_receiver_sdp_transport_file(
     if media is None:
         return params
 
-    # Source IP from source filter (sdpMediaDescriptor.SourceFilterSrcAddress)
-    if media.source_filter_src_address:
-        params["SourceIp"] = media.source_filter_src_address
+    from nmos.node.streaming import _TCP_TRANSPORTS
 
-    # Connection address → multicast IP (sdpMediaDescriptor.ConnectionAddress)
-    if media.connection_address:
-        addr = media.connection_address
-        try:
-            first_octet = int(addr.split(".")[0])
-            if 224 <= first_octet <= 239:
-                params["MulticastIp"] = addr
-        except (ValueError, IndexError):
-            pass
+    if transport_str in _TCP_TRANSPORTS:
+        # Connection-oriented (USB / RTSP / RTP-TCP / NDI): the receiver
+        # connects to the sender's endpoint carried by the SDP's connection
+        # (c=) and media (m=) lines → SourceIp / SourcePort. There is no
+        # source-filter, multicast group, or destination port for a unicast
+        # TCP connect.
+        if media.connection_address:
+            params["SourceIp"] = media.connection_address
+        if media.port:
+            params["SourcePort"] = media.port
+    else:
+        # Multicast RTP / UDP.
+        # Source IP from source filter (sdpMediaDescriptor.SourceFilterSrcAddress)
+        if media.source_filter_src_address:
+            params["SourceIp"] = media.source_filter_src_address
 
-    # Destination port from media (sdpMediaDescriptor.Port)
-    if media.port:
-        params["DestinationPort"] = media.port
+        # Connection address → multicast IP (sdpMediaDescriptor.ConnectionAddress)
+        if media.connection_address:
+            addr = media.connection_address
+            try:
+                first_octet = int(addr.split(".")[0])
+                if 224 <= first_octet <= 239:
+                    params["MulticastIp"] = addr
+            except (ValueError, IndexError):
+                pass
 
-    # RTCP port (sdpMediaDescriptor.RtcpPort)
-    if media.rtcp_port:
-        params["RtcpDestinationPort"] = media.rtcp_port
+        # Destination port from media (sdpMediaDescriptor.Port)
+        if media.port:
+            params["DestinationPort"] = media.port
+
+        # RTCP port (sdpMediaDescriptor.RtcpPort)
+        if media.rtcp_port:
+            params["RtcpDestinationPort"] = media.rtcp_port
 
     # Privacy parameters from SDP (sdpMediaDescriptor.Privacy.*)
     privacy_desc = media.privacy_desc

@@ -947,6 +947,8 @@ class MatroxSdp:
             return self.process_frame_rate(value)
         elif attr_str == "extmap":
             return self.process_extmap(value)
+        elif attr_str == "setup":
+            return self.process_setup(value)
         else:
             print(f"Warning: attribute '{attr_str}' unknown and ignored")
         return None
@@ -1435,6 +1437,16 @@ class MatroxSdp:
         if not self.in_media_section:
             return "unexpected mid attribute"
         self.current_media.media_name = value.decode('utf-8')
+        return None
+
+    def process_setup(self, value: Optional[bytes]) -> Optional[str]:
+        """a=setup: RFC 4145 connection role. The writer emits "passive" for
+        TCP-based transports (e.g. USB, RTSP); accept the standard roles. There
+        is no model field — the node is always the passive (listening) side —
+        so this validates the role and otherwise ignores it."""
+        role = value.decode('utf-8') if value else ""
+        if role not in ("active", "passive", "actpass", "holdconn"):
+            return f"invalid setup attribute '{role}'"
         return None
 
     def process_p_time(self, value: bytes) -> Optional[str]:

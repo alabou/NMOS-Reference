@@ -672,8 +672,19 @@ async def handle_patch_receiver_staged(request: web.Request) -> web.Response:
             transport_file_data = tf_value.Data.value
     if transport_file_data is not None:
         from nmos.node.sdp_transport import process_receiver_sdp_transport_file
+        # Receiver transport drives the transport-aware SDP→params mapping —
+        # connection-oriented receivers (USB/RTSP/RTP-TCP/NDI) take the
+        # sender's endpoint from the SDP into SourceIp/SourcePort.
+        receiver_transport = ""
+        _recv = node.receivers.get(receiver_id)
+        if _recv is not None:
+            _inner = _recv.get() if hasattr(_recv, "get") else _recv
+            _rv = _inner.value if hasattr(_inner, "value") else _inner
+            _core = getattr(_rv, "ReceiverCore", _rv)
+            if _core.Transport.defined:
+                receiver_transport = str(_core.Transport.value)
         sdp_params = process_receiver_sdp_transport_file(
-            activation, transport_file_data,
+            activation, transport_file_data, transport_str=receiver_transport,
         )
         # Apply SDP-extracted params to PATCH transport params.
         # If PATCH has no TransportParams, create empty ones per leg count.

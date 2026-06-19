@@ -55,6 +55,52 @@ class TestTcpLoopback:
             receiver_coro.close()
 
     @pytest.mark.asyncio
+    async def test_receiver_connects_via_source_ip_port(self) -> None:
+        """A connection-oriented (USB/RTSP/…) receiver must connect to
+        SourceIp:SourcePort — the sender's endpoint mapped from the SDP — NOT
+        DestinationIp/DestinationPort. Guards the regression where the receiver
+        coro read Destination* and connected to 0.0.0.0:0 → connect error →
+        link down. Here Destination* point nowhere; the connect only succeeds
+        if Source* is used."""
+        port = 19850
+        q: asyncio.Queue[EngineEvent] = asyncio.Queue(maxsize=200)
+        stop_s = asyncio.Event()
+        stop_r = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        class _Params:
+            SourceIp = _Field("127.0.0.1")
+            SourcePort = _Field(port)
+            DestinationIp = _Field("127.0.0.1")
+            DestinationPort = _Field(0)   # deliberately wrong — must be ignored
+
+        recv_coro = _build_streaming_coro(
+            loop, "urn:x-nmos:transport:usb", _Params(),
+            str(uuid.uuid4()), "lo", False, q, None, None, stop_r,
+        )
+        assert recv_coro is not None
+
+        sender_task = asyncio.create_task(tcp_sender(
+            listen_ip="127.0.0.1", listen_port=port,
+            sender_id=str(uuid.uuid4()), interface_name="lo",
+            event_queue=q, stop_event=stop_s,
+        ))
+        await asyncio.sleep(0.3)
+        recv_task = asyncio.create_task(recv_coro)
+        await asyncio.sleep(2.0)
+        stop_s.set()
+        stop_r.set()
+        await asyncio.gather(sender_task, recv_task, return_exceptions=True)
+
+        events: list[EngineEvent] = []
+        while not q.empty():
+            events.append(q.get_nowait())
+        connect_errors = [e for e in events if "connect error" in (e.info or "")]
+        activates = [e for e in events if e.event == EventId.VENDOR_TRANSPORT_ACTIVATE]
+        assert not connect_errors, [e.info for e in connect_errors]
+        assert len(activates) >= 2, "both sender and receiver must activate (link up)"
+
+    @pytest.mark.asyncio
     async def test_tcp_loopback(self) -> None:
         """Sender listens, receiver connects, packets flow over TCP."""
         event_queue: asyncio.Queue[EngineEvent] = asyncio.Queue(maxsize=100)

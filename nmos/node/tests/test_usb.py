@@ -206,6 +206,33 @@ class TestUsbTransports:
         desc = get_transport_descriptor(enums.TransportUsb)
         assert desc is not None
 
+    def test_sdp_parser_accepts_setup_attribute(self) -> None:
+        # The writer emits a=setup:passive for TCP transports (USB/RTSP); the
+        # parser must recognise the RFC 4145 roles, not warn "unknown".
+        from sdp.MatroxSdp import MatroxSdp
+        m = MatroxSdp()
+        for role in (b"active", b"passive", b"actpass", b"holdconn"):
+            assert m.process_setup(role) is None, f"role {role!r} rejected"
+        assert m.process_setup(b"bogus") is not None
+        assert m.process_setup(b"") is not None
+
+    def test_usb_sdp_maps_connect_endpoint_to_source(self) -> None:
+        """USB receiver SDP→params: the sender's endpoint (SDP c=/m=) maps to
+        SourceIp/SourcePort (what a TCP receiver connects to), NOT
+        MulticastIp/DestinationPort (the multicast-RTP mapping)."""
+        from nmos.node.sdp_transport import process_receiver_sdp_transport_file
+        sdp = "\r\n".join([
+            "v=0", "o=- 1 1 IN IP4 127.0.0.1", "s=Net Stream USB 0", "t=0 0",
+            "m=application 27503 TCP usb", "c=IN IP4 127.0.0.1",
+            "a=setup:passive", "",
+        ])
+        for tr in ("urn:x-nmos:transport:usb", "urn:x-matrox:transport:usb"):
+            params = process_receiver_sdp_transport_file(None, sdp, transport_str=tr)
+            assert params.get("SourceIp") == "127.0.0.1", params
+            assert params.get("SourcePort") == 27503, params
+            assert "MulticastIp" not in params
+            assert "DestinationPort" not in params
+
 
 # ===========================================================================
 # Class 2 — TestUsbSenderIs04: IS-04 Sender/Flow/Source attributes
@@ -527,6 +554,20 @@ class TestUsbSdpGeneration:
     def test_usb_sdp_has_setup_passive(self) -> None:
         # SD4
         assert "a=setup:passive" in self.sdp
+
+    def test_usb_sdp_round_trips_through_parser(self) -> None:
+        # The generated USB SDP carries a=setup:passive (TCP); decoding it back
+        # MUST succeed and MUST NOT emit an "unknown and ignored" warning — the
+        # round-trip add_sender() performs when caching the parsed SDP.
+        import io
+        import contextlib
+        from sdp.MatroxSdp import MatroxSdp
+        buf = io.StringIO()
+        sdp = MatroxSdp()
+        with contextlib.redirect_stdout(buf):
+            err = sdp.decode(self.sdp)
+        assert err is None, f"USB SDP failed to parse: {err}"
+        assert "unknown and ignored" not in buf.getvalue(), buf.getvalue()
 
     def test_usb_sdp_c_line_has_sender_ip(self) -> None:
         # SD3 — c=IN IP4 <sender-tcp-server>

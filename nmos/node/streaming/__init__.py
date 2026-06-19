@@ -289,8 +289,11 @@ def _build_tcp_coro(
             stop_event=stop_event,
         )
     else:
-        dest_ip = str(_get_field(params, "DestinationIp", "0.0.0.0"))
-        dest_port = int(_get_field(params, "DestinationPort", 0) or 0)
+        # Connection-oriented receiver connects to the sender's endpoint,
+        # carried in SourceIp/SourcePort (mapped from the SDP c=/m= lines by
+        # process_receiver_sdp_transport_file), not DestinationIp/Port.
+        dest_ip = str(_get_field(params, "SourceIp", "0.0.0.0"))
+        dest_port = int(_get_field(params, "SourcePort", 0) or 0)
 
         return tcp_receiver(
             dest_ip=dest_ip, dest_port=dest_port,
