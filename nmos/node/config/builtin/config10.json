@@ -334,6 +334,9 @@
             "enum": [
               {
                 "numerator": 48000
+              },
+              {
+                "numerator": 44100
               }
             ]
           },
