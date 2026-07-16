@@ -192,6 +192,7 @@ The Matrox extensions are formalised in the [NMOS-MatroxOnly](https://github.com
 | **NMOS With Status Reporting** | Sender / Receiver monitor resources delivered over IS-04 async WebSocket subscriptions — Matrox-extended capability set covering the BCP-008-01 / BCP-008-02 surface; no IS-12 / MS-05-02 dependency |
 | **NMOS With IS-11** | Sender / Receiver capability + constraint flow — Matrox-extended capability set covering the IS-11 surface, with hierarchical-mux sub-flow / sub-stream constraints keyed by `layer`, `format`, and `layer_compatibility_groups`. **Excludes** IS-11 `Input` / `Output` resource support. |
 | **NMOS With Reservation API** | Exclusive-acquire / renew / release control surface for protected resources |
+| **NMOS With Control Plane Security** | Control-plane security across the IS-04 Node API and the IS-05 / IS-08 / IS-11 / IS-12 / IS-14 control APIs — Matrox-extended security (IS-10 / BCP-003-01 / BCP-003-02) with TLS 1.2/1.3 (PFS, RSA/ECDSA, CRL), mTLS, and OAuth 2.0 Bearer/JWT validation combinable as mTLS-only / OAuth2-only / mTLS+OAuth2, enforcing the three Node Access Policies (Unrestricted Read-Write, Unrestricted Read-Only, Restricted Read-Write) with fail-closed posture. This specification supersedes NMOS With OAuth 2.0. |
 | **Capability layer extensions** | Constraint sets keyed by `layer`, `format`, and `layer_compatibility_groups` — the basis for hierarchical mux negotiation |
 
 ---
