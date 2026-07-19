@@ -88,7 +88,7 @@ Notes on the dependencies:
 
 ### Dev mode — no TLS
 
-The Node also supports a **no-TLS dev mode** that sits outside Configs A/B/C — plain HTTP on every surface, no OAuth, no client-cert verification. It is **not certifiable under any security spec** (under TR-10-SEC §9.1-1 a device shall not claim compliance while so configured), but is useful for quick connectivity experiments without PKI setup.
+The Node also supports a **no-TLS dev mode** that sits outside Configs A/B/C — plain HTTP on every surface, no OAuth, no client-cert verification. It is **not certifiable under any security spec** (under NMOS With Control Plane Security a device shall not claim compliance while so configured), but is useful for quick connectivity experiments without PKI setup.
 
 Run `nmos_node.py` directly with the disable flags:
 
@@ -179,7 +179,7 @@ The Matrox extensions are formalised in the [NMOS-MatroxOnly](https://github.com
 | Extension | Role |
 |---|---|
 | **NMOS With MPEG2-TS** | MPEG2-TS (H.222.0) mux containing video + audio + data sub-streams; per-sub-stream IS-11 constraint negotiation |
-| **Matrox With NDI** | NDI mux sender / receiver — Matrox-extended capability set covering the BCP-007-01 surface |
+| **NMOS With NDI** | NDI mux sender / receiver — Matrox-extended capability set covering the BCP-007-01 surface |
 | **NMOS With RTSP** | RTSP-based receiver with RTP sub-flows; capability-driven RTSP `OPTIONS` / `DESCRIBE` / `SETUP` |
 | **NMOS With SRT** | SRT unicast transport (caller / listener), with PEP encryption hand-off |
 | **NMOS With USB** | USB device transport (USB-over-IP) — Matrox-extended capability set covering the BCP-007-02 surface, with the TR-10-14 protocol adaptation wired through PEP |
