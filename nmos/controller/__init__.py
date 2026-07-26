@@ -8,7 +8,8 @@ receiver list → compatible senders → intersected caps → configure +
 activate) as a second aiohttp application served on ``--nodeControlPort``
 under ``/controller/``.
 
-Access control: HTTP Basic auth against a single admin password supplied
+Access control: a password-only login form at ``/controller/login`` that
+issues a session cookie, checked against a single admin password supplied
 on the Node command line (``--controllerAdminPassword``). The controller
 is the orchestrator of OAuth2 / Reservation on the Node side, so gating
 it with those same mechanisms would be circular; TLS transport still

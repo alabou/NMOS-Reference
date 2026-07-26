@@ -16,7 +16,7 @@ Usage:
     python3 demo_controller.py [--port 5051]
 
 Then open:
-    http://127.0.0.1:5051/x-manufacturer/controller/v1.0/
+    http://127.0.0.1:5051/controller/
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from aiohttp import web
 from nmos.config import ALLOW_NON_TLS_FOR_TESTING
 import nmos.config as nmos_config
 from nmos.controller import create_controller_app
+from nmos.controller.app import URL_PREFIX
 from nmos.controller.cache import ResourceCache
 from nmos.controller.grouping import GROUP_HINT_TAG
 from nmos.node import Node
@@ -180,7 +181,7 @@ async def main(port: int) -> None:
     site = web.TCPSite(runner, "127.0.0.1", port)
     await site.start()
 
-    url = f"http://127.0.0.1:{port}/x-manufacturer/controller/v1.0/"
+    url = f"http://127.0.0.1:{port}{URL_PREFIX}/"
     print()
     print("=" * 72)
     print(f"  NMOS Controller demo running at:")

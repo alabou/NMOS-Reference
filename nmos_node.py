@@ -1068,7 +1068,15 @@ async def main(args: argparse.Namespace) -> None:
     # Signal handling: SIGINT/SIGTERM → cancel dispatch group
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, dg.cancel)
+        try:
+            loop.add_signal_handler(sig, dg.cancel)
+        except NotImplementedError:
+            # Windows: asyncio exposes no signal-handler API at all
+            # (``add_signal_handler`` raises unconditionally). Fall back
+            # to the C-level handler and hop back onto the loop thread,
+            # so Ctrl-C still cancels the dispatch group instead of
+            # tearing the process down with a traceback.
+            signal.signal(sig, lambda *_: loop.call_soon_threadsafe(dg.cancel))
 
     # Dispatch background tasks
     await dg.dispatch(go_node_server(dg, app, args, control_app=control_app))
@@ -1195,6 +1203,17 @@ def validate_startup_certs(args: argparse.Namespace) -> None:
 
 if __name__ == "__main__":
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+    if sys.platform == "win32":
+        # Windows uses the console API for an interactive terminal, but
+        # falls back to the ANSI code page (cp1252) as soon as stdout is
+        # a pipe or a file. The startup banners contain non-ASCII, so
+        # redirecting output would otherwise die on UnicodeEncodeError.
+        for _stream in (sys.stdout, sys.stderr):
+            try:
+                _stream.reconfigure(encoding="utf-8", errors="replace")
+            except (AttributeError, OSError):
+                pass
 
     args = parse_args()
     setup_logging(args)
