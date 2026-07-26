@@ -138,7 +138,8 @@ def parse_args() -> argparse.Namespace:
                    help="Controller UI port (0=disabled); uses --rdsQueryPort / "
                         "--rdsWebSocketPort for registry data")
     g.add_argument("--controllerAdminPassword", default="",
-                   help="Admin password for the controller UI (HTTP Basic). "
+                   help="Admin password for the controller UI login form "
+                        "(password only, no user name). "
                         "REQUIRED when --nodeControlPort > 0.")
     g.add_argument("--debug-in-depth", dest="debug_in_depth",
                    action="store_true",
@@ -759,7 +760,7 @@ async def go_controller_server(
         print(
             f"NMOS Controller UI running on "
             f"{scheme}://{args.nodeAddr}:{args.nodeControlPort}/controller/"
-            " (HTTP Basic auth — admin:<--controllerAdminPassword>)",
+            " (sign in with --controllerAdminPassword; no user name)",
         )
 
         # Two cache-population modes — registry wins when configured.
