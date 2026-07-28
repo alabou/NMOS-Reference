@@ -259,11 +259,15 @@ class RegistryClient:
         Uses tracker deduplication — only sends resources whose version
         has changed since last POST.
         """
+        # Read the snapshot once. Every resource POSTed below must come from
+        # this one object: there is an await between each POST, so reading the
+        # Node's live attributes instead would let a PATCH land mid-cycle and
+        # produce an update describing two different points in time.
         state = self._node.publish_manager.get_items()
 
         # 1. Node
-        if self._node.node_value is not None:
-            nv = self._node.node_value
+        if state.node is not None:
+            nv = state.node
             rc = nv.ResourceCore
             static_id = rc.StaticId.value if rc.StaticId.defined else rc.Id.value
             version = rc.Version.value
@@ -272,8 +276,8 @@ class RegistryClient:
                 await self._post_resource("node", json_str)
 
         # 2. Device
-        if self._node.device_value is not None:
-            dv = self._node.device_value
+        if state.device is not None:
+            dv = state.device
             rc = dv.ResourceCore
             static_id = rc.StaticId.value if rc.StaticId.defined else rc.Id.value
             version = rc.Version.value

@@ -3,9 +3,17 @@
 
 """Copy-on-write publish system + tracker deduplication.
 
-The publish system creates deep-cloned snapshots of all resource maps.
-External consumers (NMOS registry) get immutable snapshots that are not
-affected by subsequent mutations to the node's internal state.
+The publish system creates deep-cloned snapshots of every resource the
+registry needs. External consumers (NMOS registry) read a snapshot that is
+unaffected by subsequent mutations to the node's internal state.
+
+No lock is involved, and none is needed. publish() builds the entire new
+snapshot first and only then rebinds it, and it does so without awaiting, so
+a consumer either sees the previous snapshot or the new one -- never a
+half-built one. Consumers that need a consistent view must therefore read
+get_items() ONCE and use that object throughout; calling it again mid-cycle,
+or reading live node state alongside it, reintroduces exactly the
+inconsistency the snapshot exists to prevent.
 
 Tracker deduplication prevents duplicate registry updates by comparing
 resource version timestamps.
@@ -18,18 +26,30 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-@dataclass
+@dataclass(frozen=True)
 class PublishState:
-    """Immutable snapshot of published resources.
+    """Snapshot of published resources.
 
-    Created by Node.publish() via deep-clone of all resource maps.
-    External consumers read this without locks — the node can continue
-    mutating its internal maps without affecting published snapshots.
+    Created by Node.publish() via deep-clone of every resource. External
+    consumers read this without locks — the node can continue mutating its
+    internal maps without affecting a snapshot already handed out.
+
+    Frozen so the fields cannot be rebound. That is as far as the language
+    goes: the dicts and the resource objects inside them are ordinary mutable
+    objects, and every holder of this snapshot shares them. Treat the whole
+    structure as read-only — mutating anything reachable from here corrupts
+    the snapshot for every other consumer.
+
+    ``node`` and ``device`` are part of the snapshot for the same reason the
+    maps are: a consumer that reached for the Node's live attributes instead
+    would be mixing two different points in time into one registry update.
     """
     receivers: dict[str, Any] = field(default_factory=dict)
     sources: dict[str, Any] = field(default_factory=dict)
     flows: dict[str, Any] = field(default_factory=dict)
     senders: dict[str, Any] = field(default_factory=dict)
+    node: Any = None            # NNodeValue | None
+    device: Any = None          # NDeviceValue | None
     published: bool = False
 
 
@@ -52,18 +72,27 @@ class PublishManager:
         sources: dict[str, Any],
         flows: dict[str, Any],
         senders: dict[str, Any],
+        node: Any = None,
+        device: Any = None,
     ) -> None:
-        """Create a deep-cloned snapshot of all resource maps.
+        """Create a deep-cloned snapshot of every registrable resource.
 
-        Each resource is cloned via .clone() to ensure the snapshot is
-        fully independent of the node's internal state. New maps are
-        created with cloned values.
+        Each resource is cloned via .clone() so the snapshot is fully
+        independent of the node's internal state. New maps are created with
+        cloned values.
+
+        The whole snapshot is built before it is rebound, and this function
+        never awaits, so a consumer reading get_items() concurrently sees
+        either the previous snapshot or this one, complete — which is what
+        makes a lock unnecessary here.
         """
         self._state = PublishState(
             receivers={k: v.clone() for k, v in receivers.items()},
             sources={k: v.clone() for k, v in sources.items()},
             flows={k: v.clone() for k, v in flows.items()},
             senders={k: v.clone() for k, v in senders.items()},
+            node=node.clone() if node is not None else None,
+            device=device.clone() if device is not None else None,
             published=True,
         )
         # Non-blocking signal to consumers
@@ -72,7 +101,10 @@ class PublishManager:
     def get_items(self) -> PublishState:
         """Return the current published snapshot.
 
-        Safe to call from any coroutine — returns an immutable snapshot.
+        Safe to call from any coroutine. Call it once per cycle and use the
+        returned object throughout: two calls can return two different
+        snapshots, and mixing resources from both produces a registry update
+        that describes no state the node was ever actually in.
         """
         return self._state
 
@@ -80,10 +112,16 @@ class PublishManager:
     def event(self) -> asyncio.Event:
         """Event that is set when new items are published.
 
-        Consumers can await this to be notified of changes:
+        Consumers await this to be notified of changes. Clear it BEFORE
+        waiting, never after reading:
+
+            node.publish_manager.event.clear()
             await node.publish_manager.event.wait()
             state = node.publish_manager.get_items()
-            node.publish_manager.event.clear()
+
+        Clearing after the read would discard a publish that landed in
+        between, and that notification is the only thing that would have
+        told the consumer to look again.
         """
         return self._event
 
@@ -110,6 +148,15 @@ class PublishManager:
         return True  # new version
 
     def reset_trackers(self) -> None:
-        """Clear all tracked versions. Used on reconnect to registry."""
+        """Forget every tracked version, so the next cycle re-sends everything.
+
+        Used when the registry connection has to start over. The pending
+        publish notification is dropped along with the trackers: everything
+        will be re-sent regardless, so the wakeup carries no information.
+
+        The event is cleared rather than replaced. Replacing it would leave
+        any consumer already suspended in ``event.wait()`` parked on an object
+        nobody will ever set again.
+        """
         self._trackers.clear()
-        self._event = asyncio.Event()
+        self._event.clear()

@@ -2907,12 +2907,19 @@ class Node:
     # ===================================================================
 
     def publish(self) -> None:
-        """Create deep-cloned snapshot of all resources for registry consumers."""
+        """Create deep-cloned snapshot of all resources for registry consumers.
+
+        node_value and device_value are included so a consumer never has to
+        read them off the live Node: doing that would splice current state
+        into a cycle that is otherwise reporting the snapshot.
+        """
         self.publish_manager.publish(
             receivers=dict(self.receivers),
             sources=dict(self.sources),
             flows=dict(self.flows),
             senders=dict(self.senders),
+            node=self.node_value,
+            device=self.device_value,
         )
 
     def get_publish_event(self) -> asyncio.Event:
