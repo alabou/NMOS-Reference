@@ -158,6 +158,25 @@ async def handle_put_sender_constraints_active(request: web.Request) -> web.Resp
     if auth_error is not None:
         return auth_error
 
+    # Read the body HERE, before anything looks at the Sender.
+    #
+    # Awaiting is the only point at which another request can run, and this is
+    # the handler's only await. Reading the body after the "is the Sender
+    # active?" check below would put a suspension point between that check and
+    # the mutation it guards: an IS-05 activation completing in that window
+    # would leave us applying active constraints to a Sender that is now
+    # active, which is exactly what the 423 exists to prevent. With the read
+    # hoisted above the check, everything from the Sender lookup to publish()
+    # runs as one uninterruptible step.
+    #
+    # Only the raw text is read here. Parsing stays after the 423 check so a
+    # malformed body on an active Sender still reports 423 rather than 400 —
+    # hoisting the parse too would silently reorder those two status codes.
+    try:
+        raw_body = await request.text()
+    except (ValueError, TypeError):
+        return error_response(400, "invalid request body", request=request)
+
     sender = node.senders.get(sender_id)
     if sender is None:
         return error_response(404, f"sender {sender_id} not found", request=request)
@@ -170,7 +189,7 @@ async def handle_put_sender_constraints_active(request: web.Request) -> web.Resp
         return error_response(423, "cannot set active constraints of an active Sender", request=request)
 
     try:
-        body = JsonEngine.parse_any(await request.text())
+        body = JsonEngine.parse_any(raw_body)
     except (ValueError, TypeError):
         return error_response(400, "invalid JSON body", request=request)
 
