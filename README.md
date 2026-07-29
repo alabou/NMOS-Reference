@@ -68,7 +68,7 @@ pip install -e .[dev]
 
 Each launch script binds the Node on a hostname that matches the configured server-certificate's SAN. Resolve that hostname to `127.0.0.1` in `/etc/hosts` for local testing. Positional arguments to the launch script set the AS host/port and registry host/port — see `--help` in `nmos_node.py` for the full flag surface.
 
-The Node ships a built-in NMOS Controller on `--nodeControlPort` (HTTP Basic auth) once you set `--controllerAdminPassword`.
+The Node ships a built-in NMOS Controller under `/controller/` on `--nodeControlPort` once you set `--controllerAdminPassword`. See [Controller sign-in](#controller-sign-in).
 
 ### External dependencies of the launch scripts
 
@@ -88,7 +88,7 @@ Notes on the dependencies:
 
 ### Dev mode — no TLS
 
-The Node also supports a **no-TLS dev mode** that sits outside Configs A/B/C — plain HTTP on every surface, no OAuth, no client-cert verification. It is **not certifiable under any security spec** (under TR-10-SEC §9.1-1 a device shall not claim compliance while so configured), but is useful for quick connectivity experiments without PKI setup.
+The Node also supports a **no-TLS dev mode** that sits outside Configs A/B/C — plain HTTP on every surface, no OAuth, no client-cert verification. It is **not certifiable under any security spec** (under NMOS With Control Plane Security a device shall not claim compliance while so configured), but is useful for quick connectivity experiments without PKI setup.
 
 Run `nmos_node.py` directly with the disable flags:
 
@@ -100,6 +100,26 @@ python3 nmos_node.py \
 ```
 
 The full flag surface is documented by `--help`.
+
+### Controller sign-in
+
+The embedded Controller is gated by a **password-only login form** at `/controller/login`, checked against `--controllerAdminPassword`. There is **no user name**, and this is **not HTTP Basic auth** — an earlier version of the app used Basic, and a cached `Authorization: Basic` header is now ignored on the way in and stripped before any request is proxied to a Node (see `nmos/controller/auth.py` for the rationale: a native browser popup supports neither logout nor error messaging).
+
+Opening any page unauthenticated redirects to the login form. API paths under `/controller/api/` answer `401` with:
+
+```text
+WWW-Authenticate: Session realm="nmos-controller"
+```
+
+A successful login sets an `nmos_controller_session` cookie holding `<issued_at>.<base64url(hmac_sha256(sha256(password), issued_at))>`. Because the signing secret derives from the admin password, changing `--controllerAdminPassword` invalidates every outstanding session.
+
+For a scripted client, post the password and keep the cookie:
+
+```bash
+curl -c cookies.txt -X POST -d "password=admin" \
+  http://127.0.0.1:8080/controller/login          # 302 on success, 401 on a bad password
+curl -b cookies.txt http://127.0.0.1:8080/controller/api/senders
+```
 
 ### Verify the install
 
@@ -179,7 +199,7 @@ The Matrox extensions are formalised in the [NMOS-MatroxOnly](https://github.com
 | Extension | Role |
 |---|---|
 | **NMOS With MPEG2-TS** | MPEG2-TS (H.222.0) mux containing video + audio + data sub-streams; per-sub-stream IS-11 constraint negotiation |
-| **Matrox With NDI** | NDI mux sender / receiver — Matrox-extended capability set covering the BCP-007-01 surface |
+| **NMOS With NDI** | NDI mux sender / receiver — Matrox-extended capability set covering the BCP-007-01 surface |
 | **NMOS With RTSP** | RTSP-based receiver with RTP sub-flows; capability-driven RTSP `OPTIONS` / `DESCRIBE` / `SETUP` |
 | **NMOS With SRT** | SRT unicast transport (caller / listener), with PEP encryption hand-off |
 | **NMOS With USB** | USB device transport (USB-over-IP) — Matrox-extended capability set covering the BCP-007-02 surface, with the TR-10-14 protocol adaptation wired through PEP |
