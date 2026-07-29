@@ -19,6 +19,8 @@ until activation is proven successful. On failure, all state is rolled back.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import re
 import time
 from dataclasses import dataclass
@@ -32,6 +34,9 @@ from nmos.node.types import (
     ActivationState,
     EngineState,
     Leg,
+    PendingActivation,
+    format_tai,
+    tai_to_utc,
 )
 
 
@@ -187,8 +192,15 @@ def update_staged_params(staged: Any, patch: Any) -> None:
         if staged_field is None:
             continue
 
-        # Copy the value
-        if hasattr(patch_field, 'value') and hasattr(staged_field, 'value'):
+        # Copy the value.
+        #
+        # Ask the CLASS whether it has a `value` property, never the instance:
+        # on these types `value` raises when the field is undefined, and
+        # hasattr() only turns AttributeError into False — anything else
+        # propagates. Probing an instance whose field happens to be undefined
+        # would abort the entire patch, which is precisely the case here (a
+        # client sets requested_time on a staged activation that has none yet).
+        if hasattr(type(patch_field), 'value') and hasattr(type(staged_field), 'value'):
             staged_field.value = patch_field.value
 
 
@@ -510,7 +522,10 @@ def _receiver_transport_file_sdp(activation: Activation) -> str | None:
     tfv = getattr(tf, "value", None)
     data = getattr(tfv, "Data", None) if tfv is not None else None
     if data is not None and getattr(data, "defined", False):
-        return data.value
+        # The field can be present but JSON-null, which is not an SDP — keep
+        # that distinct from a string rather than stringifying None.
+        sdp_data = data.value
+        return None if sdp_data is None else str(sdp_data)
     return None
 
 
@@ -552,11 +567,20 @@ def do_activation(
         ) from exc
 
     # Step 1b: Copy activation metadata from staged to active state
-    # (MasterEnable, SenderId/ReceiverId — done in the activation handlers)
+    # (SenderId/ReceiverId, TransportFile — done in the activation handlers)
     staged = activation.staged_state
     active = activation.active_state
     if staged is not None and active is not None:
-        for field_name in ("MasterEnable", "SenderId", "ReceiverId", "TransportFile"):
+        # MasterEnable comes from the caller, NOT from staged. For an immediate
+        # activation the two are identical. For a scheduled one they can differ:
+        # the on/off intent is fixed when the activation is scheduled, so a
+        # master_enable staged afterwards belongs to some future activation, not
+        # this one. Reading it from staged here would report a state on /active
+        # that disagrees with what was actually done to the stream.
+        if hasattr(active, "MasterEnable"):
+            active.MasterEnable.value = master_enable
+
+        for field_name in ("SenderId", "ReceiverId", "TransportFile"):
             src = getattr(staged, field_name, None)
             dst = getattr(active, field_name, None)
             if src is None or dst is None:
@@ -797,13 +821,39 @@ def process_activation(
 
     # Handle cancellation
     if mode_value is None:
-        _cancel_pending(node, activation)
+        _cancel_pending(node, resource_id, activation)
         activation.state = ActivationState.NONE
         activation.mode = ActivationMode.NONE
         return response
 
     # Determine master_enable
     master_enable = _get_master_enable(staged_state)
+
+    # An activation is already scheduled for this resource, and this PATCH is
+    # not trying to replace it — a PATCH carrying its own mode would have been
+    # refused with 423 before reaching here. So it is a PATCH staging
+    # parameters alongside a pending activation, and it must not disturb it.
+    #
+    # This matters because the staged mode is still the scheduled one, so
+    # processing it again would re-measure a relative delay from *this*
+    # request's arrival. IS-05 defines the relative mode as firing when the
+    # clock reaches "time of message receipt + requested_time", where the
+    # message is the one that requested the activation — so re-anchoring to a
+    # later request would move a deadline the client was already promised.
+    #
+    # The pending timer keeps everything it captured when it was armed,
+    # including master_enable: a scheduled activation does what it was asked to
+    # do at the moment it was scheduled. The transport parameters it applies are
+    # read when it fires, so this PATCH still affects the configuration that
+    # goes live — just not when, and not whether.
+    # Neither response flag is set, so this answers 200 with a null
+    # activation_time: IS-05 reserves 202 for a request that *schedules* an
+    # activation, and reports a null activation_time when the request did not
+    # ask for one. The staged activation still shows the pending mode and
+    # requested_time, because /staged genuinely still has one pending.
+    if (mode_value in ("activate_scheduled_relative", "activate_scheduled_absolute")
+            and resource_id in node.dg_pending_activation):
+        return response
 
     # Route by mode
     if mode_value == "activate_immediate":
@@ -813,10 +863,7 @@ def process_activation(
         activation.requested_time = datetime.fromtimestamp(now)
 
         # Compute TAI string once — reused by both PATCH response and GET /active
-        from nmos.json.types import NTime
-        tai_sec = int(now) + NTime.TAI_UTC_OFFSET
-        tai_nsec = int((now % 1) * 1_000_000_000)
-        activation.activation_time_tai = f"{tai_sec}:{tai_nsec}"
+        activation.activation_time_tai = format_tai(now)
 
         do_activation(
             node, resource_id, activation, master_enable,
@@ -830,13 +877,20 @@ def process_activation(
         activation.state = ActivationState.PENDING
         activation.mode = ActivationMode.RELATIVE
 
+        # Kept verbatim: the response echoes what was asked for, and rebuilding
+        # it from the parsed value would shed nanoseconds.
+        activation.requested_time_string = _get_requested_time_string(staged_state) or ""
+
         delay_sec = _get_requested_delay(staged_state)
         target_time = now + delay_sec
 
         if delay_sec <= 0:
-            # Already past — activate immediately
+            # Already past — activate immediately. The mode stays RELATIVE, so
+            # /active still reports which kind of activation produced this state,
+            # timestamped when it actually happened rather than when it was due.
             activation.state = ActivationState.IMMEDIATE
             activation.time = datetime.fromtimestamp(now)
+            activation.activation_time_tai = format_tai(now)
             do_activation(
                 node, resource_id, activation, master_enable,
                 is_sender, has_sdp, auto_resolvers,
@@ -846,7 +900,12 @@ def process_activation(
             activation.time = datetime.fromtimestamp(target_time)
             activation.requested_time = datetime.fromtimestamp(target_time)
             activation.requested_delta_time = timedelta(seconds=delay_sec)
-            # Schedule via DispatchGroup (deferred to streaming module)
+            # The 202 reports when the activation WILL happen, not now.
+            activation.activation_time_tai = format_tai(target_time)
+            _schedule_pending_activation(
+                node, resource_id, activation, master_enable,
+                is_sender, has_sdp, auto_resolvers, delay=delay_sec,
+            )
             response.delayed_activation = True
 
         response.activation_time = now
@@ -855,12 +914,16 @@ def process_activation(
         activation.state = ActivationState.PENDING
         activation.mode = ActivationMode.ABSOLUTE
 
+        activation.requested_time_string = _get_requested_time_string(staged_state) or ""
+
         target_time = _get_requested_absolute_time(staged_state)
         delay = target_time - now
 
         if delay <= 0:
+            # Target already passed — activate now, timestamped now.
             activation.state = ActivationState.IMMEDIATE
             activation.time = datetime.fromtimestamp(now)
+            activation.activation_time_tai = format_tai(now)
             do_activation(
                 node, resource_id, activation, master_enable,
                 is_sender, has_sdp, auto_resolvers,
@@ -869,11 +932,174 @@ def process_activation(
         else:
             activation.time = datetime.fromtimestamp(target_time)
             activation.requested_time = datetime.fromtimestamp(target_time)
+            # For an absolute activation the requested instant IS the activation
+            # instant, so report the client's own string rather than a value
+            # round-tripped through a float and a microsecond-resolution
+            # datetime — that would come back a few hundred nanoseconds adrift.
+            activation.activation_time_tai = (
+                activation.requested_time_string or format_tai(target_time)
+            )
+            _schedule_pending_activation(
+                node, resource_id, activation, master_enable,
+                is_sender, has_sdp, auto_resolvers, delay=delay,
+            )
             response.delayed_activation = True
 
         response.activation_time = now
 
     return response
+
+
+# ---------------------------------------------------------------------------
+# Scheduled activation timers
+# ---------------------------------------------------------------------------
+
+def _schedule_pending_activation(
+    node: Any,
+    resource_id: str,
+    activation: Activation,
+    master_enable: bool,
+    is_sender: bool,
+    has_sdp: bool,
+    auto_resolvers: dict[str, Any] | None,
+    delay: float,
+) -> None:
+    """Arm a background timer that activates this resource in ``delay`` seconds.
+
+    The delay is computed once, here, from the target the client asked for; the
+    timer never recomputes it. Everything the activation will need —
+    ``master_enable``, the resolvers, the activation object itself — is captured
+    now, so the activation that eventually happens is the one the client
+    described in this PATCH.
+
+    Synchronous on purpose. Arming a timer needs no await, and keeping this
+    function (and therefore the whole PATCH handler) free of suspension points
+    is what stops a timer firing halfway through a request. See the invariant
+    next to ``Node.dg_pending_activation``.
+    """
+    # One pending activation per resource: a fresh scheduled PATCH replaces the
+    # timer this resource already had rather than leaving two racing to fire.
+    _cancel_pending_activation(node, resource_id)
+
+    stop = asyncio.Event()
+    task = asyncio.ensure_future(_pending_activation_task(
+        node, resource_id, activation, master_enable,
+        is_sender, has_sdp, auto_resolvers, delay, stop,
+    ))
+    node.dg_pending_activation[resource_id] = PendingActivation(task=task, stop=stop)
+
+
+async def _pending_activation_task(
+    node: Any,
+    resource_id: str,
+    activation: Activation,
+    master_enable: bool,
+    is_sender: bool,
+    has_sdp: bool,
+    auto_resolvers: dict[str, Any] | None,
+    delay: float,
+    stop: asyncio.Event,
+) -> None:
+    """Wait for the activation's deadline, then activate — unless cancelled."""
+    try:
+        try:
+            # Two ways out of the wait: the stop event fires, meaning the client
+            # cancelled with mode=null or replaced this activation with a later
+            # PATCH — or the deadline elapses and the activation is due.
+            await asyncio.wait_for(stop.wait(), timeout=delay)
+            return
+        except asyncio.TimeoutError:
+            pass
+
+        # Nothing below awaits. The activation therefore runs as one
+        # uninterruptible step and cannot interleave with an API handler
+        # mutating this same resource.
+        entry = node.dg_pending_activation.get(resource_id)
+        if entry is None or entry.task is not asyncio.current_task():
+            # Cancelled or superseded after the deadline but before we ran.
+            return
+
+        do_activation(
+            node, resource_id, activation, master_enable,
+            is_sender, has_sdp, auto_resolvers,
+        )
+
+        # The activation has happened, so /staged must stop advertising it as
+        # pending. That is also what releases the 423 lock on further PATCHes.
+        # activation.state and .mode are deliberately left alone: GET /active
+        # reports which scheduled activation produced the current active state
+        # and reads both fields to do it.
+        reset_staged_activation(activation)
+
+        # No HTTP response carries this activation, so publish here or the
+        # registry keeps serving the pre-activation snapshot indefinitely.
+        node.publish()
+
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        # A background task has nobody to return an error to, so an unhandled
+        # exception would vanish. do_activation has already rolled the resource
+        # back; make the failure visible.
+        logging.exception(
+            "scheduled activation failed for %s", resource_id,
+        )
+    finally:
+        entry = node.dg_pending_activation.get(resource_id)
+        if entry is not None and entry.task is asyncio.current_task():
+            del node.dg_pending_activation[resource_id]
+
+
+def _cancel_pending_activation(node: Any, resource_id: str) -> None:
+    """Stop this resource's pending activation timer, if it has one.
+
+    Removing the entry is what actually disarms the activation: even if the
+    timer has already passed its deadline and is queued to run, it re-checks
+    that it is still the registered timer for this resource before doing
+    anything. So there is no need to wait for the task to finish here, and
+    therefore no await — which matters, because callers are inside await-free
+    regions that must stay that way.
+    """
+    entry = node.dg_pending_activation.pop(resource_id, None)
+    if entry is None:
+        return
+    entry.stop.set()
+    entry.task.cancel()
+
+
+def cancel_pending_activations(node: Any) -> None:
+    """Stop every pending activation timer on this node.
+
+    Called when the node shuts down. Without it a scheduled activation outlives
+    the server that accepted it and fires into a half-dismantled Node — most
+    visibly under test, where the event loop outlives any single Node.
+    """
+    for resource_id in list(node.dg_pending_activation):
+        _cancel_pending_activation(node, resource_id)
+
+
+def reset_staged_activation(activation: Activation) -> None:
+    """Clear the staged activation's mode/requested_time/activation_time.
+
+    Once an activation has been carried out, /staged must no longer advertise
+    it as pending: IS-05 reports the completed activation on the PATCH response
+    (and afterwards on /active), while /staged goes back to null/null/null.
+    Clearing the mode is also what releases the 423 that a pending activation
+    holds over subsequent PATCHes.
+    """
+    state = activation.staged_state
+    if state is None or not hasattr(state, "Activation"):
+        return
+    act = state.Activation
+    if not act.defined:
+        return
+    av = act.value
+    if hasattr(av, "Mode"):
+        av.Mode.value = None
+    if hasattr(av, "ActivationTime"):
+        av.ActivationTime.value = None
+    if hasattr(av, "RequestedTime"):
+        av.RequestedTime.value = None
 
 
 # ---------------------------------------------------------------------------
@@ -1002,36 +1228,66 @@ def _sync_privacy_from_active_params(activation: Activation) -> None:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _cancel_pending(node: Any, activation: Activation) -> None:
-    """Cancel a pending scheduled activation."""
-    if hasattr(node, 'dg_pending_activation') and node.dg_pending_activation is not None:
-        node.dg_pending_activation.cancel()
-        node.dg_pending_activation = None
+def _cancel_pending(node: Any, resource_id: str, activation: Activation) -> None:
+    """Cancel this resource's pending scheduled activation (PATCH mode=null).
+
+    IS-05 lets a client withdraw an activation it has scheduled by PATCHing a
+    null mode. That disarms the timer and returns the activation's timing fields
+    to their unset state, so /staged reports nothing pending.
+    """
+    _cancel_pending_activation(node, resource_id)
     activation.state = ActivationState.NONE
     activation.mode = ActivationMode.NONE
     activation.time = None
     activation.requested_time = None
     activation.requested_delta_time = None
+    activation.activation_time_tai = ""
+    activation.requested_time_string = ""
+
+
+def _activation_value(staged_state: Any) -> Any:
+    """The activation object inside a staged/active state, or None.
+
+    The state's ``Activation`` field is a wrapper; Mode, RequestedTime and
+    ActivationTime live on the value *inside* it. Reading them off the wrapper
+    finds nothing and reports no error, so every reader goes through here rather
+    than unwrapping by hand.
+    """
+    if staged_state is None or not hasattr(staged_state, 'Activation'):
+        return None
+    wrapper = staged_state.Activation
+    if not wrapper.defined:
+        return None
+    return wrapper.value
 
 
 def _get_activation_mode(staged_state: Any) -> str | None:
-    """Extract the activation mode string from staged state.
+    """The requested activation mode, or None if none is requested.
 
-    The Activation field is a wrapper (NActivation) whose .value contains
-    the NActivationValue with Mode, RequestedTime, ActivationTime.
+    A null mode is how a client withdraws an activation it scheduled earlier,
+    so "no mode" and "mode explicitly null" are deliberately the same answer
+    here — both mean "there is no activation to carry out".
     """
-    if not hasattr(staged_state, 'Activation'):
+    act_val = _activation_value(staged_state)
+    if act_val is None:
         return None
-    act_wrapper = staged_state.Activation
-    if not act_wrapper.defined:
-        return None
-    act_val = act_wrapper.value
     if hasattr(act_val, 'Mode') and act_val.Mode.defined:
         mode_val = act_val.Mode.value
         if mode_val is None:
             return None
         return str(mode_val) if mode_val else None
     return None
+
+
+def _get_requested_time_string(staged_state: Any) -> str | None:
+    """The raw ``requested_time`` the client asked for, or None."""
+    act_val = _activation_value(staged_state)
+    if act_val is None:
+        return None
+    if not hasattr(act_val, 'RequestedTime') or not act_val.RequestedTime.defined:
+        return None
+    value = act_val.RequestedTime.value
+    return None if value is None else str(value)
 
 
 def _get_master_enable(staged_state: Any) -> bool:
@@ -1043,25 +1299,33 @@ def _get_master_enable(staged_state: Any) -> bool:
 
 
 def _get_requested_delay(staged_state: Any) -> float:
-    """Extract requested delay in seconds from staged state (for relative mode)."""
-    if hasattr(staged_state, 'Activation'):
-        act = staged_state.Activation
-        if hasattr(act, 'RequestedTime') and act.RequestedTime.defined:
-            time_str = act.RequestedTime.value
-            if time_str is not None:
-                return _parse_tai_time_string(str(time_str))
-    return 0.0
+    """How far in the future a relative activation was asked for, in seconds.
+
+    ``requested_time`` is a duration here, not an instant, so no TAI conversion
+    applies. Zero (or a missing value) means "as soon as possible", which the
+    caller turns into an immediate activation.
+    """
+    time_str = _get_requested_time_string(staged_state)
+    if time_str is None:
+        return 0.0
+    return _parse_tai_time_string(time_str)
 
 
 def _get_requested_absolute_time(staged_state: Any) -> float:
-    """Extract requested absolute time as POSIX timestamp from staged state."""
-    if hasattr(staged_state, 'Activation'):
-        act = staged_state.Activation
-        if hasattr(act, 'RequestedTime') and act.RequestedTime.defined:
-            time_str = act.RequestedTime.value
-            if time_str is not None:
-                return _parse_tai_time_string(str(time_str))
-    return time.time()
+    """Extract requested absolute time as POSIX timestamp from staged state.
+
+    The client states the target in TAI, which currently runs 37 s ahead of the
+    POSIX clock. The result is compared against time.time() to derive the delay,
+    so it MUST be converted — treating a TAI instant as POSIX would fire every
+    absolute activation 37 s late.
+
+    A missing target means "now", which the caller turns into an immediate
+    activation.
+    """
+    time_str = _get_requested_time_string(staged_state)
+    if time_str is None:
+        return time.time()
+    return tai_to_utc(_parse_tai_time_string(time_str))
 
 
 def _parse_tai_time_string(s: str) -> float:

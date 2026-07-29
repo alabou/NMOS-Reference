@@ -590,6 +590,13 @@ async def go_node_server(
         # Block until DispatchGroup is cancelled
         await dg.done()
     finally:
+        # Disarm any activation scheduled for a moment that will never come.
+        # These timers are not owned by the dispatch group, so nothing else
+        # stops them, and one firing into a half-dismantled Node is worse than
+        # one that simply never happens.
+        from nmos.node.activation_engine import cancel_pending_activations
+        cancel_pending_activations(app["node"])
+
         await runner.cleanup()
         if control_runner is not None:
             await control_runner.cleanup()

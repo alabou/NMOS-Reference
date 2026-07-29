@@ -48,6 +48,7 @@ from nmos.node.types import (
     Interface,
     Leg,
     NaturalGroups,
+    PendingActivation,
     PoolOfIndices,
     PreSharedKey,
     Privacy,
@@ -1621,7 +1622,23 @@ class Node:
         import asyncio as _asyncio
         from nmos.node.events import EngineEvent
         self.event_queue: _asyncio.Queue[EngineEvent] = _asyncio.Queue(maxsize=100)
-        self.monitor_lock: _asyncio.Lock = _asyncio.Lock()
+
+        # --- Scheduled activations awaiting their deadline ---
+        # IS-05 activate_scheduled_relative / _absolute accept now and activate
+        # later, so each one is a timer waiting in the background. Keyed by
+        # resource id: a scheduled activation on one Sender must never cancel
+        # or orphan another's timer, and a cancel has to find exactly the timer
+        # belonging to the resource being PATCHed.
+        #
+        # Nothing here takes a lock, and that is sound only because of one
+        # invariant: EVERY request handler and EVERY background task must
+        # complete its read-modify-write of resource state without awaiting.
+        # asyncio runs one task at a time and switches only at an await, so two
+        # await-free regions can never interleave, and a firing timer cannot
+        # land in the middle of a PATCH. Introduce an await into the middle of
+        # one of those regions and the guarantee is gone silently, with no test
+        # failing — at that point the region needs an explicit lock.
+        self.dg_pending_activation: dict[str, PendingActivation] = {}
 
         # --- Index pools ---
         self.source_indices: PoolOfIndices = PoolOfIndices()

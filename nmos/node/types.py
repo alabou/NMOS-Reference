@@ -384,11 +384,41 @@ class Activation:
     requested_time: datetime | None = None
     requested_delta_time: timedelta | None = None
     activation_time_tai: str = ""
+    # The verbatim "<seconds>:<nanoseconds>" the client asked for, kept exactly
+    # as received. IS-05 echoes requested_time back, and a client may compare it
+    # against what it sent — so it must not be reconstructed from `time` or
+    # `requested_time` above. Both lose nanoseconds: a float cannot hold
+    # nanosecond precision at present-day epoch values, and datetime resolves
+    # only to microseconds.
+    requested_time_string: str = ""
     privacy: Privacy = field(default_factory=Privacy)
     privacy_keys: PrivacyPreSharedKeys = field(default_factory=PrivacyPreSharedKeys)
     engine: Any = None          # tasks.DispatchGroup
     engine_state: EngineState = EngineState.INVALID
     sender_name: str = ""
+
+
+@dataclass(frozen=True)
+class PendingActivation:
+    """A scheduled activation that has been accepted but has not fired yet.
+
+    IS-05 lets a client stage an activation for a future moment
+    (``activate_scheduled_relative`` / ``activate_scheduled_absolute``). The
+    node accepts the PATCH, answers 202, and arms a timer; this is the handle
+    on that timer.
+
+    Two fields, because cancelling needs both:
+
+    * ``stop`` is how a cancellation is announced. The waiting timer races this
+      event against its deadline, so setting it makes the timer return without
+      activating — the same shape as "cancel or deadline, whichever comes
+      first".
+    * ``task`` is held because the event loop keeps only a weak reference to a
+      running task. A timer that nothing references can be garbage-collected
+      part-way through its wait, and the activation would simply never happen.
+    """
+    task: asyncio.Task[None]
+    stop: asyncio.Event
 
 
 # ---------------------------------------------------------------------------
@@ -415,6 +445,57 @@ class GarbageResource:
     """
     id: str = ""
     time: datetime = field(default_factory=datetime.now)
+
+
+# ---------------------------------------------------------------------------
+# TAI time conversion
+# ---------------------------------------------------------------------------
+#
+# IS-05 expresses activation times in TAI, as a "<seconds>:<nanoseconds>"
+# string. TAI has no leap seconds, so it currently runs a fixed 37 s ahead of
+# the UTC-based POSIX clock (NTime.TAI_UTC_OFFSET). Every value that crosses
+# the API boundary is TAI; every value used with time.time() is POSIX. Mixing
+# them silently shifts a scheduled activation by that offset, which is why
+# these conversions are named and centralised rather than written inline.
+
+def utc_to_tai(posix_seconds: float) -> tuple[int, int]:
+    """POSIX timestamp → TAI (seconds, nanoseconds)."""
+    from nmos.json.types import NTime
+    tai = posix_seconds + NTime.TAI_UTC_OFFSET
+    sec = int(tai)
+    nsec = int(round((tai - sec) * 1_000_000_000))
+    # Rounding can carry into the next second; keep nsec in range.
+    if nsec >= 1_000_000_000:
+        sec += 1
+        nsec -= 1_000_000_000
+    return sec, nsec
+
+
+def tai_to_utc(tai_seconds: float) -> float:
+    """TAI timestamp → POSIX timestamp, for comparison against time.time()."""
+    from nmos.json.types import NTime
+    return tai_seconds - NTime.TAI_UTC_OFFSET
+
+
+def format_tai(posix_seconds: float) -> str:
+    """POSIX timestamp → IS-05 TAI string ``"<seconds>:<nanoseconds>"``."""
+    sec, nsec = utc_to_tai(posix_seconds)
+    return f"{sec}:{nsec}"
+
+
+def format_duration(seconds: float) -> str:
+    """Duration → ``"<seconds>:<nanoseconds>"``.
+
+    A relative activation's ``requested_time`` is a *duration*, not a point in
+    time, so the TAI offset must NOT be applied to it — adding 37 s to "in 5
+    seconds" would be meaningless.
+    """
+    sec = int(seconds)
+    nsec = int(round((seconds - sec) * 1_000_000_000))
+    if nsec >= 1_000_000_000:
+        sec += 1
+        nsec -= 1_000_000_000
+    return f"{sec}:{nsec}"
 
 
 # ---------------------------------------------------------------------------

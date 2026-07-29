@@ -1391,7 +1391,10 @@ def fix_coded_video_flow(
     original_fbblevel = _is_original(CapFormatFbblevel.s)
 
     # Helper: check if a string value is within a constraint's range
-    def _value_in_constraint(value: str, constraint_name: str) -> bool:
+    # `value` is whatever kind of value the capability holds — a string for
+    # enumerated caps like sampling or profile, an integer for numeric ones like
+    # component depth. value_included_in_range accepts both.
+    def _value_in_constraint(value: str | int, constraint_name: str) -> bool:
         if constraints is None:
             return True
         con = constraints.get(constraint_name)
@@ -1518,19 +1521,32 @@ def fix_coded_video_flow(
     # built with the corrected depth.
     cur_depth = _get_int(CapFormatComponentDepth.s)
     if cur_depth is not None and profile and not original_depth:
+        # Each codec module declares its own ProfileInfo type, so the profile
+        # tables cannot share a variable. Only the depth bound is needed here,
+        # so pull that single value out of whichever table applies.
+        max_bit_depth: int | None = None
         if media_type == VideoCodedH264.s:
-            from nmos.codec import h264 as _profile_tbl
+            from nmos.codec import h264
+            h264_info = h264.ALL_PROFILES.get(EnumRegistry.get(profile))
+            if h264_info is not None:
+                max_bit_depth = h264_info.max_bit_depth
         elif media_type == VideoCodedH265.s:
-            from nmos.codec import h265 as _profile_tbl
+            from nmos.codec import h265
+            h265_info = h265.ALL_PROFILES.get(EnumRegistry.get(profile))
+            if h265_info is not None:
+                max_bit_depth = h265_info.max_bit_depth
         else:
-            from nmos.codec import jxsv as _profile_tbl
-        info = _profile_tbl.ALL_PROFILES.get(EnumRegistry.get(profile))
-        if (info is not None and cur_depth > info.max_bit_depth
-                and _value_in_constraint(info.max_bit_depth,
+            from nmos.codec import jxsv
+            jxsv_info = jxsv.ALL_PROFILES.get(EnumRegistry.get(profile))
+            if jxsv_info is not None:
+                max_bit_depth = jxsv_info.max_bit_depth
+
+        if (max_bit_depth is not None and cur_depth > max_bit_depth
+                and _value_in_constraint(max_bit_depth,
                                          CapFormatComponentDepth.s)):
-            _set_int(CapFormatComponentDepth.s, info.max_bit_depth)
+            _set_int(CapFormatComponentDepth.s, max_bit_depth)
             if verbose:
-                print(f"    [fix_coded] profile={profile} → depth={info.max_bit_depth}")
+                print(f"    [fix_coded] profile={profile} → depth={max_bit_depth}")
 
     # --- FBB level fix-up (JPEG-XS only) ---
     # The frame-buffer-budget level depends on the profile family: TDC

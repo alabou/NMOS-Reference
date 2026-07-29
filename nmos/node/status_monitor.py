@@ -480,8 +480,13 @@ async def run_status_monitor(node: Any) -> None:
     nmos_node.py root DispatchGroup alongside the HTTP server.
     """
     monitors: dict[str, ResourceMonitor] = {}
-    monitor_lock = getattr(node, 'monitor_lock', None)
 
+    # _publish_status is called without a lock. It mutates node state and
+    # publishes, but it does so without awaiting, so it completes as one
+    # uninterruptible step and cannot interleave with a request handler or with
+    # a firing scheduled activation. See the invariant documented next to
+    # Node.dg_pending_activation: if an await is ever added inside
+    # _publish_status, that reasoning breaks and this needs real exclusion.
     while True:
         # Wait for event or 1-second tick
         try:
@@ -497,11 +502,7 @@ async def run_status_monitor(node: Any) -> None:
             # Process event and publish if status changed
             # (processOneDomainStatus return triggers updateSourceMonitor)
             if monitor.process_event(event):
-                if monitor_lock is not None:
-                    async with monitor_lock:
-                        _publish_status(node, monitor)
-                else:
-                    _publish_status(node, monitor)
+                _publish_status(node, monitor)
 
         except asyncio.TimeoutError:
             pass  # Tick — process delayed transitions below
@@ -511,11 +512,7 @@ async def run_status_monitor(node: Any) -> None:
         # Tick all monitors for time-delayed transitions
         for monitor in monitors.values():
             if monitor.tick():
-                if monitor_lock is not None:
-                    async with monitor_lock:
-                        _publish_status(node, monitor)
-                else:
-                    _publish_status(node, monitor)
+                _publish_status(node, monitor)
 
 
 def _publish_status(node: Any, monitor: ResourceMonitor) -> None:
