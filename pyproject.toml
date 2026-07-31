@@ -38,6 +38,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio", "pytest-aiohttp", "mypy"]
+# Agent-driven UI driver (nmos/agentui/). Optional: the node runtime never
+# imports it. Installing the package is only half the setup -- pip cannot
+# install a browser, so see requirements-agentui.txt for the second command.
+agentui = ["playwright>=1.62"]
 
 [project.urls]
 Homepage = "https://github.com/alabou/NMOS-Reference"
@@ -67,6 +71,15 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["ipmx_pep"]
+ignore_missing_imports = true
+
+# Optional agent-UI dependency. playwright ships py.typed, so when the extra IS
+# installed mypy checks nmos/agentui/driver/ against real stubs. This override
+# only covers a checkout WITHOUT the extra, where the import would otherwise be
+# an error -- which is why the driver quarantines every playwright object and
+# returns only project types across its boundary.
+[[tool.mypy.overrides]]
+module = ["playwright.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

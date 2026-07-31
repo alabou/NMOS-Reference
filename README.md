@@ -121,6 +121,74 @@ curl -c cookies.txt -X POST -d "password=admin" \
 curl -b cookies.txt http://127.0.0.1:8080/controller/api/senders
 ```
 
+### Agent-driven UI driver (optional)
+
+`nmos/agentui/` drives the embedded Controller through a real Chromium, acting only
+through the affordances a signed-in operator has, and writes a screenshot-and-text
+journal of every step. It exists so the UI's behaviour — particularly its
+per-control gating — can be demonstrated and audited rather than described.
+
+It **attaches** to a node you already started; it never launches one.
+`start-node*.sh` remains the sole launch contract, so which configuration a run
+exercises stays your choice. The node's address, control port, scheme, and TLS
+trust material are read from its command line; the admin password comes from the
+environment and is deliberately *not* harvested from process state.
+
+Fully optional: the node runtime never imports it, playwright is confined to
+`nmos/agentui/driver/`, and the default test gate never runs it.
+
+#### Setup
+
+```bash
+cd nmos-reference
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pip install -r requirements-agentui.txt
+
+# Second step — pip cannot install a browser.
+# Fetches a self-contained Chromium (~656 MB) into a repo-local directory.
+PLAYWRIGHT_BROWSERS_PATH="$PWD/.playwright" \
+    .venv/bin/python -m playwright install chromium
+```
+
+Everything lands in `.playwright/`: nothing enters the system package database, no
+`apt` or `sudo` step is required, and removal is `rm -rf .playwright`. Both
+`.playwright/` and `artifacts/` are gitignored.
+
+#### Running
+
+```bash
+# 1. Start a node as usual — the driver never starts one.
+./start-node1-bare.sh
+
+# 2. In another shell, from nmos-reference/:
+export NMOS_CONTROLLER_ADMIN_PASSWORD=admin      # the --controllerAdminPassword value
+export PLAYWRIGHT_BROWSERS_PATH="$PWD/.playwright"
+.venv/bin/python -m nmos.agentui --listScenarios
+.venv/bin/python -m nmos.agentui --scenario attach-and-look
+```
+
+Options mirror `nmos_node.py`'s camelCase style: `--scenario`, `--controlPort`
+(disambiguate when several nodes serve a UI), `--artifactsRoot`, `--headed`,
+`--stepTimeoutMs`, `--pinChain`.
+
+Artifacts land in `artifacts/agentui/<run_id>/` — read `journal.md`. Alongside it,
+`manifest.json` records the run's own honesty checks: whether any navigation went
+unaccounted for, whether a second browser page appeared, whether the driver itself
+issued HTTP, whether certificate verification was ever bypassed, and whether a
+live status update was genuinely observed or merely unconfirmed.
+
+Scenarios marked *makes changes* issue real IS-05/IS-11 calls and, by design,
+perform **no teardown** — they leave the rig in the state they reached so you can
+inspect it. Note that an unreleased exclusive-access reservation stays held until
+the session expires or someone signs out.
+
+For a TLS node the browser is made to trust the certificate by pinning its SPKI
+hash, after verifying the chain with `nmos/cert_check.py`; where the certificate's
+own DNS name resolves, the cleaner name-based path is used and no browser flag is
+passed at all. There is deliberately no option to disable verification, because a
+run with checks switched off looks identical to one where they work.
+
 ### Verify the install
 
 ```bash

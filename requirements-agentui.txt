@@ -1,0 +1,24 @@
+# nmos-reference — optional agent-driven UI driver (nmos/agentui/).
+#
+# Lets an agent operate the embedded Controller UI through a real browser, with
+# the same information and the same control a signed-in operator has, writing a
+# screenshot-and-text journal of every step.
+#
+# The node runtime never imports this. Install it only if you want the driver.
+#
+# Requires a SECOND step that pip CANNOT perform, because a browser is not a
+# Python package:
+#
+#     PLAYWRIGHT_BROWSERS_PATH="$PWD/.playwright" python -m playwright install chromium
+#
+# That fetches a self-contained, version-pinned Chromium (~656 MB on disk, which
+# includes the headless shell and ffmpeg) into a repo-local directory. Nothing
+# enters the system package database, no apt or sudo step is involved, and
+# removal is `rm -rf .playwright`. On a Debian-family system the shared libraries
+# Chromium needs are usually already present; if a launch reports a missing
+# `.so`, install just the named packages rather than a blanket dependency set.
+#
+# playwright ships py.typed, so with this installed `mypy --strict` checks the
+# driver against real stubs. Verify both states after changing driver code —
+# with the extra installed and without it — because they check different paths.
+playwright==1.62.0

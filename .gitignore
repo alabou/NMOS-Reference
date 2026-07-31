@@ -23,6 +23,13 @@ htmlcov/
 # Type checking
 .mypy_cache/
 
+# Agent-driven UI driver (nmos/agentui/) — optional, never committed.
+# .playwright/ holds a self-contained Chromium build (~656 MB) fetched by
+# `playwright install chromium`; artifacts/ holds per-run journals and
+# screenshots. Both are regenerable and must never enter git history.
+.playwright/
+artifacts/
+
 # IDE
 .vscode/
 .idea/
