@@ -434,7 +434,9 @@ class TestManifest:
             target={}, environment={}, fidelity=recorder.ledger,
             sse=SseVerdict.NOT_EXERCISED, mutating=False, debug_tracing=True,
             diagnostic_api_used=True)
-        assert "diagnostic API" in recorder.journal.markdown_path.read_text()
+        assert "diagnostic API" in recorder.journal.markdown_path.read_text(
+            encoding="utf-8"
+        )
 
     def test_tls_bypass_marks_ledger_unclean(self, tmp_path: Path) -> None:
         recorder = _recorder(tmp_path, FakeSurface())

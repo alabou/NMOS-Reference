@@ -13,12 +13,19 @@ shareable artifact, and the node's command line contains its admin password.
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
 import pytest
 
 from ..apps.nmos_controller import discovery
-from ..core.proc_scan import CommandLine, find_by_script, iter_processes
+from ..core import proc_scan
+from ..core.proc_scan import (
+    CommandLine,
+    ProcessInfo,
+    find_by_script,
+    iter_processes,
+)
 from ..enums import TlsPolicy
 from ..errors import (
     AdminPasswordMissing,
@@ -97,6 +104,19 @@ class TestProcScan:
     def test_exclude_pid(self, tmp_path: Path) -> None:
         root = _proc(tmp_path, {5: BARE_NODE_ARGV})
         assert find_by_script("nmos_node.py", proc_root=root, exclude_pid=5) == ()
+
+    def test_windows_default_uses_native_process_scan(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        expected = ProcessInfo(pid=42, argv=BARE_NODE_ARGV)
+        monkeypatch.setattr(proc_scan.sys, "platform", "win32")
+        monkeypatch.setattr(
+            proc_scan,
+            "_iter_windows_processes",
+            lambda: iter((expected,)),
+        )
+
+        assert list(iter_processes()) == [expected]
 
 
 class TestCommandLine:
@@ -217,7 +237,10 @@ class TestDiscovery:
         # rules put out of reach.
         root = _proc(tmp_path, {4242: BARE_NODE_ARGV})
         found = discovery.discover(proc_root=root)
-        assert found.debug_log_path == "/tmp/nmos-controller-127.0.0.1-5050.log"
+        assert found.debug_log_path == str(
+            Path(tempfile.gettempdir()) /
+            "nmos-controller-127.0.0.1-5050.log"
+        )
         assert found.debug_tracing
 
     def test_debug_tracing_absent_without_the_flag(self, tmp_path: Path) -> None:
@@ -228,8 +251,9 @@ class TestDiscovery:
         assert not found.debug_tracing
 
     def test_ipv6_addr_colons_become_hyphens(self) -> None:
-        assert discovery.derive_debug_log_path("::1", 5050) == (
-            "/tmp/nmos-controller---1-5050.log")
+        assert discovery.derive_debug_log_path("::1", 5050) == str(
+            Path(tempfile.gettempdir()) / "nmos-controller---1-5050.log"
+        )
 
     def test_wildcard_bind_is_substituted_and_recorded(self, tmp_path: Path) -> None:
         argv = ("python3.12", "nmos_node.py", "--nodeAddr", "0.0.0.0",
@@ -241,7 +265,10 @@ class TestDiscovery:
         # The substitution is visible in the journal rather than silent.
         assert found.target.provenance["host_substituted"] == "0.0.0.0 -> 127.0.0.1"
         # But the debug log path uses the address the node itself used.
-        assert found.debug_log_path == "/tmp/nmos-controller-0.0.0.0-5050.log"
+        assert found.debug_log_path == str(
+            Path(tempfile.gettempdir()) /
+            "nmos-controller-0.0.0.0-5050.log"
+        )
 
     def test_provenance_records_the_rig(self, tmp_path: Path) -> None:
         root = _proc(tmp_path, {4242: BARE_NODE_ARGV})

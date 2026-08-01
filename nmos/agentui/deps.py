@@ -25,6 +25,7 @@ from __future__ import annotations
 import importlib.util
 import os
 from pathlib import Path
+import sys
 
 from .errors import DependencyMissing
 
@@ -34,9 +35,6 @@ from .errors import DependencyMissing
 #: ``nmos_node.py``.
 DEFAULT_BROWSERS_DIRNAME = ".playwright"
 
-#: Playwright's own default when the environment variable is unset.
-_PLAYWRIGHT_DEFAULT_CACHE = Path.home() / ".cache" / "ms-playwright"
-
 #: Directory-name prefixes a usable Chromium download can appear under. The full
 #: browser and the headless shell are separate downloads; either can serve a
 #: headless run, so the presence of one is enough to proceed.
@@ -44,10 +42,27 @@ _CHROMIUM_PREFIXES = ("chromium-", "chromium_headless_shell-")
 
 #: Executable basenames that indicate a complete download rather than a
 #: half-extracted directory.
-_CHROMIUM_BINARIES = ("chrome", "headless_shell")
+_CHROMIUM_BINARIES = (
+    "chrome",
+    "chrome.exe",
+    "headless_shell",
+    "headless_shell.exe",
+)
 
 INSTALL_PACKAGE = 'pip install -r requirements-agentui.txt   (or: pip install -e ".[agentui]")'
 INSTALL_BROWSER = 'PLAYWRIGHT_BROWSERS_PATH="$PWD/.playwright" python -m playwright install chromium'
+
+
+def _playwright_default_cache() -> Path:
+    """Return Playwright's platform-specific default browser cache."""
+    if sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            return Path(local_app_data) / "ms-playwright"
+        return Path.home() / "AppData" / "Local" / "ms-playwright"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches" / "ms-playwright"
+    return Path.home() / ".cache" / "ms-playwright"
 
 
 def browsers_path() -> Path:
@@ -66,7 +81,7 @@ def browsers_path() -> Path:
     local = Path.cwd() / DEFAULT_BROWSERS_DIRNAME
     if local.is_dir():
         return local
-    return _PLAYWRIGHT_DEFAULT_CACHE
+    return _playwright_default_cache()
 
 
 def _chromium_build_dirs(root: Path) -> list[Path]:

@@ -14,9 +14,9 @@ single chronological JSONL log capturing every:
     release, success or failure);
   * client-side browser event POSTed via ``/api/debug/client-event``.
 
-One log per controller instance, named
-``/tmp/nmos-controller-{addr}-{controlPort}.log``. Multiple
-controllers running on the same box get separate files.
+One log per controller instance in the system temporary directory, named
+``nmos-controller-{addr}-{controlPort}.log``. Multiple controllers running on
+the same box get separate files.
 
 When ``--debug-in-depth`` is OFF the module is a no-op: callers can
 still import and call into it, but every method is a guard-and-return.

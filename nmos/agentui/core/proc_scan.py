@@ -19,11 +19,18 @@ caller names which options are sensitive rather than this module guessing.
 from __future__ import annotations
 
 from collections.abc import Iterator
+import ctypes
 from dataclasses import dataclass
+import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 #: Placeholder written in place of a sensitive option's value.
 REDACTED = "***"
+
+_DEFAULT_PROC_ROOT = Path("/proc")
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +53,10 @@ def iter_processes(proc_root: Path = Path("/proc")) -> Iterator[ProcessInfo]:
     than raising: a scan is a snapshot of something inherently in motion, and one
     unreadable entry says nothing about the rest.
     """
+    if sys.platform == "win32" and proc_root == _DEFAULT_PROC_ROOT:
+        yield from _iter_windows_processes()
+        return
+
     if not proc_root.is_dir():
         return
 
@@ -65,6 +76,92 @@ def iter_processes(proc_root: Path = Path("/proc")) -> Iterator[ProcessInfo]:
             pid=int(entry.name),
             argv=tuple(part.decode("utf-8", "replace") for part in argv),
         )
+
+
+def _split_windows_command_line(command_line: str) -> tuple[str, ...]:
+    """Parse a Win32 command line using the same rules as a native process."""
+    argc = ctypes.c_int()
+    command_line_to_argv = ctypes.windll.shell32.CommandLineToArgvW
+    command_line_to_argv.argtypes = (
+        ctypes.c_wchar_p,
+        ctypes.POINTER(ctypes.c_int),
+    )
+    command_line_to_argv.restype = ctypes.POINTER(ctypes.c_wchar_p)
+    pointer = command_line_to_argv(command_line, ctypes.byref(argc))
+    if not pointer:
+        return ()
+    try:
+        return tuple(pointer[index] for index in range(argc.value))
+    finally:
+        ctypes.windll.kernel32.LocalFree(pointer)
+
+
+def _iter_windows_processes() -> Iterator[ProcessInfo]:
+    """Yield Windows processes from CIM, collapsing the venv launcher pair.
+
+    A Windows virtual-environment Python launcher starts the base interpreter as
+    a child and waits for it. Both processes expose the same command line, but
+    only the base interpreter owns the sockets. Prefer that process so the
+    recorded PID identifies the actual NMOS server.
+    """
+    powershell = (
+        Path(os.environ.get("SystemRoot", r"C:\Windows"))
+        / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    )
+    script = (
+        "Get-CimInstance Win32_Process | "
+        "Where-Object { $_.CommandLine } | "
+        "Select-Object ProcessId,ExecutablePath,CommandLine | "
+        "ConvertTo-Json -Compress"
+    )
+    try:
+        result = subprocess.run(
+            [
+                str(powershell),
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                script,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return
+    if result.returncode != 0 or not result.stdout.strip():
+        return
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return
+
+    rows = payload if isinstance(payload, list) else [payload]
+    unique: dict[tuple[str, ...], tuple[ProcessInfo, bool]] = {}
+    for row in rows:
+        command_line = row.get("CommandLine") or ""
+        argv = _split_windows_command_line(command_line)
+        if not argv:
+            continue
+        executable = row.get("ExecutablePath") or ""
+        executable_path = Path(executable) if executable else Path(argv[0])
+        is_launcher = (
+            executable_path.parent.name.casefold() == "scripts"
+            and (executable_path.parent.parent / "pyvenv.cfg").is_file()
+        )
+        process = ProcessInfo(pid=int(row["ProcessId"]), argv=argv)
+        # The venv launcher and base interpreter differ only in argv[0].
+        # Key Python script invocations from the script path onward.
+        key = argv[1:] if len(argv) > 1 and argv[1].endswith(".py") else argv
+        previous = unique.get(key)
+        if previous is None or (previous[1] and not is_launcher):
+            unique[key] = (process, is_launcher)
+
+    for process, _is_launcher in unique.values():
+        yield process
 
 
 def find_by_script(

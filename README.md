@@ -174,6 +174,29 @@ export PLAYWRIGHT_BROWSERS_PATH="$PWD/.playwright"
 .venv/bin/python -m nmos.agentui --scenario attach-and-look
 ```
 
+On Windows, start the equivalent bare nodes from Command Prompt in separate
+windows. Both launchers prefer the repository's `.venv\Scripts\python.exe`:
+
+```bat
+start-node1-bare.bat
+start-node2-bare.bat
+```
+
+These two launchers mirror the shell contracts and expect an IS-04 Registry on
+`127.0.0.1` (Query API port 8443, Registration API port 8444). Without that
+Registry the Node APIs still start, but their consoles report connection-refused
+retries and the Controller cannot assemble a shared two-node resource view.
+
+```bat
+start-node1-bare.bat
+start-node2-bare.bat
+```
+
+Each launcher prints the selected Registry address before starting.
+`NMOS_RDS_HOST` can override discovery, and `NMOS_RDS_REG_PORT` can override
+port 8444; the Query API port is derived as one less than the Registration API
+port.
+
 Options mirror `nmos_node.py`'s camelCase style: `--scenario`, `--controlPort`
 (disambiguate when several nodes serve a UI), `--artifactsRoot`, `--headed`,
 `--stepTimeoutMs`, `--pinChain`.

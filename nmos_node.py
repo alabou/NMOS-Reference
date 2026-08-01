@@ -27,6 +27,7 @@ import signal
 import socket
 import ssl
 import sys
+import tempfile
 from logging.handlers import RotatingFileHandler
 from typing import Any
 
@@ -145,8 +146,8 @@ def parse_args() -> argparse.Namespace:
                    action="store_true",
                    help="Enable deep debug tracing on the controller UI: "
                         "per-request trace ids, client-event browser hook, "
-                        "snapshot endpoint, and a rotating log file at "
-                        "/tmp/nmos-controller-{addr}-{controlPort}.log. "
+                        "snapshot endpoint, and a rotating log file in the "
+                        "system temporary directory. "
                         "No-op when --nodeControlPort is 0.")
 
     # --- Node configuration ---
@@ -697,8 +698,9 @@ async def go_controller_server(
     debug_log_path: str | None = None
     if args.debug_in_depth:
         host_safe = (args.nodeAddr or "0.0.0.0").replace(":", "-")
-        debug_log_path = (
-            f"/tmp/nmos-controller-{host_safe}-{args.nodeControlPort}.log"
+        debug_log_path = os.path.join(
+            tempfile.gettempdir(),
+            f"nmos-controller-{host_safe}-{args.nodeControlPort}.log",
         )
 
     # Build the OAuth2 config when --oauth2 is enabled. The client_id

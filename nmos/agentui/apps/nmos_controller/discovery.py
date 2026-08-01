@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import os
 import socket
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -113,7 +114,10 @@ def derive_debug_log_path(node_addr: str, control_port: int) -> str:
     nothing and correlation is reported as unavailable — degraded, never wrong.
     """
     host_safe = (node_addr or "0.0.0.0").replace(":", "-")
-    return f"/tmp/nmos-controller-{host_safe}-{control_port}.log"
+    return os.path.join(
+        tempfile.gettempdir(),
+        f"nmos-controller-{host_safe}-{control_port}.log",
+    )
 
 
 def read_password(env_var: str = PASSWORD_ENV) -> Credentials:
