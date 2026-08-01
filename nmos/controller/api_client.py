@@ -83,6 +83,12 @@ class RemoteCallResult:
     body: Any
     error: str | None = None
     www_authenticate: str = ""
+    #: ``Link`` header, captured for the same reason as
+    #: ``www_authenticate``: the Node reports who currently holds an
+    #: exclusive session by returning ``Link: <https://{owner}>`` alongside
+    #: its 423, and dropping it here left the controller inventing the
+    #: phrase "held by another owner" rather than saying who.
+    link: str = ""
 
 
 # Timeout for every outbound call to a remote Node. ``total`` bounds a
@@ -508,7 +514,8 @@ class RemoteNodeClient:
 
         Status mapping:
           * 200 Ok      — token returned
-          * 423 Locked  — already held by another owner
+          * 423 Locked  — already held; the response's ``Link`` header names
+            the current owner, surfaced via ``ReservationLocked.owner``
         """
         url = _join(base_url, "acquire/")
         body = {"owner": owner, "exclusive_key": exclusive_key_hex}
@@ -683,6 +690,7 @@ class RemoteNodeClient:
                     status=resp.status,
                     body=body,
                     www_authenticate=resp.headers.get("WWW-Authenticate", ""),
+                    link=resp.headers.get("Link", ""),
                 )
         except aiohttp.ClientError as exc:
             log.warning("outbound transport error: %s", exc)

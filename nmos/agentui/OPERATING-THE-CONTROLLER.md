@@ -9,6 +9,10 @@ the problem.
 Read this before writing a scenario. Everything here is either cited to source or
 explicitly labelled as operator guidance.
 
+> Driving the tool itself — live operation, scenarios, tutorial mode — is
+> covered separately in [FOR-AI-AGENTS.md](FOR-AI-AGENTS.md). This file is only
+> about the Controller's own behaviour.
+
 ---
 
 ## 1. Two ways to reach the configure page

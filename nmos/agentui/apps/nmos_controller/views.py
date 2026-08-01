@@ -351,6 +351,13 @@ class PrivacyView:
     reservation_status: str = ""
     locked: bool = False
     pending: bool = False
+    #: Whether the panel is *showing* a held reservation.
+    #:
+    #: Read from the ``is-reserved`` class, which JavaScript applies after a
+    #: successful acquire and which the server never renders. It therefore reports
+    #: what the operator can see, not whether a reservation exists: after a page
+    #: load this is ``False`` even when the session still holds one. Do not use it
+    #: to decide whether to acquire — use it to describe the screen.
     reserved: bool = False
     protocol: str = ""
     mode: str = ""

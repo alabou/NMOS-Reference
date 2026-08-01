@@ -41,6 +41,7 @@ from ...core.waits import (
     DialogRaised,
     First,
     NavigationSince,
+    TextContains,
     UrlChangedFrom,
     ValueIs,
     WaitOutcome,
@@ -1753,8 +1754,12 @@ class ControllerSession:
             # the switch styling makes it unclickable. The resulting state is then
             # confirmed from the input's live ``checked`` property.
             self._surface.click(control.target)
-            self._require_wait(step, WaitSignal.RADIO_SELECTED,
-                               checked(pages.PRIVACY_EXCLUSIVITY, acquire))
+            # Diagnostic only, deliberately not required: on refusal the page
+            # reverts the checkbox, so demanding it flip would time out here and
+            # hide the reason waiting one step further on.
+            self._wait(step, WaitSignal.RADIO_SELECTED,
+                       checked(pages.PRIVACY_EXCLUSIVITY, acquire),
+                       timeout_ms=_TOGGLE_START_PROBE_MS)
 
             self._wait(step, WaitSignal.PRIVACY_PENDING,
                        class_present(pages.PRIVACY_PANEL,
@@ -1764,7 +1769,32 @@ class ControllerSession:
                         if acquire else
                         class_absent(pages.PRIVACY_PANEL,
                                      pages.PRIVACY_RESERVED_CLASS))
-            self._require_wait(step, WaitSignal.PRIVACY_SETTLED, terminal)
+            # A refused acquire never reaches the reserved state, so waiting only
+            # for success turned "someone else holds this" into a bare timeout —
+            # hiding the reason the page was displaying all along. Race the
+            # success condition against the page's own failure text instead.
+            outcome = self._require_wait(
+                step, WaitSignal.PRIVACY_SETTLED,
+                AnyOf((
+                    ("settled", terminal),
+                    ("refused", TextContains(pages.PRIVACY_RESERVATION_STATUS,
+                                             "failed")),
+                )))
+            if outcome.branch == "refused":
+                reason = normalise_text(self._surface.visible_text(
+                    pages.PRIVACY_RESERVATION_STATUS))
+                step.note("refusal", reason)
+                # ActionFailed, not BlockedControl. The switch was enabled and we
+                # pressed it; the *server* declined — typically because another
+                # controller holds the reservation. BlockedControl means the
+                # interface refused before acting, and asserting that here would
+                # be false: the attempt really was made and really did cost a
+                # request. The fidelity invariant catches the difference.
+                raise ActionFailed(
+                    f"the Controller could not "
+                    f"{'take' if acquire else 'release'} exclusive access: "
+                    f"{reason}",
+                    failures=(("exclusivity", reason),))
 
             view = self._read_privacy_raw()
             if view is None:
@@ -1786,6 +1816,8 @@ class ControllerSession:
         detail: str = "",
         internals: str = "",
         state: dict[str, str] | None = None,
+        sources: tuple[tuple[str, str], ...] = (),
+        specs: tuple[tuple[str, str], ...] = (),
     ) -> None:
         """Record a tutorial step describing what was just done and observed.
 
@@ -1794,9 +1826,16 @@ class ControllerSession:
         audit-oriented record either way; this adds the teaching layer on top
         rather than replacing it.
 
-        ``state`` and ``detail`` become the "data behind it" section, ``internals``
-        the "under the hood" one. Both are collapsed in the rendered tutorial, and
-        the API calls shown alongside them come from what this run actually issued.
+        ``state`` and ``detail`` become the "data behind it" section. ``internals``,
+        ``specs`` and ``sources`` become "under the hood": the concept, the
+        specification it comes from, and the files that implement it here. All are
+        collapsed in the rendered tutorial, and the API calls shown alongside them
+        come from what this run actually issued.
+
+        Citing the spec alongside the code is deliberate. A reader learning NMOS
+        needs to know both what everyone agreed to and what this project chose;
+        showing only the source teaches one implementation, and showing only the
+        spec teaches nothing about how it is really built.
         """
         if self._tutorial is None:
             return
@@ -1821,6 +1860,8 @@ class ControllerSession:
             first_seq=first,
             last_seq=self._recorder.sequence,
             state=dict(state or {}),
+            sources=sources,
+            specs=specs,
         ))
         self._lesson_mark = self._recorder.sequence + 1
 

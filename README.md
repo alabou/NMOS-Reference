@@ -128,6 +128,12 @@ through the affordances a signed-in operator has, and writes a screenshot-and-te
 journal of every step. It exists so the UI's behaviour — particularly its
 per-control gating — can be demonstrated and audited rather than described.
 
+> **If you are an AI agent** asked to demo, explain, or walk through the Controller,
+> start with **[nmos/agentui/FOR-AI-AGENTS.md](nmos/agentui/FOR-AI-AGENTS.md)** —
+> how to operate the driver, live or as a scenario, and how to emit a tutorial.
+> Then read **[nmos/agentui/OPERATING-THE-CONTROLLER.md](nmos/agentui/OPERATING-THE-CONTROLLER.md)**
+> for the domain rules a demo will otherwise trip over.
+
 It **attaches** to a node you already started; it never launches one.
 `start-node*.sh` remains the sole launch contract, so which configuration a run
 exercises stays your choice. The node's address, control port, scheme, and TLS

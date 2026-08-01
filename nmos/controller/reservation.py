@@ -35,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any, Final
 
@@ -56,6 +57,27 @@ HALF_ALIVETIME: Final[float] = 30.0   # keepalive when < 30 s remains
 POLL_INTERVAL: Final[float] = 1.0     # per-second tick
 
 
+def _owner_from_link(link: str) -> str:
+    """Extract the owner the Node named in its ``Link`` header.
+
+    The Node emits ``Link: <https://{percent-encoded owner}>`` alongside a 423
+    (``handlers_exclusive.py``). Parsed defensively: a malformed or absent
+    header costs the operator a name, never the error itself.
+    """
+    if not link:
+        return ""
+    raw = link.strip()
+    if raw.startswith("<") and ">" in raw:
+        raw = raw[1:raw.index(">")]
+    # Only the ``https://`` form is emitted; tolerate its absence rather than
+    # depending on it.
+    for prefix in ("https://", "http://"):
+        if raw.startswith(prefix):
+            raw = raw[len(prefix):]
+            break
+    return urllib.parse.unquote(raw).strip()
+
+
 class ReservationError(Exception):
     """Base class for reservation failures."""
 
@@ -65,7 +87,17 @@ class ReservationLocked(ReservationError):
     (or another instance of the controller) already holds the session.
     The UI should surface this clearly so the operator can retry once
     the other party releases.
+
+    ``owner`` is whoever the Node says currently holds it, taken from the
+    ``Link`` header it returns with the 423. Empty when the Node did not say.
+    Reporting the Node's own answer beats the controller guessing: "held by
+    administrator" tells an operator something actionable, whereas "held by
+    another owner" is a phrase the controller made up.
     """
+
+    def __init__(self, msg: str = "", *, owner: str = "") -> None:
+        super().__init__(msg)
+        self.owner = owner
 
 
 @dataclass
@@ -522,9 +554,11 @@ class SessionStore:
         if result.status == 200:
             return
         if result.status == 423:
+            owner = _owner_from_link(result.link)
+            held_by = f"by {owner!r}" if owner else "by another owner"
             raise ReservationLocked(
-                f"reservation for node {node_id!r} already held "
-                f"by another owner",
+                f"reservation for node {node_id!r} already held {held_by}",
+                owner=owner,
             )
         detail: Any = result.error or result.body
         raise ReservationError(

@@ -1801,7 +1801,15 @@ async def api_privacy_acquire(request: web.Request) -> web.Response:
             )
             acquired.append(node_id)
         except ReservationLocked as exc:
-            failed.append({"node_id": node_id, "reason": str(exc)})
+            # ``owner`` is carried separately from ``reason`` so the browser can
+            # name who holds it without parsing prose. Empty when the Node did
+            # not say.
+            failed.append({
+                "node_id": node_id,
+                "reason": str(exc),
+                "locked": "true",
+                "owner": exc.owner,
+            })
         except ReservationError as exc:
             failed.append({"node_id": node_id, "reason": str(exc)})
 
@@ -1820,7 +1828,12 @@ async def api_privacy_release(request: web.Request) -> web.Response:
 
     Body: ``{"node_ids": [...]}`` to release a specific set, or
     ``?all=true`` in the query string to release every session this
-    admin currently holds (used by the browser unload beacon).
+    admin currently holds.
+
+    ``?all=true`` is what admin logout uses. It is deliberately *not*
+    called from the browser on page unload: ``beforeunload`` fires on
+    ordinary in-app navigation, so doing so released every reservation
+    merely because the operator went to look at another page.
     """
     reservations = _reservations(request)
     admin = _admin_session(request)
@@ -3164,6 +3177,15 @@ async def _build_privacy_view(
         for r in receivers
     )
 
+    # Which of the selection's Nodes this admin already holds a reservation
+    # on. Without this the panel always renders "not reserved" on load, so an
+    # operator returning to the page cannot see that they still hold one —
+    # which became visible once reservations correctly survived navigation.
+    # ``acquired_nodes`` is maintained by the reservation layer on every
+    # acquire / release, so it is the authoritative answer for *this* admin.
+    held: set[str] = _admin_session(request).acquired_nodes
+    reserved_node_ids = [n for n in node_ids if n in held]
+
     return {
         "pep_available":    opts.pep_available,
         "protocols":        opts.protocols,
@@ -3173,6 +3195,10 @@ async def _build_privacy_view(
         "exclusivity_ok":   opts.exclusivity_ok,
         "any_active":       any_active,
         "node_ids":         node_ids,
+        "reserved_node_ids": reserved_node_ids,
+        # True only when every Node in the selection is held: the switch is
+        # all-or-nothing, so a partial hold must not render as ticked.
+        "reserved_all":     bool(node_ids) and len(reserved_node_ids) == len(node_ids),
         "resource_summary": resource_summary,
         # Devices whose IS-05 transport-params fetch did NOT return
         # 200. When non-empty, the privacy panel surfaces a

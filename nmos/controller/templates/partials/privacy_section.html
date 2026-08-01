@@ -51,8 +51,15 @@
    the CSV the JS posts to /api/privacy/acquire|release.
 #}
 {% if privacy_view is defined and privacy_view %}
-<div class="privacy-panel mb-4"
+{# ``is-reserved`` is rendered from real state, not just applied by JS after
+   an acquire. Reservations survive navigation, so a panel that always loaded
+   "not reserved" told the operator the opposite of the truth whenever they
+   came back to the page still holding one. ``reserved_node_ids`` comes from
+   the admin session's ``acquired_nodes``, which the reservation layer keeps
+   current on every acquire and release. #}
+<div class="privacy-panel mb-4{% if privacy_view.reserved_all %} is-reserved{% endif %}"
      data-node-ids="{{ privacy_view.node_ids | join(',') }}"
+     data-reserved-nodes="{{ privacy_view.reserved_node_ids | join(',') }}"
      {# ``exclusivity-available`` stays constant for the page's
         lifetime — it reflects whether every Node in the selection
         even advertises the reservation service. The live-lock JS
@@ -223,6 +230,7 @@
                    class="custom-control-input"
                    id="privacy-exclusivity"
                    data-role="privacy-exclusivity"
+                   {% if privacy_view.reserved_all %}checked{% endif %}
                    {% if excl_locked %}disabled{% endif %}>
             <span class="custom-control-label">
               Exclusivity
@@ -252,7 +260,7 @@
                   d-flex align-items-center justify-content-between">
         <span>
           Negotiated across {{ privacy_view.resource_summary }}.
-          <span data-role="privacy-reservation-status"></span>
+          <span data-role="privacy-reservation-status">{% if privacy_view.reserved_all %} · reserved on {{ privacy_view.reserved_node_ids | length }} node{{ '' if privacy_view.reserved_node_ids | length == 1 else 's' }}{% elif privacy_view.reserved_node_ids %} · reserved on {{ privacy_view.reserved_node_ids | length }} of {{ privacy_view.node_ids | length }} nodes{% endif %}</span>
         </span>
         <span class="privacy-locked-inline"
               data-role="privacy-locked-note"

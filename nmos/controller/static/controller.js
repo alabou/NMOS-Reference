@@ -13,7 +13,7 @@
   const PREFIX = "/controller";
   // Bump on every JS change so a console beacon + a CSS/JS cache-bust
   // both confirm the running version in one step.
-  const CONTROLLER_JS_VERSION = "41";
+  const CONTROLLER_JS_VERSION = "43";
 
   const controller = {};
   window.controller = controller;
@@ -1555,14 +1555,28 @@
     // locked though nothing is active" case where the cache held
     // a stale subscription.active value at render time.
     _reconcilePrivacyLock();
-    // Best-effort release when the browser closes / navigates away.
-    // Using the beacon keeps the call alive past the page's teardown.
-    window.addEventListener("beforeunload", () => {
-      try {
-        const url = `${PREFIX}/api/privacy/release?all=true`;
-        navigator.sendBeacon(url, new Blob([], { type: "application/json" }));
-      } catch (_e) { /* ignore */ }
-    });
+    // No unload-time release.
+    //
+    // There used to be a ``beforeunload`` beacon here posting
+    // ``/api/privacy/release?all=true``, meaning to clean up when the
+    // browser closed. But ``beforeunload`` fires on *document* unload,
+    // which includes ordinary in-app navigation — so simply leaving the
+    // configure page to look at the live status on Senders/Receivers
+    // dropped every reservation the admin held. That is not the intended
+    // behaviour: a reservation exists precisely to be held across a
+    // multi-step operation.
+    //
+    // A reservation is released on **admin logout** and on **app
+    // shutdown**, which is what ``SessionStore.release_all`` documents
+    // itself as being for. Both already happen server-side:
+    // ``logout_handler`` calls ``release_all`` and ``SessionStore.stop``
+    // releases everything on cleanup.
+    //
+    // Consequence, accepted deliberately: closing the tab without
+    // signing out leaves the reservation held until the admin signs in
+    // and out again, or the controller restarts. Holding a reservation
+    // slightly too long is the safe direction to fail — releasing one
+    // while an operator is still working is not.
   };
 
   // Returns the current operator choice as an object suitable for
@@ -1620,8 +1634,20 @@
         // matches the server's.
         ev.target.checked = !checked;
         const failed = (body && body.failed) || [];
+        // A reservation held by someone else is the common, explicable
+        // failure — and the Node tells us who, via the ``Link`` header it
+        // returns with its 423. Say that plainly rather than echoing a raw
+        // reason string: "held by administrator" is actionable, "423" is not.
+        const describe = (f) => {
+          if (f.locked === "true") {
+            return f.owner
+              ? `already held by ${f.owner}`
+              : "already held by another controller";
+          }
+          return `${f.node_id}: ${f.reason}`;
+        };
         const summary = failed.length
-          ? failed.map(f => `${f.node_id}: ${f.reason}`).join("; ")
+          ? [...new Set(failed.map(describe))].join("; ")
           : `HTTP ${resp.status}`;
         // Acquire failed → stay not-reserved (open lock).
         // Release failed → keep the previous reserved state rather

@@ -20,8 +20,12 @@ appeared: the flow, the transport parameters, the subscription. For a reader who
 believes the screen and now wants the model underneath it.
 
 **Level 3, on request.** What the Controller and the Node actually did — the API
-calls the page issued and the node's own trace of handling them. For a reader
-debugging or extending the implementation.
+calls the page issued, the node's own trace of handling them, the NMOS technology
+underneath (hierarchical capabilities, the CCF, IS-11 negotiation, BCP-008 status
+over IS-04, privacy encryption, node reservation), **the specification it
+implements**, and **the files that implement it**. This is the level that turns a
+tutorial into an entry point to the codebase: a reader who has just watched a
+constraint set apply should be able to go and read the code that applied it.
 
 Levels 2 and 3 are rendered inside collapsed ``<details>`` blocks, which is how a
 static document offers "tell me more" without making the first read heavier. The
@@ -37,6 +41,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .text import normalise_text
+
+#: Where a reader goes next. The Matrox tutorials cover the specification corpus
+#: this implementation follows; a generated tutorial shows one worked example
+#: against a live rig, so the two complement rather than duplicate each other.
+DEFAULT_FURTHER_READING: tuple[tuple[str, str], ...] = (
+    ("NMOS-MatroxOnly — tutorials",
+     "https://github.com/alabou/NMOS-MatroxOnly/tree/main/tutorials"),
+    ("NMOS-MatroxOnly — the Matrox NMOS extensions corpus",
+     "https://github.com/alabou/NMOS-MatroxOnly"),
+    ("AMWA NMOS specifications (IS-04, IS-05, IS-11, the BCPs)",
+     "https://specs.amwa.tv/"),
+    ("VSF Technical Recommendations (TR-10 series)",
+     "https://vsf.tv/technical-recommendations/"),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +73,14 @@ class Lesson:
     last_seq: int = 0
     #: Structured state to show at level 2, rendered as a small table.
     state: Mapping[str, str] = field(default_factory=dict)
+    #: ``(path, what you will find there)`` pairs closing the tutorial's third
+    #: level. A reader who has understood the step and wants the implementation
+    #: should not have to guess which of 380 source files to open.
+    sources: tuple[tuple[str, str], ...] = ()
+    #: ``(name, url)`` pairs naming the specification the step exercised. Code
+    #: shows *how this project* does it; the spec shows what everyone has agreed
+    #: to. A reader learning NMOS needs both, and neither substitutes.
+    specs: tuple[tuple[str, str], ...] = ()
 
 
 class Tutorial:
@@ -67,11 +93,16 @@ class Tutorial:
         title: str,
         goal: str,
         audience: str = "",
+        further_reading: tuple[tuple[str, str], ...] = (),
     ) -> None:
         self.root = root
         self.title = title
         self.goal = goal
         self.audience = audience
+        #: ``(name, url)`` closing links — the specification corpus and the
+        #: existing tutorials this one sits alongside. Defaulted by the CLI so
+        #: every generated tutorial ends somewhere a reader can continue.
+        self.further_reading = further_reading or DEFAULT_FURTHER_READING
         self._lessons: list[Lesson] = []
 
     def add(self, lesson: Lesson) -> None:
@@ -120,6 +151,20 @@ class Tutorial:
             out.append("---\n\n## What you just proved\n\n")
             out.append(summary + "\n")
 
+        if self.further_reading:
+            out.append("\n---\n\n## Where to go next\n\n")
+            out.append(
+                "This tutorial is one worked example driven against a live rig. "
+                "For the specifications behind it, and for tutorials covering the "
+                "wider corpus:\n\n"
+            )
+            for name, url in self.further_reading:
+                out.append(f"- [{name}]({url})\n")
+            out.append(
+                "\nThe *under the hood* sections above link into this "
+                "repository's own source for each concept as it appears.\n"
+            )
+
         path.write_text("".join(out), encoding="utf-8")
         return path
 
@@ -156,6 +201,14 @@ class Tutorial:
             if lesson.internals:
                 out.append(f"{lesson.internals}\n\n")
             out.append(internals)
+            if lesson.specs:
+                out.append("\n**The specifications this implements:**\n\n")
+                for name, url in lesson.specs:
+                    out.append(f"- [{name}]({url})\n")
+            if lesson.sources:
+                out.append("\n**Where this lives in the project:**\n\n")
+                for path, what in lesson.sources:
+                    out.append(f"- [`{path}`]({_repo_link(path)}) — {what}\n")
             out.append("\n</details>\n\n")
 
         return "".join(out)
@@ -165,8 +218,19 @@ class Tutorial:
         lesson: Lesson,
         records: Sequence[Mapping[str, object]],
     ) -> str:
-        """Render the calls and trace recorded for this lesson's steps."""
-        calls: list[str] = []
+        """Render the calls and trace recorded for this lesson's steps.
+
+        Action-driven traffic and page-lifecycle traffic are listed separately,
+        and that distinction matters for honesty rather than tidiness. A page
+        opens its status stream on load and fires a best-effort privacy release
+        on unload; both are attributed to whichever step navigated, so listing
+        them plainly as "what the Controller did" invites the reader to conclude
+        that, say, *checking a receiver's status releases a privacy reservation*.
+        It does not. They are still shown — hiding real traffic would be worse —
+        but labelled as what they are.
+        """
+        actions: list[str] = []
+        lifecycle: list[str] = []
         traced: list[str] = []
 
         for record in records:
@@ -184,9 +248,15 @@ class Tutorial:
                 if "debug/client-event" in str(path):
                     continue
                 trace = request.get("trace_id")
-                calls.append(
-                    f"- `{method} {path}`" + (f"  (trace `{trace}`)" if trace else "")
-                )
+                line = (f"- `{method} {path}`"
+                        + (f"  (trace `{trace}`)" if trace else ""))
+                # fetch/xhr is the page acting on the operator's click; an
+                # eventsource opens with the page and a ping is a beforeunload
+                # beacon, so neither was caused by the action being taught.
+                if str(request.get("resource_type")) in _LIFECYCLE_TYPES:
+                    lifecycle.append(line)
+                else:
+                    actions.append(line)
 
             for entry in _as_list(record.get("node_trace")):
                 kind = str(entry.get("kind", ""))
@@ -195,15 +265,21 @@ class Tutorial:
                 traced.append(f"- `{kind}` {_clip(json.dumps(entry), 150)}")
 
         out: list[str] = []
-        if calls:
-            out.append("The page issued these calls to the Controller:\n\n")
-            # Newline-terminated: an earlier version extended the list with bare
-            # strings and the bullets ran together into one unreadable line.
-            out.extend(line + "\n" for line in dict.fromkeys(calls))
+        if actions:
+            out.append("This action caused the page to call:\n\n")
+            out.extend(line + "\n" for line in dict.fromkeys(actions))
             out.append("\n")
         if traced:
             out.append("\nThe Node recorded:\n\n")
             out.extend(line + "\n" for line in dict.fromkeys(traced[:8]))
+            out.append("\n")
+        if lifecycle:
+            out.append(
+                "\nAlso seen, but *not* caused by this action — traffic the page "
+                "generates on its own schedule, such as opening its live-status "
+                "stream when it loads:\n\n"
+            )
+            out.extend(line + "\n" for line in dict.fromkeys(lifecycle))
             out.append("\n")
         if not out:
             out.append(
@@ -211,6 +287,22 @@ class Tutorial:
                 "navigation or reading only._\n"
             )
         return "".join(out)
+
+
+#: How a source path is turned into a link. Relative to the run directory, which
+#: sits several levels below the project root — so a reader opening the tutorial
+#: from the artifacts tree can still follow the link to the file.
+_REPO_DEPTH = "../../../"
+
+#: Resource types a page produces on its own schedule rather than in response to
+#: an operator action: the live-status EventSource, and sendBeacon on unload
+#: (which Chromium reports as ``ping``).
+_LIFECYCLE_TYPES = frozenset({"eventsource", "ping"})
+
+
+def _repo_link(path: str) -> str:
+    """Link a project-relative source path from inside the artifacts tree."""
+    return _REPO_DEPTH + path
 
 
 def _as_list(value: object) -> list[Mapping[str, object]]:

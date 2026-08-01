@@ -1032,7 +1032,16 @@ def _tutorial_jpegxs(session: ControllerSession) -> None:
             "read and write to it.",
         internals="Signing in sets a session cookie scoped to /controller. The "
                   "receivers table is rendered from the Controller's cache of the "
-                  "registry, not by querying each node.",
+                  "IS-04 registry rather than by querying each node — which is "
+                  "why it can show resources from every node at once, and why a "
+                  "change takes a moment to appear after you make it.",
+        specs=(("AMWA IS-04 — Discovery & Registration", "https://specs.amwa.tv/"),) ,
+        sources=(
+            ("nmos/node/registry.py", "the node's IS-04 Registration API client — "
+                                      "how a node publishes itself"),
+            ("nmos/controller/cache.py", "the Controller's resource cache, fed "
+                                         "from the registry's query WebSocket"),
+        ),
     )
 
     session.open_receivers()
@@ -1085,6 +1094,25 @@ def _tutorial_jpegxs(session: ControllerSession) -> None:
         detail="This list is an intersection, computed from both sides' IS-11 "
                "capabilities. An empty list means no sender can feed this "
                "receiver — not that something is broken.",
+        internals="Capability matching in this project runs through the Matrox "
+                  "**Capability Constraint Framework (CCF)**: each side declares "
+                  "capability sets, and compatibility is their intersection. "
+                  "Nothing here compares prebaked SDP templates — the matching "
+                  "surface is what the devices actually advertise, which is what "
+                  "lets the same code drive independent and multiplexed streams "
+                  "alike.",
+        specs=(
+            ("AMWA BCP-004-01 — Receiver Capabilities", "https://specs.amwa.tv/"),
+            ("Matrox NMOS extensions — the CCF and hierarchical capabilities", "https://github.com/alabou/NMOS-MatroxOnly"),
+        ),
+        sources=(
+            ("caps/MatroxCCF.py", "the CCF itself — Caps, Cons, CapSet, ConSet, "
+                                  "RangeValue, intersection and union"),
+            ("nmos/controller/compat.py", "receiver ↔ sender capability "
+                                          "intersection for this page"),
+            ("nmos/node/flow_caps.py", "turning an NMOS flow into CCF "
+                                       "capabilities"),
+        ),
     )
 
     session.clear_selection()
@@ -1110,6 +1138,25 @@ def _tutorial_jpegxs(session: ControllerSession) -> None:
         detail="A green constraint-set name means it matches what the sender is "
                "transmitting right now. Preference orders the alternatives; the "
                "highest is pre-selected when the page loads.",
+        internals="A constraint set is a CCF *ConSet*: one allowed combination of "
+                  "parameter values. A device advertises several, and the one "
+                  "with preference 100 is its native mode. For a multiplexed "
+                  "stream these sets are **hierarchical** — each sub-flow "
+                  "(video, audio, data) carries its own, tagged with format and "
+                  "layer metadata, so one negotiation configures every layer.",
+        specs=(
+            ("AMWA IS-11 — Stream Compatibility", "https://specs.amwa.tv/"),
+            ("AMWA BCP-006-01 — NMOS With JPEG XS", "https://specs.amwa.tv/"),
+            ("Matrox NMOS extensions — One Model, format/layer metadata", "https://github.com/alabou/NMOS-MatroxOnly"),
+        ),
+        sources=(
+            ("caps/MatroxCCF.py", "ConSet and the constraint model"),
+            ("nmos/controller/flow_match.py", "what makes a set's name green — "
+                                              "matching a resource's current flow "
+                                              "against its declared sets"),
+            ("nmos/controller/grouping.py", "natural groups and the format/layer "
+                                            "metadata behind the One Model design"),
+        ),
     )
 
     session.choose_constraint_set(resource_id=jxs.resource_id, index=jxs.index)
@@ -1143,6 +1190,16 @@ def _tutorial_jpegxs(session: ControllerSession) -> None:
         detail="Nothing has been sent to the device yet. These edits are held in "
                "the browser until you press Constrain, and the Reset button "
                "discards them.",
+        internals="Each drop-down offers exactly the values the chosen constraint "
+                  "set permits — a CCF *RangeValue*, which may be an enumeration, "
+                  "a numeric range, or a single pinned value. A pinned value "
+                  "renders read-only, which is why a native set leaves nothing to "
+                  "choose.",
+        specs=(("AMWA BCP-004-02 — Receiver Capabilities schemas", "https://specs.amwa.tv/"),),
+        sources=(
+            ("caps/MatroxCCF.py", "RangeValue — how a permitted set of values is "
+                                  "represented and narrowed"),
+        ),
     )
 
     _ensure_toggle(session, ToggleAction.ACTIVATE, False,
@@ -1158,9 +1215,17 @@ def _tutorial_jpegxs(session: ControllerSession) -> None:
         detail="Order matters here: a sender's constraints are locked while it is "
                "transmitting, so constraining an active sender is refused with "
                "*423 Locked*. Deactivate first, constrain, then activate.",
-        internals="Constrain sends the chosen constraint set to the sender's IS-11 "
-                  "stream-compatibility endpoint. The result cell shows the HTTP "
-                  "status the device returned.",
+        internals="This is **IS-11 stream compatibility**. The set you chose is "
+                  "sent as the sender's *active constraints*; the device must then "
+                  "produce a stream satisfying them. The 423 rule you avoided by "
+                  "deactivating first is enforced node-side, not by the UI.",
+        specs=(("AMWA IS-11 — Stream Compatibility", "https://specs.amwa.tv/"),),
+        sources=(
+            ("nmos/api/handlers_compat.py", "the IS-11 endpoints, including the "
+                                            "423 Locked rule for an active sender"),
+            ("nmos/node/compatibility.py", "node-side IS-11 stream compatibility "
+                                           "management"),
+        ),
     )
 
     _ensure_toggle(session, ToggleAction.ACTIVATE, True,
@@ -1172,8 +1237,18 @@ def _tutorial_jpegxs(session: ControllerSession) -> None:
         "Activate the sender",
         do="Press **Activate** on the sender side.",
         see="The sender's state changes to *active*. It is now transmitting.",
-        internals="Activation is an immediate IS-05 activation on the sender's "
-                  "/staged endpoint, which the node promotes to /active.",
+        internals="Activation is an **IS-05** immediate activation: the "
+                  "Controller PATCHes the sender's /staged endpoint and the node "
+                  "promotes staged to active. This implementation runs every "
+                  "transport — RTP, SRT, USB, mux containers — through one "
+                  "activation pipeline rather than a path per transport.",
+        specs=(("AMWA IS-05 — Connection Management", "https://specs.amwa.tv/"),),
+        sources=(
+            ("nmos/api/handlers_connection.py", "the IS-05 Connection API "
+                                                "endpoints"),
+            ("nmos/node/activation_engine.py", "the shared 5-step activation "
+                                               "pipeline"),
+        ),
     )
 
     _ensure_toggle(session, ToggleAction.ACTIVATE_RECEIVERS, True,
@@ -1188,9 +1263,22 @@ def _tutorial_jpegxs(session: ControllerSession) -> None:
             "the sender and receiving the JPEG XS stream.",
         detail="The receiver has to come second: until the sender is transmitting "
                "there is no stream, and no transport file, for it to lock onto.",
-        internals="The Controller fetches the sender's transport file and stages "
-                  "it on the receiver, then activates. That is what creates the "
-                  "subscription linking the two resources.",
+        internals="The Controller fetches the sender's **SDP transport file** and "
+                  "stages it on the receiver before activating. That is what "
+                  "creates the IS-04 *subscription* linking the two resources — "
+                  "the field the receivers page reads to decide whether the flow "
+                  "button is offered.",
+        specs=(
+            ("AMWA IS-05 — Connection Management", "https://specs.amwa.tv/"),
+            ("AMWA BCP-006-01 — NMOS With JPEG XS (SDP profile)", "https://specs.amwa.tv/"),
+        ),
+        sources=(
+            ("nmos/node/sdp_transport.py", "SDP transport file generation and "
+                                           "receiver-side SDP processing"),
+            ("sdp/MatroxSdp.py", "the SDP model itself"),
+            ("nmos/api/handlers_connection.py", "staging and activating a "
+                                                "receiver"),
+        ),
     )
 
     # -- evidence -----------------------------------------------------------
@@ -1220,6 +1308,22 @@ def _tutorial_jpegxs(session: ControllerSession) -> None:
                "stream, so they change without reloading the page. The NMOS "
                "detail pages reached from the grey buttons do not — they hold a "
                "stable snapshot until you press Refresh.",
+        internals="The traffic lights are **BCP-008 status carried over IS-04**. "
+                  "Status is published as monitor resources in the registry, so "
+                  "any controller subscribed to the registry's query WebSocket "
+                  "sees changes asynchronously — no IS-12 or MS-05-02 control "
+                  "stack is required. The Controller relays them to the browser "
+                  "as server-sent events.",
+        specs=(
+            ("AMWA BCP-008-01 — Receiver Status", "https://specs.amwa.tv/"),
+            ("AMWA IS-04 — the registry query WebSocket that carries it", "https://specs.amwa.tv/"),
+        ),
+        sources=(
+            ("nmos/node/status_monitor.py", "BCP-008 status reporting — the event "
+                                            "consumer and state machine"),
+            ("nmos/controller/sse.py", "the server-sent-events stream the badges "
+                                       "subscribe to"),
+        ),
     )
 
     session.open_row_action(resource_id=receiver.resource_id,
@@ -1238,8 +1342,17 @@ def _tutorial_jpegxs(session: ControllerSession) -> None:
                "flow to show. Seeing it enabled is itself evidence the "
                "subscription exists.\n\n"
                "```json\n" + _excerpt(flow_text) + "\n```",
-        internals="This page renders the IS-04 Flow resource as published by the "
-                  "node and cached by the Controller from the registry.",
+        internals="This is the **IS-04 Flow** resource as published by the node "
+                  "and cached from the registry. Its fields are the same ones the "
+                  "CCF matched against when it offered you this constraint set — "
+                  "which is why the values here are exactly what you chose.",
+        specs=(("AMWA IS-04 — the Flow resource", "https://specs.amwa.tv/"),),
+        sources=(
+            ("nmos/node/flow_caps.py", "converting a flow into CCF capabilities — "
+                                       "the link between this resource and the "
+                                       "matching you saw earlier"),
+            ("nmos/node/publish.py", "how the node publishes its resources"),
+        ),
     )
 
 

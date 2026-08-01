@@ -367,6 +367,26 @@ class TextIs:
 
 
 @dataclass(frozen=True, slots=True)
+class TextContains:
+    """A region's visible text contains a fragment, after normalisation.
+
+    Used to race a success condition against a page's own failure text, so a
+    refusal is reported with the reason on screen rather than as a timeout.
+    """
+
+    selector: str
+    fragment: str
+
+    def describe(self) -> str:
+        return f"TextContains({self.selector!r} ~ {self.fragment!r})"
+
+    def evaluate(self, surface: Surface) -> SpecResult:
+        actual = normalise_text(surface.visible_text(self.selector))
+        return SpecResult(normalise_text(self.fragment) in actual,
+                          observed=actual[:120])
+
+
+@dataclass(frozen=True, slots=True)
 class UrlChangedFrom:
     """The document URL differs from a baseline.
 
