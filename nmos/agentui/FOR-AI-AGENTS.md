@@ -244,6 +244,7 @@ root and name the document; do not invent deep links you have not checked.
 | Concept | Specification |
 |---|---|
 | Discovery, registration, the resource model | **AMWA IS-04** — <https://specs.amwa.tv/> |
+| The registry side: Query API, subscriptions, grains | **AMWA IS-04** — the Registration and Query APIs. The normative behaviour is in *Behaviour - Registration.md* and *Behaviour - Querying.md*, mirrored verbatim under `nmos/registry/specs/` |
 | Connection, staged/active, activation | **AMWA IS-05** |
 | Stream compatibility, active constraints | **AMWA IS-11** |
 | Authorization, tokens, JWKS | **AMWA IS-10** |
@@ -252,8 +253,8 @@ root and name the document; do not invent deep links you have not checked.
 | Status reporting | **AMWA BCP-008-01**, carried over IS-04 here |
 | TLS | **AMWA BCP-003-01**; **VSF TR-10-SEC** for the IPMX profile |
 | Privacy encryption | **AMWA BCP-005-03**; **VSF TR-10-13** — <https://vsf.tv/technical-recommendations/> |
-| USB-over-IP | **VSF TR-10-14** |
-| JPEG XS / H.264 / H.265 | **AMWA BCP-006-01 / -02**, extended by the Matrox corpus |
+| USB-over-IP | **AMWA BCP-007-02** (NMOS With USB — the SDP profile and verification) **and VSF TR-10-14** (the USB protocol adaptation). Cite both: BCP-007-02 is the NMOS surface, TR-10-14 is how the traffic is carried |
+| JPEG XS / H.264 / H.265 | **AMWA BCP-006-01** (JPEG XS) / **BCP-006-02** (H.264) / **BCP-006-03** (H.265), each extended by the Matrox corpus |
 | CCF, hierarchical mux capabilities, One Model, AM824, MPEG2-TS, NDI, SRT, RTSP | **NMOS-MatroxOnly** — <https://github.com/alabou/NMOS-MatroxOnly> |
 
 The repo README carries the full tables with this implementation's coverage notes
@@ -275,7 +276,8 @@ its evident role. Cite the ones a step actually touched — not all of them.
 | **IS-05 connection and activation** | `nmos/api/handlers_connection.py` — the endpoints; `nmos/node/activation_engine.py` — *"Generic activation pipeline — 5-step process for all transports"* |
 | **BCP-008 status over IS-04** | `nmos/node/status_monitor.py` — *"BCP-008 Status Reporting — Event Consumer and State Machine"*. Status travels as IS-04 monitor resources, so any registry-subscribed controller sees it without IS-12/MS-05-02 |
 | **Live status in the UI** | `nmos/controller/sse.py` — the server-sent-events stream the badges and traffic lights use |
-| **IS-04 registration** | `nmos/node/registry.py` — *"NMOS Registration API client"* |
+| **IS-04 registration — the node side** | `nmos/node/registry.py` — *"NMOS Registration API client"*. The **client**: it POSTs the node's resources and heartbeats. Do not cite it for anything the registry does |
+| **IS-04 registry — the server side** | `nmos/registry/` — the Registration and Query APIs this project ships, so a rig needs no third-party registry. `store.py` holds the resources with registry-assigned TAI paging cursors, health and garbage collection; `subscriptions.py` builds the WebSocket grains (added / removed / modified / sync, and the synthetic events a filtered subscription must emit when a resource starts or stops matching); `paging.py` and `query_filter.py` are the `paging.*` and basic-query semantics; `nmos_registry.py` is the standalone launcher. The verbatim IS-04 sources sit in `nmos/registry/specs/` |
 | **SDP transport files** | `nmos/node/sdp_transport.py` — *"SDP transport file generation and receiver SDP processing"*; `sdp/MatroxSdp.py` and `sdp/MatroxSdpWrite.py` for the SDP model itself |
 | **Privacy encryption — PEP (TR-10-13)** | `pep/ipmx_pep.py` — *"IPMX Privacy Encryption Protocol (PEP) — Key Derivation, Cipher, and Protocol Adaptations"*; `nmos/node/privacy.py` — *"Privacy / ECDH key generation for transport encryption"*; `nmos/controller/privacy.py` — the UI side; `nmos/node/security_tags.py` — *"IPMX security configuration tags — VSF TR-10-SECURITY §8"* |
 | **Node reservation for exclusive use** | `nmos/crypto/__init__.py` — *"ExclusiveSession — token-based mutual exclusion for NMOS Node API"*; `nmos/api/handlers_exclusive.py` — *"Exclusive session (Node Reservation) API handlers"*; `nmos/controller/reservation.py` — *"Node Reservation session management for the controller"* |
@@ -352,7 +354,8 @@ natural progressions, each ending in a level 3 that opens the corresponding code
    controls lock once anything is active.
 6. **Take exclusive ownership of the nodes** — token-based reservation, and what
    it protects against when several controllers share a network.
-7. **Route across two nodes with a return path** — USB / talk-back, TR-10-14.
+7. **Route across two nodes with a return path** — USB / talk-back, BCP-007-02
+   and TR-10-14.
 
 ---
 
