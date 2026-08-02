@@ -20,26 +20,57 @@ Two files matter, and the order is not optional:
 
 ## 1. Check you can actually run before promising anything
 
-Three prerequisites. Check them before telling the user what you are going to do.
+Four prerequisites. Check them before telling the user what you are going to do.
 
 ```bash
 cd nmos-reference
 
 # (a) A node with a Controller UI must already be running. You never start one.
-pgrep -fa nmos_node.py | grep -o -- '--nodeControlPort [0-9]*'
+#
+#     The bracketed first letter matters: a plain `pgrep -f nmos_node.py`
+#     also matches the shell running the pgrep, so it reports a node on an
+#     empty machine. `[0-9]*` matters for the same reason -- it matches zero
+#     digits, so the self-match slips through as a blank port.
+pgrep -fa "[n]mos_node.py" | grep -o -- '--nodeControlPort [0-9][0-9]*'
 
-# (b) The optional dependency and its browser.
+# (b) How many nodes, and is a registry up? This decides which scenarios run.
+pgrep -fa "[n]mos_node.py" | grep -o -- '--nodeSerialNumber [A-Z0-9][A-Z0-9]*'
+pgrep -f "[n]mos_registry.py" >/dev/null && echo "registry: up" || echo "registry: ABSENT"
+
+# (c) The optional dependency and its browser.
 .venv/bin/python -c "import playwright" && ls .playwright/
 
-# (c) The admin password, from the environment.
+# (d) The admin password, from the environment.
 echo "${NMOS_CONTROLLER_ADMIN_PASSWORD:?not set}"
 ```
 
-If **(a)** finds nothing, ask the user to start a node — `./start-node1-bare.sh` is
-the usual one. **Do not start it yourself**: `start-node*.sh` is the project's
-launch contract and the configuration it chooses determines what the demo shows.
+If **(a)** finds nothing, ask the user to start the rig. **Do not start it
+yourself**: `start-node*.sh` is the project's launch contract and the
+configuration it chooses determines what the demo shows.
 
-If **(b)** is missing, see the setup section in the repo README. It is two commands,
+**(b) decides what you can honestly promise.** Match the rig to the scenario
+before you describe what you are about to do:
+
+| Rig | What runs |
+|---|---|
+| One node, no registry | `attach-and-look`, `inspect-one-sender`, `selection-guard`, `blocked-controls`, `session-lost` |
+| One node + registry | adds `route-one-receiver`, `privacy-exclusivity` — status badges only update through the registry, so without it a run records an *unconfirmed* observation rather than a live one |
+| Two nodes + registry | adds `cross-node-reverse`, `demo-group-route-tb`, `demo-group-route-hevc`, **`tutorial-jpegxs`** |
+
+The cross-node scenarios route from a sender on **SNX00001** to a receiver on
+**SNX00002**, so both nodes must be registered with the *same* registry. Note
+that `tutorial-jpegxs` — the scenario that emits a tutorial — is one of them: on
+a single-node rig it cannot find its receiver and stops early. If a user asks
+for a tutorial and only one node is up, say so and ask them to start the full
+rig rather than running it and narrating a truncated journal:
+
+```bash
+./start-registry-bare.sh     # terminal 1
+./start-node1-bare.sh        # terminal 2 — SNX00001
+./start-node2-bare.sh        # terminal 3 — SNX00002
+```
+
+If **(c)** is missing, see the setup section in the repo README. It is two commands,
 one of which downloads ~656 MB, so ask before running it.
 
 Always run from `nmos-reference/`, and always with the venv interpreter:

@@ -242,16 +242,42 @@ Everything lands in `.playwright/`: nothing enters the system package database, 
 
 #### Running
 
-```bash
-# 1. Start a node as usual — the driver never starts one.
-./start-node1-bare.sh
+Bring up the full rig — registry and **two** nodes — in three terminals. The
+driver attaches to what is already running and never starts anything itself:
 
-# 2. In another shell, from nmos-reference/:
+```bash
+./start-registry-bare.sh     # terminal 1
+./start-node1-bare.sh        # terminal 2 — SNX00001
+./start-node2-bare.sh        # terminal 3 — SNX00002
+```
+
+```bash
+# terminal 4, from nmos-reference/
 export NMOS_CONTROLLER_ADMIN_PASSWORD=admin      # the --controllerAdminPassword value
 export PLAYWRIGHT_BROWSERS_PATH="$PWD/.playwright"
 .venv/bin/python -m nmos.agentui --listScenarios
 .venv/bin/python -m nmos.agentui --scenario attach-and-look
 ```
+
+##### What each scenario needs
+
+The full rig runs everything, which is why it is the recommendation. A smaller
+rig still runs part of the set:
+
+| Rig | Scenarios | Why |
+|---|---|---|
+| One node, no registry | `attach-and-look`, `inspect-one-sender`, `selection-guard`, `blocked-controls`, `session-lost` | Read-only walks over one node's own resources. The Controller seeds its cache from the local node at startup, which is enough. |
+| One node **+ registry** | adds `route-one-receiver`, `privacy-exclusivity` | These activate a route and then watch the status badges. Status travels as BCP-008 monitor resources through IS-04, so **without a registry the badges never update** and the scenario reports an unconfirmed observation. |
+| **Two nodes + registry** | adds `cross-node-reverse`, `demo-group-route-tb`, `demo-group-route-hevc`, `tutorial-jpegxs` | Each routes from a sender on SNX00001 to a receiver on SNX00002, so both must be registered with the *same* registry for the Controller to see them as one resource set. |
+
+Note that **`tutorial-jpegxs` — the scenario that emits a tutorial — is in the
+last row.** With one node it cannot find its SNX00002 receiver and stops early.
+
+A run that is short of what it needs does not fail silently: the driver reports
+the missing precondition (`"Is the node registered with a registry and serving
+senders?"`, `"reverse-direction buttons will not appear. Start a second node."`)
+and `manifest.json` records whether a live status update was genuinely observed
+or merely unconfirmed.
 
 On Windows, start the equivalent bare nodes from Command Prompt in separate
 windows. Both launchers prefer the repository's `.venv\Scripts\python.exe`:
