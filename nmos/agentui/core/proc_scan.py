@@ -18,7 +18,7 @@ caller names which options are sensitive rather than this module guessing.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 import ctypes
 from dataclasses import dataclass
 import json
@@ -79,7 +79,16 @@ def iter_processes(proc_root: Path = Path("/proc")) -> Iterator[ProcessInfo]:
 
 
 def _split_windows_command_line(command_line: str) -> tuple[str, ...]:
-    """Parse a Win32 command line using the same rules as a native process."""
+    """Parse a Win32 command line using the same rules as a native process.
+
+    The early platform return is what lets this type-check off Windows: typeshed
+    only declares ``ctypes.windll`` under ``sys.platform == "win32"``, and mypy
+    narrows on that comparison, so the guard makes the ``windll`` accesses below
+    valid rather than needing a blanket ``type: ignore``.
+    """
+    if sys.platform != "win32":
+        return ()
+
     argc = ctypes.c_int()
     command_line_to_argv = ctypes.windll.shell32.CommandLineToArgvW
     command_line_to_argv.argtypes = (
@@ -96,13 +105,63 @@ def _split_windows_command_line(command_line: str) -> tuple[str, ...]:
         ctypes.windll.kernel32.LocalFree(pointer)
 
 
-def _iter_windows_processes() -> Iterator[ProcessInfo]:
-    """Yield Windows processes from CIM, collapsing the venv launcher pair.
+@dataclass(frozen=True, slots=True)
+class _ScannedProcess:
+    """A CIM row reduced to what venv-launcher-pair detection needs."""
+
+    process: ProcessInfo
+    parent_pid: int | None
+    is_venv_launcher: bool
+
+
+def _collapse_venv_launchers(
+    scanned: Sequence[_ScannedProcess],
+) -> Iterator[ProcessInfo]:
+    """Drop each venv launcher that its own base interpreter supersedes.
 
     A Windows virtual-environment Python launcher starts the base interpreter as
     a child and waits for it. Both processes expose the same command line, but
-    only the base interpreter owns the sockets. Prefer that process so the
-    recorded PID identifies the actual NMOS server.
+    only the base interpreter owns the sockets, so the launcher is suppressed and
+    the child's PID is the one reported.
+
+    The pair is identified by the actual parent/child link AND a matching command
+    line — never by a matching command line alone. Two nodes started
+    independently from the same launcher script share an identical command line
+    without being one process reported twice, and collapsing those would erase a
+    real ambiguity: :func:`nmos.agentui.apps.nmos_controller.discovery.discover`
+    refuses to guess between candidates and relies on the COUNT being truthful,
+    so a false merge would let the driver attach to one rig while the journal
+    read as though there had been no choice to make.
+
+    A launcher with no such child — no parent data, child not in this snapshot,
+    or a child running something else — is kept. That degrades toward reporting a
+    duplicate, which ``discover`` surfaces as an ambiguity the operator can
+    resolve with ``--controlPort``, rather than toward dropping a live node.
+    """
+    argv_by_pid = {entry.process.pid: entry.process.argv for entry in scanned}
+    launcher_pids = {
+        entry.process.pid for entry in scanned if entry.is_venv_launcher
+    }
+    superseded = {
+        entry.parent_pid
+        for entry in scanned
+        if entry.parent_pid in launcher_pids
+        and argv_by_pid.get(entry.parent_pid) == entry.process.argv
+    }
+    # PID order rather than CIM enumeration order: a snapshot of something in
+    # motion should at least be reported deterministically.
+    for entry in sorted(scanned, key=lambda item: item.process.pid):
+        if entry.process.pid in superseded:
+            continue
+        yield entry.process
+
+
+def _iter_windows_processes() -> Iterator[ProcessInfo]:
+    """Yield Windows processes from CIM, collapsing venv launcher pairs.
+
+    ``ParentProcessId`` is selected alongside the command line because the
+    launcher/base pair can only be told apart from two genuinely separate
+    processes by the parent/child link — see :func:`_collapse_venv_launchers`.
     """
     powershell = (
         Path(os.environ.get("SystemRoot", r"C:\Windows"))
@@ -111,7 +170,7 @@ def _iter_windows_processes() -> Iterator[ProcessInfo]:
     script = (
         "Get-CimInstance Win32_Process | "
         "Where-Object { $_.CommandLine } | "
-        "Select-Object ProcessId,ExecutablePath,CommandLine | "
+        "Select-Object ProcessId,ParentProcessId,ExecutablePath,CommandLine | "
         "ConvertTo-Json -Compress"
     )
     try:
@@ -140,7 +199,7 @@ def _iter_windows_processes() -> Iterator[ProcessInfo]:
         return
 
     rows = payload if isinstance(payload, list) else [payload]
-    unique: dict[tuple[str, ...], tuple[ProcessInfo, bool]] = {}
+    scanned: list[_ScannedProcess] = []
     for row in rows:
         command_line = row.get("CommandLine") or ""
         argv = _split_windows_command_line(command_line)
@@ -152,16 +211,22 @@ def _iter_windows_processes() -> Iterator[ProcessInfo]:
             executable_path.parent.name.casefold() == "scripts"
             and (executable_path.parent.parent / "pyvenv.cfg").is_file()
         )
-        process = ProcessInfo(pid=int(row["ProcessId"]), argv=argv)
-        # The venv launcher and base interpreter differ only in argv[0].
-        # Key Python script invocations from the script path onward.
-        key = argv[1:] if len(argv) > 1 and argv[1].endswith(".py") else argv
-        previous = unique.get(key)
-        if previous is None or (previous[1] and not is_launcher):
-            unique[key] = (process, is_launcher)
+        # Missing or unparseable parent data means the pair cannot be proven, so
+        # the entry is treated as parentless and therefore never collapses.
+        parent_pid: int | None
+        try:
+            parent_pid = int(row["ParentProcessId"])
+        except (KeyError, TypeError, ValueError):
+            parent_pid = None
+        scanned.append(
+            _ScannedProcess(
+                process=ProcessInfo(pid=int(row["ProcessId"]), argv=argv),
+                parent_pid=parent_pid,
+                is_venv_launcher=is_launcher,
+            )
+        )
 
-    for process, _is_launcher in unique.values():
-        yield process
+    yield from _collapse_venv_launchers(scanned)
 
 
 def find_by_script(

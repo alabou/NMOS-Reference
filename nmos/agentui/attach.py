@@ -74,6 +74,14 @@ def attach_controller(
     journal = Journal(root, scenario=scenario,
                       title=f"Controller UI walkthrough — {scenario}")
     joiner = TraceJoiner(found.debug_log_path)
+    # Whether the derived path actually resolved to a file, sampled now rather
+    # than at teardown so it answers the question as it stood when correlation
+    # began. An empty causal chain otherwise has two indistinguishable causes:
+    # the node traced nothing, or it traced somewhere this run never looked
+    # (the path is derived from the node's command line, and the temporary
+    # directory it resolves through is environment-dependent). Recording the
+    # answer costs one stat and turns that ambiguity into a stated fact.
+    debug_log_found = joiner.available
 
     # Imported here rather than at module scope: this module is part of the public
     # surface and must stay importable with no browser dependency present.
@@ -112,6 +120,11 @@ def attach_controller(
         target = found.target.to_json()
         target["tls_detail"] = found.pin.to_json()
         target["debug_log_path"] = found.debug_log_path or "(tracing disabled)"
+        # Only meaningful when a path was derived at all — with tracing off there
+        # is nothing that ought to exist, and reporting its absence would read as
+        # a fault rather than a configuration choice.
+        if found.debug_log_path is not None:
+            target["debug_log_present"] = "true" if debug_log_found else "false"
         if joiner.rotated:
             target["debug_log_rotated"] = "true"
 

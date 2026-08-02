@@ -31,7 +31,7 @@ The security surface — TLS (with cipher and curve restriction), OAuth 2.0 Bear
 - **Typed JSON serializers** — generated from the NMOS JSON schemas, so the wire format and the in-memory types stay in sync.
 - **Typed Python** — `mypy --strict` clean across the `nmos/` package (tests excluded).
 - **Asyncio throughout** — aiohttp HTTP / WebSocket servers, `DispatchGroup`-based task lifecycles, errgroup-style cancellation.
-- **Test suite** — 2 000+ tests across unit, integration, and end-to-end paths.
+- **Test suite** — 2 500+ tests across unit, integration, and end-to-end paths.
 
 ---
 
@@ -187,11 +187,6 @@ These two launchers mirror the shell contracts and expect an IS-04 Registry on
 Registry the Node APIs still start, but their consoles report connection-refused
 retries and the Controller cannot assemble a shared two-node resource view.
 
-```bat
-start-node1-bare.bat
-start-node2-bare.bat
-```
-
 Each launcher prints the selected Registry address before starting.
 `NMOS_RDS_HOST` can override discovery, and `NMOS_RDS_REG_PORT` can override
 port 8444; the Query API port is derived as one less than the Registration API
@@ -221,10 +216,10 @@ run with checks switched off looks identical to one where they work.
 ### Verify the install
 
 ```bash
-python3 -m pytest -q nmos/ sdp/
+python3 -m pytest -q
 ```
 
-Runs the full test suite (~3 minutes, 2 000+ tests). See the [Tests](#tests) section for per-module invocation and marker breakdown.
+Runs the full test suite (~4 minutes, 2 500+ tests). The paths come from `testpaths` in `pyproject.toml`, so no arguments are needed. See the [Tests](#tests) section for per-module invocation and marker breakdown.
 
 ---
 
@@ -330,9 +325,16 @@ nmos/                   — Core NMOS implementation
   api/                  — HTTP/WS endpoints, TLS context factories, IS-04/05/...
   controller/           — Built-in NMOS Controller + outbound OAuth2/registry clients
   node/                 — Node resources (senders/receivers/sources/flows/devices), config
+  agentui/              — Agent driver for the Controller UI (real Chromium, journalled runs)
+    core/               — Surface/step/journal primitives, process scan, TLS pinning
+    apps/nmos_controller/ — Controller-specific driver: discovery, session, pages, trace join
+    driver/             — Playwright launcher and Surface implementation
+    FOR-AI-AGENTS.md, OPERATING-THE-CONTROLLER.md — read these before driving the UI
   json/                 — Typed JSON serialization engine
   types/generated/      — Auto-generated typed wrappers for all NMOS resource types
+  codegen/              — Go-source parser + generator that produces types/generated/
   oauth2/               — Bearer token validation, JWKS cache lifecycle
+  crypto/               — ExclusiveSession: token-based mutual exclusion for Node Reservation
   tasks/                — DispatchGroup wrapping asyncio.TaskGroup
   codec/                — Audio/video codec descriptors (H.264, H.265, AAC, JXSV, AES3, …)
   enums/, ip/, errors/, uuid/  — Domain primitives
@@ -345,6 +347,9 @@ nmos_node.py            — Main entry point; parses CLI and starts the server
 run_server.py           — Lightweight wrapper for embedding nmos_node from scripts
 demo_controller.py      — Standalone demo controller for manual exploration
 start-node*.sh          — Launch scripts for the three security configurations
+start-node*-bare.bat    — Windows launchers for the bare (registry-only) rigs
+requirements.txt        — Runtime dependencies
+requirements-agentui.txt — Extra dependencies for the agent driver (Playwright)
 ```
 
 ---
@@ -352,11 +357,14 @@ start-node*.sh          — Launch scripts for the three security configurations
 ## Tests
 
 ```bash
-# Full test suite (~3 minutes; 2 000+ tests)
-python3 -m pytest -q nmos/ sdp/
+# Full test suite (~4 minutes; 2 500+ tests)
+# Paths come from `testpaths` in pyproject.toml — nmos/ plus caps/tests
+python3 -m pytest -q
 
 # Per-module
 python3 -m pytest -q nmos/oauth2/tests/
+python3 -m pytest -q nmos/agentui/tests/
+python3 -m pytest -q caps/tests/
 python3 -m pytest -q nmos/api/tests/test_tr10_tls.py
 ```
 

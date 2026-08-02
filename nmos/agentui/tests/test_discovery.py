@@ -119,6 +119,98 @@ class TestProcScan:
         assert list(iter_processes()) == [expected]
 
 
+#: A Windows venv invocation. Both halves of the launcher pair report this
+#: verbatim — which is precisely why the command line cannot identify the pair.
+WIN_NODE_ARGV = (
+    r"C:\repo\.venv\Scripts\python.exe", "nmos_node.py",
+    "--nodeControlPort", "5050",
+)
+
+
+def _scanned(
+    pid: int,
+    *,
+    parent_pid: int | None = None,
+    argv: tuple[str, ...] = WIN_NODE_ARGV,
+    launcher: bool = False,
+) -> proc_scan._ScannedProcess:
+    return proc_scan._ScannedProcess(
+        process=ProcessInfo(pid=pid, argv=argv),
+        parent_pid=parent_pid,
+        is_venv_launcher=launcher,
+    )
+
+
+class TestCollapseVenvLaunchers:
+    """Telling a venv launcher/base pair apart from two separate nodes.
+
+    The distinction matters beyond tidiness: ``discover`` refuses to choose
+    between candidates, so merging two real nodes would not surface as an
+    ambiguity — it would silently attach to one of them.
+    """
+
+    def test_launcher_is_superseded_by_its_own_base_interpreter(self) -> None:
+        scanned = [
+            _scanned(100, launcher=True),
+            _scanned(101, parent_pid=100),
+        ]
+        assert [p.pid for p in proc_scan._collapse_venv_launchers(scanned)] == [101]
+
+    def test_identical_command_lines_from_separate_rigs_both_survive(self) -> None:
+        # The regression this guards: keying the collapse on argv alone erased
+        # one of these, and the ambiguity error never fired.
+        scanned = [
+            _scanned(100, launcher=True),
+            _scanned(101, parent_pid=100),
+            _scanned(200, launcher=True),
+            _scanned(201, parent_pid=200),
+        ]
+        assert [p.pid for p in proc_scan._collapse_venv_launchers(scanned)] == [
+            101, 201,
+        ]
+
+    def test_launcher_without_its_child_in_the_snapshot_is_kept(self) -> None:
+        # Dropping it would lose the only evidence the node is running.
+        scanned = [_scanned(100, launcher=True)]
+        assert [p.pid for p in proc_scan._collapse_venv_launchers(scanned)] == [100]
+
+    def test_child_running_a_different_command_does_not_collapse_it(self) -> None:
+        scanned = [
+            _scanned(100, launcher=True),
+            _scanned(101, parent_pid=100,
+                     argv=(r"C:\repo\.venv\Scripts\python.exe", "-m", "pip")),
+        ]
+        assert [p.pid for p in proc_scan._collapse_venv_launchers(scanned)] == [
+            100, 101,
+        ]
+
+    def test_absent_parent_data_never_collapses(self) -> None:
+        scanned = [
+            _scanned(100, launcher=True),
+            _scanned(101, parent_pid=None),
+        ]
+        assert [p.pid for p in proc_scan._collapse_venv_launchers(scanned)] == [
+            100, 101,
+        ]
+
+    def test_a_non_launcher_parent_is_never_dropped(self) -> None:
+        # A plain interpreter that spawned an identical child is not a launcher
+        # pair; both are real processes.
+        scanned = [
+            _scanned(100),
+            _scanned(101, parent_pid=100),
+        ]
+        assert [p.pid for p in proc_scan._collapse_venv_launchers(scanned)] == [
+            100, 101,
+        ]
+
+    def test_output_is_ordered_by_pid(self) -> None:
+        scanned = [_scanned(300), _scanned(100), _scanned(200)]
+        assert [p.pid for p in proc_scan._collapse_venv_launchers(scanned)] == [
+            100, 200, 300,
+        ]
+
+
 class TestCommandLine:
     """Parsing the three option shapes argparse produces."""
 
