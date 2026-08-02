@@ -12,10 +12,15 @@ from __future__ import annotations
 
 import html
 import re
-from typing import Any
+from typing import Any, Callable
 
 from aiohttp import web
 from nmos.json.engine import JsonEngine
+
+#: ``(field_name, value) -> href | None``. ``field_name`` is the JSON key
+#: the value sits under, or None at the document root / inside an array
+#: whose key is unknown. Returning None defers to the generic link rules.
+LinkResolver = Callable[[str | None, str], "str | None"]
 
 _UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-"
@@ -26,29 +31,57 @@ _UUID_RE = re.compile(
 )
 _ABS_URL_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://")
 _VERSION_SEGMENT_RE = re.compile(r"^v[0-9]+\.[0-9]+$")
+# Path segments that may appear in a relative API reference. A string value is
+# turned into a hyperlink only when EVERY one of its segments appears here, so
+# a segment that is missing silently renders as plain text -- the index is then
+# partially navigable, which is more confusing than no linking at all.
+#
+# Grouped by the API that owns them so the next API added is less likely to be
+# half-covered.
 _API_SEGMENTS = {
+    # Roots
     "x-nmos",
     "x-manufacturer",
+    # IS-04 Node API
     "node",
-    "connection",
-    "streamcompatibility",
-    "exclusive",
-    "single",
     "self",
+    # IS-04 Registry -- Query API. The six resource collections are plural
+    # here, unlike the Node API's singular "node" root, which is why "nodes"
+    # has to be listed separately from it.
+    "query",
+    "nodes",
+    "subscriptions",
+    # Shared between the Node API and the Query API
     "devices",
     "sources",
     "flows",
     "senders",
     "receivers",
+    # IS-04 Registry -- Registration API.
+    #
+    # Only the version ladder is listed. "resource" and "health" are
+    # deliberately absent: the Registration API is write-only, so
+    # ``/resource`` answers 405 (POST and OPTIONS only) and ``/health`` 404
+    # (the resource is ``/health/nodes/{id}``). They still appear in the base
+    # index because registrationapi-base.json mandates it, but rendering them
+    # as links would offer the reader two clicks that cannot work.
+    "registration",
+    # IS-05 Connection API
+    "connection",
+    "single",
     "staged",
     "active",
     "constraints",
     "transportfile",
     "transporttype",
+    # IS-11 Stream Compatibility API
+    "streamcompatibility",
     "status",
     "inputs",
     "outputs",
     "supported",
+    # x-manufacturer Exclusive Session API
+    "exclusive",
     "acquire",
     "renew",
     "release",
@@ -121,11 +154,29 @@ li {{ line-height: 1.4; }}
 </html>"""
 
 
-def _json_to_html(json_str: str, request_path: str) -> str:
+def _json_to_html(
+    json_str: str,
+    request_path: str,
+    link_resolver: LinkResolver | None = None,
+) -> str:
     """Convert a JSON string to an HTML page with clickable links.
 
     Only absolute URLs and GUID-like resource IDs become hyperlinks.
     Other string values remain plain text.
+
+    Args:
+        link_resolver: Optional ``(field_name, value) -> href | None``
+            callback consulted before the generic rules. Without it a UUID can
+            only be linked into the collection currently being browsed, which
+            is wrong for a cross-reference: a Sender's ``flow_id`` would point
+            at ``/senders/<flow id>`` and 404. The callback is what lets a
+            caller say "``flow_id`` lives under ``/flows/``".
+
+            The Node API solves the same problem inside the JSON engine via
+            ``handlers_node._make_link_resolver``, but that path only applies
+            when encoding generated types; callers rendering plain dicts (the
+            registry's Query API, which serves the JSON exactly as it was
+            registered) need it here.
     """
     trimmed = request_path.rstrip("/")
     base_path = trimmed + "/"
@@ -146,20 +197,57 @@ def _json_to_html(json_str: str, request_path: str) -> str:
         return segment in _API_SEGMENTS
 
     def is_relative_api_ref(value: str) -> bool:
+        """Is this string a relative link to a child resource?
+
+        Every segment must look like an API segment. One extra condition
+        applies to a value with no trailing slash: at least one of its
+        segments must be a *named* segment, not merely version-shaped.
+
+        That rules out a lone ``"v1.3"``, which is data rather than a link —
+        it is what a Node's ``api.versions`` array contains — while keeping
+        the version *index* linkable, because that is written ``"v1.3/"``
+        with the slash. Without the distinction, browsing any Node resource
+        renders ``api.versions`` as links to
+        ``<current collection>/v1.3``, which 404.
+        """
         if not value or value.startswith("/") or _ABS_URL_RE.match(value):
             return False
-        path = value[:-1] if value.endswith("/") else value
+        has_trailing_slash = value.endswith("/")
+        path = value[:-1] if has_trailing_slash else value
         segments = [seg for seg in path.split("/") if seg]
         if not segments:
             return False
-        return all(is_api_segment(seg) for seg in segments)
+        if not all(is_api_segment(seg) for seg in segments):
+            return False
+        if has_trailing_slash:
+            return True
+        return any(seg in _API_SEGMENTS for seg in segments)
 
-    def resolve_href(raw_value: str) -> str | None:
+    def resolve_href(raw_value: str, field_name: str | None) -> str | None:
         if _ABS_URL_RE.match(raw_value):
             return raw_value
 
+        # A caller-supplied mapping wins over the generic rules: it is the
+        # only thing that knows which collection a named reference targets.
+        if link_resolver is not None:
+            resolved = link_resolver(field_name, raw_value)
+            if resolved is not None:
+                return resolved
+
         guid = raw_value[:-1] if raw_value.endswith("/") else raw_value
         if _UUID_RE.match(guid):
+            # A resolver, once supplied, is authoritative for UUIDs: having
+            # declined this one, fall through to plain text rather than
+            # guessing.
+            #
+            # The generic guess is "same collection as the page being
+            # browsed", which is right only for a resource's own id. For any
+            # other reference it invents a link that 404s -- a BCP-008 monitor
+            # Source carries a ``monitor_sibling_id`` naming a *Sender*, so
+            # browsing /sources/ would offer /sources/<sender id>. An
+            # unlinked value is a smaller failure than a confident wrong one.
+            if link_resolver is not None:
+                return None
             if raw_value.endswith("/"):
                 return guid_base_path + guid + "/"
             return guid_base_path + guid
@@ -174,10 +262,10 @@ def _json_to_html(json_str: str, request_path: str) -> str:
 
         return None
 
-    def render_scalar(value: Any) -> str:
+    def render_scalar(value: Any, field_name: str | None = None) -> str:
         if isinstance(value, str):
             value_json = html.escape(JsonEngine.dump_any(value, ensure_ascii=False))
-            href = resolve_href(value)
+            href = resolve_href(value, field_name)
             if href is not None:
                 href_escaped = html.escape(href)
                 return (
@@ -205,7 +293,7 @@ def _json_to_html(json_str: str, request_path: str) -> str:
         fallback_json = html.escape(JsonEngine.dump_any(value, ensure_ascii=False, default=str))
         return f'<span class="value">{fallback_json}</span>'
 
-    def render_value(value: Any) -> str:
+    def render_value(value: Any, field_name: str | None = None) -> str:
         if isinstance(value, dict):
             if not value:
                 return '<span class="object">{}</span>'
@@ -217,7 +305,7 @@ def _json_to_html(json_str: str, request_path: str) -> str:
                 lines.append(
                     "<li>"
                     + f'<span class="name">{key_json}</span>: '
-                    + render_value(item_value)
+                    + render_value(item_value, str(key))
                     + comma
                     + "</li>"
                 )
@@ -230,11 +318,16 @@ def _json_to_html(json_str: str, request_path: str) -> str:
             lines = ['<span class="array">[<ol>']
             for idx, item in enumerate(value):
                 comma = "," if idx < len(value) - 1 else ""
-                lines.append("<li>" + render_value(item) + comma + "</li>")
+                # Array elements inherit the array's own key, so ``parents``
+                # and the deprecated ``senders`` / ``receivers`` arrays of
+                # UUIDs resolve like the named reference they are.
+                lines.append(
+                    "<li>" + render_value(item, field_name) + comma + "</li>",
+                )
             lines.append("</ol>]</span>")
             return "".join(lines)
 
-        return render_scalar(value)
+        return render_scalar(value, field_name)
 
     try:
         parsed = JsonEngine.parse_any(json_str)
@@ -281,16 +374,21 @@ def json_response(
     status: int = 200,
     no_store: bool = False,
     request: web.Request | None = None,
+    link_resolver: LinkResolver | None = None,
 ) -> web.Response:
     """Create a JSON or HTML response based on Accept header.
 
     If the client sends Accept: text/html (browser), returns an HTML page
     with clickable links. Otherwise returns plain JSON.
+
+    Args:
+        link_resolver: Optional per-field link mapping used only for the HTML
+            rendering; see ``_json_to_html``. Ignored for JSON responses.
     """
     json_str = JsonEngine.dump_any(data, indent=2, ensure_ascii=False, default=str)
 
     if request is not None and _wants_html(request):
-        html_body = _json_to_html(json_str, str(request.path))
+        html_body = _json_to_html(json_str, str(request.path), link_resolver)
         headers = _add_cors({})
         if no_store:
             headers["Cache-Control"] = "public, no-store"

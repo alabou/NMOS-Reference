@@ -101,6 +101,23 @@ NCONSTRAINT_PREDICATES: dict[str, list[tuple[str, str, str]]] = {
     "NConstraintRational": [("", "", "fallback")],
 }
 
+# NRegistrationResourcePost: discriminate on the ``type`` discriminator of the
+# Registration API's ``{"type": <singular>, "data": {...}}`` envelope.
+#
+# The values are the singular resource names fixed by
+# registrationapi-resource-post-request.json ("node", "device", "source",
+# "flow", "sender", "receiver"). They are plain JSON string literals in the
+# schema -- NOT urn: enums -- so they are written literally here rather than
+# pulled from nmos.enums, which carries only URN-shaped constants.
+NREGISTRATION_RESOURCE_POST_PREDICATES: dict[str, list[tuple[str, str, str]]] = {
+    "NRegistrationPostNode": [("type", "node", "eq")],
+    "NRegistrationPostDevice": [("type", "device", "eq")],
+    "NRegistrationPostSource": [("type", "source", "eq")],
+    "NRegistrationPostFlow": [("type", "flow", "eq")],
+    "NRegistrationPostSender": [("type", "sender", "eq")],
+    "NRegistrationPostReceiver": [("type", "receiver", "eq")],
+}
+
 # NcMessage: discriminate on message_type integer
 NCMESSAGE_PREDICATES: dict[str, list[tuple[str, str, str]]] = {
     "NcCommandMessage": [("message_type", "0", "eq")],
@@ -119,4 +136,5 @@ ALL_PREDICATES: dict[str, dict[str, list[tuple[str, str, str]]]] = {
     "NFlow": NFLOW_PREDICATES,
     "NConstraint": NCONSTRAINT_PREDICATES,
     "NcMessage": NCMESSAGE_PREDICATES,
+    "NRegistrationResourcePost": NREGISTRATION_RESOURCE_POST_PREDICATES,
 }

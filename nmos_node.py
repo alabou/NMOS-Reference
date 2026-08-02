@@ -933,6 +933,7 @@ async def go_node_authorizations(
 async def main(args: argparse.Namespace) -> None:
     """Main async entry point that dispatches all background tasks."""
     from nmos.api import create_app
+    from nmos.errors import Done
     from nmos.crypto import ExclusiveSession
     from nmos.node import Node
     from nmos.node.config import ConfigBuilder
@@ -1104,11 +1105,40 @@ async def main(args: argparse.Namespace) -> None:
     if args.nodeControlPort:
         await dg.dispatch(go_controller_server(dg, node, args))
 
-    # Wait for all tasks
+    # Wait for all tasks.
+    #
+    # A failure in any dispatched task -- overwhelmingly the most common being
+    # a listener that cannot bind because its port is already taken -- must be
+    # reported loudly and must make the process exit non-zero.
+    #
+    # Logging it at debug level hid exactly that case: the operator saw the
+    # process exit quietly with status 0, no listening sockets, and nothing
+    # anywhere naming the busy port. From the outside that is indistinguishable
+    # from "the Node started but my browser cannot reach it", which is a very
+    # expensive thing to debug.
     try:
         await dg.wait()
+    except asyncio.CancelledError:
+        # Clean shutdown: SIGINT/SIGTERM called dg.cancel().
+        logging.info("node: shutting down")
+    except Done:
+        logging.info("node: shutting down")
+    except OSError as exc:
+        ports = [f"node={args.nodePort}"]
+        if args.controlTrustedRootCA and args.controlPort:
+            ports.append(f"control={args.controlPort}")
+        if args.nodeControlPort:
+            ports.append(f"controller-ui={args.nodeControlPort}")
+        logging.error(
+            "node: a listener failed to start: %s\n"
+            "      Ports in use by this Node: %s on %s\n"
+            "      Check whether another process already holds one of them.",
+            exc, ", ".join(ports), args.nodeAddr or "0.0.0.0",
+        )
+        raise SystemExit(1) from exc
     except Exception as exc:
-        logging.debug(f"Dispatch group exited: {exc}")
+        logging.error("node: stopped after an error: %s", exc, exc_info=True)
+        raise SystemExit(1) from exc
 
 
 # ---------------------------------------------------------------------------

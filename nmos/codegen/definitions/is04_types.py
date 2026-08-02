@@ -864,6 +864,16 @@ nnetwork_device = TypeDesc(
     ],
 )
 
+# ``params`` is declared by both subscription schemas as a bare
+# ``{"type": "object"}`` -- a free-form filter object, "Object containing
+# attributes to filter the resource on as per the Query Parameters
+# specification. Can be empty." It was previously typed ``NEmpty``, which has
+# ZERO members, so every filter the client sent was silently discarded on
+# re-encode and filtered subscriptions could not work at all. ``NGeneric``
+# carries an arbitrary JSON value through encode/decode untouched, which is
+# what a free-form object requires; the filter engine coerces values to
+# strings at comparison time, matching basic-query semantics where every
+# query-string value is a string.
 nquery_subscription_request = TypeDesc(
     package="nmos",
     name="NQuerySubscriptionRequest",
@@ -871,7 +881,9 @@ nquery_subscription_request = TypeDesc(
         MemberDesc(name="MaxUpdateRate_ms", type_name="NInt", json_key="max_update_rate_ms", default='100'),
         MemberDesc(name="Persist", type_name="NBool", json_key="persist", default='False'),
         MemberDesc(name="ResourcePath", type_name="NString", json_key="resource_path"),
-        MemberDesc(name="Params", type_name="NEmpty", json_key="params"),
+        MemberDesc(name="Params", type_name="NGeneric", json_key="params"),
+        # ``secure`` is NOT in the POST request's ``required`` list -- the
+        # server assigns it from its own scheme when the client omits it.
         MemberDesc(name="Secure", type_name="NBool", json_key="secure", optional=True),
         MemberDesc(name="Authorization", type_name="NBool", json_key="authorization", optional=True),
     ],
@@ -886,9 +898,21 @@ nquery_subscription_response = TypeDesc(
         MemberDesc(name="MaxUpdateRate_ms", type_name="NInt", json_key="max_update_rate_ms", default='100'),
         MemberDesc(name="Persist", type_name="NBool", json_key="persist", default='False'),
         MemberDesc(name="ResourcePath", type_name="NString", json_key="resource_path"),
-        MemberDesc(name="Params", type_name="NEmpty", json_key="params"),
-        MemberDesc(name="Secure", type_name="NBool", json_key="secure", optional=True),
+        MemberDesc(name="Params", type_name="NGeneric", json_key="params"),
+        # Unlike the request, ``secure`` IS in the response's ``required``
+        # list (queryapi-subscription-response.json), so it is not optional
+        # here -- the server has always resolved it by the time it answers.
+        MemberDesc(name="Secure", type_name="NBool", json_key="secure"),
         MemberDesc(name="Authorization", type_name="NBool", json_key="authorization", optional=True),
+    ],
+)
+
+narray_of_query_subscription_response = TypeDesc(
+    package="nmos",
+    name="NArrayOfQuerySubscriptionResponse",
+    is_array=True,
+    members=[
+        MemberDesc(name="value", type_name="list[NQuerySubscriptionResponseValue]", json_key="-"),
     ],
 )
 
@@ -1162,6 +1186,171 @@ narray_of_query_web_socket_grain_data_receiver = TypeDesc(
     ],
 )
 
+# ---------------------------------------------------------------------------
+# Query API WebSocket grains -- resource-agnostic ("generic") family
+# ---------------------------------------------------------------------------
+#
+# The six families above (…GrainDataNode, …GrainDataDevice, …) type ``pre`` and
+# ``post`` as the concrete resource type (NNode, NDevice, …). That is the right
+# shape for a CLIENT that wants a typed view of what it received.
+#
+# A registry emitting grains has the opposite requirement. It must reproduce the
+# registered resource EXACTLY as it was registered, including any vendor
+# extension a third-party Node sent that our generated types do not model --
+# otherwise the resource a client sees over the WebSocket would differ from the
+# one it sees over ``GET /x-nmos/query/v1.3/<collection>``. Routing pre/post
+# through a concrete type would silently drop those keys.
+#
+# This family keeps the whole grain envelope typed (grain_type, source_id,
+# flow_id, the three timestamps, rate, duration, grain.type, grain.topic) while
+# ``pre``/``post`` are NGeneric, which carries an arbitrary JSON object through
+# encode/decode untouched. The wire format is identical to the six typed
+# families -- only the static typing of the payload differs.
+
+nquery_web_socket_grain_data_generic = TypeDesc(
+    package="nmos",
+    name="NQueryWebSocketGrainDataGeneric",
+    members=[
+        MemberDesc(name="Path", type_name="NString", json_key="path"),
+        MemberDesc(name="Pre", type_name="NGeneric", json_key="pre", optional=True),
+        MemberDesc(name="Post", type_name="NGeneric", json_key="post", optional=True),
+    ],
+)
+
+narray_of_query_web_socket_grain_data_generic = TypeDesc(
+    package="nmos",
+    name="NArrayOfQueryWebSocketGrainDataGeneric",
+    is_array=True,
+    members=[
+        MemberDesc(name="value", type_name="list[NQueryWebSocketGrainDataGeneric]", json_key="-"),
+    ],
+)
+
+nquery_web_socket_grain_generic = TypeDesc(
+    package="nmos",
+    name="NQueryWebSocketGrainGeneric",
+    members=[
+        MemberDesc(name="Type", type_name="NString", json_key="type"),
+        MemberDesc(name="Topic", type_name="NString", json_key="topic"),
+        MemberDesc(name="Data", type_name="NArrayOfQueryWebSocketGrainDataGeneric", json_key="data"),
+    ],
+)
+
+nquery_payload_generic = TypeDesc(
+    package="nmos",
+    name="NQueryPayloadGeneric",
+    members=[
+        MemberDesc(name="GrainType", type_name="NString", json_key="grain_type"),
+        MemberDesc(name="SourceId", type_name="NString", json_key="source_id", assertion="CheckResourceIdString"),
+        MemberDesc(name="FlowId", type_name="NString", json_key="flow_id", assertion="CheckResourceIdString"),
+        MemberDesc(name="OriginTimestamp", type_name="NTime", json_key="origin_timestamp"),
+        MemberDesc(name="SyncTimestamp", type_name="NTime", json_key="sync_timestamp"),
+        MemberDesc(name="CreationTimestamp", type_name="NTime", json_key="creation_timestamp"),
+        MemberDesc(name="Rate", type_name="NRational", json_key="rate"),
+        MemberDesc(name="Duration", type_name="NRational", json_key="duration"),
+        MemberDesc(name="Grain", type_name="NQueryWebSocketGrainGeneric", json_key="grain"),
+    ],
+)
+
+
+# ---------------------------------------------------------------------------
+# Registration API
+# ---------------------------------------------------------------------------
+#
+# ``registrationapi-health-response.json`` types ``health`` as
+# ``{"type": "string", "pattern": "^[0-9]+$"}`` -- a STRING holding the
+# TAI seconds, not a JSON number. (nmos-cpp agrees: make_health_response_body
+# emits json::value::string. The AMWA test-suite mock returns an int, which is
+# the outlier.)
+nregistration_health_response = TypeDesc(
+    package="nmos",
+    name="NRegistrationHealthResponse",
+    members=[
+        MemberDesc(name="Health", type_name="NString", json_key="health", assertion="CheckHealthString"),
+    ],
+)
+
+# ``registrationapi-resource-post-request.json`` is a ``oneOf`` over six
+# ``{"type": <singular>, "data": <resource>}`` envelopes. Each concrete
+# envelope is declared separately and NRegistrationResourcePost dispatches on
+# the ``type`` discriminator (see NREGISTRATION_RESOURCE_POST_PREDICATES in
+# predicates.py).
+#
+# These also give the Node-side Registration client a typed body to encode,
+# replacing the raw f-string concatenation it used to build by hand.
+
+nregistration_post_node = TypeDesc(
+    package="nmos",
+    name="NRegistrationPostNode",
+    members=[
+        MemberDesc(name="Type", type_name="NString", json_key="type"),
+        MemberDesc(name="Data", type_name="NNode", json_key="data"),
+    ],
+)
+
+nregistration_post_device = TypeDesc(
+    package="nmos",
+    name="NRegistrationPostDevice",
+    members=[
+        MemberDesc(name="Type", type_name="NString", json_key="type"),
+        MemberDesc(name="Data", type_name="NDevice", json_key="data"),
+    ],
+)
+
+nregistration_post_source = TypeDesc(
+    package="nmos",
+    name="NRegistrationPostSource",
+    members=[
+        MemberDesc(name="Type", type_name="NString", json_key="type"),
+        MemberDesc(name="Data", type_name="NSource", json_key="data"),
+    ],
+)
+
+nregistration_post_flow = TypeDesc(
+    package="nmos",
+    name="NRegistrationPostFlow",
+    members=[
+        MemberDesc(name="Type", type_name="NString", json_key="type"),
+        MemberDesc(name="Data", type_name="NFlow", json_key="data"),
+    ],
+)
+
+nregistration_post_sender = TypeDesc(
+    package="nmos",
+    name="NRegistrationPostSender",
+    members=[
+        MemberDesc(name="Type", type_name="NString", json_key="type"),
+        MemberDesc(name="Data", type_name="NSender", json_key="data"),
+    ],
+)
+
+nregistration_post_receiver = TypeDesc(
+    package="nmos",
+    name="NRegistrationPostReceiver",
+    members=[
+        MemberDesc(name="Type", type_name="NString", json_key="type"),
+        MemberDesc(name="Data", type_name="NReceiver", json_key="data"),
+    ],
+)
+
+nregistration_resource_post = TypeDesc(
+    package="nmos",
+    name="NRegistrationResourcePost",
+    is_value=True,
+    is_base=True,
+    poly_types=[
+        'NRegistrationPostNode',
+        'NRegistrationPostDevice',
+        'NRegistrationPostSource',
+        'NRegistrationPostFlow',
+        'NRegistrationPostSender',
+        'NRegistrationPostReceiver',
+    ],
+    members=[
+        MemberDesc(name="value", type_name="object", json_key="-"),
+    ],
+)
+
 ALL_TYPES = [
     nresource_core,
     nerror,
@@ -1241,6 +1430,7 @@ ALL_TYPES = [
     nnetwork_device,
     nquery_subscription_request,
     nquery_subscription_response,
+    narray_of_query_subscription_response,
     nquery_payload_node,
     nquery_payload_device,
     nquery_payload_source,
@@ -1265,5 +1455,19 @@ ALL_TYPES = [
     narray_of_query_web_socket_grain_data_flow,
     narray_of_query_web_socket_grain_data_sender,
     narray_of_query_web_socket_grain_data_receiver,
+    # Query API WebSocket grains -- resource-agnostic family (registry side)
+    nquery_web_socket_grain_data_generic,
+    narray_of_query_web_socket_grain_data_generic,
+    nquery_web_socket_grain_generic,
+    nquery_payload_generic,
+    # Registration API
+    nregistration_health_response,
+    nregistration_post_node,
+    nregistration_post_device,
+    nregistration_post_source,
+    nregistration_post_flow,
+    nregistration_post_sender,
+    nregistration_post_receiver,
+    nregistration_resource_post,
 ]
 

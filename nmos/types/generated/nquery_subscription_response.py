@@ -7,8 +7,7 @@ from typing import Any, TYPE_CHECKING
 from nmos.enums import EnumId, EnumRegistry
 from nmos.errors import InvalidData, InvalidObject, NotAvailable, NotMatching
 from nmos.json.engine import JsonEngine
-from nmos.json.types import NString, NInt, NBool
-from nmos.types.generated.nempty import NEmpty, NEmptyValue
+from nmos.json.types import NString, NInt, NBool, NGeneric
 from nmos.validators import CheckResourceIdString
 
 def _assign_value(field: Any, value: Any) -> None:
@@ -51,7 +50,7 @@ class NQuerySubscriptionResponseValue:
         self.MaxUpdateRate_ms: NInt = NInt()
         self.Persist: NBool = NBool()
         self.ResourcePath: NString = NString()
-        self.Params: NEmpty = NEmpty()
+        self.Params: NGeneric = NGeneric()
         self.Secure: NBool = NBool()
         self.Authorization: NBool = NBool()
 
@@ -62,6 +61,7 @@ class NQuerySubscriptionResponseValue:
         _assign_value(self.Persist, False)
         self.ResourcePath.set_to_default()
         self.Params.set_to_default()
+        self.Secure.set_to_default()
         pass  # may have no members
 
     def set_optional_to_default(self) -> None:
@@ -80,6 +80,8 @@ class NQuerySubscriptionResponseValue:
             raise InvalidObject("missing required member ResourcePath")
         if not self.Params.defined:
             raise InvalidObject("missing required member Params")
+        if not self.Secure.defined:
+            raise InvalidObject("missing required member Secure")
         if self.Id.defined:
             CheckResourceIdString(self.Id)
         pass  # may have no validations
@@ -207,7 +209,7 @@ class NQuerySubscriptionResponse:
         assert self._defined, "NQuerySubscriptionResponse must be defined before setting ResourcePath"
         _assign_value(self._value.ResourcePath, v)
 
-    def get_Params(self) -> NEmpty:
+    def get_Params(self) -> NGeneric:
         if not self._defined:
             raise NotAvailable("undefined value")
         return self._value.Params

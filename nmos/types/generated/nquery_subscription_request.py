@@ -7,8 +7,7 @@ from typing import Any, TYPE_CHECKING
 from nmos.enums import EnumId, EnumRegistry
 from nmos.errors import InvalidData, InvalidObject, NotAvailable, NotMatching
 from nmos.json.engine import JsonEngine
-from nmos.json.types import NInt, NBool, NString
-from nmos.types.generated.nempty import NEmpty, NEmptyValue
+from nmos.json.types import NInt, NBool, NString, NGeneric
 
 def _assign_value(field: Any, value: Any) -> None:
     if hasattr(field, "set_value"):
@@ -44,7 +43,7 @@ class NQuerySubscriptionRequestValue:
         self.MaxUpdateRate_ms: NInt = NInt()
         self.Persist: NBool = NBool()
         self.ResourcePath: NString = NString()
-        self.Params: NEmpty = NEmpty()
+        self.Params: NGeneric = NGeneric()
         self.Secure: NBool = NBool()
         self.Authorization: NBool = NBool()
 
@@ -166,7 +165,7 @@ class NQuerySubscriptionRequest:
         assert self._defined, "NQuerySubscriptionRequest must be defined before setting ResourcePath"
         _assign_value(self._value.ResourcePath, v)
 
-    def get_Params(self) -> NEmpty:
+    def get_Params(self) -> NGeneric:
         if not self._defined:
             raise NotAvailable("undefined value")
         return self._value.Params

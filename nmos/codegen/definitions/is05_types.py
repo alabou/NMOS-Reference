@@ -662,17 +662,6 @@ nndi_sender_transport_params = TypeDesc(
     package="nmos",
     name="NNdiSenderTransportParams",
     members=[
-        MemberDesc(name="ServerIp", type_name="NString", json_key="server_ip", optional=True),
-        MemberDesc(name="ServerPort", type_name="NNull", json_key="server_port", optional=True, assertion="CheckAutoPort"),
-        MemberDesc(name="SourceName", type_name="NString", json_key="source_name", optional=True),
-        MemberDesc(name="GroupName", type_name="NNullString", json_key="group_name", optional=True),
-    ],
-)
-
-nndi_sender_transport_params = TypeDesc(
-    package="nmos",
-    name="NNdiSenderTransportParams",
-    members=[
         MemberDesc(name="SourceIp", type_name="NString", json_key="source_ip", optional=True),
         MemberDesc(name="SourcePort", type_name="NNull", json_key="source_port", optional=True, assertion="CheckAutoPort"),
         MemberDesc(name="SourceName", type_name="NString", json_key="source_name", optional=True),
@@ -686,18 +675,6 @@ narray_of_ndi_sender_transport_params = TypeDesc(
     is_array=True,
     members=[
         MemberDesc(name="value", type_name="list[NNdiSenderTransportParamsValue]", json_key="-"),
-    ],
-)
-
-nndi_receiver_transport_params = TypeDesc(
-    package="nmos",
-    name="NNdiReceiverTransportParams",
-    members=[
-        MemberDesc(name="InterfaceIp", type_name="NString", json_key="interface_ip", optional=True),
-        MemberDesc(name="ServerHost", type_name="NNullString", json_key="server_host", optional=True),
-        MemberDesc(name="ServerPort", type_name="NNull", json_key="server_port", optional=True, assertion="CheckAutoPort"),
-        MemberDesc(name="SourceName", type_name="NString", json_key="source_name", optional=True),
-        MemberDesc(name="GroupName", type_name="NNullString", json_key="group_name", optional=True),
     ],
 )
 
@@ -1018,9 +995,7 @@ ALL_TYPES = [
     nsrt_receiver_transport_params,
     narray_of_srt_receiver_transport_params,
     nndi_sender_transport_params,
-    nndi_sender_transport_params,
     narray_of_ndi_sender_transport_params,
-    nndi_receiver_transport_params,
     nndi_receiver_transport_params,
     narray_of_ndi_receiver_transport_params,
     nactivation,

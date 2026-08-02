@@ -49,6 +49,11 @@ _PORT_ID = re.compile(r"^([0-9a-f]{2}-){5}([0-9a-f]{2})$")
 
 _NODE_API_VERSION = re.compile(r"^v[0-9]+\.[0-9]+$")
 
+# registrationapi-health-response.json constrains ``health`` to
+# {"type": "string", "pattern": "^[0-9]+$"} -- the heartbeat time in TAI
+# seconds carried as a decimal STRING, not as a JSON number.
+_HEALTH = re.compile(r"^[0-9]+$")
+
 _VIDEO_MEDIA_TYPE = re.compile(r"^video/[^\s/]+$")
 _AUDIO_MEDIA_TYPE = re.compile(r"^audio/[^\s/]+$")
 _DATA_MEDIA_TYPE = re.compile(r"^[^\s/]+/[^\s/]+$")
@@ -98,6 +103,17 @@ def CheckResourceIdNullableString(field: Any) -> None:
     results = _RESOURCE_ID.findall(v)
     if len(results) != 1:
         raise InvalidObject("invalid resource id")
+
+
+def CheckHealthString(field: Any) -> None:
+    """Validate a Registration API health value (NString).
+
+    Per registrationapi-health-response.json the value is the heartbeat time
+    in TAI seconds rendered as a decimal string matching ``^[0-9]+$``. It is
+    deliberately NOT a number on the wire, and deliberately NOT the
+    ``seconds:nanoseconds`` form used by resource ``version`` attributes.
+    """
+    _match_exactly_one(_HEALTH, field.value, "invalid health value")
 
 
 def CheckClockNameString(field: Any) -> None:

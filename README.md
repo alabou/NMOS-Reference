@@ -31,7 +31,8 @@ The security surface — TLS (with cipher and curve restriction), OAuth 2.0 Bear
 - **Typed JSON serializers** — generated from the NMOS JSON schemas, so the wire format and the in-memory types stay in sync.
 - **Typed Python** — `mypy --strict` clean across the `nmos/` package (tests excluded).
 - **Asyncio throughout** — aiohttp HTTP / WebSocket servers, `DispatchGroup`-based task lifecycles, errgroup-style cancellation.
-- **Test suite** — 2 500+ tests across unit, integration, and end-to-end paths.
+- **Bundled IS-04 registry** — `nmos_registry.py` serves the Registration and Query APIs (HTTP + WebSocket) so the whole system runs from this checkout with no third-party registry to install. See [NMOS Registry](#nmos-registry).
+- **Test suite** — 2 800+ tests across unit, integration, and end-to-end paths.
 
 ---
 
@@ -50,12 +51,27 @@ In practice this means the same IS-11 negotiation handles MPEG2-TS, RTSP, NDI, U
 
 ## Quick start
 
-Three pre-configured launch scripts cover the three security configurations.
+Nothing outside this checkout is required. The repository ships its own IS-04
+registry, so a full multi-Node system — registry, Nodes, Controller — comes up
+from three terminals:
 
 ```bash
 # Prerequisites: Python 3.12 or newer, plus the dependencies in pyproject.toml
 pip install -e .[dev]
 
+./start-registry-bare.sh     # terminal 1 — IS-04 Registration + Query APIs
+./start-node1-bare.sh        # terminal 2
+./start-node2-bare.sh        # terminal 3
+```
+
+Then open <http://127.0.0.1:5050/controller/> and sign in with the password
+`admin`. The Controller discovers both Nodes through the registry and updates
+live over the registry's WebSocket. See [NMOS Registry](#nmos-registry).
+
+For the secured configurations, three further launch scripts cover the three
+security profiles:
+
+```bash
 # Config A — mTLS without OAuth 2.0
 ./start-node1-noauth2.sh
 
@@ -81,7 +97,7 @@ The Node ships a built-in NMOS Controller under `/controller/` on `--nodeControl
 
 Notes on the dependencies:
 
-- **NMOS Registry**: a single Node runs **standalone** with no registry — pass `--rdsHost ""` (the launch-script default already wires this when no `$3 $4` are supplied). In this mode the embedded NMOS Controller seeds its cache **once at startup** from the local Node's resources, so the Controller UI shows the initial set of senders / receivers / sources / flows. **The cache is not live-updated** afterwards — IS-05 activations, IS-11 reconfigurations, BCP-008 status changes that happen at run-time will not appear in the Controller UI until you point the Node at a real registry. To exercise multi-Node negotiation AND see live updates, use any IS-04-compliant registry (e.g. [nmos-cpp's registry](https://github.com/sony/nmos-cpp), or another instance of this implementation) by passing `$3 $4` positional args on the launch script.
+- **NMOS Registry**: a single Node runs **standalone** with no registry — pass `--rdsHost ""` (the launch-script default already wires this when no `$3 $4` are supplied). In this mode the embedded NMOS Controller seeds its cache **once at startup** from the local Node's resources, so the Controller UI shows the initial set of senders / receivers / sources / flows. **The cache is not live-updated** afterwards — IS-05 activations, IS-11 reconfigurations, BCP-008 status changes that happen at run-time will not appear in the Controller UI until you point the Node at a real registry. To exercise multi-Node negotiation AND see live updates, run the [registry that ships with this repository](#nmos-registry) (`./start-registry.sh`) or any other IS-04-compliant registry such as [nmos-cpp's](https://github.com/sony/nmos-cpp), passing `$3 $4` positional args on the launch script.
 
 - **OAuth 2.0 Authorization Server**: required for Configs B and C — the Node fetches JWKS from the AS, validates Bearer tokens against the published public keys, and enforces the IS-10 claim semantics (`aud`, `scope`, `x-nmos-*`). Any IS-10-compliant AS works; a [Keycloak](https://www.keycloak.org/) realm is a common choice for production deployments. Pass the AS host / port to the launch script as `$1 $2`. Config A does not contact an AS.
 - **TLS material**: each launch script references a server cert / key (and, for mTLS, a client cert / key) and a trust root. Vendors substitute their own PKI by editing the scripts or by running `nmos_node.py` directly with `--nodeCertificate` / `--nodeKey` / `--nodeTrustedRootCA`.
@@ -100,6 +116,69 @@ python3 nmos_node.py \
 ```
 
 The full flag surface is documented by `--help`.
+
+## NMOS Registry
+
+`nmos_registry.py` is a standalone IS-04 v1.3 registry — the Registration API
+that Nodes POST their resources to, and the Query API (HTTP + WebSocket) that
+Controllers read them back from. It removes the need to install a
+third-party registry before trying this project.
+
+```bash
+./start-registry-bare.sh          # no TLS
+./start-registry.sh 1             # server-authenticated TLS   (RAP=1)
+./start-registry.sh 2             # mutual TLS                 (RAP=2)
+./start-registry.sh 2 8444 --oauth2   # ... plus OAuth 2.0 on the Query API
+```
+
+Three listeners, defaulting to the ports the Node's `--rds*` flags already
+expect, so a Node needs only `--rdsHost`:
+
+| Listener | Default port | Node flag |
+|---|---|---|
+| Registration API | 8447 | `--rdsRegistrationPort` |
+| Query API | 8446 | `--rdsQueryPort` |
+| Query WebSocket | 8448 | target of the subscription `ws_href` |
+
+The launch scripts use 8444 / 8443 / 8448 instead, matching the defaults the
+node launchers already pass.
+
+### Security model
+
+The two interfaces are deliberately **not** symmetric, and the asymmetry is
+normative. `specs/NMOS With Control Plane Security.md` (IPMX TR-10-SEC) states
+that the IS-04 Registration API "MUST not require the NMOS Nodes to use OAuth
+2.0 authorizations" and "MUST be secured using TLS with server authentication
+or mutual client-server authentication":
+
+| | Registration API | Query API |
+|---|---|---|
+| No TLS | yes (RAP=0, non-compliant dev mode) | yes |
+| TLS server auth | yes (RAP=1) | yes |
+| Mutual TLS | yes (RAP=2) | yes |
+| OAuth 2.0 | **never** | yes, over either TLS mode |
+
+The registry reports its effective Registry Access Policy in the startup
+banner, so the running compliance mode is visible rather than inferred.
+
+### Implemented behaviour
+
+- Registration: 201/200 with `Location`, cascade delete of child resources,
+  referential-integrity and version-regression rejection, heartbeats with
+  garbage collection of silent Nodes (12 s default) and their sub-resources.
+- Query: pagination with `X-Paging-*` and `Link` headers, basic queries
+  including dotted paths into objects and arrays, downgrade validation, and
+  `501` for the optional RQL and ancestry features.
+- Subscriptions: WebSocket grains for added / removed / modified / sync
+  events, filtered subscriptions with the synthetic transition events IS-04
+  mandates, and `max_update_rate_ms` coalescing.
+- A periodic status line in nmos-cpp's exact format, so logs from the two
+  implementations are directly comparable.
+
+The normative sources are mirrored under `nmos/registry/specs/` (AMWA IS-04
+`v1.3.x` at tag `v1.3.3`); see `nmos/registry/specs/README.md` for provenance.
+Responses are validated against those published schemas by
+`nmos/registry/tests/test_schema_conformance.py`.
 
 ### Controller sign-in
 
@@ -178,14 +257,20 @@ On Windows, start the equivalent bare nodes from Command Prompt in separate
 windows. Both launchers prefer the repository's `.venv\Scripts\python.exe`:
 
 ```bat
+start-registry-bare.bat
 start-node1-bare.bat
 start-node2-bare.bat
 ```
 
-These two launchers mirror the shell contracts and expect an IS-04 Registry on
-`127.0.0.1` (Query API port 8443, Registration API port 8444). Without that
+These launchers mirror the shell contracts. The node launchers expect an IS-04
+Registry on `127.0.0.1` (Query API port 8443, Registration API port 8444),
+which `start-registry-bare.bat` provides with matching defaults. Without a
 Registry the Node APIs still start, but their consoles report connection-refused
 retries and the Controller cannot assemble a shared two-node resource view.
+
+Windows coverage is intentionally limited to the bare (no-TLS) scenario for the
+Nodes; the TLS and OAuth 2.0 node launchers are shell-only. `start-registry.bat`
+is provided for parity and for serving a TLS registry from Windows.
 
 Each launcher prints the selected Registry address before starting.
 `NMOS_RDS_HOST` can override discovery, and `NMOS_RDS_REG_PORT` can override
@@ -325,6 +410,8 @@ nmos/                   — Core NMOS implementation
   api/                  — HTTP/WS endpoints, TLS context factories, IS-04/05/...
   controller/           — Built-in NMOS Controller + outbound OAuth2/registry clients
   node/                 — Node resources (senders/receivers/sources/flows/devices), config
+  registry/             — Standalone IS-04 Registration + Query APIs (server side)
+    specs/              — IS-04 v1.3.3 RAML, JSON schemas and behaviour docs (verbatim)
   agentui/              — Agent driver for the Controller UI (real Chromium, journalled runs)
     core/               — Surface/step/journal primitives, process scan, TLS pinning
     apps/nmos_controller/ — Controller-specific driver: discovery, session, pages, trace join
@@ -343,11 +430,14 @@ sdp/                    — SDP encoding/decoding (Matrox profile)
 caps/                   — Capability/constraint framework (Matrox CCF)
 pep/                    — Privacy Encryption Protocol (PEP) helpers
 
-nmos_node.py            — Main entry point; parses CLI and starts the server
+nmos_node.py            — Node entry point; parses CLI and starts the server
+nmos_registry.py        — Registry entry point; Registration + Query + WebSocket listeners
 run_server.py           — Lightweight wrapper for embedding nmos_node from scripts
 demo_controller.py      — Standalone demo controller for manual exploration
 start-node*.sh          — Launch scripts for the three security configurations
+start-registry*.sh      — Registry launchers (bare = no TLS; the other takes a RAP value)
 start-node*-bare.bat    — Windows launchers for the bare (registry-only) rigs
+start-registry*.bat     — Windows registry launchers
 requirements.txt        — Runtime dependencies
 requirements-agentui.txt — Extra dependencies for the agent driver (Playwright)
 ```
@@ -357,12 +447,13 @@ requirements-agentui.txt — Extra dependencies for the agent driver (Playwright
 ## Tests
 
 ```bash
-# Full test suite (~4 minutes; 2 500+ tests)
+# Full test suite (~4 minutes; 2 800+ tests)
 # Paths come from `testpaths` in pyproject.toml — nmos/ plus caps/tests
 python3 -m pytest -q
 
 # Per-module
 python3 -m pytest -q nmos/oauth2/tests/
+python3 -m pytest -q nmos/registry/tests/
 python3 -m pytest -q nmos/agentui/tests/
 python3 -m pytest -q caps/tests/
 python3 -m pytest -q nmos/api/tests/test_tr10_tls.py

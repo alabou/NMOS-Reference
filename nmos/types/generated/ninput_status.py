@@ -38,7 +38,6 @@ class NInputStatusValue:
 
     def set_to_default(self) -> None:
         self.State.set_to_default()
-        self.Debug.set_to_default()
         pass  # may have no members
 
     def set_optional_to_default(self) -> None:
@@ -47,8 +46,6 @@ class NInputStatusValue:
     def assert_valid(self) -> None:
         if not self.State.defined:
             raise InvalidObject("missing required member State")
-        if not self.Debug.defined:
-            raise InvalidObject("missing required member Debug")
         if self.State.defined:
             CheckInputStatusState(self.State)
         pass  # may have no validations
