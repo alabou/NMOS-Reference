@@ -179,6 +179,42 @@ def _compute_rap(args: Any) -> RAP:
     return RAP.UNRESTRICTED_HTTPS
 
 
+def has_authorization_mechanism(args: Any) -> bool:
+    """Is any RAAM mechanism actually configured for inbound Node API access?
+
+    RAAM enumerates *how* restricted access is enforced (§11): mutual TLS,
+    OAuth 2.0, or both. With none of them there is nothing to enforce with,
+    and the NAP the device reports overstates what it does:
+
+    * ``--nodeTrustedRootCA`` gives the listener a client-certificate trust
+      store, so the TLS layer can require and verify a peer certificate.
+    * ``--nodeOptionalClientAuth`` moves that requirement to the application,
+      where ``client_auth_middleware`` applies it to state-changing verbs
+      only — the Unrestricted Read Only policy of §9.2.
+    * ``--oauth2`` gates every verb on a Bearer token.
+
+    With TLS on and none of the three, both reads and writes are open to any
+    client that completes the handshake. That combination is not one of the
+    three NAP policies: §9.1's Unrestricted Read Write is defined as "HTTP
+    without TLS", so an encrypted-but-unauthorized listener falls outside the
+    enumeration entirely.
+
+    ``_compute_nap`` still reports NAP=2 for it — that is the policy the flags
+    ask for, and NAP describes the configured policy rather than measuring
+    what is enforced. This predicate exists so the caller can warn that the
+    policy cannot actually be honoured. The TR-10-SEC validator catches it
+    independently through behaviour (``SEC-9.3-2`` requires an authenticated
+    GET under NAP=2, ``SEC-9.3-3`` an authenticated write), so the tag alone
+    was never the safety net — but an operator should not have to run a
+    certification suite to discover an unauthenticated Node API.
+    """
+    return bool(
+        getattr(args, "nodeTrustedRootCA", None)
+        or getattr(args, "nodeOptionalClientAuth", False)
+        or getattr(args, "oauth2", False)
+    )
+
+
 def _compute_raam(args: Any) -> RAAM:
     """Derive RAAM from the OAuth2 + node-mTLS flags.
 

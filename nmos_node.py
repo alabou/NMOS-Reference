@@ -974,6 +974,32 @@ async def main(args: argparse.Namespace) -> None:
     # ``--config`` matches what the device actually does.
     from nmos.node.security_tags import compute_security_tags
     security_tags = compute_security_tags(args).to_tags()
+
+    # TR-10-SEC §11: NAP says which policy the device is configured for, RAAM
+    # says how it is enforced. With TLS up but no RAAM mechanism at all there
+    # is nothing enforcing anything, so the NAP=2 the tags advertise overstates
+    # the device: both reads and writes are open to any client that completes
+    # the handshake.
+    #
+    # The tag value is left alone deliberately. §9.1 defines Unrestricted Read
+    # Write as "HTTP without TLS", so reporting NAP=0 for an encrypted listener
+    # would contradict the specification as squarely as NAP=2 overstates it —
+    # the configuration simply is not one of the three policies. What is worth
+    # fixing is that it used to happen in silence.
+    from nmos.node.security_tags import has_authorization_mechanism
+    if tls_enabled and not has_authorization_mechanism(args):
+        logging.warning(
+            "node: TLS is enabled but no authorization mechanism is "
+            "configured — none of --nodeTrustedRootCA, "
+            "--nodeOptionalClientAuth or --oauth2.\n"
+            "      Traffic is encrypted, but every request including "
+            "state-changing ones is accepted from\n"
+            "      any client. The Node advertises "
+            "nap-config=2 (Restricted Read Write), which it cannot honour "
+            "in this\n"
+            "      configuration; a TR-10-SEC validator will fail it on "
+            "SEC-9.3-2 / SEC-9.3-3.",
+        )
     node.init(
         serial_number=args.nodeSerialNumber,
         host=host,

@@ -28,6 +28,7 @@ from nmos.node.security_tags import (
     TCT,
     SecurityConfig,
     compute_security_tags,
+    has_authorization_mechanism,
 )
 
 
@@ -234,3 +235,82 @@ def test_to_tags_emits_five_urns_with_digit_strings() -> None:
         assert len(value) == 1
         assert value[0].isdigit()
         assert len(value[0]) == 1
+
+
+# ---------------------------------------------------------------------------
+# has_authorization_mechanism — is the reported NAP actually enforceable?
+# ---------------------------------------------------------------------------
+#
+# NAP reports the configured policy; RAAM reports the mechanism enforcing it.
+# The two can disagree: with TLS up and no mechanism at all, the tags advertise
+# NAP=2 (Restricted Read Write) while every verb is in fact open. That is not
+# one of the three policies -- §9.1 defines Unrestricted Read Write as "HTTP
+# without TLS" -- so the tag is left as-is and the launcher warns instead.
+# These tests pin which flag combinations count as "enforceable", because that
+# predicate is what decides whether the operator is told.
+
+def test_mtls_anchor_is_an_authorization_mechanism() -> None:
+    """Configuration A: the TLS layer verifies a client certificate."""
+    args = _ns(
+        nodeCertificate="/p/cert.pem",
+        nodeKey="/p/key.pem",
+        nodeTrustedRootCA=["/p/ExampleRootCA.pem"],
+    )
+    assert has_authorization_mechanism(args) is True
+
+
+def test_oauth2_is_an_authorization_mechanism() -> None:
+    """Configuration B: no client-certificate anchor, but tokens are required.
+
+    The case that makes this predicate more than ``bool(nodeTrustedRootCA)``.
+    """
+    args = _ns(
+        nodeCertificate="/p/cert.pem", nodeKey="/p/key.pem", oauth2=True,
+    )
+    assert has_authorization_mechanism(args) is True
+    assert compute_security_tags(args).nap is NAP.RESTRICTED_RW
+
+
+def test_optional_client_auth_is_an_authorization_mechanism() -> None:
+    """NAP=1: enforcement moves to the application, on writes only."""
+    args = _ns(
+        nodeCertificate="/p/cert.pem",
+        nodeKey="/p/key.pem",
+        nodeOptionalClientAuth=True,
+    )
+    assert has_authorization_mechanism(args) is True
+    assert compute_security_tags(args).nap is NAP.UNRESTRICTED_RO
+
+
+def test_tls_alone_is_not_an_authorization_mechanism() -> None:
+    """The blind spot: encrypted, but nothing restricts anything.
+
+    ``client_auth_required`` is false and the SSL context never sets
+    ``verify_mode``, so reads and writes alike are accepted from any client
+    completing the handshake -- while the tags still say NAP=2.
+    """
+    args = _ns(nodeCertificate="/p/cert.pem", nodeKey="/p/key.pem")
+    assert has_authorization_mechanism(args) is False
+    assert compute_security_tags(args).nap is NAP.RESTRICTED_RW
+
+
+def test_all_three_certifiable_configurations_are_enforceable() -> None:
+    """A, B and C must never trigger the warning.
+
+    Config B is the one at risk from a naive check, since it carries no
+    client-certificate anchor.
+    """
+    config_a = _ns(
+        nodeCertificate="/p/cert.pem", nodeKey="/p/key.pem",
+        nodeTrustedRootCA=["/p/ca.pem"],
+    )
+    config_b = _ns(
+        nodeCertificate="/p/cert.pem", nodeKey="/p/key.pem", oauth2=True,
+    )
+    config_c = _ns(
+        nodeCertificate="/p/cert.pem", nodeKey="/p/key.pem",
+        nodeTrustedRootCA=["/p/ca.pem"], oauth2=True,
+    )
+    for args in (config_a, config_b, config_c):
+        assert has_authorization_mechanism(args) is True
+        assert compute_security_tags(args).nap is NAP.RESTRICTED_RW
