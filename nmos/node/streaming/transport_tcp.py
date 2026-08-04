@@ -70,7 +70,21 @@ async def tcp_sender(
             client_writer.append(w)
             connected.set()
 
-        server = await asyncio.start_server(handle_client, listen_ip, listen_port)
+        # A listen failure (port in use, address not local) is reported and
+        # re-raised: the event drives the monitor, the exception takes
+        # engine_state to ERROR (see ``streaming._on_streaming_done``).
+        # Unreported, it left the Node advertising a healthy sender that was
+        # never listening.
+        try:
+            server = await asyncio.start_server(
+                handle_client, listen_ip, listen_port,
+            )
+        except OSError as exc:
+            emit_transport_error(
+                event_queue, sender_id, interface_name, is_sender=True,
+                info=f"sender listen failed: {exc}",
+            )
+            raise
 
         print(f"  [streaming] TCP Sender (Listener) {sender_id}")
         print(f"    Listening: {listen_ip}:{listen_port}")
@@ -371,7 +385,21 @@ async def tcp_bidirectional_sender(
             client_streams.append((r, w))
             connected.set()
 
-        server = await asyncio.start_server(handle_client, listen_ip, listen_port)
+        # A listen failure (port in use, address not local) is reported and
+        # re-raised: the event drives the monitor, the exception takes
+        # engine_state to ERROR (see ``streaming._on_streaming_done``).
+        # Unreported, it left the Node advertising a healthy sender that was
+        # never listening.
+        try:
+            server = await asyncio.start_server(
+                handle_client, listen_ip, listen_port,
+            )
+        except OSError as exc:
+            emit_transport_error(
+                event_queue, sender_id, interface_name, is_sender=True,
+                info=f"sender listen failed: {exc}",
+            )
+            raise
 
         try:
             await asyncio.wait_for(connected.wait(), timeout=30.0)
@@ -485,7 +513,13 @@ async def tcp_bidirectional_receiver(
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(dest_ip, dest_port), timeout=10.0,
             )
-        except (asyncio.TimeoutError, ConnectionError, OSError):
+        except (asyncio.TimeoutError, ConnectionError, OSError) as exc:
+            # Was a silent return: no event, so the monitor read healthy for a
+            # receiver that never connected. Mirrors ``tcp_receiver``.
+            emit_transport_error(
+                event_queue, receiver_id, interface_name, is_sender=False,
+                info=f"connect error: {exc}", link_down=True,
+            )
             return result
 
         assert reader is not None

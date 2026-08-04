@@ -56,13 +56,23 @@ async def srt_sender(
 
     emit_activate(event_queue, sender_id, interface_name, is_sender=True)
 
+    sock: socket.socket | None = None
+
     try:
         emit_starting(event_queue, sender_id, interface_name, is_sender=True)
 
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.setblocking(False)
-        sock.bind((listen_ip, listen_port))
+        # A bind failure is reported and re-raised: the event drives the
+        # monitor, the exception takes engine_state to ERROR (see
+        # ``streaming._on_streaming_done``). Letting it escape unreported left
+        # the Node advertising a healthy sender with no socket.
+        try:
+            sock = _open_srt_socket(listen_ip, listen_port)
+        except OSError as exc:
+            emit_transport_error(
+                event_queue, sender_id, interface_name, is_sender=True,
+                info=f"sender socket setup failed: {exc}",
+            )
+            raise
 
         print(f"  [streaming] SRT Sender (Listener) {sender_id}")
         print(f"    Listening: {listen_ip}:{listen_port}")
@@ -82,7 +92,10 @@ async def srt_sender(
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
-                return
+                # Re-raised, not absorbed: swallowing it would report a clean
+                # completion to whoever cancelled us and defeat cooperative
+                # cancellation. The finally block still runs.
+                raise
 
         if caller_addr is None:
             return
@@ -91,6 +104,7 @@ async def srt_sender(
         sequence = 0
         timestamp_ns = 0
         ctr = 0
+        pending_recovery: set[int] = set()
 
         while not (stop_event and stop_event.is_set()):
             pkt = StreamPacket(
@@ -111,6 +125,18 @@ async def srt_sender(
                     event_queue, sender_id, interface_name, is_sender=True,
                     info=f"send error: {exc}",
                 )
+                pending_recovery.add(EventId.TRANSPORT_OK)
+            else:
+                # A send that succeeds after a failure clears the error, as on
+                # the UDP sender and both receivers. Without it a transient
+                # fault pinned transmissionStatus at Error for the lifetime of
+                # the activation.
+                if pending_recovery:
+                    emit_recovery(
+                        event_queue, sender_id, interface_name,
+                        is_sender=True, pending_events=pending_recovery,
+                    )
+                    pending_recovery.clear()
 
             sequence += 1
             timestamp_ns += DEFAULT_PERIOD_NS
@@ -126,7 +152,8 @@ async def srt_sender(
     finally:
         emit_stopping(event_queue, sender_id, interface_name, is_sender=True)
         emit_deactivate(event_queue, sender_id, interface_name, is_sender=True)
-        sock.close()
+        if sock is not None:
+            sock.close()
 
 
 # ---------------------------------------------------------------------------
@@ -146,18 +173,38 @@ async def srt_receiver(
     """SRT Caller receiver: send hello to listener, then receive packets."""
     emit_activate(event_queue, receiver_id, interface_name, is_sender=False)
 
+    sock: socket.socket | None = None
+
     try:
         emit_starting(event_queue, receiver_id, interface_name, is_sender=False)
 
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        sock.setblocking(False)
+        try:
+            sock = socket.socket(
+                socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP,
+            )
+            sock.setblocking(False)
+        except OSError as exc:
+            emit_transport_error(
+                event_queue, receiver_id, interface_name, is_sender=False,
+                info=f"receiver socket setup failed: {exc}", link_down=True,
+            )
+            raise
 
         print(f"  [streaming] SRT Receiver (Caller) {receiver_id}")
         print(f"    Connecting to: {dest_ip}:{dest_port}")
         print(f"    PEP: {'enabled' if decrypt_fn else 'disabled'}")
 
-        # Send hello to listener
-        await loop.sock_sendto(sock, _HELLO_MARKER, (dest_ip, dest_port))
+        # Send hello to listener. An unroutable destination fails here rather
+        # than in the receive loop, so it is reported and re-raised too — the
+        # caller has no session at all if the hello cannot leave.
+        try:
+            await loop.sock_sendto(sock, _HELLO_MARKER, (dest_ip, dest_port))
+        except OSError as exc:
+            emit_transport_error(
+                event_queue, receiver_id, interface_name, is_sender=False,
+                info=f"receiver hello send failed: {exc}", link_down=True,
+            )
+            raise
 
         reference_pkt: StreamPacket | None = None
         reference_time: float = 0.0
@@ -180,7 +227,7 @@ async def srt_receiver(
                 ok = False
                 continue
             except asyncio.CancelledError:
-                break
+                raise  # see the sender: cancellation must not be absorbed
             except OSError as exc:
                 emit_transport_error(
                     event_queue, receiver_id, interface_name, is_sender=False,
@@ -278,7 +325,24 @@ async def srt_receiver(
     finally:
         emit_stopping(event_queue, receiver_id, interface_name, is_sender=False)
         emit_deactivate(event_queue, receiver_id, interface_name, is_sender=False)
+        if sock is not None:
+            sock.close()
+
+
+def _open_srt_socket(listen_ip: str, listen_port: int) -> socket.socket:
+    """Create and bind the SRT listener socket.
+
+    Raises ``OSError`` on failure, leaving no socket behind.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.setblocking(False)
+        sock.bind((listen_ip, listen_port))
+        return sock
+    except OSError:
         sock.close()
+        raise
 
 
 async def _wait_stop(stop_event: asyncio.Event | None) -> None:

@@ -212,6 +212,7 @@ def flip_activation(
     activation: Activation,
     legs: list[Leg],
     auto_resolvers: dict[str, Any] | None = None,
+    serial_number: str = "",
 ) -> None:
     """Promote staged parameters to active, resolving "auto" values.
 
@@ -270,14 +271,115 @@ def flip_activation(
         if auto_resolvers is not None:
             resolver = auto_resolvers.get("flip_resolve")
             if resolver is not None:
-                resolver(active, sender_index, receiver_index, leg)
+                resolver(
+                    active, sender_index, receiver_index, leg,
+                    serial_number,
+                )
+
+
+#: Highest sender index that still yields a TR-10-9-v2 §17.1 compliant stream
+#: number (S = index + 1 must satisfy 0 < S < 128).
+_MAX_STREAM_INDEX = 126
+
+#: Base of the auto-resolved destination-port space.
+AUTO_PORT_BASE = 22000
+
+#: Ports reserved per Node: 127 stream slots × 2 (RTP data + RTCP at +1).
+_NODE_PORT_BLOCK = 256
+
+#: Distinct Node port blocks, one per value of the serial's last two digits.
+#: 100 × 256 = 25600 ports, so the space runs 22000–47599 and its highest
+#: possible port (block 99, stream 126, RTCP) is 47597 — clear of 65535.
+#:
+#: 100 devices per host is the deliberate ceiling: past that you add another
+#: host or VM, which brings its own IP address and therefore its own
+#: ``239.S.C.D`` groups (TR-10-9-v2 §17.1). Ignoring all but the last two
+#: serial digits costs nothing globally — serial numbers stay unique, only
+#: their port block repeats, and two devices sharing a block cannot be on the
+#: same host without also sharing an address.
+_NODE_PORT_BLOCKS = 100
+
+#: ASCII digits only, on purpose: ``str.isdigit()`` and ``\d`` both accept
+#: non-ASCII decimal digits, which ``int()`` would then happily parse into a
+#: block index nobody intended.
+_ASCII_DIGITS = "0123456789"
+
+#: Highest block index, i.e. the largest value the last two digits can form.
+MAX_SERIAL_PORT_INDEX = _NODE_PORT_BLOCKS - 1
+
+#: How many trailing digits select the block.
+_SERIAL_PORT_DIGITS = 2
+
+
+def serial_port_index(serial_number: str) -> int:
+    """The port block ``serial_number`` addresses — its last two digits.
+
+    ``SNX00001`` → 1, ``SNX12345`` → 45, ``SNX00099`` → 99. Only the last two
+    digits participate, so the value is always a valid block and no serial is
+    ever "too large": digits above the last two are simply not part of the
+    port decision. See ``_NODE_PORT_BLOCKS`` for why 100 blocks is enough.
+
+    Returns 0 for an empty serial — an unnamed device has no identity to
+    encode, so it keeps the base block.
+
+    Raises:
+        InvalidData: if the serial does not end in an ASCII digit. That is
+            reported rather than defaulted, because a serial whose last
+            character is not a digit gives no basis for choosing a block, and
+            silently using block 0 would collide with every other such device.
+    """
+    serial = (serial_number or "").strip()
+    if not serial:
+        return 0
+
+    if serial[-1] not in _ASCII_DIGITS:
+        raise InvalidData(
+            f"serial number {serial!r} must end in a digit 0-9: its last "
+            f"{_SERIAL_PORT_DIGITS} digits select the Node's destination-port "
+            f"block, and {serial[-1]!r} is not a digit",
+        )
+
+    # Take up to the last two characters, stopping at the first non-digit: a
+    # one-digit tail ("BOARD-7") addresses block 7 rather than being an error.
+    tail = ""
+    for ch in reversed(serial[-_SERIAL_PORT_DIGITS:]):
+        if ch not in _ASCII_DIGITS:
+            break
+        tail = ch + tail
+
+    index = int(tail)
+    if index > MAX_SERIAL_PORT_INDEX:  # pragma: no cover — two digits cap at 99
+        raise InvalidData(
+            f"serial number {serial!r} selects block {index}, above the "
+            f"maximum {MAX_SERIAL_PORT_INDEX}",
+        )
+    return index
+
+
+def _serial_port_offset(serial_number: str) -> int:
+    """Offset of ``serial_number``'s port block within the auto port space.
+
+    TR-10-9-v2 §17.1 pins the default multicast address to the media port's
+    own address (``239.S.C.D``, C.D being that address's last two octets), so
+    two Nodes sharing a media-port address — every Node on a loopback rig —
+    necessarily derive the *same* group for the same stream number. The group
+    cannot carry Node identity, so the port does: each Node takes a block of
+    ``_NODE_PORT_BLOCK`` ports selected by its serial number, whose trailing
+    digits are its numeric identity (``SNX00002`` → 2). That follows the same
+    "last serial characters distinguish the device" convention as ``nmos.uuid``.
+
+    Raises ``InvalidData`` for a serial that cannot address a block — see
+    ``serial_port_index``.
+    """
+    return serial_port_index(serial_number) * _NODE_PORT_BLOCK
 
 
 def _get_unused_multicast_address_ipv4(sender_index: int, leg: Any) -> str:
     """Generate a unique IPv4 multicast address for a sender.
 
-    Format: 239.<senderIndex+1>.<mgmtAddr[2]>.<mgmtAddr[3]>
-    Uses the last two octets of the leg's IPv4 address.
+    Format: 239.<senderIndex+1>.<mgmtAddr[2]>.<mgmtAddr[3]>, per TR-10-9-v2
+    §17.1 — the last two octets come from the leg's (media port's) IPv4
+    address, so the address is only as unique as that address is.
     """
     # Get leg's IPv4 address octets
     mgmt_octets = [0, 0, 0, 0]
@@ -289,8 +391,12 @@ def _get_unused_multicast_address_ipv4(sender_index: int, leg: Any) -> str:
     except (ValueError, AttributeError):
         pass
 
-    if sender_index > 127:
-        sender_index = 127  # IPMX limit
+    # TR-10-9-v2 §17.1: the default address "shall be 239.S.C.D where S is the
+    # stream number. Where S shall be greater than 0 and less than 128." S is
+    # ``sender_index + 1``, so the highest compliant index is 126 — clamping at
+    # 127 emitted 239.128.C.D, one past the bound.
+    if sender_index > _MAX_STREAM_INDEX:
+        sender_index = _MAX_STREAM_INDEX
 
     return f"239.{sender_index + 1}.{mgmt_octets[2]}.{mgmt_octets[3]}"
 
@@ -320,11 +426,14 @@ def _resolve_auto_null_field(params: Any, field_name: str, resolved: Any) -> Non
 # with key "flip_resolve".
 # ---------------------------------------------------------------------------
 
-def resolve_rtp_sender(active: Any, sender_index: int, receiver_index: int, leg: Any) -> None:
+def resolve_rtp_sender(
+    active: Any, sender_index: int, receiver_index: int, leg: Any,
+    serial_number: str = "",
+) -> None:
     """RTP sender auto-resolution.
 
     DestinationIp="auto"      → unique multicast address from leg IPv4
-    DestinationPort="auto"    → 27500 + 2*senderIndex
+    DestinationPort="auto"    → <node block> + 2*senderIndex
     RtcpDestinationIp="auto"  → copy from resolved DestinationIp
     RtcpDestinationPort="auto"→ resolved DestinationPort + 1
     """
@@ -332,8 +441,10 @@ def resolve_rtp_sender(active: Any, sender_index: int, receiver_index: int, leg:
     mcast = _get_unused_multicast_address_ipv4(sender_index, leg)
     _resolve_auto_field(active, "DestinationIp", mcast)
 
-    # DestinationPort: "auto" → 27500 + 2*senderIndex
-    _resolve_auto_null_field(active, "DestinationPort", 27500 + 2 * sender_index)
+    # DestinationPort: "auto" → <node block> + 2*senderIndex, keeping RTP on
+    # the even port and RTCP on the odd one above it (RFC 3550 §11).
+    port = AUTO_PORT_BASE + _serial_port_offset(serial_number) + 2 * sender_index
+    _resolve_auto_null_field(active, "DestinationPort", port)
 
     # RtcpDestinationIp: "auto" → copy from resolved DestinationIp
     _resolve_auto_field(active, "RtcpDestinationIp", active.DestinationIp.value)
@@ -343,18 +454,23 @@ def resolve_rtp_sender(active: Any, sender_index: int, receiver_index: int, leg:
     if dp is not None and dp != "auto":
         _resolve_auto_null_field(active, "RtcpDestinationPort", int(dp) + 1)
     else:
-        _resolve_auto_null_field(active, "RtcpDestinationPort", 27501 + 2 * sender_index)
+        _resolve_auto_null_field(active, "RtcpDestinationPort", port + 1)
 
 
-def resolve_rtp_receiver(active: Any, sender_index: int, receiver_index: int, leg: Any) -> None:
+def resolve_rtp_receiver(
+    active: Any, sender_index: int, receiver_index: int, leg: Any,
+    serial_number: str = "",
+) -> None:
     """RTP receiver auto-resolution.
 
-    DestinationPort="auto"     → 27500 (fixed, no index)
+    DestinationPort="auto"     → AUTO_PORT_BASE (a placeholder: a
+                                 receiver takes the real port from
+                                 the sender's SDP)
     RtcpDestinationIp="auto"   → InterfaceIp, override with MulticastIp if present
     RtcpDestinationPort="auto" → DestinationPort + 1
     """
-    # DestinationPort: "auto" → 27500 (fixed)
-    _resolve_auto_null_field(active, "DestinationPort", 27500)
+    # DestinationPort: "auto" → base (placeholder, see docstring)
+    _resolve_auto_null_field(active, "DestinationPort", AUTO_PORT_BASE)
 
     # RtcpDestinationIp: "auto" → InterfaceIp, then override with MulticastIp
     rtcp_field = getattr(active, "RtcpDestinationIp", None)
@@ -383,32 +499,45 @@ def resolve_rtp_receiver(active: Any, sender_index: int, receiver_index: int, le
                 if dp is not None and dp != "auto":
                     rtcp_port_field.value = int(dp) + 1
                 else:
-                    rtcp_port_field.value = 27501
+                    rtcp_port_field.value = AUTO_PORT_BASE + 1
             else:
-                rtcp_port_field.value = 27501
+                rtcp_port_field.value = AUTO_PORT_BASE + 1
 
 
-def resolve_udp_sender(active: Any, sender_index: int, receiver_index: int, leg: Any) -> None:
+def resolve_udp_sender(
+    active: Any, sender_index: int, receiver_index: int, leg: Any,
+    serial_number: str = "",
+) -> None:
     """UDP sender auto-resolution.
 
     DestinationIp="auto"   → unique multicast address
-    DestinationPort="auto" → 27500 + senderIndex (NOT 2×, unlike RTP)
+    DestinationPort="auto" → <node block> + senderIndex (NOT 2×, unlike RTP)
     """
     mcast = _get_unused_multicast_address_ipv4(sender_index, leg)
     _resolve_auto_field(active, "DestinationIp", mcast)
-    # UDP port formula: 27500 + senderIndex (not 2*senderIndex)
-    _resolve_auto_null_field(active, "DestinationPort", 27500 + sender_index)
+    # UDP port formula: <node block> + senderIndex (not 2*senderIndex — UDP
+    # has no RTCP companion port to leave room for).
+    _resolve_auto_null_field(
+        active, "DestinationPort",
+        AUTO_PORT_BASE + _serial_port_offset(serial_number) + sender_index,
+    )
 
 
-def resolve_udp_receiver(active: Any, sender_index: int, receiver_index: int, leg: Any) -> None:
+def resolve_udp_receiver(
+    active: Any, sender_index: int, receiver_index: int, leg: Any,
+    serial_number: str = "",
+) -> None:
     """UDP receiver auto-resolution.
 
-    DestinationPort="auto" → 27500 (fixed)
+    DestinationPort="auto" → AUTO_PORT_BASE (placeholder, see above)
     """
-    _resolve_auto_null_field(active, "DestinationPort", 27500)
+    _resolve_auto_null_field(active, "DestinationPort", AUTO_PORT_BASE)
 
 
-def resolve_srt_sender(active: Any, sender_index: int, receiver_index: int, leg: Any) -> None:
+def resolve_srt_sender(
+    active: Any, sender_index: int, receiver_index: int, leg: Any,
+    serial_number: str = "",
+) -> None:
     """SRT sender auto-resolution.
 
     Protocol-conditional:
@@ -443,7 +572,10 @@ def resolve_srt_sender(active: Any, sender_index: int, receiver_index: int, leg:
                     dst_port_field.value = src_port.value
 
 
-def resolve_srt_receiver(active: Any, sender_index: int, receiver_index: int, leg: Any) -> None:
+def resolve_srt_receiver(
+    active: Any, sender_index: int, receiver_index: int, leg: Any,
+    serial_number: str = "",
+) -> None:
     """SRT receiver auto-resolution.
 
     Protocol-conditional:
@@ -478,7 +610,10 @@ def resolve_srt_receiver(active: Any, sender_index: int, receiver_index: int, le
                     src_port_field.value = dst_port.value
 
 
-def resolve_noop(active: Any, sender_index: int, receiver_index: int, leg: Any) -> None:
+def resolve_noop(
+    active: Any, sender_index: int, receiver_index: int, leg: Any,
+    serial_number: str = "",
+) -> None:
     """No auto-resolution.  Used by RTSP, USB, NDI, MQTT, WebSocket, RTP-TCP.
 
     These transports' flip functions do not resolve any "auto" values.
@@ -560,7 +695,10 @@ def do_activation(
 
     # Step 1: Flip staged → active (transport params)
     try:
-        flip_activation(activation, node.legs, auto_resolvers)
+        flip_activation(
+            activation, node.legs, auto_resolvers,
+            getattr(node, "serial_number", ""),
+        )
     except Exception as exc:
         raise UnexpectedError(
             f"cannot flip staged to active: {exc}"

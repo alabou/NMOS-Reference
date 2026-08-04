@@ -17,6 +17,7 @@ from nmos.node.activation import (
     init_receiver_activation,
 )
 from nmos.node.activation_engine import (
+    AUTO_PORT_BASE,
     ActivationResponse,
     check_constraint,
     flip_activation,
@@ -164,7 +165,7 @@ class TestSenderInit:
             assert staged_0.SourceIp.value != ""
 
     def test_rtp_sender_port_calculation(self) -> None:
-        """RTP sender port = 27500 + 2*index."""
+        """RTP sender port = AUTO_PORT_BASE + 2*index."""
         transport = _get_transport("urn:x-nmos:transport:rtp")
         desc = get_transport_descriptor(transport)
         activation = _make_activation(desc)
@@ -174,7 +175,7 @@ class TestSenderInit:
         init_sender_activation(activation, legs, transport, desc)
 
         staged = activation.staged[0]
-        assert staged.SourcePort.value == 27500 + 2 * 7
+        assert staged.SourcePort.value == AUTO_PORT_BASE + 2 * 7
 
     def test_ndi_sender_source_name(self) -> None:
         """NDI sender gets SourceName from group_hint."""

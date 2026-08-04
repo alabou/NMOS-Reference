@@ -41,6 +41,7 @@ from nmos.node.activation import (
     init_receiver_activation,
     init_sender_activation,
 )
+from nmos.node.activation_engine import AUTO_PORT_BASE
 from nmos.node.types import MAX_LEGS, Activation, Leg
 
 
@@ -194,12 +195,12 @@ class TestUsbTransports:
         assert desc.has_privacy is True
         assert desc.privacy_protocol is enums.USB_KV
 
-    def test_usb_descriptor_sender_port_fn_is_27500_plus_index(self) -> None:
+    def test_usb_descriptor_sender_port_fn_is_base_plus_index(self) -> None:
         # activation.py:926
         desc = get_transport_descriptor(enums.TransportUsb)
-        assert desc.sender_port_fn(0) == 27500
-        assert desc.sender_port_fn(1) == 27501
-        assert desc.sender_port_fn(7) == 27507
+        assert desc.sender_port_fn(0) == AUTO_PORT_BASE
+        assert desc.sender_port_fn(1) == AUTO_PORT_BASE + 1
+        assert desc.sender_port_fn(7) == AUTO_PORT_BASE + 7
 
     def test_usb_descriptor_registered_for_transport_urn(self) -> None:
         # Lookup by the transport enum must succeed
@@ -409,10 +410,10 @@ class TestUsbIs05TransportParams:
                       "ExtPrivacyEcdhCurve"):
             assert hasattr(v, fname), f"sender params missing {fname}"
 
-    def test_sender_default_port_matches_27500_plus_index(self) -> None:
+    def test_sender_default_port_matches_base_plus_index(self) -> None:
         desc = get_transport_descriptor(enums.TransportUsb)
-        assert desc.sender_port_fn(0) == 27500
-        assert desc.sender_port_fn(2) == 27502
+        assert desc.sender_port_fn(0) == AUTO_PORT_BASE
+        assert desc.sender_port_fn(2) == AUTO_PORT_BASE + 2
 
     def test_receiver_transport_params_have_source_ip_nullable(self) -> None:
         # IS2 + IS4 — SourceIp on receiver is nullable (NNullString)
@@ -578,7 +579,8 @@ class TestUsbSdpGeneration:
         m = re.search(r"m=application (\d+) TCP usb", self.sdp)
         assert m is not None, "m-line must contain numeric port"
         port = int(m.group(1))
-        assert 27500 <= port <= 27600, f"port {port} not in expected range"
+        assert AUTO_PORT_BASE <= port <= AUTO_PORT_BASE + 100, \
+            f"port {port} not in expected range"
 
     def test_usb_sdp_no_rtp_framing(self) -> None:
         # USB is TCP, not RTP — RTP/AVP must not appear

@@ -19,6 +19,7 @@ from typing import Any, cast
 from aiohttp import web
 
 from nmos.api.response import json_response, json_response_raw, error_response, sdp_response, _wants_html
+from nmos.node.activation_engine import AUTO_PORT_BASE
 
 
 # Transport type mapping: variant → base (activation type switch
@@ -210,8 +211,8 @@ def _resolve_auto_params(params: list[Any], node: Any) -> None:
         # Nullable fields (NNull): resolve "auto" to valid port numbers
         # destination_port resolves to source_port value (both set per sender index).
         # Read source_port first to use as destination_port default.
-        src_port = 27500
-        rtcp_src_port = 27501
+        src_port = AUTO_PORT_BASE
+        rtcp_src_port = AUTO_PORT_BASE + 1
         src_field = getattr(p, "SourcePort", None)
         if src_field is not None and hasattr(src_field, 'defined') and src_field.defined:
             try:

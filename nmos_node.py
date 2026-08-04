@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ipaddress
 import logging
 import os
 import signal
@@ -60,6 +61,42 @@ def _host_arg(value: str) -> str:
     ``type=int``, which already tolerates surrounding whitespace.
     """
     return value.strip()
+
+
+def _resolve_leg_address(host: str) -> str:
+    """Return ``host`` as a numeric address, resolving it if it is a name.
+
+    A leg carries an *address*, not a name: it becomes the ``SourceIp`` /
+    ``InterfaceIp`` of IS-05 transport parameters, and
+    ``activation_engine._get_unused_multicast_address_ipv4`` parses it as a
+    dotted quad to derive each sender's multicast group
+    (``239.<index+1>.<octet3>.<octet4>``).
+
+    Under TLS ``--nodeAddr`` is a *certificate name* (``XYZ-SNX00001``),
+    because the advertised hrefs have to match a DNS SAN. Stored unresolved,
+    that name parsed as zero octets, so every Node on the rig silently derived
+    the same group (``239.<index+1>.0.0``) and two Nodes streamed into each
+    other's group. Resolving here keeps the name for the hrefs — the caller
+    passes ``host`` on untouched — while the leg gets a real address.
+    """
+    try:
+        ipaddress.ip_address(host)
+        return host  # already numeric (v4 or v6)
+    except ValueError:
+        pass
+
+    try:
+        resolved = socket.gethostbyname(host)
+    except OSError as exc:
+        print(
+            f"nmos_node.py: WARNING: '{host}' does not resolve to an IPv4 "
+            f"address ({exc}). IS-05 transport-parameter auto-resolution will "
+            f"fall back to 0.0.0.0, so every Node derives the same multicast "
+            f"group. Pass a resolvable name or a numeric --nodeAddr.",
+        )
+        return host
+
+    return resolved
 
 
 def parse_args() -> argparse.Namespace:
@@ -948,8 +985,15 @@ async def main(args: argparse.Namespace) -> None:
             host = "127.0.0.1"
         args.nodeAddr = host
 
-    # Resolve interface name for the host address
-    iface_name = Node._resolve_interface_name(host)
+    # ``host`` stays as given — the Node / Device hrefs must carry the
+    # certificate name under TLS. The leg needs the address behind it.
+    leg_address = _resolve_leg_address(host)
+    if leg_address != host:
+        print(f"  Leg address: {host} → {leg_address} (transport parameters)")
+
+    # Resolve interface name from the leg *address*: a name matches no
+    # interface address, which silently fell through to "eth0".
+    iface_name = Node._resolve_interface_name(leg_address)
 
     # Initialize Node via node.init() with interfaces, legs, etc.
     from nmos.node.types import Leg, IPv4Settings
@@ -1018,7 +1062,7 @@ async def main(args: argparse.Namespace) -> None:
         ipmx=args.ipmx,
         privacy=args.privacy,
         legs=[Leg(name=iface_name, enable=True,
-                  ipv4=IPv4Settings(port=args.nodePort, address=host))],
+                  ipv4=IPv4Settings(port=args.nodePort, address=leg_address))],
         node_label="Node",
         node_description="This is the node",
         device_label="Device",
@@ -1171,6 +1215,25 @@ async def main(args: argparse.Namespace) -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
+def validate_startup_serial(args: argparse.Namespace) -> None:
+    """Reject a serial number that cannot address a destination-port block.
+
+    The serial's trailing number selects this Node's block of auto-resolved
+    destination ports, because TR-10-9-v2 §17.1 fixes the multicast group to
+    the media port's address and two Nodes on one address therefore share a
+    group. Checked here so a bad serial fails at launch with an actionable
+    message, rather than at the first IS-05 activation — by which point the
+    Node is registered and the failure looks like an activation bug.
+    """
+    from nmos.errors import InvalidData
+    from nmos.node.activation_engine import serial_port_index
+
+    try:
+        serial_port_index(args.nodeSerialNumber)
+    except InvalidData as exc:
+        raise SystemExit(f"CONFIG: --nodeSerialNumber {exc}") from exc
+
+
 def validate_startup_certs(args: argparse.Namespace) -> None:
     """Startup cert verification.
 
@@ -1283,6 +1346,7 @@ if __name__ == "__main__":
 
     args = parse_args()
     setup_logging(args)
+    validate_startup_serial(args)
     validate_startup_certs(args)
 
     try:

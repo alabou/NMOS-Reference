@@ -24,6 +24,14 @@ from typing import Any
 from nmos.node.events import EngineEvent
 from nmos.node.types import Activation, EngineState
 
+# Strong references to in-flight streaming tasks.
+#
+# ``asyncio`` keeps only a weak reference to a task that is suspended at an
+# await, so a task held by nothing else can be garbage-collected mid-flight.
+# Every task registered here is discarded again by its own done callback, so
+# the set holds exactly the streaming tasks that are still running.
+_STREAMING_TASKS: set[asyncio.Task[None]] = set()
+
 
 # Transport enum string → streaming function mapping
 _MULTICAST_TRANSPORTS = {
@@ -69,8 +77,10 @@ def start_streaming(
     Creates an asyncio task for the appropriate transport.
     The task runs in the background and is cancelled on deactivation.
 
-    Dispatches to doSenderRtpStreaming/doReceiverRtpStreaming inside the
-    activation's Engine DispatchGroup.
+    The task is supervised by ``_on_streaming_done``: a transport coroutine
+    that dies takes ``engine_state`` to ``ERROR`` instead of leaving it at
+    ``ACTIVE``. Without that the engine reported a healthy stream for a
+    transport that had no socket at all.
     """
     if transport_str in _NO_STREAMING:
         activation.engine_state = EngineState.INACTIVE
@@ -116,7 +126,47 @@ def start_streaming(
         return
 
     activation.engine_state = EngineState.ACTIVE
-    asyncio.ensure_future(coro)
+    task = asyncio.ensure_future(coro)
+    _STREAMING_TASKS.add(task)
+    task.add_done_callback(_STREAMING_TASKS.discard)
+    task.add_done_callback(
+        lambda t: _on_streaming_done(activation, resource_id, stop_event, t),
+    )
+
+
+def _on_streaming_done(
+    activation: Activation,
+    resource_id: str,
+    stop_event: asyncio.Event,
+    task: asyncio.Future[None],
+) -> None:
+    """Record how a streaming task ended on its ``Activation``.
+
+    ``engine_state`` is set to ACTIVE before the task first runs, so nothing
+    else would ever move it off ACTIVE for a transport that failed: the task's
+    exception was dropped along with its handle and the Node kept reporting a
+    healthy stream. Retrieving the exception here also means asyncio's "Task
+    exception was never retrieved" warning is no longer its only trace.
+
+    The only legitimate reason for a transport coroutine to finish is having
+    been asked to stop, so **returning early counts as a failure too** — the
+    TCP transports report a dead connection by breaking out of their send /
+    receive loop rather than by raising, and a bare return would otherwise
+    leave ACTIVE behind exactly as an escaping exception did.
+
+    Deactivation is not a failure in either form: ``stop_streaming`` sets the
+    stop event, clears ``activation.engine`` and sets INACTIVE itself, and a
+    cancelled task is a torn-down one.
+    """
+    if task.cancelled():
+        return
+    if stop_event.is_set() or activation.engine is None:
+        return  # asked to stop, or already deactivated
+
+    exc = task.exception()
+    reason = repr(exc) if exc is not None else "ended before deactivation"
+    activation.engine_state = EngineState.ERROR
+    print(f"  [streaming] {resource_id}: transport task failed → ERROR: {reason}")
 
 
 def stop_streaming(activation: Activation) -> None:

@@ -637,10 +637,12 @@ def _resolve_leg_ips_and_ports(active_params: Any, sender_index: int,
     active transport params, applying the same ``"auto"`` expansion the
     single-leg path historically used.
     """
+    from nmos.node.activation_engine import AUTO_PORT_BASE
+
     source_ip = interface_ip
-    src_port = 27500 + 2 * sender_index
+    src_port = AUTO_PORT_BASE + 2 * sender_index
     dest_ip = "0.0.0.0"
-    dest_port = 27500 + 2 * sender_index
+    dest_port = AUTO_PORT_BASE + 2 * sender_index
     if active_params is None:
         return {
             SourceIp.s: source_ip, "src_port": src_port,

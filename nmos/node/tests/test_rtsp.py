@@ -45,6 +45,7 @@ except ImportError:
 from nmos import enums
 from nmos.node import Node, _get_flow_core, _generate_sdp_from_params
 from nmos.node.activation import get_transport_descriptor
+from nmos.node.activation_engine import AUTO_PORT_BASE
 
 
 BUILTIN_DIR = Path(__file__).parent.parent / "config" / "builtin"
@@ -173,12 +174,12 @@ class TestRtspTransports:
         assert desc.has_privacy is True
         assert desc.privacy_protocol is enums.RTSP
 
-    def test_rtsp_descriptor_sender_port_fn_is_27500_plus_index(self) -> None:
+    def test_rtsp_descriptor_sender_port_fn_is_base_plus_index(self) -> None:
         # TP3 — uses a sender-index-based default port
         desc = get_transport_descriptor(enums.TransportRtsp)
-        assert desc.sender_port_fn(0) == 27500
-        assert desc.sender_port_fn(1) == 27501
-        assert desc.sender_port_fn(5) == 27505
+        assert desc.sender_port_fn(0) == AUTO_PORT_BASE
+        assert desc.sender_port_fn(1) == AUTO_PORT_BASE + 1
+        assert desc.sender_port_fn(5) == AUTO_PORT_BASE + 5
 
     def test_rtsp_descriptor_registered_for_both_urns(self) -> None:
         # Both rtsp and rtsp.tcp share the same descriptor (activation.py:988)
@@ -414,12 +415,11 @@ class TestRtspIs05TransportParams:
                       "ExtPrivacyEcdhCurve"):
             assert hasattr(v, fname), f"sender params missing {fname}"
 
-    def test_sender_default_port_matches_27500_plus_index(self) -> None:
+    def test_sender_default_port_matches_base_plus_index(self) -> None:
         # TP3 — descriptor-provided formula
         desc = get_transport_descriptor(enums.TransportRtsp)
-        # Index 0 → 27500, index 2 → 27502
-        assert desc.sender_port_fn(0) == 27500
-        assert desc.sender_port_fn(2) == 27502
+        assert desc.sender_port_fn(0) == AUTO_PORT_BASE
+        assert desc.sender_port_fn(2) == AUTO_PORT_BASE + 2
 
     def test_receiver_transport_params_have_source_ip_nullable(self) -> None:
         # TP2 — SourceIp on receiver is nullable (NNullString) per is05_types.py:566.
@@ -551,12 +551,13 @@ class TestRtspSdpGeneration:
         assert "c=IN IP4 " in self.sdp
 
     def test_rtsp_sdp_port_is_sender_source_port(self) -> None:
-        # Port is sender's listener UDP/TCP port (default 27500 via port_fn)
+        # Port is sender's listener UDP/TCP port (default base via port_fn)
         import re
         m = re.search(r"m=application (\d+) TCP rtsp", self.sdp)
         assert m is not None, "m-line must contain numeric port"
         port = int(m.group(1))
-        assert 27500 <= port <= 27600, f"port {port} not in expected range"
+        assert AUTO_PORT_BASE <= port <= AUTO_PORT_BASE + 100, \
+            f"port {port} not in expected range"
 
     def test_rtsp_tcp_sdp_uses_same_shape_as_rtsp(self) -> None:
         # SD4 + SD5 — both transports yield the same manifest shape.

@@ -301,9 +301,9 @@ Anything using TLS needs the hosts-file entries described in
 in `C:\Windows\System32\drivers\etc\hosts`, edited as Administrator. The
 remaining shell-only launchers are the Configuration A and B node variants
 (`start-node1-noauth2.sh`, `start-node1-nomtls.sh`).
-`NMOS_RDS_HOST` can override discovery, and `NMOS_RDS_REG_PORT` can override
-port 8444; the Query API port is derived as one less than the Registration API
-port.
+The launchers default to a registry on `127.0.0.1`; `NMOS_RDS_HOST` overrides
+that address and `NMOS_RDS_REG_PORT` overrides port 8444, with the Query API
+port derived as one less than the Registration API port.
 
 ### Windows multicast over loopback
 
@@ -724,6 +724,13 @@ This repository implements an NMOS Node and a curated set of VSF IPMX / TR-10-x 
 `NMOS-MatroxOnly/` is the broader Matrox documentation corpus. This Python implementation supports only the subset of that corpus that has been validated end-to-end here. See the [NMOS-MatroxOnly](https://github.com/alabou/NMOS-MatroxOnly) repository for the full specification set; the spec coverage tables above list what this implementation exercises.
 
 **IS-05 Bulk interface is intentionally not supported.** The Node implements the per-Sender / per-Receiver IS-05 single-resource endpoints (`/single/...`) but does not expose the `/bulk/...` interface. Bulk operations are out of scope: the Controller drives multi-resource activations as coordinated single-resource calls, which keeps the connection-management state machine uniform across Senders and Receivers and avoids the partial-success semantics of bulk activations. Vendors who need IS-05 Bulk on their own products must add it themselves.
+
+**The streaming engine emulates transport, so two TR-10-9 §17 stream requirements are deliberately not met.** The engine exists to exercise connection management, capability negotiation, encryption and registry orchestration end-to-end — not to be a reference for the media transport itself. Two §17 requirements are knowingly simplified:
+
+- **Default UDP port.** §17 says an IPMX Sender "shall use a default UDP port value of 5004". Auto-resolved Senders here start from port 22000 instead, partitioned into per-device blocks of 256 by the last two digits of the Node's serial number. That is what lets many emulated devices share one host: §17.1 fixes the multicast group to the media port's own address (`239.S.C.D`), so devices sharing an address — every device on a loopback rig — necessarily share a group, and only the port can tell their streams apart. Explicit IS-05 parameters override the default, so a real product built on this code can use 5004.
+- **IGMP source-specific joins.** §17 requires IGMPv3 with "the source-specific method". Receivers here join with any-source `IP_ADD_MEMBERSHIP` and filter on the IS-05 `SourceIp` in the receive loop instead. For an emulated transport on a single host that is sufficient; a real product should use `IP_ADD_SOURCE_MEMBERSHIP` so the kernel enforces the source filter.
+
+Neither affects the control-plane behaviour this project is a reference for. Vendors implementing real IPMX transport must meet both.
 
 ---
 

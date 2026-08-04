@@ -97,42 +97,22 @@ async def udp_sender(
     # Emit lifecycle events
     emit_activate(event_queue, sender_id, interface_name, is_sender=True)
 
+    sock: socket.socket | None = None
+
     try:
         emit_starting(event_queue, sender_id, interface_name, is_sender=True)
 
-        # Create UDP socket
-        sock = socket.socket(
-            socket.AF_INET6 if ":" in source_ip else socket.AF_INET,
-            socket.SOCK_DGRAM,
-            socket.IPPROTO_UDP,
-        )
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.setblocking(False)
-
+        # Create UDP socket. As on the receiver, a setup failure is reported
+        # and re-raised: the event drives the monitor, the exception drives
+        # engine_state (see ``streaming._on_streaming_done``).
         try:
-            sock.bind((source_ip, source_port))
-        except OSError:
-            # Fallback: bind to any interface
-            sock.bind(("", source_port))
-
-        if is_multicast:
-            # Set the outgoing interface, hop limit (MulticastTTL = 255) and
-            # loopback. The option level and names differ per family: an
-            # AF_INET6 socket rejects the IPPROTO_IP forms with WSAEINVAL.
-            if ":" in source_ip:
-                idx = _get_interface_index(_to_numeric(source_ip, socket.AF_INET6))
-                sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_IF, idx)
-                sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_HOPS, 255)
-                # Allow loopback for local testing
-                sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_LOOP, 1)
-            else:
-                sock.setsockopt(
-                    socket.IPPROTO_IP, socket.IP_MULTICAST_IF,
-                    socket.inet_aton(_to_numeric(source_ip, socket.AF_INET)),
-                )
-                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 255)
-                # Allow loopback for local testing
-                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
+            sock = _open_sender_socket(source_ip, source_port, is_multicast)
+        except OSError as exc:
+            emit_transport_error(
+                event_queue, sender_id, interface_name, is_sender=True,
+                info=f"sender socket setup failed: {exc}",
+            )
+            raise
 
         dest_addr = (dest_ip, dest_port)
         sid = uuid.UUID(sender_id)
@@ -198,7 +178,8 @@ async def udp_sender(
     finally:
         emit_stopping(event_queue, sender_id, interface_name, is_sender=True)
         emit_deactivate(event_queue, sender_id, interface_name, is_sender=True)
-        sock.close()
+        if sock is not None:
+            sock.close()
 
 
 # ---------------------------------------------------------------------------
@@ -251,9 +232,11 @@ async def udp_receiver(
         emit_starting(event_queue, receiver_id, interface_name, is_sender=False)
 
         # Create UDP socket. Bind and group-join failures are reported as a
-        # transport error rather than left to escape: an exception here would
-        # kill the task while the monitor still read healthy, so the operator
-        # would see a green receiver that never receives anything.
+        # transport error before being re-raised: the event is what the
+        # monitor needs to stop reading healthy, and the exception is what
+        # takes the activation's engine_state to ERROR (see
+        # ``streaming._on_streaming_done``). Swallowing it here would leave
+        # engine_state at ACTIVE for a receiver that has no socket.
         try:
             sock = _open_receiver_socket(
                 interface_ip, multicast_ip, dest_port, is_multicast,
@@ -263,7 +246,7 @@ async def udp_receiver(
                 event_queue, receiver_id, interface_name, is_sender=False,
                 info=f"receiver socket setup failed: {exc}", link_down=True,
             )
-            return
+            raise
 
         print(f"  [streaming] Receiver {receiver_id}")
         print(f"    Transport: UDP {'multicast ' + multicast_ip if is_multicast else 'unicast'}:{dest_port}")
@@ -296,7 +279,10 @@ async def udp_receiver(
                 ok = False
                 continue
             except asyncio.CancelledError:
-                break
+                # Re-raised, not absorbed: swallowing it would report a clean
+                # completion to whoever cancelled us and defeat cooperative
+                # cancellation. The finally block still runs.
+                raise
             except OSError as exc:
                 emit_transport_error(
                     event_queue, receiver_id, interface_name, is_sender=False,
@@ -449,6 +435,53 @@ async def udp_receiver(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _open_sender_socket(
+    source_ip: str,
+    source_port: int,
+    is_multicast: bool,
+) -> socket.socket:
+    """Create, bind and (for multicast) configure the sender socket.
+
+    Raises ``OSError`` on any failure, leaving no socket behind.
+    """
+    family = socket.AF_INET6 if ":" in source_ip else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.setblocking(False)
+
+        try:
+            sock.bind((source_ip, source_port))
+        except OSError:
+            # Fallback: bind to any interface
+            sock.bind(("", source_port))
+
+        if is_multicast:
+            # Set the outgoing interface, hop limit (MulticastTTL = 255) and
+            # loopback. The option level and names differ per family: an
+            # AF_INET6 socket rejects the IPPROTO_IP forms with WSAEINVAL,
+            # and Linux accepts them as a silent no-op — which left IPv6
+            # senders on the default hop limit of 1.
+            if ":" in source_ip:
+                idx = _get_interface_index(_to_numeric(source_ip, socket.AF_INET6))
+                sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_IF, idx)
+                sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_HOPS, 255)
+                # Allow loopback for local testing
+                sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_LOOP, 1)
+            else:
+                sock.setsockopt(
+                    socket.IPPROTO_IP, socket.IP_MULTICAST_IF,
+                    socket.inet_aton(_to_numeric(source_ip, socket.AF_INET)),
+                )
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 255)
+                # Allow loopback for local testing
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
+        return sock
+    except OSError:
+        sock.close()
+        raise
+
 
 def _open_receiver_socket(
     interface_ip: str,
