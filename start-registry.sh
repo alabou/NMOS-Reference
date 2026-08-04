@@ -2,7 +2,8 @@
 # NMOS Registry — TLS, optional mTLS, optional OAuth 2.0 on the Query API.
 #
 # Usage:
-#   start-registry.sh [rap] [registration-port] [--oauth2] [--as-host=H] [--as-port=P] [--tct=T]
+#   start-registry.sh [rap] [registration-port] [--oauth2] [--as-host=H]
+#                     [--as-port=P] [--tct=T] [--nap=N]
 #
 #   $1 = Registry Access Policy for the Registration API (default: 1)
 #          1  Unrestricted Registration, server-authenticated TLS
@@ -20,6 +21,14 @@
 #   --as-host=H     Authorization server host (default: XYZ-SNX00000)
 #   --as-port=P     Authorization server port (default: 9443)
 #   --tct=T         TLS Certificate Type: 0=RSA (default), 1=ECDSA
+#   --nap=N         Query API access policy (default: 2)
+#                     1  Unrestricted Read Only  -- reads open to any
+#                        client trusting the registry cert; subscription
+#                        create/delete still needs a client certificate.
+#                        Use this to browse the Query API's HTML views
+#                        without putting a client cert in your browser.
+#                     2  Restricted Read Write -- mutual TLS for every
+#                        request. Not available with --oauth2 (see below).
 #
 # TR-10-SEC (specs/NMOS With Control Plane Security.md):
 #
@@ -62,6 +71,7 @@ WS_PORT=$((REG_PORT + 4))
 AS_HOST="XYZ-SNX00000"
 AS_PORT="9443"
 TCT=0
+NAP=2
 USE_OAUTH2=0
 
 for arg in "$@"; do
@@ -70,6 +80,7 @@ for arg in "$@"; do
     --as-host=*) AS_HOST="${arg#*=}" ;;
     --as-port=*) AS_PORT="${arg#*=}" ;;
     --tct=*)     TCT="${arg#*=}" ;;
+    --nap=*)     NAP="${arg#*=}" ;;
     *) echo "start-registry.sh: unknown arg $arg" >&2; exit 64 ;;
   esac
 done
@@ -121,9 +132,39 @@ case "$RAP" in
   *) echo "start-registry.sh: unsupported RAP=$RAP" >&2; exit 64 ;;
 esac
 
-# The Query API accepts client certificates in every TLS mode here, so a
-# Controller may authenticate with mTLS, with OAuth 2.0, or with both.
-QUERY_CA_FLAGS=(--queryTrustedRootCA "$CA")
+# The Query API's own access policy, classified exactly as a Node's API is —
+# see nmos_registry.py::classify_query_nap, which reuses the rules in
+# nmos/node/security_tags.py. Both modes accept client certificates, so a
+# Controller may authenticate with mTLS, with OAuth 2.0, or with both; they
+# differ in what an *unauthenticated* client may do.
+#
+#   NAP=1  Unrestricted Read Only. Reads are open to any client that trusts
+#          the registry's certificate; state-changing verbs (creating and
+#          deleting subscriptions) still require a client certificate. This
+#          is the mode that lets a browser read the Query API's HTML views
+#          without provisioning a client certificate into it.
+#   NAP=2  Restricted Read Write. Every request needs a client certificate.
+#
+# NAP=0 (no TLS at all) is start-registry-bare.sh, mirroring RAP=0.
+case "$NAP" in
+  1) QUERY_CA_FLAGS=(--queryTrustedRootCA "$CA" --queryOptionalClientAuth) ;;
+  2) QUERY_CA_FLAGS=(--queryTrustedRootCA "$CA") ;;
+  0) echo "start-registry.sh: NAP=0 (plain HTTP) is start-registry-bare.sh" >&2
+     exit 64 ;;
+  *) echo "start-registry.sh: unsupported --nap=$NAP" >&2; exit 64 ;;
+esac
+
+# §"Unrestricted Read Only" is not available under OAuth 2.0: "even read
+# access MUST be explicitly provided by the OAuth 2.0 authorizations". The
+# registry honours that — every read route is wrapped in check_oauth2, so the
+# deployment really is NAP=2 — but silently accepting --nap=1 here would let
+# an operator believe reads were open when they are not.
+if [ "$NAP" = "1" ] && [ "$USE_OAUTH2" = "1" ]; then
+  echo "start-registry.sh: --nap=1 (Unrestricted Read Only) is not allowed" >&2
+  echo "  with --oauth2; the specification requires read access to be granted" >&2
+  echo "  by the OAuth 2.0 authorizations. Use --nap=2, or drop --oauth2." >&2
+  exit 64
+fi
 
 if [ "$USE_OAUTH2" = "1" ]; then
   OAUTH2_FLAGS=(

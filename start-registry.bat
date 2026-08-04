@@ -20,6 +20,13 @@ rem   --oauth2      Require OAuth 2.0 on the Query API in addition to TLS.
 rem   --as-host=H   Authorization server host (default XYZ-SNX00000)
 rem   --as-port=P   Authorization server port (default 9443)
 rem   --tct=T       TLS Certificate Type: 0=RSA (default), 1=ECDSA
+rem   --nap=N       Query API access policy (default 2)
+rem                   1  Unrestricted Read Only -- reads open to any client
+rem                      trusting the registry cert; subscription create and
+rem                      delete still need a client certificate. Use this to
+rem                      browse the Query API without a client cert in the
+rem                      browser. Not allowed with --oauth2.
+rem                   2  Restricted Read Write -- mutual TLS for everything.
 rem
 rem TR-10-SEC: the Registration API must never require OAuth 2.0 (:105), so
 rem --oauth2 deliberately affects the Query API only.
@@ -51,6 +58,7 @@ for /f "tokens=1,*" %%A in ("%REMAINING_ARGS%") do set "REMAINING_ARGS=%%B"
 set "AS_HOST=XYZ-SNX00000"
 set "AS_PORT=9443"
 set "TCT=0"
+set "NAP=2"
 set "USE_OAUTH2=0"
 
 :parse_options
@@ -73,6 +81,10 @@ if /i "%ARG:~0,10%"=="--as-port=" (
 )
 if /i "%ARG:~0,6%"=="--tct=" (
   set "TCT=%ARG:~6%"
+  goto parse_options
+)
+if /i "%ARG:~0,6%"=="--nap=" (
+  set "NAP=%ARG:~6%"
   goto parse_options
 )
 >&2 echo start-registry.bat: unknown argument %ARG%
@@ -139,6 +151,32 @@ if "%RAP%"=="1" (
   goto done
 )
 
+rem The Query API's own access policy, classified as a Node's API is -- see
+rem nmos_registry.py::classify_query_nap. Both modes accept client
+rem certificates; they differ in what an unauthenticated client may do.
+if "%NAP%"=="1" (
+  set QUERY_CA_FLAGS=--queryTrustedRootCA "%CA%" --queryOptionalClientAuth
+) else if "%NAP%"=="2" (
+  set QUERY_CA_FLAGS=--queryTrustedRootCA "%CA%"
+) else if "%NAP%"=="0" (
+  >&2 echo start-registry.bat: NAP=0 ^(plain HTTP^) is start-registry-bare.bat
+  set "EXIT_CODE=64"
+  goto done
+) else (
+  >&2 echo start-registry.bat: unsupported --nap=%NAP%
+  set "EXIT_CODE=64"
+  goto done
+)
+
+rem Unrestricted Read Only is not available under OAuth 2.0: the
+rem specification requires even read access to come from the OAuth 2.0
+rem authorizations, so accepting --nap=1 here would mislead the operator.
+if "%NAP%"=="1" if "%USE_OAUTH2%"=="1" (
+  >&2 echo start-registry.bat: --nap=1 is not allowed with --oauth2; use --nap=2
+  set "EXIT_CODE=64"
+  goto done
+)
+
 if "%USE_OAUTH2%"=="1" (
   set OAUTH2_FLAGS=--oauth2 --oauth2Host "%AS_HOST%" --oauth2Port "%AS_PORT%" --oauth2TrustedRootCA "%CA%" --oauth2ApiSelector realms/TR-10-SEC
 ) else (
@@ -163,7 +201,7 @@ echo NMOS Registry: RAP=%RAP% registration %REG_PORT%, query %QUERY_PORT%, webso
   --queryPort "%QUERY_PORT%" ^
   --queryWebSocketPort "%WS_PORT%" ^
   %REG_CA_FLAGS% ^
-  --queryTrustedRootCA "%CA%" ^
+  %QUERY_CA_FLAGS% ^
   %OAUTH2_FLAGS% ^
   --trustedRootCA "%CA%" ^
   --logFile nmos-registry.log
