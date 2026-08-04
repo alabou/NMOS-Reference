@@ -23,14 +23,7 @@ set "AS_PORT=9443"
 set "RDS_HOST=127.0.0.1"
 set "RDS_REG_PORT=8444"
 
-if defined NMOS_RDS_HOST (
-  set "RDS_HOST=%NMOS_RDS_HOST%"
-) else (
-  for /f "tokens=1" %%I in ('wsl.exe hostname -I 2^>nul') do if not defined WSL_RDS_HOST (
-    set "WSL_RDS_HOST=%%I"
-    set "RDS_HOST=%%I"
-  )
-)
+if defined NMOS_RDS_HOST set "RDS_HOST=%NMOS_RDS_HOST%"
 if defined NMOS_RDS_REG_PORT set "RDS_REG_PORT=%NMOS_RDS_REG_PORT%"
 
 if not "%~1"=="" set "AS_HOST=%~1"

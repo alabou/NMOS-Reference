@@ -18,6 +18,7 @@ import asyncio
 import ipaddress
 import socket
 import struct
+import sys
 import time
 from typing import Any
 
@@ -115,21 +116,23 @@ async def udp_sender(
             sock.bind(("", source_port))
 
         if is_multicast:
-            # Set multicast interface
+            # Set the outgoing interface, hop limit (MulticastTTL = 255) and
+            # loopback. The option level and names differ per family: an
+            # AF_INET6 socket rejects the IPPROTO_IP forms with WSAEINVAL.
             if ":" in source_ip:
-                # IPv6: IPV6_MULTICAST_IF
                 idx = _get_interface_index(_to_numeric(source_ip, socket.AF_INET6))
                 sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_IF, idx)
+                sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_HOPS, 255)
+                # Allow loopback for local testing
+                sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_LOOP, 1)
             else:
-                # IPv4: IP_MULTICAST_IF
                 sock.setsockopt(
                     socket.IPPROTO_IP, socket.IP_MULTICAST_IF,
                     socket.inet_aton(_to_numeric(source_ip, socket.AF_INET)),
                 )
-            # TTL = 255 (MulticastTTL)
-            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 255)
-            # Allow loopback for local testing
-            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 255)
+                # Allow loopback for local testing
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
 
         dest_addr = (dest_ip, dest_port)
         sid = uuid.UUID(sender_id)
@@ -137,6 +140,7 @@ async def udp_sender(
         timestamp_ns = 0
         period_ns = DEFAULT_PERIOD_NS
         ctr = 0
+        pending_recovery: set[int] = set()
 
         print(f"  [streaming] Sender {sender_id}")
         print(f"    Transport: UDP {'multicast' if is_multicast else 'unicast'} → {dest_ip}:{dest_port}")
@@ -165,6 +169,20 @@ async def udp_sender(
                     event_queue, sender_id, interface_name, is_sender=True,
                     info=f"send error: {exc}",
                 )
+                pending_recovery.add(EventId.TRANSPORT_OK)
+            else:
+                # Mirror the receiver: a send that succeeds after a failure
+                # clears the error. Without this, a self-healing fault pins
+                # transmissionStatus at Error for the lifetime of the
+                # activation — as happens on Windows, where sending to a
+                # multicast group over loopback is unroutable until a
+                # Receiver joins the group (WinError 1231).
+                if pending_recovery:
+                    emit_recovery(
+                        event_queue, sender_id, interface_name,
+                        is_sender=True, pending_events=pending_recovery,
+                    )
+                    pending_recovery.clear()
 
             sequence += 1
             timestamp_ns += period_ns
@@ -227,40 +245,25 @@ async def udp_receiver(
 
     emit_activate(event_queue, receiver_id, interface_name, is_sender=False)
 
+    sock: socket.socket | None = None
+
     try:
         emit_starting(event_queue, receiver_id, interface_name, is_sender=False)
 
-        # Create UDP socket
-        family = socket.AF_INET6 if ":" in interface_ip else socket.AF_INET
-        sock = socket.socket(family, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        if hasattr(socket, 'SO_REUSEPORT'):
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-        sock.setblocking(False)
-
-        if is_multicast:
-            # Bind to multicast group address + port
-            sock.bind((multicast_ip, dest_port))
-            # Join multicast group
-            if ":" in multicast_ip:
-                iface_num = _to_numeric(interface_ip, socket.AF_INET6)
-                idx = _get_interface_index(iface_num)
-                mreq = struct.pack(
-                    "16sI",
-                    socket.inet_pton(socket.AF_INET6, _to_numeric(multicast_ip, socket.AF_INET6)),
-                    idx,
-                )
-                sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_JOIN_GROUP, mreq)
-            else:
-                mreq = struct.pack(
-                    "4s4s",
-                    socket.inet_aton(_to_numeric(multicast_ip, socket.AF_INET)),
-                    socket.inet_aton(_to_numeric(interface_ip, socket.AF_INET)),
-                )
-                sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-        else:
-            # Unicast: bind to interface
-            sock.bind((interface_ip, dest_port))
+        # Create UDP socket. Bind and group-join failures are reported as a
+        # transport error rather than left to escape: an exception here would
+        # kill the task while the monitor still read healthy, so the operator
+        # would see a green receiver that never receives anything.
+        try:
+            sock = _open_receiver_socket(
+                interface_ip, multicast_ip, dest_port, is_multicast,
+            )
+        except OSError as exc:
+            emit_transport_error(
+                event_queue, receiver_id, interface_name, is_sender=False,
+                info=f"receiver socket setup failed: {exc}", link_down=True,
+            )
+            return
 
         print(f"  [streaming] Receiver {receiver_id}")
         print(f"    Transport: UDP {'multicast ' + multicast_ip if is_multicast else 'unicast'}:{dest_port}")
@@ -416,7 +419,7 @@ async def udp_receiver(
 
     finally:
         # Leave multicast group
-        if is_multicast:
+        if is_multicast and sock is not None:
             try:
                 if ":" in multicast_ip:
                     iface_num = _to_numeric(interface_ip, socket.AF_INET6)
@@ -439,12 +442,69 @@ async def udp_receiver(
 
         emit_stopping(event_queue, receiver_id, interface_name, is_sender=False)
         emit_deactivate(event_queue, receiver_id, interface_name, is_sender=False)
-        sock.close()
+        if sock is not None:
+            sock.close()
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _open_receiver_socket(
+    interface_ip: str,
+    multicast_ip: str,
+    dest_port: int,
+    is_multicast: bool,
+) -> socket.socket:
+    """Create, bind and (for multicast) group-join the receiver socket.
+
+    Raises ``OSError`` on any failure, leaving no socket behind.
+    """
+    family = socket.AF_INET6 if ":" in interface_ip else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if hasattr(socket, 'SO_REUSEPORT'):
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        sock.setblocking(False)
+
+        if not is_multicast:
+            # Unicast: bind to interface
+            sock.bind((interface_ip, dest_port))
+            return sock
+
+        # Bind the port, then join the group.
+        #
+        # Binding to the group address itself is a BSD/Linux idiom: the
+        # kernel accepts a class-D address there and narrows delivery to
+        # that group. Winsock requires the bind address to be a *local*
+        # address (a unicast address on an interface, or the wildcard), so
+        # a group address fails with WSAEADDRNOTAVAIL. Bind the wildcard
+        # there and rely on IP_ADD_MEMBERSHIP plus the SourceIp filter in
+        # the receive loop to select the traffic.
+        sock.bind(("" if sys.platform == "win32" else multicast_ip, dest_port))
+
+        if ":" in multicast_ip:
+            iface_num = _to_numeric(interface_ip, socket.AF_INET6)
+            idx = _get_interface_index(iface_num)
+            mreq = struct.pack(
+                "16sI",
+                socket.inet_pton(socket.AF_INET6, _to_numeric(multicast_ip, socket.AF_INET6)),
+                idx,
+            )
+            sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_JOIN_GROUP, mreq)
+        else:
+            mreq = struct.pack(
+                "4s4s",
+                socket.inet_aton(_to_numeric(multicast_ip, socket.AF_INET)),
+                socket.inet_aton(_to_numeric(interface_ip, socket.AF_INET)),
+            )
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+        return sock
+    except OSError:
+        sock.close()
+        raise
+
 
 def _is_multicast(ip: str) -> bool:
     """Check if an IP address is multicast."""

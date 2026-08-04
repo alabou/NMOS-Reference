@@ -305,6 +305,40 @@ remaining shell-only launchers are the Configuration A and B node variants
 port 8444; the Query API port is derived as one less than the Registration API
 port.
 
+### Windows multicast over loopback
+
+The bare rig puts both Nodes on `127.0.0.1`, so an activated UDP or RTP stream
+sends to a multicast group over the loopback interface. Windows treats that
+differently from Linux in two ways, and both matter when reading the consoles.
+
+**Sending needs a joiner first.** Sending to a multicast group over the loopback
+interface fails for as long as nothing on the host has joined that group on
+`127.0.0.1` — Windows has no route to hand the datagram to. The failure surfaces
+as `WSAENETUNREACH` (10051) on a blocking socket, or as
+`ERROR_NETWORK_UNREACHABLE` (1231) on the overlapped path that asyncio uses:
+
+```
+send error: [WinError 1231] The network location cannot be reached.
+```
+
+The moment a Receiver joins the group on that interface the route exists, sends
+succeed, and delivery works. So a Sender activated before its Receiver reports a
+transmission error for the first second or two, then clears itself once the
+Receiver joins. A Sender that reports 1231 *and never clears* means no Receiver
+ever joined the group — check the Receiver console rather than the Sender.
+
+There is no such dependency on a real NIC, where a route always exists. Assigning
+the Nodes real interface addresses instead of `127.0.0.1` avoids the startup
+error entirely.
+
+**Receiving cannot bind the group address.** Binding a socket to the multicast
+group address is a BSD/Linux idiom — the kernel accepts a class-D address and
+narrows delivery to that group. Winsock requires the bind address to be a *local*
+address (a unicast address on an interface, or the wildcard) and rejects a group
+address with `WSAEADDRNOTAVAIL` (10049). The engine therefore binds the wildcard
+on Windows and relies on `IP_ADD_MEMBERSHIP` plus the IS-05 `SourceIp` filter to
+select the traffic; it still binds the group address on Linux.
+
 ---
 
 ## NMOS Registry
@@ -512,6 +546,10 @@ Supported transports out of the box:
 | **SRT** | Reliable unicast over the public internet |
 | **TCP** | Reliable unicast |
 | **USB-over-IP** | USB device traffic tunneled over IP per TR-10-14 |
+
+On Windows, multicast flows between Nodes on `127.0.0.1` behave differently from
+Linux — see
+[Windows multicast over loopback](#windows-multicast-over-loopback).
 
 Together with the embedded capabilities-driven NMOS Controller, the streaming engine supports a multi-Node test fabric across any number of machines: IS-05 activations drive real connections, the Controller runs IS-11 stream-compatibility negotiation against the connected peers, and Senders / Receivers are reconfigured against what the device declares in BCP-004-01/-02 — codec profile / level, sampling, bit-depth, packet-time, transport, channel layout. The TLS, OAuth 2.0, PEP, registry registration, and capability negotiation paths are exercised end-to-end.
 
