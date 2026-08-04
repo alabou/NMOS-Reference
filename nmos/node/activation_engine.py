@@ -356,7 +356,7 @@ def serial_port_index(serial_number: str) -> int:
     return index
 
 
-def _serial_port_offset(serial_number: str) -> int:
+def node_port_offset(serial_number: str) -> int:
     """Offset of ``serial_number``'s port block within the auto port space.
 
     TR-10-9-v2 §17.1 pins the default multicast address to the media port's
@@ -368,10 +368,18 @@ def _serial_port_offset(serial_number: str) -> int:
     digits are its numeric identity (``SNX00002`` → 2). That follows the same
     "last serial characters distinguish the device" convention as ``nmos.uuid``.
 
-    Raises ``InvalidData`` for a serial that cannot address a block — see
-    ``serial_port_index``.
+    **Never raises.** A serial with no usable digit tail falls back to block 0.
+    The strict check lives in ``serial_port_index``, which
+    ``nmos_node.validate_startup_serial`` runs at launch — so a Node started
+    from the command line cannot reach this fallback, and the operator gets one
+    clear CONFIG error instead. Embedded and test uses that pass a
+    letter-suffixed serial (``"USBTST"``) keep working on block 0 rather than
+    failing every sender creation, which is what raising from this path did.
     """
-    return serial_port_index(serial_number) * _NODE_PORT_BLOCK
+    try:
+        return serial_port_index(serial_number) * _NODE_PORT_BLOCK
+    except InvalidData:
+        return 0
 
 
 def _get_unused_multicast_address_ipv4(sender_index: int, leg: Any) -> str:
@@ -443,7 +451,7 @@ def resolve_rtp_sender(
 
     # DestinationPort: "auto" → <node block> + 2*senderIndex, keeping RTP on
     # the even port and RTCP on the odd one above it (RFC 3550 §11).
-    port = AUTO_PORT_BASE + _serial_port_offset(serial_number) + 2 * sender_index
+    port = AUTO_PORT_BASE + node_port_offset(serial_number) + 2 * sender_index
     _resolve_auto_null_field(active, "DestinationPort", port)
 
     # RtcpDestinationIp: "auto" → copy from resolved DestinationIp
@@ -519,7 +527,7 @@ def resolve_udp_sender(
     # has no RTCP companion port to leave room for).
     _resolve_auto_null_field(
         active, "DestinationPort",
-        AUTO_PORT_BASE + _serial_port_offset(serial_number) + sender_index,
+        AUTO_PORT_BASE + node_port_offset(serial_number) + sender_index,
     )
 
 

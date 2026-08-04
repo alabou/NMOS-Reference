@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, cast
 
-from nmos.node.activation_engine import AUTO_PORT_BASE
+from nmos.node.activation_engine import AUTO_PORT_BASE, node_port_offset
 from nmos.node.types import (
     MAX_LEGS,
     Activation,
@@ -49,9 +49,14 @@ class TransportDescriptor:
     privacy_protocol: Any = None         # EnumId
     privacy_kv_protocol: Any = None      # EnumId
 
-    # Port calculation: index → port number
+    # Port calculation: index → port number, relative to the Node's port block
     sender_port_fn: Callable[[int], int] = lambda i: AUTO_PORT_BASE + i
     receiver_port_fn: Callable[[int], int] = lambda i: AUTO_PORT_BASE
+
+    # Whether the ports above are offset into this Node's block (see
+    # ``node_port_offset``). False for a protocol-mandated fixed port such as
+    # NDI's 5960, which every device must use as-is.
+    ports_in_node_block: bool = True
 
     # Transport-specific init (sets fields beyond common pattern)
     init_sender_extra: Callable[..., None] | None = None
@@ -131,8 +136,16 @@ def init_sender_activation(
         _set_field(staged, "InterfaceIp", ip_str)
         _set_field(active, "InterfaceIp", ip_str if leg.enable else "0.0.0.0")
 
-        # Common: SourcePort
+        # Common: SourcePort.
+        #
+        # Offset into this Node's port block, so a device's whole allocation —
+        # source, RTCP and destination — sits inside one block. Without it two
+        # devices on one host bind the same source port, and a sender's
+        # SourcePort no longer matches its auto-resolved DestinationPort (Go
+        # sets both to base + 2*index).
         port = descriptor.sender_port_fn(activation.sender_index)
+        if descriptor.ports_in_node_block:
+            port += node_port_offset(activation.sender_name)
         _set_null_field(staged, "SourcePort", port)
         _set_null_field(active, "SourcePort", port)
 
@@ -247,8 +260,9 @@ def _init_rtp_sender_extra(
     _set_field(active, "RtpEnabled", leg.enable)
     _set_field(staged, "RtcpEnabled", leg.enable)
     _set_field(active, "RtcpEnabled", leg.enable)
-    _set_null_field(staged, "RtcpSourcePort", AUTO_PORT_BASE + 1 + 2 * idx)
-    _set_null_field(active, "RtcpSourcePort", AUTO_PORT_BASE + 1 + 2 * idx)
+    rtcp_port = AUTO_PORT_BASE + node_port_offset(activation.sender_name) + 1 + 2 * idx
+    _set_null_field(staged, "RtcpSourcePort", rtcp_port)
+    _set_null_field(active, "RtcpSourcePort", rtcp_port)
     _set_field(staged, "DestinationIp", "auto")
     _set_field(active, "DestinationIp", "0.0.0.0")
     _set_null_field(staged, "DestinationPort", "auto")
@@ -323,8 +337,9 @@ def _init_rtp_tcp_sender_extra(
     _set_field(active, "RtpEnabled", leg.enable)
     _set_field(staged, "RtcpEnabled", leg.enable)
     _set_field(active, "RtcpEnabled", leg.enable)
-    _set_null_field(staged, "RtcpSourcePort", AUTO_PORT_BASE + 1 + 2 * idx)
-    _set_null_field(active, "RtcpSourcePort", AUTO_PORT_BASE + 1 + 2 * idx)
+    rtcp_port = AUTO_PORT_BASE + node_port_offset(activation.sender_name) + 1 + 2 * idx
+    _set_null_field(staged, "RtcpSourcePort", rtcp_port)
+    _set_null_field(active, "RtcpSourcePort", rtcp_port)
     cs = _get_constraint_set(constraints)
     _add_enum_constraint(cs, "RtpEnabled", [leg.enable], "cannot enable/disable RTP", staged)
     _add_enum_constraint(cs, "RtcpEnabled", [leg.enable], "cannot enable/disable RTCP", staged)
@@ -940,6 +955,7 @@ def _build_registry() -> dict[Any, TransportDescriptor]:
         has_privacy=False,
         sender_port_fn=lambda i: 5960,
         receiver_port_fn=lambda i: 5960,
+        ports_in_node_block=False,
         init_sender_extra=_init_ndi_sender_extra,
         init_receiver_extra=_init_ndi_receiver_extra,
         sender_auto_resolvers={"flip_resolve": resolve_noop},

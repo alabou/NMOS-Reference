@@ -18,6 +18,7 @@ from nmos.node.activation import (
 )
 from nmos.node.activation_engine import (
     AUTO_PORT_BASE,
+    node_port_offset,
     ActivationResponse,
     check_constraint,
     flip_activation,
@@ -165,7 +166,13 @@ class TestSenderInit:
             assert staged_0.SourceIp.value != ""
 
     def test_rtp_sender_port_calculation(self) -> None:
-        """RTP sender port = AUTO_PORT_BASE + 2*index."""
+        """RTP sender port = base + this Node's block + 2*index.
+
+        The block comes from the serial number carried in ``sender_name``, so a
+        sender's source, RTCP and destination ports all sit inside one Node's
+        block — two Nodes on a shared media address would otherwise bind the
+        same source port.
+        """
         transport = _get_transport("urn:x-nmos:transport:rtp")
         desc = get_transport_descriptor(transport)
         activation = _make_activation(desc)
@@ -175,7 +182,10 @@ class TestSenderInit:
         init_sender_activation(activation, legs, transport, desc)
 
         staged = activation.staged[0]
-        assert staged.SourcePort.value == AUTO_PORT_BASE + 2 * 7
+        expected = AUTO_PORT_BASE + node_port_offset(activation.sender_name) + 2 * 7
+        assert staged.SourcePort.value == expected
+        # RTCP sits immediately above the data port, inside the same block.
+        assert staged.RtcpSourcePort.value == expected + 1
 
     def test_ndi_sender_source_name(self) -> None:
         """NDI sender gets SourceName from group_hint."""

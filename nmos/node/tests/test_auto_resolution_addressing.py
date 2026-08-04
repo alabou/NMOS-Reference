@@ -34,7 +34,7 @@ from nmos.node.activation_engine import (
     _NODE_PORT_BLOCK,
     MAX_SERIAL_PORT_INDEX,
     _get_unused_multicast_address_ipv4,
-    _serial_port_offset,
+    node_port_offset,
     serial_port_index,
 )
 from nmos.node.types import IPv4Settings, Leg
@@ -87,26 +87,26 @@ class TestSerialPortBlock:
     """The port carries Node identity, since the group cannot."""
 
     def test_distinct_serials_get_distinct_blocks(self) -> None:
-        offsets = {s: _serial_port_offset(s)
+        offsets = {s: node_port_offset(s)
                    for s in ("SNX00001", "SNX00002", "SNX00003")}
         assert len(set(offsets.values())) == 3, offsets
 
     def test_blocks_do_not_overlap(self) -> None:
         """Every stream of Node N stays below Node N+1's first port."""
-        a = _serial_port_offset("SNX00001")
-        b = _serial_port_offset("SNX00002")
+        a = node_port_offset("SNX00001")
+        b = node_port_offset("SNX00002")
         assert b - a == _NODE_PORT_BLOCK
         highest_rtcp_in_a = a + 2 * _MAX_STREAM_INDEX + 1
         assert highest_rtcp_in_a < b
 
     def test_no_serial_keeps_the_historical_base(self) -> None:
         """An unnamed device keeps base — it has no identity to encode."""
-        assert _serial_port_offset("") == 0
-        assert _serial_port_offset("   ") == 0
+        assert node_port_offset("") == 0
+        assert node_port_offset("   ") == 0
 
     def test_every_valid_serial_fits_in_16_bits(self) -> None:
         worst = AUTO_PORT_BASE + max(
-            _serial_port_offset(f"SNX{n:05d}")
+            node_port_offset(f"SNX{n:05d}")
             for n in range(0, MAX_SERIAL_PORT_INDEX + 1)
         ) + 2 * _MAX_STREAM_INDEX + 1
         assert worst <= MAX_PORT, worst
@@ -154,7 +154,7 @@ class TestSerialValidation:
         assert MAX_SERIAL_PORT_INDEX == 99
         assert serial_port_index(f"SNX{MAX_SERIAL_PORT_INDEX:05d}") == \
             MAX_SERIAL_PORT_INDEX
-        assert AUTO_PORT_BASE + _serial_port_offset(
+        assert AUTO_PORT_BASE + node_port_offset(
             f"SNX{MAX_SERIAL_PORT_INDEX:05d}"
         ) + 2 * _MAX_STREAM_INDEX + 1 <= MAX_PORT
 
