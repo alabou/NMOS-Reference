@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from unittest import mock
+
 import pytest
 
 from nmos.errors import InvalidOperation, InvalidParameter, NotFound
@@ -829,6 +831,27 @@ class TestSourceUpdateInterLinks:
         new_flow_version = _get_flow_core(flow).ResourceCore.Version.value
         assert new_flow_version != old_flow_version
 
+    def test_cascade_versions_all_distinct(self) -> None:
+        """A cascading update stamps source, flow and sender distinctly.
+
+        All three are touched inside one clock tick on a coarse-resolution
+        platform (Windows resolves time_ns() to ~15.6 ms), so this only holds
+        because the stamp generator steps forward on collision.
+        """
+        node, recv, src, flow, sender = self._build_pipeline()
+        src_static = to_static_id(_get_source_core(src).ResourceCore.Id.value)
+
+        node.update_source(src_static, SourceUpdate())
+
+        versions = [
+            _get_source_core(src).ResourceCore.Version.value,
+            _get_flow_core(flow).ResourceCore.Version.value,
+            _get_resource_core(sender).Version.value,
+        ]
+        assert len(set(versions)) == len(versions), (
+            f"cascade produced duplicate versions: {versions}"
+        )
+
     def test_child_source_parents_updated(self) -> None:
         """After parent source update, child source's Parents list has the new ID."""
         node = _make_node()
@@ -1008,3 +1031,53 @@ class TestDeviceListIntegrityOnUpdate:
         node.del_sender(sender.ResourceCore.Id.value)
         v2 = node.device_value.ResourceCore.Version.value
         assert v2 != v1
+
+
+class TestVersionStamp:
+    """``_nmos_version_now`` must hand out strictly increasing stamps.
+
+    IS-04 uses ``version`` both as the changed-since signal and as the Query
+    API paging cursor, so duplicates are a correctness problem, not cosmetics.
+    """
+
+    def test_rapid_calls_strictly_increase(self) -> None:
+        """Consecutive calls differ even inside one clock tick."""
+        from nmos.node import _nmos_version_now
+
+        stamps = [_nmos_version_now() for _ in range(50)]
+        assert stamps == sorted(stamps), "stamps are not ordered"
+        assert len(set(stamps)) == len(stamps), "stamps contain duplicates"
+
+    def test_frozen_clock_still_advances(self) -> None:
+        """A clock that never ticks must not produce duplicate stamps."""
+        import nmos.node as node_mod
+
+        saved = node_mod._last_version_ns
+        frozen = 1_700_000_000_000_000_000
+        try:
+            node_mod._last_version_ns = 0
+            with mock.patch.object(node_mod.time, "time_ns", return_value=frozen):
+                stamps = [node_mod._nmos_version_now() for _ in range(5)]
+            assert len(set(stamps)) == 5, f"frozen clock duplicated: {stamps}"
+            # 1 ns steps off the frozen reading, so still the same second.
+            assert [s[1] - stamps[0][1] for s in stamps] == [0, 1, 2, 3, 4]
+        finally:
+            node_mod._last_version_ns = saved
+
+    def test_backwards_clock_step_does_not_regress(self) -> None:
+        """An NTP correction backwards must not rewind versions."""
+        import nmos.node as node_mod
+
+        saved = node_mod._last_version_ns
+        try:
+            node_mod._last_version_ns = 0
+            with mock.patch.object(node_mod.time, "time_ns",
+                                   return_value=1_700_000_000_000_000_000):
+                first = node_mod._nmos_version_now()
+            # Clock jumps a minute into the past
+            with mock.patch.object(node_mod.time, "time_ns",
+                                   return_value=1_699_999_940_000_000_000):
+                second = node_mod._nmos_version_now()
+            assert second > first, f"version regressed: {first} -> {second}"
+        finally:
+            node_mod._last_version_ns = saved

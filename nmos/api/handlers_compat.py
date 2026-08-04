@@ -218,9 +218,8 @@ async def handle_put_sender_constraints_active(request: web.Request) -> web.Resp
         return error_response(code, str(err), request=request)
 
     # bump IS-04 sender version after constraint change
-    import time
-    t = time.time_ns()
-    sender.ResourceCore.Version.value = (t // 1_000_000_000, t % 1_000_000_000)
+    from nmos.node import _nmos_version_now
+    sender.ResourceCore.Version.value = _nmos_version_now()
 
     # Update compatibility status
     node.set_sender_compatibility_state(sender)
@@ -260,9 +259,8 @@ async def handle_delete_sender_constraints_active(request: web.Request) -> web.R
         return error_response(500, str(err), request=request)
 
     # bump IS-04 sender version after constraint change
-    import time
-    t = time.time_ns()
-    sender.ResourceCore.Version.value = (t // 1_000_000_000, t % 1_000_000_000)
+    from nmos.node import _nmos_version_now
+    sender.ResourceCore.Version.value = _nmos_version_now()
 
     node.set_sender_compatibility_state(sender)
 

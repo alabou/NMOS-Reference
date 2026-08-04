@@ -1420,17 +1420,41 @@ def _generate_sdp_from_params(node: Any, sender: Any, sender_id: str,
 
 
 
+#: Last stamp handed out by ``_nmos_version_now``, in whole nanoseconds.
+#: Module-level rather than per-resource: the ordering IS-04 cares about is
+#: across resources, not within one. Safe without a lock because the Node is
+#: single-threaded asyncio and the read-modify-write below never awaits.
+_last_version_ns: int = 0
+
+
 def _nmos_version_now() -> tuple[int, int]:
     """Generate an NMOS version timestamp as (utc_seconds, nanoseconds).
 
-    Returns current UTC time.
+    Returns current UTC time, except that each call is guaranteed to return a
+    strictly larger value than the previous one.
+
+    The monotonic step matters because IS-04 overloads ``version``: it is both
+    the signal that a resource changed and the Query API's paging cursor. Two
+    updates sharing a stamp let a controller conclude nothing changed, and let
+    a paged query skip or repeat entries at the page boundary. The system clock
+    is too coarse to rely on for this — Windows resolves ``time.time_ns()`` to
+    ~15.6 ms, so consecutive calls routinely return the same value and a single
+    cascading update (source → flow → sender) collides with itself. Feeding the
+    clock forward by 1 ns per collision keeps stamps distinct and ordered while
+    staying within a tick of real time.
+
+    A backwards clock step (an NTP correction) is absorbed the same way:
+    versions continue from the last one issued rather than going backwards,
+    which would otherwise look like a resource reverting to an older state.
+
     NTime handles TAI conversion internally on encode/decode.
     """
-    import time as _time
-    t = _time.time_ns()
-    sec = t // 1_000_000_000
-    nsec = t % 1_000_000_000
-    return (sec, nsec)
+    global _last_version_ns
+    t = time.time_ns()
+    if t <= _last_version_ns:
+        t = _last_version_ns + 1
+    _last_version_ns = t
+    return (t // 1_000_000_000, t % 1_000_000_000)
 
 
 def _set_version_now(resource_core: Any) -> None:
