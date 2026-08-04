@@ -200,7 +200,7 @@ def parse_args() -> argparse.Namespace:
                         "path component of the issuer identifier. "
                         "Empty for ORY Hydra; 'realms/<realm>' for "
                         "Keycloak (default: 'realms/TR-10-SEC').")
-    # VSF TR-10-SEC §12.4: OAuth 2.0 Audience Identification Mode (OAIM).
+    # TR-10-SEC §12.4: OAuth 2.0 Audience Identification Mode (OAIM).
     # Selects how the Node validates the ``aud`` claim of incoming
     # Bearer tokens. Reference-node already implements all three modes
     # in ``nmos/oauth2/__init__.py:498-565`` (with RFC 4592 wildcards);
@@ -361,7 +361,7 @@ def build_controller_ui_ssl_context(
     (``--nodeControlPort``).
 
     **Rule: mTLS → TLS for the Controller UI.** The Controller UI is
-    a browser-facing admin endpoint, not part of the IPMX protocol
+    a browser-facing admin endpoint, not part of the protocol
     surface (Node API, IS-05/IS-08/IS-11) that TR-10-SEC's mTLS
     requirement covers. Under Configuration C the Node listener runs
     mTLS; this listener takes that same TLS context and **downgrades
@@ -744,7 +744,7 @@ async def go_controller_server(
 
     # Controller UI server runs server-TLS-only (no mTLS) even under
     # Configuration C — the UI is a browser endpoint, not part of the
-    # IPMX protocol surface that TR-10-SEC's mTLS requirement covers.
+    # protocol surface that TR-10-SEC's mTLS requirement covers.
     # See ``build_controller_ui_ssl_context`` for the rationale.
     # ``shutdown_timeout=2.0`` keeps Ctrl-C responsive — the
     # controller's SSE stream (/controller/api/status-events) is the
@@ -864,7 +864,7 @@ async def go_node_authorizations(
 ) -> None:
     """Periodic JWKS public-key cache for inbound OAuth 2.0 validation.
 
-    Implements the full VSF TR-10-SEC §14.3.2 lifecycle via
+    Implements the full TR-10-SEC §14.3.2 lifecycle via
     :class:`nmos.oauth2.jwks_cache.JWKSCache`: 23h+jitter refresh,
     36h hard invalidation, exponential backoff (1→64s), and fail-closed
     until the first fetch succeeds.
@@ -967,10 +967,10 @@ async def main(args: argparse.Namespace) -> None:
         and bool(args.nodeCertificate)
         and bool(args.nodeKey)
     )
-    # VSF TR-10-SEC §8: snapshot the Node's effective security config
+    # TR-10-SEC §8: snapshot the Node's effective security config
     # so the five urn:x-vsf:tag:tr-10-sec:*-config/v1.0 tags are
-    # published in ``GET /x-nmos/node/v1.3/self``. The validator under
-    # ``security/`` reads them to verify the operator's declared
+    # published in ``GET /x-nmos/node/v1.3/self``. The validator 
+    # reads them to verify the operator's declared
     # ``--config`` matches what the device actually does.
     from nmos.node.security_tags import compute_security_tags
     security_tags = compute_security_tags(args).to_tags()

@@ -1,7 +1,7 @@
 # Copyright (C) 2025-2026 Alain Bouchard
 # SPDX-License-Identifier: Apache-2.0
 
-"""VSF TR-10-SEC §14.3.2 / NMOS-IS-10 OAuth 2.0 Public-Key cache.
+"""TR-10-SEC §14.3.2 / NMOS-IS-10 OAuth 2.0 Public-Key cache.
 
 Reference-node implements the spec's full lifecycle for the OAuth 2.0
 Authorization Server's signing keys:

@@ -201,8 +201,8 @@ LOGIN_SUBMIT = 'form[action$="/login"] button[type="submit"]'   # login.html:47
 # started with, and the two it is exercised against disagree on the submit
 # button while agreeing on the fields:
 #
-#   security/ipmx_fake_as.py   #username  #password  #as-signin
-#   Keycloak                   #username  #password  #kc-login
+#   ipmx_fake_as.py     #username  #password  #as-signin
+#   Keycloak            #username  #password  #kc-login
 #
 # ``#username`` and ``#password`` are near-universal — Keycloak, ORY Hydra and
 # Authlib all use them, and they are also what a password manager keys on. The

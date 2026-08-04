@@ -43,7 +43,7 @@ from nmos.json.engine import JsonEngine
 
 
 # ---------------------------------------------------------------------------
-# VSF TR-10-SEC §14.3.3.2 — permitted JOSE header values
+# TR-10-SEC §14.3.3.2 — permitted JOSE header values
 # ---------------------------------------------------------------------------
 
 _PERMITTED_TYP_VALUES: frozenset[str] = frozenset({
@@ -310,7 +310,7 @@ def validate_token_with_claims(
 ) -> tuple[bool, dict[str, Any]]:
     """Validate a JWT token and return (ok, claims).
 
-    Supports RS256, RS512, ES256, ES512. Enforces VSF TR-10-SEC §14.3.3.2
+    Supports RS256, RS512, ES256, ES512. Enforces TR-10-SEC §14.3.3.2
     on the JOSE header — ``typ`` must be present and one of ``JWT``,
     ``at+jwt`` or ``application/at+jwt``; ``alg`` must be on the
     permitted list. Any other shape returns ``(False, {})`` so the
@@ -328,7 +328,7 @@ def validate_token_with_claims(
     except (ValueError, TypeError):
         return False, {}
 
-    # VSF TR-10-SEC §14.3.3.2: "The JOSE header typ parameter shall be
+    # TR-10-SEC §14.3.3.2: "The JOSE header typ parameter shall be
     # present and shall have one of the following values: JWT, at+jwt,
     # or application/at+jwt." The comparison is case-insensitive per
     # RFC 7515 §4.1.9 (the "typ" Header Parameter). A missing or
@@ -338,7 +338,7 @@ def validate_token_with_claims(
         return False, {}
 
     alg = header.get("alg", "")
-    # VSF TR-10-SEC §14.3.3.2 also restricts ``alg`` to {RS256, RS512,
+    # TR-10-SEC §14.3.3.2 also restricts ``alg`` to {RS256, RS512,
     # ES256, ES512}. Validate up-front so an unsupported alg fails fast
     # rather than falling through to the dispatch below — which would
     # also reject it, but with a less actionable message.

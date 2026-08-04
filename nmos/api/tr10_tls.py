@@ -1,7 +1,7 @@
 # Copyright (C) 2025-2026 Alain Bouchard
 # SPDX-License-Identifier: Apache-2.0
 
-"""VSF TR-10-SEC §3 TLS cipher-suite + key-exchange-group restriction.
+"""TR-10-SEC §3 TLS cipher-suite + key-exchange-group restriction.
 
 The spec enumerates the exact set of TLS 1.2 / 1.3 cipher suites and ECDH
 key-exchange groups a compliant IPMX device is allowed to use:
@@ -156,7 +156,7 @@ def apply_tr10_tls_restrictions(
     *,
     gcrl_path: str | None = None,
 ) -> None:
-    """Apply VSF TR-10-SEC §3 TLS-restriction policy to ``ctx``.
+    """Apply TR-10-SEC §3 TLS-restriction policy to ``ctx``.
 
     Called by every SSLContext factory in reference-node (server and
     client side both) so the same whitelist governs every TLS endpoint

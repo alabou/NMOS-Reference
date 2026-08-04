@@ -1,11 +1,11 @@
 # Copyright (C) 2025-2026 Alain Bouchard
 # SPDX-License-Identifier: Apache-2.0
 
-"""IPMX security configuration tags — VSF TR-10-SECURITY §8.
+"""IPMX security configuration tags — TR-10-SECURITY §8.
 
 The spec mandates that a compliant IPMX Node publishes five tags in the
 Node's ``tags`` attribute, each carrying the current effective value of a
-security-configuration option. The validator (under ``security/``) reads
+security-configuration option. The TR-10-SEC validator reads
 these tags from ``GET /x-nmos/node/v1.3/self`` and cross-checks them
 against the operator's declared configuration.
 
@@ -116,7 +116,7 @@ class SecurityConfig:
     def to_tags(self) -> dict[str, list[str]]:
         """Map the snapshot to the dict shape used by NMOS Node ``tags``.
 
-        The validator under ``security/`` reads these from
+        The TR-10-SEC validator reads these from
         ``GET /x-nmos/node/v1.3/self`` and asserts the first array
         element matches the operator's ``--config`` / ``--expect-*``
         declaration.

@@ -18,7 +18,7 @@ Node needs no reconfiguration to talk to it:
 Security
 --------
 The two APIs are deliberately not configured the same way, and the asymmetry
-is normative. ``specs/NMOS With Control Plane Security.md:105`` (IPMX
+is normative. ``specs/NMOS With Control Plane Security.md:105`` (
 TR-10-SEC) requires that the Registration API "MUST not require the NMOS Nodes
 to use OAuth 2.0 authorizations" and that it "MUST be secured using TLS with
 server authentication or mutual client-server authentication". So:

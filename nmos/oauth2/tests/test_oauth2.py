@@ -188,7 +188,7 @@ class TestJWTValidation:
         assert validate_token(token, jwks) is True
 
     # -------------------------------------------------------------------
-    # VSF TR-10-SEC §14.3.3.2 — JOSE header restrictions
+    # TR-10-SEC §14.3.3.2 — JOSE header restrictions
     # -------------------------------------------------------------------
 
     def test_missing_typ_rejected(self) -> None:

@@ -40,7 +40,7 @@ from nmos.controller.oauth2 import OAuth2Client, OAuth2Config, OAuth2Error
 class _MetadataServer:
     """A stand-in AS that serves only ``/.well-known/…``.
 
-    Deliberately *not* the fake AS from ``security/``: these tests are
+    Deliberately *not* the fake AS: these tests are
     about what the controller does with a metadata document, so the
     document has to be arbitrary — including malformed and hostile
     shapes a real server would never emit.

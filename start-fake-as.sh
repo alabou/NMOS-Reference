@@ -40,9 +40,9 @@
 #     ./start-node1.sh XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2
 #
 # The implementation ships in fake-as/, a byte-identical copy of the one the
-# TR-10-SEC validator uses in the separately-released security/ project — so
+# TR-10-SEC validator uses in a separately-released project — so
 # the tutorial and the certification suite exercise one Authorization Server
-# rather than two lookalikes. See ./sync-fake-as.sh.
+# rather than two lookalikes.
 #
 # Requires hosts-file entries. This script addresses its peers by DNS name
 # because the certificates carry DNS SANs (XYZ-SNX000nn) and an IP literal
@@ -113,23 +113,15 @@ for f in "$AS_CERT" "$AS_KEY"; do
 done
 
 # The Authorization Server ships vendored in this repository, so a checkout
-# of nmos-reference alone can run the tutorial. When the security/ project is
-# alongside it is preferred, because that copy is the source of truth and a
-# developer editing it should see the effect without syncing first.
-# ./sync-fake-as.sh keeps the two byte-identical, and a test enforces it.
+# of nmos-reference alone can run the tutorial.
 FAKE_AS=""
 for candidate in \
-  "${IPMX_SECURITY_ROOT:-$SCRIPT_DIR/../security}/ipmx_fake_as.py" \
   "$SCRIPT_DIR/fake-as/ipmx_fake_as.py"
 do
   if [ -f "$candidate" ]; then FAKE_AS="$candidate"; break; fi
 done
 if [ -z "$FAKE_AS" ]; then
   echo "start-fake-as.sh: no Authorization Server found." >&2
-  echo "  Looked for fake-as/ipmx_fake_as.py in this repository and for a" >&2
-  echo "  security/ project alongside it. Restore fake-as/ (see" >&2
-  echo "  ./sync-fake-as.sh), or use start-node1-noauth2.sh for a rig with" >&2
-  echo "  no OAuth 2.0." >&2
   exit 66
 fi
 

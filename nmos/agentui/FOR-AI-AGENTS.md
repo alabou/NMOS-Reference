@@ -292,7 +292,7 @@ root and name the document; do not invent deep links you have not checked.
 | Sender/Receiver capabilities | **AMWA BCP-004-01**, schemas in **BCP-004-02** |
 | Natural grouping (the group circle) | **AMWA BCP-002-01** |
 | Status reporting | **AMWA BCP-008-01**, carried over IS-04 here |
-| TLS | **AMWA BCP-003-01**; **VSF TR-10-SEC** for the IPMX profile |
+| TLS | **AMWA BCP-003-01**; **Matrox NMOS With Control Plane Security** for the ProAV profile |
 | Privacy encryption | **AMWA BCP-005-03**; **VSF TR-10-13** — <https://vsf.tv/technical-recommendations/> |
 | USB-over-IP | **AMWA BCP-007-02** (NMOS With USB — the SDP profile and verification) **and VSF TR-10-14** (the USB protocol adaptation). Cite both: BCP-007-02 is the NMOS surface, TR-10-14 is how the traffic is carried |
 | JPEG XS / H.264 / H.265 | **AMWA BCP-006-01** (JPEG XS) / **BCP-006-02** (H.264) / **BCP-006-03** (H.265), each extended by the Matrox corpus |
@@ -320,9 +320,9 @@ its evident role. Cite the ones a step actually touched — not all of them.
 | **IS-04 registration — the node side** | `nmos/node/registry.py` — *"NMOS Registration API client"*. The **client**: it POSTs the node's resources and heartbeats. Do not cite it for anything the registry does |
 | **IS-04 registry — the server side** | `nmos/registry/` — the Registration and Query APIs this project ships, so a rig needs no third-party registry. `store.py` holds the resources with registry-assigned TAI paging cursors, health and garbage collection; `subscriptions.py` builds the WebSocket grains (added / removed / modified / sync, and the synthetic events a filtered subscription must emit when a resource starts or stops matching); `paging.py` and `query_filter.py` are the `paging.*` and basic-query semantics; `nmos_registry.py` is the standalone launcher. The verbatim IS-04 sources sit in `nmos/registry/specs/` |
 | **SDP transport files** | `nmos/node/sdp_transport.py` — *"SDP transport file generation and receiver SDP processing"*; `sdp/MatroxSdp.py` and `sdp/MatroxSdpWrite.py` for the SDP model itself |
-| **Privacy encryption — PEP (TR-10-13)** | `pep/ipmx_pep.py` — *"IPMX Privacy Encryption Protocol (PEP) — Key Derivation, Cipher, and Protocol Adaptations"*; `nmos/node/privacy.py` — *"Privacy / ECDH key generation for transport encryption"*; `nmos/controller/privacy.py` — the UI side; `nmos/node/security_tags.py` — *"IPMX security configuration tags — VSF TR-10-SECURITY §8"* |
+| **Privacy encryption — PEP (TR-10-13)** | `pep/ipmx_pep.py` — *"IPMX Privacy Encryption Protocol (PEP) — Key Derivation, Cipher, and Protocol Adaptations"*; `nmos/node/privacy.py` — *"Privacy / ECDH key generation for transport encryption"*; `nmos/controller/privacy.py` — the UI side; `nmos/node/security_tags.py` — *"security configuration tags — Matrox NMOS With Control Plane Security"* |
 | **Node reservation for exclusive use** | `nmos/crypto/__init__.py` — *"ExclusiveSession — token-based mutual exclusion for NMOS Node API"*; `nmos/api/handlers_exclusive.py` — *"Exclusive session (Node Reservation) API handlers"*; `nmos/controller/reservation.py` — *"Node Reservation session management for the controller"* |
-| **TLS and TR-10-SEC** | `nmos/api/tr10_tls.py` — cipher and curve restriction; `nmos/cert_check.py` — chain and SAN verification |
+| **TLS and NMOS With Control Plane Security** | `nmos/api/tr10_tls.py` — cipher and curve restriction; `nmos/cert_check.py` — chain and SAN verification |
 | **OAuth 2.0 (IS-10)** | `nmos/oauth2/` — token validation and JWKS lifecycle |
 | **Typed JSON layer** | `nmos/json/` — the only permitted encoder/decoder; `nmos/codegen/` generates the types from the NMOS schemas |
 | **The Controller UI itself** | `nmos/controller/handlers.py` — page handlers; `nmos/controller/templates/` — the markup; `nmos/controller/static/controller.js` — the client behaviour |

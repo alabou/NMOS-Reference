@@ -331,8 +331,7 @@ Anything using TLS needs the hosts-file entries described in
 [Required before any TLS configuration](#required-before-any-tls-configuration),
 in `C:\Windows\System32\drivers\etc\hosts`, edited as Administrator. The
 remaining shell-only launchers are the Configuration A and B node variants
-(`start-node1-noauth2.sh`, `start-node1-nomtls.sh`) and `sync-fake-as.sh`,
-which is a maintainer tool.
+(`start-node1-noauth2.sh`, `start-node1-nomtls.sh`).
 `NMOS_RDS_HOST` can override discovery, and `NMOS_RDS_REG_PORT` can override
 port 8444; the Query API port is derived as one less than the Registration API
 port.
@@ -519,7 +518,6 @@ demo_controller.py      — Standalone demo controller for manual exploration
 start-node*.sh          — Launch scripts for the three security configurations
 start-registry*.sh      — Registry launchers (bare = no TLS; the other takes a RAP value)
 start-fake-as.sh        — Test OAuth 2.0 Authorization Server (no Keycloak, no Docker)
-sync-fake-as.sh         — Refresh fake-as/ from the security/ project
 start-node*-bare.bat    — Windows launchers for the bare (registry-only) rigs
 start-registry*.bat     — Windows registry launchers
 requirements.txt        — Runtime dependencies

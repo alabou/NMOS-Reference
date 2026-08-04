@@ -1,7 +1,7 @@
 # Copyright (C) 2025-2026 Alain Bouchard
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for nmos.oauth2.jwks_cache — VSF TR-10-SEC §14.3.2.
+"""Tests for nmos.oauth2.jwks_cache — TR-10-SEC §14.3.2.
 
 The cache's timing behavior is fully testable thanks to the injected
 ``sleep`` / ``monotonic`` / ``random_jitter`` callbacks. Each test

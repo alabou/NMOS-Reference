@@ -1,7 +1,7 @@
 # Copyright (C) 2025-2026 Alain Bouchard
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for nmos.api.tr10_tls — VSF TR-10-SEC §3 cipher restriction.
+"""Tests for nmos.api.tr10_tls — TR-10-SEC §3 cipher restriction.
 
 Three layers of coverage:
 1. Unit: ``apply_tr10_tls_restrictions`` mutates SSLContext attributes

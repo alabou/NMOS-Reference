@@ -18,7 +18,7 @@ every Authorization Server instance on a network uses the same endpoint
 locations". Earlier revisions of this module appended Keycloak's
 ``/protocol/openid-connect/<x>`` suffixes to the issuer, which worked
 against Keycloak and silently failed against every other conformant AS
-(ORY Hydra, Authlib, the project's own ``security/ipmx_fake_as.py``).
+(ORY Hydra, Authlib, the project's own ``ipmx_fake_as.py``).
 
 Uses :mod:`aiohttp` for the outbound HTTP and reuses :mod:`nmos.oauth2`
 for metadata discovery plus JWT signature + claim validation (no

@@ -1707,7 +1707,7 @@ class Node:
         self.oauth2 = oauth2
         self.tls_enabled = tls_enabled
         self.client_auth_required = client_auth_required
-        # VSF TR-10-SEC §8 security configuration tags. Built in
+        # TR-10-SEC §8 security configuration tags. Built in
         # nmos_node.py from the launch-time argparse namespace via
         # ``nmos.node.security_tags.compute_security_tags(args).to_tags()``
         # and merged into the Node's ``tags`` attribute below.
@@ -1781,7 +1781,7 @@ class Node:
             nv.ResourceCore.StaticId.value = update_resource_unique_id(str(node_uuid), 0)
             _set_version_now(nv.ResourceCore)
 
-            # BCP-002-02: Node asset tags. VSF TR-10-SEC §8 security
+            # BCP-002-02: Node asset tags. TR-10-SEC §8 security
             # configuration tags are merged in afterwards — both name
             # spaces coexist in the same ``tags`` dict per the spec.
             _node_tags: dict[str, list[str]] = {

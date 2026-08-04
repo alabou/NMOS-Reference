@@ -32,7 +32,6 @@ rem     127.0.0.1   XYZ-SNX00001
 rem     127.0.0.1   XYZ-SNX00002
 rem
 rem Set IPMX_CERT_ROOT to relocate the Certificates tree.
-rem Set IPMX_SECURITY_ROOT if the security/ project lives elsewhere.
 rem Set NMOS_PYTHON_EXE to override Python discovery.
 
 set "SCRIPT_DIR=%~dp0"
@@ -131,21 +130,13 @@ if not exist "%AS_CERT%" (
 )
 
 rem The Authorization Server ships vendored in this repository, so a checkout
-rem of nmos-reference alone can run the tutorial. When the security/ project
-rem is alongside it is preferred, because that copy is the source of truth.
+rem of nmos-reference alone can run the tutorial.
 set "FAKE_AS="
-if defined IPMX_SECURITY_ROOT (
-  if exist "%IPMX_SECURITY_ROOT%\ipmx_fake_as.py" set "FAKE_AS=%IPMX_SECURITY_ROOT%\ipmx_fake_as.py"
-)
-if not defined FAKE_AS (
-  if exist "%SCRIPT_DIR%..\security\ipmx_fake_as.py" set "FAKE_AS=%SCRIPT_DIR%..\security\ipmx_fake_as.py"
-)
 if not defined FAKE_AS (
   if exist "%SCRIPT_DIR%fake-as\ipmx_fake_as.py" set "FAKE_AS=%SCRIPT_DIR%fake-as\ipmx_fake_as.py"
 )
 if not defined FAKE_AS (
   >&2 echo start-fake-as.bat: no Authorization Server found.
-  >&2 echo Looked for fake-as\ipmx_fake_as.py here and for a security\ project alongside.
   set "EXIT_CODE=66"
   goto done
 )

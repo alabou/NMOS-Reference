@@ -29,7 +29,7 @@ Security model
 The two interfaces are deliberately NOT symmetric, and this asymmetry is
 normative rather than a simplification.
 
-``NMOS With Control Plane Security.md:105`` (IPMX TR-10-SEC) states:
+``NMOS With Control Plane Security.md:105`` (TR-10-SEC) states:
 
     The IS-04 Registration API MUST not require the NMOS Nodes to use OAuth
     2.0 authorizations. The IS-04 Registration API MUST be secured using TLS

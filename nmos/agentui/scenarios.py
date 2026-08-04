@@ -1473,7 +1473,7 @@ def _tutorial_security(session: ControllerSession) -> None:
                   "certificate, so a stolen token is useless without the "
                   "matching private key.",
         specs=(
-            ("VSF TR-10-SEC — NMOS With Control Plane Security", ""),
+            ("TR-10-SEC — NMOS With Control Plane Security", ""),
             ("RFC 6125 — Service Identity in TLS",
              "https://www.rfc-editor.org/rfc/rfc6125"),
         ),
