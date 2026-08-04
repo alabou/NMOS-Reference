@@ -306,15 +306,54 @@ class TestResolveTls:
             ca_paths=(str(paths["ca"]),),
         )
 
-    def test_prefers_san_hostname_when_it_resolves(self, ca_and_leaf: dict[str, Path]) -> None:
-        # The cleaner path: connect by the certificate's own name, chain validates,
-        # and no browser flag is needed at all.
+    def test_san_hostname_when_it_resolves_and_the_root_is_trusted(
+        self, ca_and_leaf: dict[str, Path],
+    ) -> None:
+        # The cleanest path, and the only one that needs no browser flag: the
+        # name resolves AND a default-trust client already accepts the chain.
+        result = tls_pin.resolve_tls(
+            self._material(ca_and_leaf), host="127.0.0.1",
+            resolves=lambda name: name == "XYZ-SNX00001",
+            publicly_trusted=lambda name: True)
+        assert result.policy is TlsPolicy.SAN_HOSTNAME
+        assert result.pins == ()
+        assert result.connect_host == "XYZ-SNX00001"
+        assert tls_pin.chromium_args(result) == ()
+
+    def test_resolving_san_still_pins_when_the_root_is_private(
+        self, ca_and_leaf: dict[str, Path],
+    ) -> None:
+        """A name match does not make a private root acceptable to a browser.
+
+        The regression guard for a real defect: this case used to return
+        SAN_HOSTNAME with no flag, on the reasoning that connecting by the
+        certificate's own name "validates cleanly". Hostname verification did
+        pass — and Chromium then refused the page with
+        ``ERR_CERT_AUTHORITY_INVALID`` because the reference PKI's root is in no
+        trust store. The name and the authority are separate checks and both
+        have to be satisfied.
+        """
+        result = tls_pin.resolve_tls(
+            self._material(ca_and_leaf), host="127.0.0.1",
+            resolves=lambda name: name == "XYZ-SNX00001",
+            publicly_trusted=lambda name: False)
+        assert result.policy is TlsPolicy.PIN_LEAF_SPKI
+        assert len(result.pins) == 1
+        # Still addressed by name — that half was never the problem.
+        assert result.connect_host == "XYZ-SNX00001"
+        assert tls_pin.chromium_args(result)
+
+    def test_absent_trust_probe_errs_towards_pinning(
+        self, ca_and_leaf: dict[str, Path],
+    ) -> None:
+        """No probe means "assume untrusted", the safe direction.
+
+        A needless pin still verifies the key; a missing one blocks the page.
+        """
         result = tls_pin.resolve_tls(
             self._material(ca_and_leaf), host="127.0.0.1",
             resolves=lambda name: name == "XYZ-SNX00001")
-        assert result.policy is TlsPolicy.SAN_HOSTNAME
-        assert result.pins == ()
-        assert tls_pin.chromium_args(result) == ()
+        assert result.policy is TlsPolicy.PIN_LEAF_SPKI
 
     def test_falls_back_to_pinning(self, ca_and_leaf: dict[str, Path]) -> None:
         result = tls_pin.resolve_tls(

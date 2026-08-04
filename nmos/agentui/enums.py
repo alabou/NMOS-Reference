@@ -49,6 +49,16 @@ class PageId(StrEnum):
     RESOURCE_DETAIL = "resource_detail"
     DEVICE_DETAIL = "device_detail"
     NODE_DETAIL = "node_detail"
+    OAUTH2_SIGNIN = "oauth2_signin"
+    """The Authorization Server's own sign-in form.
+
+    The only page in this enum served by a *different* origin than the
+    Controller, which is exactly how it is recognised — its path is whatever
+    the Authorization Server publishes in its RFC 8414 metadata
+    (``/realms/<realm>/authorize`` here, ``/oauth2/auth`` on ORY Hydra,
+    ``/protocol/openid-connect/auth`` on Keycloak) and matching on any of
+    those would bind the driver to one vendor.
+    """
     UNKNOWN = "unknown"
 
 

@@ -33,7 +33,22 @@
 # Pair with a node launcher using a matching --rap:
 #
 #     ./start-registry.sh 2               # mTLS registration
-#     ./start-node1.sh XYZ-SNX00000 9443 127.0.0.1 8444 --rap=2
+#     ./start-node1.sh XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2
+#
+# The registry host is given by name, not as 127.0.0.1: under RAP 1 and 2 the
+# Node verifies the registry's certificate, which carries the DNS SAN
+# XYZ-SNX00000 and no IP SAN, so an IP literal fails hostname verification.
+#
+# Requires hosts-file entries. This script addresses its peers by DNS name
+# because the certificates carry DNS SANs (XYZ-SNX000nn) and an IP literal
+# matches none of them. Map to 127.0.0.1 in /etc/hosts before running:
+#
+#     127.0.0.1   XYZ-SNX00000    # registry + Authorization Server
+#     127.0.0.1   XYZ-SNX00001    # node 1 + Controller UI
+#     127.0.0.1   XYZ-SNX00002    # node 2
+#
+# Passing 127.0.0.1 as the registry-host argument fails TLS verification for
+# the same reason -- pass XYZ-SNX00000.
 
 set -e
 
@@ -63,7 +78,20 @@ done
 # different `Certificates/` layout. Default: sibling of this script's
 # parent (i.e. <workspace>/Certificates).
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-CERT_ROOT="${IPMX_CERT_ROOT:-$SCRIPT_DIR/../Certificates}"
+# Prefer the certificate subset bundled inside this repository, so a
+# standalone clone of nmos-reference runs without the wider workspace PKI.
+# That subset ships only the serials the quick-start and tutorials use
+# (SNX00000 infrastructure, SNX00001, SNX00002); anything else falls back
+# to the workspace-level Certificates/ tree. An explicit IPMX_CERT_ROOT
+# always wins over both.
+CERT_PROBE="pem/ExampleDeviceServer.ABC.SNX00000.chain.pem"
+if [ -n "${IPMX_CERT_ROOT:-}" ]; then
+  CERT_ROOT="$IPMX_CERT_ROOT"
+elif [ -f "$SCRIPT_DIR/Certificates/build.0/$CERT_PROBE" ]; then
+  CERT_ROOT="$SCRIPT_DIR/Certificates"
+else
+  CERT_ROOT="$SCRIPT_DIR/../Certificates"
+fi
 CERTS="$CERT_ROOT/build.0"
 
 # The Node launchers build the same bundle, so both ends validate against one

@@ -35,10 +35,31 @@ class Credentials:
 
     password: str
 
+    operator_username: str = ""
+    """End-user account for the Authorization Server's sign-in form.
+
+    Only used when the rig runs with OAuth 2.0: the Controller's own gate takes
+    a password with no username, but the AS authenticates a *person*. Empty on
+    rigs with no Authorization Server."""
+
+    operator_password: str = ""
+    """Password for :attr:`operator_username`.
+
+    Defaults to :attr:`password` when unset — the reference rig gives the
+    Controller admin gate and the AS operator the same secret, so a tutorial
+    operator types one password rather than two."""
+
+    @property
+    def oauth2_password(self) -> str:
+        """The secret to type into the Authorization Server's form."""
+        return self.operator_password or self.password
+
     def __repr__(self) -> str:
         # Defeats the usual ways a secret escapes: f-strings, logging calls,
-        # exception rendering, and pytest assertion output.
-        return "Credentials(password=***)"
+        # exception rendering, and pytest assertion output. The username is a
+        # non-secret identifier and is shown, because a failed AS sign-in is
+        # otherwise impossible to diagnose from the journal.
+        return f"Credentials(operator_username={self.operator_username!r}, password=***)"
 
     __str__ = __repr__
 

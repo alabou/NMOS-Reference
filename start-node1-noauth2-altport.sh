@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
-# Configuration C (mTLS + OAuth 2.0) — TR-10-SEC §12.3 RAAM=2.
+# Configuration A (mTLS without OAuth 2.0) on alternate ports.
 #
-# IPMX security validator launch contract:
-#   start-node1.sh <as-host> <as-port> [<rds-host> <rds-port>] \
-#                  [--nap=N] [--rap=R] [--oaim=O] [--tct=T]
+# Byte-for-byte the same Node configuration as start-node1-noauth2.sh — same
+# serial, same certificates, same trust anchor, same --nodeConfig — with only
+# --nodePort and --nodeControlPort moved. It exists so the security validator
+# can run while another Node already occupies 7051/5050, which is the normal
+# state on a developer box running the quick-start.
 #
-# Positional args:
-#   $1 = OAuth 2.0 authorization server host (default: XYZ-SNX00000)
-#   $2 = OAuth 2.0 authorization server port (default: 9443)
-#   $3 = Registry host (default: 127.0.0.1)
-#   $4 = Registry registration port (default: 8444; query port = $4-1)
+# The argument contract is the validator's, not this script's: it passes
+#   <as-host> <as-port> <rds-host> <rds-port> [--nap=N] [--rap=R] [--tct=T] ...
+# to whatever it is given as --launch-dut. Those are accepted and handled the
+# same way start-node1-noauth2.sh handles them, so this stays a drop-in
+# replacement. Ports come from the environment instead:
 #
-# Named args:
-#   --nap=N    Node Access Policy. Config C pins NAP=2 per §9.2.
-#   --rap=R    Registry Access Policy: 0=HTTP, 1=server-TLS, 2=mTLS.
-#   --oaim=O   OAuth2 Audience ID Mode: 0=serial, 1=cert, 2=either.
-#   --tct=T    TLS Cert Type: 0=RSA, 1=ECDSA, 2=both (dual-stack TODO).
+#   NMOS_ALT_NODE_PORT     (default 17051)
+#   NMOS_ALT_CONTROL_PORT  (default 15050)
+#
+# TLS is unaffected by the move: the certificate's SAN is the hostname
+# XYZ-SNX00001, and a SAN does not constrain the port.
 #
 # Requires hosts-file entries. This script addresses its peers by DNS name
 # because the certificates carry DNS SANs (XYZ-SNX000nn) and an IP literal
@@ -30,35 +32,29 @@
 
 set -e
 
-AS_HOST="${1:-XYZ-SNX00000}"
-AS_PORT="${2:-9443}"
-RDS_HOST="${3:-127.0.0.1}"
+NODE_PORT="${NMOS_ALT_NODE_PORT:-17051}"
+CONTROL_UI_PORT="${NMOS_ALT_CONTROL_PORT:-15050}"
+
+# Positional args, matching start-node1-noauth2.sh. Config A contacts no
+# authorization server, so $1/$2 are accepted and unused.
+RDS_HOST="${3:-}"
 RDS_REG_PORT="${4:-8444}"
-RDS_QUERY_PORT=$((RDS_REG_PORT - 1))
 shift $(( $# < 4 ? $# : 4 ))
 
 NAP=2
-RAP=0
-OAIM=0
+RAP=2
 TCT=0
 for arg in "$@"; do
   case "$arg" in
     --nap=*)  NAP="${arg#*=}" ;;
     --rap=*)  RAP="${arg#*=}" ;;
-    --oaim=*) OAIM="${arg#*=}" ;;
+    --oaim=*) ;;   # Config A contacts no AS; OAIM is not applicable
     --tct=*)  TCT="${arg#*=}" ;;
-    *) echo "start-node1.sh: unknown arg $arg" >&2; exit 64 ;;
+    --split-controls) ;;
+    *) echo "start-node1-noauth2-altport.sh: unknown arg $arg" >&2; exit 64 ;;
   esac
 done
 
-if [ "$NAP" != "2" ]; then
-  echo "start-node1.sh: Config C (RAAM=2) pins NAP=2; got --nap=$NAP" >&2
-  exit 64
-fi
-
-# Cert directory resolution — override IPMX_CERT_ROOT to point at a
-# different `Certificates/` layout. Default: sibling of this script's
-# parent (i.e. <workspace>/Certificates).
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # Prefer the certificate subset bundled inside this repository, so a
 # standalone clone of nmos-reference runs without the wider workspace PKI.
@@ -85,15 +81,16 @@ case "$TCT" in
        NODE_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00001.key" ;;
   1)   NODE_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00001.chain.ec.pem"
        NODE_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00001.ec.key" ;;
-  *)   echo "start-node1.sh: unsupported --tct=$TCT" >&2; exit 64 ;;
+  *) echo "start-node1-noauth2-altport.sh: unsupported --tct=$TCT" >&2; exit 64 ;;
 esac
 
-case "$OAIM" in
-  0) OAIM_FLAG="serial" ;;
-  1) OAIM_FLAG="cert" ;;
-  2) OAIM_FLAG="either" ;;
-  *) echo "start-node1.sh: unsupported --oaim=$OAIM" >&2; exit 64 ;;
-esac
+# NAP=1 is "Unrestricted Read Only": the TLS layer accepts a client without a
+# certificate and the application enforces one on state-changing verbs.
+if [ "$NAP" = "1" ]; then
+  NAP_FLAGS=(--nodeOptionalClientAuth)
+else
+  NAP_FLAGS=()
+fi
 
 case "$RAP" in
   0) RDS_FLAGS=(--rdsDisableTLS) ;;
@@ -102,33 +99,29 @@ case "$RAP" in
        --rdsClientCertificate "$CERTS/pem/ExampleDeviceClient.ABC.SNX00001.chain.pem"
        --rdsClientKey         "$CERTS/key/ExampleDeviceClient.ABC.SNX00001.key"
      ) ;;
-  *) echo "start-node1.sh: unsupported --rap=$RAP" >&2; exit 64 ;;
+  *) echo "start-node1-noauth2-altport.sh: unsupported --rap=$RAP" >&2; exit 64 ;;
 esac
+
+RDS_ARGS=()
+if [ -n "$RDS_HOST" ]; then
+  RDS_ARGS=(
+    --rdsHost "$RDS_HOST"
+    --rdsRegistrationPort "$RDS_REG_PORT"
+    --rdsQueryPort "$((RDS_REG_PORT - 1))"
+  )
+fi
 
 exec python3 nmos_node.py \
   --nodeSerialNumber SNX00001 \
   --nodeAddr XYZ-SNX00001 \
-  --nodePort 7051 \
+  --nodePort "$NODE_PORT" \
   --nodeCertificate "$NODE_CERT" \
   --nodeKey         "$NODE_KEY" \
   --nodeTrustedRootCA "$CA" \
-  --nodeControlPort 5050 \
-  --nodeClientCertificate "$CERTS/pem/ExampleDeviceClient.ABC.SNX00001.chain.pem" \
-  --nodeClientKey         "$CERTS/key/ExampleDeviceClient.ABC.SNX00001.key" \
+  --nodeControlPort "$CONTROL_UI_PORT" \
   --controllerAdminPassword admin \
-  --oauth2 \
-  --oauth2Host "${AS_HOST}" \
-  --oauth2Port "${AS_PORT}" \
-  --oauth2TrustedRootCA "$CA" \
-  --oauth2ClientSecret secret \
-  --oauth2ApiSelector realms/TR-10-SEC \
-  --oauth2AudienceMode "${OAIM_FLAG}" \
-  --oauth2ClientId Example.Company.Device.Client.ABC.SNX00001.example.com \
-  --rdsHost "${RDS_HOST}" \
-  --rdsRegistrationPort "${RDS_REG_PORT}" \
-  --rdsQueryPort        "${RDS_QUERY_PORT}" \
+  "${NAP_FLAGS[@]}" \
+  "${RDS_ARGS[@]}" \
   "${RDS_FLAGS[@]}" \
   --trustedRootCA "$CA" \
-  --debug-in-depth \
   --nodeConfig config10
-

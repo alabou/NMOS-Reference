@@ -83,10 +83,21 @@ class AdminPasswordMissing(AgentUiError):
 
 
 class OAuth2NotSupported(AgentUiError):
-    """The node requires the OAuth 2.0 sign-in stage, which is not yet driven.
+    """An OAuth 2.0 rig could not be driven.
 
-    Raised up front at discovery rather than after the browser has already
-    followed a redirect to an authorization server and stalled there.
+    No longer raised at discovery: the sign-in stage against an Authorization
+    Server *is* driven now (see ``ControllerSession.sign_in``). Retained as the
+    base of :class:`OAuth2FormNotRecognised` and for callers that catch it.
+    """
+
+
+class OAuth2FormNotRecognised(OAuth2NotSupported):
+    """The Authorization Server's sign-in page exposes no form we can fill.
+
+    The markup belongs to the Authorization Server, so the driver matches a list
+    of candidate selectors covering the servers it is exercised against. When
+    none match it says so here, naming the page — rather than typing into
+    nothing and failing later at a wait, which would point at the wrong cause.
     """
 
 

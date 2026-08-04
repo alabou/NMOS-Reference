@@ -71,7 +71,7 @@ _SUFFIX_TO_PAGE: tuple[tuple[str, PageId], ...] = (
 )
 
 
-def identify(url: str) -> PageId:
+def identify(url: str, *, origin: str = "") -> PageId:
     """Classify a page from its URL path.
 
     The scheme and host are stripped via :func:`urlsplit` — matching against the
@@ -83,7 +83,19 @@ def identify(url: str) -> PageId:
     first because they are unambiguous, then the path table longest-first so that
     ``/controller/senders`` cannot swallow ``/controller/senders/caps``. The index
     is matched exactly and never by prefix, or it would claim every page.
+
+    ``origin`` is the Controller's own ``scheme://host:port``. When given, any
+    URL from a *different* origin is the Authorization Server's sign-in page:
+    under OAuth 2.0 the browser is redirected off the Controller entirely, and
+    that page's path is whatever the AS chose to publish. Classifying it by
+    origin rather than by path is what keeps the driver working against any
+    conformant Authorization Server instead of one vendor's URL layout. Leaving
+    ``origin`` empty preserves the pure path-based behaviour, which is what the
+    no-OAuth-2.0 rigs need.
     """
+    if origin and not _same_origin(url, origin):
+        return PageId.OAUTH2_SIGNIN
+
     path = urlsplit(url).path
     # Collapse a trailing slash so "/controller/" and "/controller" agree, while
     # keeping a bare root intact.
@@ -103,6 +115,30 @@ def identify(url: str) -> PageId:
             return page
 
     return PageId.UNKNOWN
+
+
+def _same_origin(url: str, origin: str) -> bool:
+    """Compare scheme, host and port, case-insensitively on the host.
+
+    The host needs folding because the Controller's origin is derived from the
+    node's ``--nodeAddr`` (``XYZ-SNX00001``) while the browser reports the
+    lowercased form it sent in the ``Host`` header. DNS names are
+    case-insensitive per RFC 4343, so treating those as different origins would
+    declare every Controller page a foreign one.
+
+    A URL with no host at all — ``about:blank`` between navigations — is treated
+    as same-origin so a transient blank page is never mistaken for the
+    Authorization Server.
+    """
+    parts = urlsplit(url)
+    if not parts.hostname:
+        return True
+    expected = urlsplit(origin)
+    return (
+        parts.scheme == expected.scheme
+        and parts.hostname.lower() == (expected.hostname or "").lower()
+        and parts.port == expected.port
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +190,35 @@ HTML_ROOT = "html"
 
 LOGIN_PASSWORD = "#password"                       # login.html:43
 LOGIN_SUBMIT = 'form[action$="/login"] button[type="submit"]'   # login.html:47
+
+# ---------------------------------------------------------------------------
+# The Authorization Server's sign-in form
+# ---------------------------------------------------------------------------
+#
+# This form belongs to the Authorization Server, not to this project, so these
+# selectors describe someone else's markup. They are written as candidate lists
+# tried in order because the driver has to work against whichever AS the rig was
+# started with, and the two it is exercised against disagree on the submit
+# button while agreeing on the fields:
+#
+#   security/ipmx_fake_as.py   #username  #password  #as-signin
+#   Keycloak                   #username  #password  #kc-login
+#
+# ``#username`` and ``#password`` are near-universal — Keycloak, ORY Hydra and
+# Authlib all use them, and they are also what a password manager keys on. The
+# generic ``button[type=submit]`` / ``input[type=submit]`` fallbacks catch the
+# rest. If none match, the driver reports the page it is on rather than
+# guessing, so an unrecognised AS fails with a readable message.
+
+OAUTH2_USERNAME_CANDIDATES: tuple[str, ...] = (
+    "#username", "input[name='username']", "input[type='text']",
+)
+OAUTH2_PASSWORD_CANDIDATES: tuple[str, ...] = (
+    "#password", "input[name='password']", "input[type='password']",
+)
+OAUTH2_SUBMIT_CANDIDATES: tuple[str, ...] = (
+    "#as-signin", "#kc-login", "button[type='submit']", "input[type='submit']",
+)
 
 
 # ---------------------------------------------------------------------------

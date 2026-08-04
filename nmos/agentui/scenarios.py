@@ -1371,6 +1371,218 @@ def _excerpt(text: str, keys: tuple[str, ...] = (
 
 
 # ---------------------------------------------------------------------------
+# 13. tutorial-security
+# ---------------------------------------------------------------------------
+
+def _tutorial_security(session: ControllerSession) -> None:
+    """Teach: how TLS and OAuth 2.0 decide what a Controller may do.
+
+    Read-only. Nothing here activates a sender or changes a device — the whole
+    subject is *permission*, and the interesting evidence is already on screen
+    by the time the tutorial starts.
+
+    Requires a Config C rig (mTLS + OAuth 2.0):
+
+        ./start-fake-as.sh &
+        ./start-registry.sh 2 &
+        ./start-node1.sh XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2
+
+    A second node makes the last lesson far better: tokens are scoped per
+    device, so a node the token does not cover shows the refusal *and its
+    reason* in the interface. With one node the tutorial still runs and says
+    that the comparison was unavailable, rather than inventing it.
+    """
+    # The sign-in lesson is taught first, on the page signing in lands you on,
+    # so its screenshot is the one a reader would be looking at. Devices are
+    # only readable from a list page, so that read comes after.
+    session.teach(
+        "Two gates, not one",
+        do="Open the Controller and sign in. You are asked for a password, and "
+           "then — before any device appears — the browser leaves the "
+           "Controller entirely for a second sign-in page belonging to the "
+           "Authorization Server. Sign in there as the operator.",
+        see="Two different forms on two different origins. The first is the "
+            "Controller's own gate and only proves you may use *this* "
+            "Controller. The second issues the token that decides what the "
+            "Controller may do *to the devices* on your behalf.",
+        detail="Look at the address bar during the second step: the host "
+               "changes. That is the point — your operator password is typed "
+               "into the Authorization Server, never into the Controller, so "
+               "the Controller never sees it.",
+        internals="The Controller does not know where the Authorization "
+                  "Server's endpoints are; it asks. It fetches the metadata "
+                  "document from a well-known URL and reads "
+                  "``authorization_endpoint``, ``token_endpoint`` and "
+                  "``jwks_uri`` out of it. IS-10 requires this and forbids the "
+                  "shortcut: clients \"MUST NOT assume that every Authorization "
+                  "Server instance on a network uses the same endpoint "
+                  "locations\". It is what lets the same Controller drive "
+                  "Keycloak, ORY Hydra, or the small test server this rig runs, "
+                  "none of which agree on URL layout. The browser then comes "
+                  "back with a single-use code, which the Controller exchanges "
+                  "for a token over its own connection — the token never "
+                  "travels through the browser.",
+        specs=(
+            ("AMWA IS-10 — Authorization", "https://specs.amwa.tv/is-10/"),
+            ("RFC 8414 — OAuth 2.0 Authorization Server Metadata",
+             "https://www.rfc-editor.org/rfc/rfc8414"),
+            ("RFC 6749 §4.1 — Authorization Code Grant",
+             "https://www.rfc-editor.org/rfc/rfc6749#section-4.1"),
+        ),
+        sources=(
+            ("nmos/controller/oauth2.py", "endpoint discovery, the code "
+                                          "exchange, and RFC 8414 §3.3 issuer "
+                                          "validation"),
+            ("nmos/controller/app.py", "the two-stage gate: the password "
+                                       "session, then the redirect to the "
+                                       "Authorization Server and back"),
+            ("fake-as/ipmx_fake_as.py", "the Authorization Server this rig "
+                                        "runs — the same one the TR-10-SEC "
+                                        "certification suite validates against"),
+        ),
+    )
+
+    session.open_receivers()
+    devices = session.read_devices()
+    covered = [d for d in devices if not d.inaccessible]
+    refused = [d for d in devices if d.inaccessible]
+
+    session.teach(
+        "Devices are identified by certificate, not by address",
+        do="Choose **Receivers** in the navigation bar, then look at the "
+           "padlock beside each node's serial number and hover it.",
+        see="Every control endpoint is HTTPS, and the tooltip names the "
+            "identity the certificate presented. The Controller reached each "
+            "node by that name rather than by an IP address.",
+        state={f"{d.serial} — transport": (
+            "HTTPS throughout" if d.tls_secure
+            else "at least one control over plain HTTP") for d in devices}
+        | {f"{d.serial} — address": d.address for d in devices},
+        detail="This is why the rig needs hosts-file entries. A certificate "
+               "carries DNS names, and TLS verification compares the name you "
+               "asked for against them. Connect to the same node by "
+               "``127.0.0.1`` and verification fails — not because the "
+               "certificate is wrong, but because an IP address matches no DNS "
+               "name in it.",
+        internals="Verification here is mutual. The node presents a server "
+                  "certificate the Controller checks against its trusted "
+                  "roots, and the Controller presents a *client* certificate "
+                  "the node checks in return — Configuration C in TR-10-SEC, "
+                  "``RAAM=2``. Under OAuth 2.0 the two are linked: the token's "
+                  "``client_id`` must match the identity in the client "
+                  "certificate, so a stolen token is useless without the "
+                  "matching private key.",
+        specs=(
+            ("VSF TR-10-SEC — NMOS With Control Plane Security", ""),
+            ("RFC 6125 — Service Identity in TLS",
+             "https://www.rfc-editor.org/rfc/rfc6125"),
+        ),
+        sources=(
+            ("nmos/api/tr10_tls.py", "the TLS restrictions every listener and "
+                                     "client context is built with"),
+            ("nmos/cert_check.py", "chain, SAN and key verification at startup"),
+            ("nmos/node/security_tags.py", "NAP / RAP / RAAM / OAIM / TCT — the "
+                                           "five tags a node publishes to "
+                                           "declare the policy it is running"),
+        ),
+    )
+
+    reasons = {}
+    for device in refused:
+        reasons[f"{device.serial} — refused because"] = (
+            device.access_reason or "(no reason given)")
+
+    if refused:
+        see = (
+            f"{len(covered)} node(s) show a green circle and "
+            f"{len(refused)} show a refusal. Hover the refused one: the "
+            f"Controller states plainly that its token does not cover that "
+            f"device, and lists the audience entries the token does carry.")
+        detail = (
+            "Nothing was tried and rejected here. The Controller compared the "
+            "token it holds against the device it is looking at and predicted "
+            "the refusal, so the interface can grey the controls out before "
+            "you click rather than failing afterwards.")
+    else:
+        see = (
+            f"All {len(covered)} node(s) show a green circle: the token covers "
+            f"every device on screen, so every control is live.")
+        detail = (
+            "With a single node there is nothing to contrast against. Start a "
+            "second node — ``./start-node2.sh`` — and its device block will "
+            "show the refusal and the reason, because the token this rig "
+            "issues is scoped to SNX00001 alone.")
+
+    session.teach(
+        "What the token actually permits",
+        do="Look at the circle beside each serial, and hover it.",
+        see=see,
+        state={f"{d.serial} — access": f"{d.access}: {d.access_reason}"
+               for d in devices} | reasons,
+        detail=detail,
+        internals="A token is not a general permission to use NMOS. It carries "
+                  "an ``aud`` claim listing who it is for, and a ``scope`` "
+                  "claim listing which APIs — ``node``, ``connection``, "
+                  "``streamcompatibility`` and so on. A node accepts a token "
+                  "only if its own serial number appears in ``aud``, so one "
+                  "operator's token can be valid at one node and rejected at "
+                  "the node beside it. The token also distinguishes *who* from "
+                  "*what*: ``sub`` is the operator who signed in, ``azp`` is "
+                  "the Controller they signed in through. That is what makes "
+                  "an audit trail able to name a person rather than a program.",
+        specs=(
+            ("AMWA IS-10 — Behaviour: Access Tokens",
+             "https://specs.amwa.tv/is-10/"),
+            ("RFC 7519 — JSON Web Token",
+             "https://www.rfc-editor.org/rfc/rfc7519"),
+        ),
+        sources=(
+            ("nmos/oauth2/__init__.py", "signature validation, JWKS lifecycle, "
+                                        "and the three audience-matching modes"),
+            ("nmos/controller/handlers.py", "the prediction behind the circle — "
+                                            "why a control is greyed out before "
+                                            "it is pressed"),
+        ),
+    )
+
+    session.open_senders()
+    rows = session.read_rows()
+
+    session.teach(
+        "Everything after this is ordinary NMOS",
+        do="Open **Senders**.",
+        see=f"{len(rows)} sender(s), listed exactly as they are on a rig with "
+            f"no security at all. Security changed who may look, not what "
+            f"there is to look at.",
+        state={"senders visible": str(len(rows)),
+               "nodes on screen": str(len(devices))},
+        detail="Worth noticing what did *not* change. IS-04 discovery, IS-05 "
+               "connection management and IS-11 capabilities behave "
+               "identically; the security layer sits underneath them. That is "
+               "deliberate in the specifications — authorization is a "
+               "cross-cutting concern, not a different set of APIs.",
+        internals="Each request the Controller now makes carries "
+                  "``Authorization: Bearer <token>`` and is made over mutual "
+                  "TLS. The node validates the signature against the "
+                  "Authorization Server's public keys, which it fetched from "
+                  "``jwks_uri`` — discovered the same way the Controller "
+                  "discovered its endpoints — and caches. If those keys become "
+                  "unavailable the node fails closed: it rejects tokens rather "
+                  "than accepting unverifiable ones.",
+        specs=(
+            ("AMWA IS-04 — Discovery & Registration", "https://specs.amwa.tv/is-04/"),
+            ("AMWA BCP-003-02 — Authorization Practice", "https://specs.amwa.tv/"),
+        ),
+        sources=(
+            ("nmos/oauth2/jwks_cache.py", "the 23h refresh / 36h invalidate "
+                                          "lifecycle, and the fail-closed rule"),
+            ("nmos/api/middleware.py", "the single point every authenticated "
+                                       "request passes through"),
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -1415,6 +1627,10 @@ SCENARIOS: dict[str, Scenario] = {
                  "TUTORIAL: activate a video sender and subscribe a receiver "
                  "over JPEG XS.",
                  _tutorial_jpegxs, mutating=True),
+        Scenario("tutorial-security",
+                 "TUTORIAL: how TLS and OAuth 2.0 decide what a Controller may "
+                 "do. Needs a Config C rig; read-only.",
+                 _tutorial_security),
         Scenario("session-lost",
                  "Confirm a dead session is reported, not silently followed.",
                  _session_lost),

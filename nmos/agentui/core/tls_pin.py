@@ -32,12 +32,16 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import socket
+import ssl
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-from cryptography.x509 import Certificate, load_pem_x509_certificates
+from cryptography.x509 import (
+    Certificate, load_der_x509_certificate, load_pem_x509_certificates,
+)
 
 from nmos import cert_check
 
@@ -55,6 +59,19 @@ class PinResult:
     verification: str = "none"
     detail: str = ""
     chain_length: int = 0
+    connect_host: str = ""
+    """Hostname to address the target by, when it should not be the discovered
+    one. Empty means "keep what discovery found".
+
+    Separate from :attr:`policy` because connecting by name and needing a pin
+    are independent questions, and conflating them was a real defect: the SAN
+    path used to imply "no browser flag needed", which is only true when the
+    chain also anchors in a root the browser already trusts. With a private CA
+    — which is what the reference PKI is — connecting by the certificate's own
+    name still yields ``ERR_CERT_AUTHORITY_INVALID``. Now the name fixes
+    hostname verification and the pin fixes authority verification, each on its
+    own merits.
+    """
 
     def to_json(self) -> dict[str, object]:
         """Render for the manifest, so the reader can see how trust was set."""
@@ -65,6 +82,7 @@ class PinResult:
             "verification": self.verification,
             "detail": self.detail,
             "chain_length": self.chain_length,
+            "connect_host": self.connect_host,
         }
 
 
@@ -205,39 +223,135 @@ def resolve_tls(
     host: str,
     prefer_policy: TlsPolicy = TlsPolicy.PIN_LEAF_SPKI,
     resolves: Callable[[str], bool] | None = None,
+    publicly_trusted: Callable[[str], bool] | None = None,
 ) -> PinResult:
     """Decide how the browser will trust this target.
 
-    ``resolves`` is an optional predicate taking a hostname and reporting whether
-    it resolves to ``host``; when it accepts one of the certificate's SANs, the
-    cleaner name-based path is chosen and no browser flag is needed at all.
+    Two independent questions, answered separately:
+
+    *Which name to connect by.* ``resolves`` is an optional predicate taking a
+    hostname and reporting whether it resolves to ``host``; when it accepts one
+    of the certificate's SANs, that name is used, which satisfies hostname
+    verification.
+
+    *Whether a pin is needed.* ``publicly_trusted`` reports whether a client
+    using default trust actually accepts the server. Only when it does is the
+    flagless :attr:`TlsPolicy.SAN_HOSTNAME` path taken. Omitting the predicate
+    means "assume not trusted", which errs toward pinning — the safe direction,
+    since a needless pin still verifies the key while a missing one blocks the
+    page outright.
     """
     verification, detail = verify_material(material)
     chain = load_chain(material.cert_path)
     sans = dns_names(material.cert_path)
 
+    # Connecting by one of the certificate's own names removes the hostname
+    # half of verification. Done whenever a SAN resolves, independently of
+    # whether a pin also turns out to be needed.
+    connect_host = ""
     if resolves is not None:
-        for name in sans:
-            if resolves(name):
-                return PinResult(
-                    policy=TlsPolicy.SAN_HOSTNAME,
-                    san_names=sans,
-                    verification=verification,
-                    detail=(f"{detail}; connecting by SAN {name!r}, so the chain "
-                            f"validates without any browser flag"),
-                    chain_length=len(chain),
-                )
+        connect_host = next((name for name in sans if resolves(name)), "")
+
+    # The authority half. A name-matched chain still fails in the browser when
+    # its root is not one the browser ships — which is the normal case for the
+    # reference PKI, whose ExampleRootCA is in no trust store. Measured rather
+    # than assumed: `publicly_trusted` opens a real connection with default
+    # trust and reports whether it verified.
+    trusted = False
+    if connect_host and publicly_trusted is not None:
+        trusted = publicly_trusted(connect_host)
+
+    if connect_host and trusted:
+        return PinResult(
+            policy=TlsPolicy.SAN_HOSTNAME,
+            san_names=sans,
+            verification=verification,
+            detail=(f"{detail}; connecting by SAN {connect_host!r} and the chain "
+                    f"anchors in a trusted root, so no browser flag is needed"),
+            chain_length=len(chain),
+            connect_host=connect_host,
+        )
 
     pins = compute_pins(chain, prefer_policy)
+    if connect_host:
+        why = (f"connecting by SAN {connect_host!r}, but its root is not in the "
+               f"browser's trust store")
+    else:
+        why = (f"the URL host {host!r} is not among the certificate's names "
+               f"{list(sans)}")
     return PinResult(
         policy=prefer_policy,
         pins=pins,
         san_names=sans,
         verification=verification,
-        detail=(f"{detail}; pinned {len(pins)} SPKI hash(es) because the URL host "
-                f"{host!r} is not among the certificate's names {list(sans)}"),
+        detail=f"{detail}; pinned {len(pins)} SPKI hash(es) because {why}",
         chain_length=len(chain),
+        connect_host=connect_host,
     )
+
+
+def is_publicly_trusted(host: str, port: int, *, timeout: float = 2.0) -> bool:
+    """Does a client using only default trust accept this server?
+
+    A direct measurement rather than an inference: the same question the browser
+    will ask, asked the same way. Assuming a chain is browser-trusted because it
+    verified against the root the *node* was configured with is exactly the
+    mistake that made the flagless path fail on the reference PKI, whose root is
+    in no trust store.
+
+    Any failure — unreachable, timeout, verification refused — answers "no",
+    which routes the caller to pinning. That is the conservative direction.
+    """
+    context = ssl.create_default_context()
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as raw:
+            with context.wrap_socket(raw, server_hostname=host):
+                return True
+    except (OSError, ssl.SSLError):
+        return False
+
+
+def pin_presented_leaf(
+    host: str, port: int, ca_paths: tuple[str, ...], *, timeout: float = 2.0,
+) -> tuple[str, str]:
+    """Pin a server we have no certificate file for, such as the AS.
+
+    The Authorization Server's certificate lives on the Authorization Server,
+    not on the node whose command line discovery reads — so unlike the
+    Controller's own certificate there is no path to load. It is fetched from
+    the server instead.
+
+    Fetching a key and trusting it would be trust-on-first-use, so the
+    connection is made **with verification on** against ``ca_paths`` — the roots
+    the node itself was told to trust for this Authorization Server. A leaf that
+    does not chain to one of them never gets pinned. That keeps the same
+    discipline as the file-based path: verify first, pin second.
+
+    Returns ``(pin, detail)``, with an empty pin when the server could not be
+    verified or reached.
+    """
+    if not ca_paths:
+        return "", (f"no trusted root configured for {host}:{port}, so its "
+                    f"certificate cannot be verified before pinning")
+    context = ssl.create_default_context()
+    for ca in ca_paths:
+        try:
+            context.load_verify_locations(ca)
+        except OSError as exc:
+            return "", f"cannot read {ca}: {exc}"
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as raw:
+            with context.wrap_socket(raw, server_hostname=host) as tls:
+                der = tls.getpeercert(binary_form=True)
+    except (OSError, ssl.SSLError) as exc:
+        return "", (f"{host}:{port} did not present a certificate verifiable "
+                    f"against {list(ca_paths)}: {exc}")
+    if not der:
+        return "", f"{host}:{port} presented no certificate"
+
+    leaf = load_der_x509_certificate(der)
+    return spki_pin(leaf), (f"pinned the leaf {host}:{port} presented, after "
+                            f"verifying it chains to the node's configured root")
 
 
 def chromium_args(result: PinResult) -> tuple[str, ...]:

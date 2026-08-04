@@ -410,13 +410,23 @@ class TestDiscoveryRefusals:
         with pytest.raises(NodeNotFound, match="9999"):
             discovery.discover(proc_root=root, control_port=9999)
 
-    def test_oauth2_refused_up_front(self, tmp_path: Path) -> None:
-        # Better than letting the browser follow a redirect to an authorization
-        # server and stall there with no explanation.
+    def test_oauth2_node_is_discovered_and_flagged(self, tmp_path: Path) -> None:
+        """An OAuth 2.0 rig is a supported target, not a refusal.
+
+        Discovery used to reject these outright because the sign-in stage
+        against an Authorization Server was not driven. It is now, so the flag
+        is carried on the target instead — ``ControllerSession.sign_in`` uses
+        where the browser actually lands to decide whether a second stage is
+        needed.
+        """
         argv = (*BARE_NODE_ARGV, "--oauth2")
         root = _proc(tmp_path, {1: argv})
-        with pytest.raises(OAuth2NotSupported, match="not implemented yet"):
-            discovery.discover(proc_root=root)
+        found = discovery.discover(proc_root=root)
+        assert found.oauth2 is True
+
+    def test_node_without_oauth2_is_not_flagged(self, tmp_path: Path) -> None:
+        root = _proc(tmp_path, {1: BARE_NODE_ARGV})
+        assert discovery.discover(proc_root=root).oauth2 is False
 
 
 class TestSelfExclusion:

@@ -5,12 +5,24 @@
 
 Drives the second stage of the controller's two-stage admin login:
 after the operator has cleared the local password gate, the controller
-redirects the browser to Keycloak's ``/auth`` endpoint with this
-client's credentials, then exchanges the returned ``code`` at
-``/token`` for an ``access_token`` + ``refresh_token``.
+redirects the browser to the Authorization Server's authorization
+endpoint with this client's credentials, then exchanges the returned
+``code`` at the token endpoint for an ``access_token`` +
+``refresh_token``.
+
+Endpoint locations are **discovered**, never assumed. IS-10
+``Behaviour - Clients.md`` requires a client to "identify the location
+of API endpoints using the Authorization Server Metadata resource as
+specified in RFC 8414" and states that clients "MUST NOT assume that
+every Authorization Server instance on a network uses the same endpoint
+locations". Earlier revisions of this module appended Keycloak's
+``/protocol/openid-connect/<x>`` suffixes to the issuer, which worked
+against Keycloak and silently failed against every other conformant AS
+(ORY Hydra, Authlib, the project's own ``security/ipmx_fake_as.py``).
 
 Uses :mod:`aiohttp` for the outbound HTTP and reuses :mod:`nmos.oauth2`
-for JWT signature + claim validation (no parallel implementation).
+for metadata discovery plus JWT signature + claim validation (no
+parallel implementation).
 
 Layout:
 
@@ -39,7 +51,9 @@ from typing import Any
 import aiohttp
 
 from nmos.api.tr10_tls import apply_tr10_tls_restrictions
-from nmos.oauth2 import JWKS, fetch_jwks, validate_token_with_claims
+from nmos.oauth2 import (
+    JWKS, discover_metadata, fetch_jwks, validate_token_with_claims,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -79,15 +93,11 @@ class OAuth2Config:
     ``--oauth2TrustedRootCA``). Frozen so a single instance can be
     safely shared across coroutines.
 
-    .. note::
-       The endpoint properties below (``auth_endpoint``, ``token_endpoint``,
-       …) currently hard-code Keycloak's ``/protocol/openid-connect/<x>``
-       URL convention. A future refactor SHOULD discover these from the
-       Authorization Server metadata document (per IS-10 / RFC 8414 §3.1)
-       so the controller works against ORY Hydra and other compliant
-       Authorization Servers without code changes. The Node-side JWKS
-       fetch already does this discovery; replicating it here is
-       straightforward but out-of-scope for the current change.
+    Deliberately carries **no endpoint URLs**. Earlier revisions derived
+    them by appending Keycloak's ``/protocol/openid-connect/<x>`` suffixes
+    to :attr:`issuer`, which IS-10 forbids — see
+    :meth:`OAuth2Client.authorization_endpoint`. Endpoint locations now
+    come exclusively from the Authorization Server metadata document.
     """
     issuer: str
     """Full issuer URL, e.g. ``https://XYZ-SNX00000:9443/realms/TR-10-SEC``
@@ -114,23 +124,22 @@ class OAuth2Config:
     the multi-root semantics of the ``--*TrustedRootCA`` CLI flags."""
 
     scopes: tuple[str, ...] = DEFAULT_SCOPES
-    """Scopes requested at the ``/auth`` endpoint."""
+    """Scopes requested at the authorization endpoint."""
 
     @property
-    def auth_endpoint(self) -> str:
-        return f"{self.issuer}/protocol/openid-connect/auth"
+    def issuer_components(self) -> tuple[str, str, int]:
+        """``issuer`` split into ``(scheme, host, port)``.
 
-    @property
-    def token_endpoint(self) -> str:
-        return f"{self.issuer}/protocol/openid-connect/token"
-
-    @property
-    def jwks_endpoint(self) -> str:
-        return f"{self.issuer}/protocol/openid-connect/certs"
-
-    @property
-    def end_session_endpoint(self) -> str:
-        return f"{self.issuer}/protocol/openid-connect/logout"
+        :func:`nmos.oauth2.discover_metadata` takes the AS location as
+        separate components rather than a URL, because it has to splice
+        ``/.well-known/…`` between the host and the path (RFC 8414 §3.1).
+        The port is defaulted from the scheme when the issuer omits it,
+        so ``https://as.example.com/realms/x`` resolves to port 443.
+        """
+        parts = urlp.urlsplit(self.issuer)
+        scheme = parts.scheme or "https"
+        default_port = 443 if scheme == "https" else 80
+        return scheme, parts.hostname or "", parts.port or default_port
 
 
 @dataclass
@@ -166,17 +175,23 @@ class OAuth2Tokens:
 # ---------------------------------------------------------------------------
 
 class OAuth2Client:
-    """Stateless façade over Keycloak's auth_code + refresh_token grants.
+    """Façade over the auth_code + refresh_token grants of any RFC 8414 AS.
 
     Single instance per controller process; threaded via
-    ``app["controller_oauth2_client"]``. The instance caches a JWKS
-    fetched on first token validation and refreshed lazily when a
-    ``kid`` miss occurs.
+    ``app["controller_oauth2_client"]``. Instance state is two lazily
+    populated caches: the Authorization Server metadata document (fetched
+    once, on first use) and a JWKS (fetched on first token validation and
+    re-fetched on a ``kid`` miss).
+
+    Both caches race benignly — two coroutines arriving together may each
+    issue a fetch and the last write wins. They fetch the same immutable
+    document, so no lock is warranted.
     """
 
     def __init__(self, config: OAuth2Config) -> None:
         self._config = config
         self._jwks: JWKS | None = None
+        self._metadata: dict[str, Any] | None = None
         self._ssl_ctx = self._build_ssl_context()
 
     # --- Public API ---
@@ -185,12 +200,15 @@ class OAuth2Client:
     def config(self) -> OAuth2Config:
         return self._config
 
-    def build_auth_url(self, *, redirect_uri: str, state: str) -> str:
-        """Build the Keycloak ``/auth`` URL the browser must be 302'd to.
+    async def build_auth_url(self, *, redirect_uri: str, state: str) -> str:
+        """Build the authorization-endpoint URL the browser must be 302'd to.
 
         ``state`` is an opaque per-session nonce the caller persists in
         the admin session; we echo it back from the callback to defend
         against CSRF on the redirect.
+
+        Coroutine rather than a plain function because the endpoint has
+        to be discovered — see :meth:`authorization_endpoint`.
         """
         qs = urlp.urlencode({
             "client_id": self._config.client_id,
@@ -199,7 +217,7 @@ class OAuth2Client:
             "scope": " ".join(self._config.scopes),
             "state": state,
         })
-        return f"{self._config.auth_endpoint}?{qs}"
+        return f"{await self.authorization_endpoint()}?{qs}"
 
     @staticmethod
     def new_state_nonce() -> str:
@@ -238,6 +256,120 @@ class OAuth2Client:
             "client_secret": self._config.client_secret,
         })
 
+    # --- Authorization Server metadata (RFC 8414 / IS-10) ---
+
+    async def authorization_endpoint(self) -> str:
+        """Discovered ``authorization_endpoint``.
+
+        IS-10 ``Behaviour - Clients.md`` § Discovery is explicit that a
+        client may not guess this:
+
+            When first contacting an Authorization Server, a Client MUST
+            identify the location of API endpoints using the Authorization
+            Server Metadata resource as specified in RFC 8414. Clients MUST
+            NOT assume that every Authorization Server instance on a network
+            uses the same endpoint locations.
+
+        So there is deliberately no fallback to a vendor URL convention
+        here: an AS that publishes no metadata is unusable, and failing
+        loudly is the only honest outcome. RFC 8414 §2 marks this field
+        REQUIRED "unless no grant types are supported that use the
+        authorization endpoint" — the controller uses ``authorization_code``,
+        so its absence is a broken AS.
+        """
+        return await self._metadata_url("authorization_endpoint")
+
+    async def token_endpoint(self) -> str:
+        """Discovered ``token_endpoint`` (RFC 8414 §2: REQUIRED here —
+        the exemption covers implicit-only servers, which we are not)."""
+        return await self._metadata_url("token_endpoint")
+
+    async def jwks_uri(self) -> str:
+        """Discovered ``jwks_uri``.
+
+        RFC 8414 §2 lists this OPTIONAL, but IS-10 ``Behaviour -
+        Authorization Servers.md`` overrides that for NMOS deployments:
+        "Authorization Servers MUST provide all public keys used for
+        signing tokens at a non-protected endpoint, the location of which
+        will correspond with the value of the 'jwks_uri' property at the
+        server metadata endpoint." Without it we cannot validate a single
+        token, so a missing value is an error rather than a degraded mode.
+        """
+        return await self._metadata_url("jwks_uri")
+
+    async def _metadata_url(self, field_name: str) -> str:
+        """Read one URL-valued field out of the discovered metadata."""
+        metadata = await self._discover()
+        value = metadata.get(field_name)
+        if not isinstance(value, str) or not value:
+            raise OAuth2Error(
+                f"Authorization Server metadata for {self._config.issuer} "
+                f"has no usable {field_name!r}; cannot continue without it",
+            )
+        return value
+
+    async def _discover(self) -> dict[str, Any]:
+        """Fetch and cache the AS metadata document.
+
+        Cached for the process lifetime, mirroring the JWKS cache below:
+        endpoint locations are part of an AS's deployment identity, not
+        rotating material like signing keys.
+        """
+        if self._metadata is not None:
+            return self._metadata
+
+        scheme, host, port = self._config.issuer_components
+        connector = aiohttp.TCPConnector(ssl=self._ssl_ctx or False)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            try:
+                metadata = await discover_metadata(
+                    scheme=scheme, host=host, port=port,
+                    api_selector=self._config.api_selector,
+                    client=session,
+                )
+            except Exception as exc:
+                raise OAuth2Error(
+                    f"Authorization Server metadata discovery failed for "
+                    f"{self._config.issuer}: {exc}",
+                ) from exc
+
+        self._validate_issuer(metadata)
+        self._metadata = metadata
+        return metadata
+
+    def _validate_issuer(self, metadata: dict[str, Any]) -> None:
+        """Enforce RFC 8414 §3.3 Authorization Server Metadata Validation.
+
+            The "issuer" value returned MUST be identical to the
+            authorization server's issuer identifier value into which the
+            well-known URI string was inserted to create the URL used to
+            retrieve the metadata. If these values are not identical, the
+            data contained in the response MUST NOT be used.
+
+        This is what stops a metadata document served from one origin from
+        redirecting our token and JWKS traffic to an attacker's endpoints:
+        without the check, discovery would happily adopt whatever
+        ``token_endpoint`` the response carried.
+
+        A single trailing ``/`` is normalised away on both sides before
+        comparing. RFC 8414 §3.1 has the client strip a terminating slash
+        from the issuer identifier when building the well-known URL, so
+        the two spellings denote the same identifier; rejecting on that
+        alone would fail compliant servers without closing any attack.
+        """
+        published = metadata.get("issuer")
+        if not isinstance(published, str):
+            raise OAuth2Error(
+                f"Authorization Server metadata for {self._config.issuer} "
+                f"has no 'issuer' field (RFC 8414 §2 marks it REQUIRED)",
+            )
+        if published.rstrip("/") != self._config.issuer.rstrip("/"):
+            raise OAuth2Error(
+                f"Authorization Server metadata issuer mismatch "
+                f"(RFC 8414 §3.3): configured {self._config.issuer!r}, "
+                f"document declares {published!r}; discarding the document",
+            )
+
     # --- Internals ---
 
     def _build_ssl_context(self) -> ssl.SSLContext | None:
@@ -257,7 +389,7 @@ class OAuth2Client:
         connector = aiohttp.TCPConnector(ssl=self._ssl_ctx or False)
         async with aiohttp.ClientSession(connector=connector) as session:
             async with session.post(
-                self._config.token_endpoint, data=payload,
+                await self.token_endpoint(), data=payload,
             ) as resp:
                 body = await resp.text()
                 if resp.status != 200:
@@ -306,7 +438,7 @@ class OAuth2Client:
     async def _fetch_jwks(self) -> JWKS:
         connector = aiohttp.TCPConnector(ssl=self._ssl_ctx or False)
         async with aiohttp.ClientSession(connector=connector) as session:
-            return await fetch_jwks(self._config.jwks_endpoint, client=session)
+            return await fetch_jwks(await self.jwks_uri(), client=session)
 
 
 # ---------------------------------------------------------------------------

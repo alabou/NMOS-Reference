@@ -32,12 +32,15 @@ from __future__ import annotations
 import os
 import socket
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ...core.adapter import Credentials, Target
 from ...core.proc_scan import CommandLine, ProcessInfo, find_by_script
-from ...core.tls_pin import CertificateMaterial, PinResult, resolve_tls
+from ...core.tls_pin import (
+    CertificateMaterial, PinResult, is_publicly_trusted, pin_presented_leaf,
+    resolve_tls,
+)
 from ...enums import TlsPolicy
 from ...errors import (
     AdminPasswordMissing,
@@ -59,6 +62,17 @@ URL_PREFIX = "/controller"
 
 #: Environment variable holding the Controller admin password.
 PASSWORD_ENV = "NMOS_CONTROLLER_ADMIN_PASSWORD"
+
+#: Authorization Server end-user account, for rigs running with OAuth 2.0.
+OPERATOR_ENV = "NMOS_OAUTH2_OPERATOR"
+
+#: Its password. Unset means "reuse the Controller admin password".
+OPERATOR_PASSWORD_ENV = "NMOS_OAUTH2_OPERATOR_PASSWORD"
+
+#: The account ``start-fake-as.sh`` registers by default. Having a default at
+#: all is what lets the OAuth 2.0 rig run with the same one exported variable
+#: as every other rig.
+DEFAULT_OPERATOR_USERNAME = "ipmx-operator"
 
 #: Options whose values must never reach an artifact file. ``/proc`` is
 #: world-readable and ``ps`` shows the same text, so reading these is not a new
@@ -94,6 +108,52 @@ class ControllerTarget:
         return self.debug_log_path is not None
 
 
+def _extend_pins_for_authorization_server(
+    pin: PinResult,
+    cli: CommandLine,
+    node_ca_paths: tuple[str, ...],
+    provenance: dict[str, str],
+) -> PinResult:
+    """Add the Authorization Server's leaf to the pin list, when one is needed.
+
+    The AS is a second origin the browser is sent to mid-login. Its certificate
+    is not on the node's disk, so it is fetched and verified against the roots
+    the node was configured to trust for it (``--oauth2TrustedRootCA``, falling
+    back to the global list exactly as ``nmos_node.py`` does).
+
+    A server that is already publicly trusted needs no pin and gets none — the
+    real-deployment case, where the AS holds a certificate from a public CA.
+    Failures here are recorded in the provenance rather than raised: the run can
+    still reach the Controller, and stopping the whole attach because a pin could
+    not be computed would be a worse outcome than letting the sign-in step report
+    what it hit.
+    """
+    as_host = cli.value("--oauth2Host", "") or ""
+    as_port = cli.int_value("--oauth2Port", 0)
+    if not as_host or not as_port:
+        provenance["oauth2_as_pin"] = "skipped: no --oauth2Host/--oauth2Port"
+        return pin
+    provenance["oauth2_as"] = f"{as_host}:{as_port}"
+
+    if cli.has_flag("--oauth2DisableTLS"):
+        provenance["oauth2_as_pin"] = "not needed: --oauth2DisableTLS"
+        return pin
+    if is_publicly_trusted(as_host, as_port):
+        provenance["oauth2_as_pin"] = "not needed: chain is publicly trusted"
+        return pin
+
+    as_ca_paths = cli.values("--oauth2TrustedRootCA") or node_ca_paths
+    as_pin, detail = pin_presented_leaf(as_host, as_port, as_ca_paths)
+    provenance["oauth2_as_pin"] = detail
+    if not as_pin or as_pin in pin.pins:
+        return pin
+    return replace(
+        pin,
+        pins=(*pin.pins, as_pin),
+        detail=f"{pin.detail}; plus the Authorization Server's leaf ({detail})",
+    )
+
+
 def _resolves_to(host: str) -> bool:
     """Whether a name resolves at all, used to prefer the clean TLS path."""
     try:
@@ -124,6 +184,13 @@ def read_password(env_var: str = PASSWORD_ENV) -> Credentials:
     """Read the admin password from the environment.
 
     Not taken from the node's command line on purpose — see the module docstring.
+
+    The Authorization Server operator is read alongside it, but neither of its
+    variables is required: the username defaults to the account the reference
+    AS is started with, and the password falls back to the admin password
+    because the reference rig deliberately uses one secret for both gates. A
+    run against an Authorization Server with different credentials sets them;
+    everything else needs no extra configuration.
     """
     value = os.environ.get(env_var, "")
     if not value:
@@ -133,7 +200,12 @@ def read_password(env_var: str = PASSWORD_ENV) -> Credentials:
             f"line, so export it before attaching:\n"
             f"    export {env_var}=<the --controllerAdminPassword value>"
         )
-    return Credentials(password=value)
+    return Credentials(
+        password=value,
+        operator_username=os.environ.get(
+            OPERATOR_ENV, DEFAULT_OPERATOR_USERNAME),
+        operator_password=os.environ.get(OPERATOR_PASSWORD_ENV, ""),
+    )
 
 
 def candidates(proc_root: Path = Path("/proc")) -> tuple[ProcessInfo, ...]:
@@ -223,16 +295,11 @@ def _build(
     oauth2 = cli.has_flag("--oauth2")
     serial = cli.value("--nodeSerialNumber", "") or ""
 
-    if oauth2:
-        # Refused at discovery rather than after the browser has followed a
-        # redirect to an authorization server and stalled there with no
-        # explanation.
-        raise OAuth2NotSupported(
-            f"pid {process.pid} was started with --oauth2, so signing in leaves "
-            f"the Controller for an external authorization server. Driving that "
-            f"flow is not implemented yet. Use a node started without --oauth2, "
-            f"e.g. ./start-node1-bare.sh"
-        )
+    # ``oauth2`` is carried on the target rather than refused here. Signing in
+    # on such a node leaves the Controller for an external Authorization Server
+    # and comes back; ``ControllerSession.sign_in`` drives that second stage.
+    # Earlier revisions rejected these rigs outright, which is why the flag was
+    # already being parsed.
 
     # A wildcard bind is not a connectable address. Substituting loopback is
     # recorded in the provenance so the journal shows the address actually used.
@@ -268,13 +335,26 @@ def _build(
             serial_number=serial,
             ca_paths=ca_paths,
         )
-        pin = resolve_tls(material, host=host, prefer_policy=prefer_policy,
-                          resolves=_resolves_to)
+        pin = resolve_tls(
+            material, host=host, prefer_policy=prefer_policy,
+            resolves=_resolves_to,
+            publicly_trusted=lambda name: is_publicly_trusted(name, control_port),
+        )
         scheme = "https"
-        if pin.policy is TlsPolicy.SAN_HOSTNAME and pin.san_names:
-            # Connect by the certificate's own name so the chain validates with
-            # no browser flag at all.
-            host = pin.san_names[0]
+        if pin.connect_host:
+            # Address the Controller by the certificate's own name, which
+            # settles hostname verification. Whether a pin is *also* needed is a
+            # separate question already answered inside resolve_tls.
+            host = pin.connect_host
+
+        if oauth2:
+            # Signing in leaves this origin for the Authorization Server, and
+            # the browser has to accept that certificate too. A pin covering
+            # only the Controller gets as far as the redirect and then stops at
+            # ERR_CERT_AUTHORITY_INVALID on a page this driver never navigated
+            # to itself, which reads as a driver fault rather than a trust gap.
+            pin = _extend_pins_for_authorization_server(pin, cli, ca_paths,
+                                                        provenance)
 
     target = Target(
         app=APP_NAME,

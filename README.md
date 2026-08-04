@@ -82,7 +82,48 @@ security profiles:
 ./start-node1.sh
 ```
 
-Each launch script binds the Node on a hostname that matches the configured server-certificate's SAN. Resolve that hostname to `127.0.0.1` in `/etc/hosts` for local testing. Positional arguments to the launch script set the AS host/port and registry host/port — see `--help` in `nmos_node.py` for the full flag surface.
+Positional arguments to the launch script set the AS host/port and registry host/port — see `--help` in `nmos_node.py` for the full flag surface.
+
+#### Required before any TLS configuration: hosts-file entries
+
+**Every TLS configuration reaches its peers by DNS name, never by IP address.** The
+shipped certificates carry DNS SANs of the form `XYZ-SNX000nn` (plus a `.local`
+variant), and RFC 6125 hostname verification compares the name in the URL against
+those SANs. An IP literal matches no DNS SAN, so `https://127.0.0.1:8443` fails
+verification even though it reaches the right socket:
+
+```
+SSLCertVerificationError: IP address mismatch,
+certificate is not valid for '127.0.0.1'
+```
+
+Add these to `/etc/hosts` before running anything with TLS:
+
+```
+127.0.0.1   XYZ-SNX00000
+127.0.0.1   XYZ-SNX00001
+127.0.0.1   XYZ-SNX00002
+```
+
+| Name | Used by |
+|---|---|
+| `XYZ-SNX00000` | NMOS Registry, and the OAuth 2.0 Authorization Server — the reserved infrastructure serial |
+| `XYZ-SNX00001` | Node 1 and its Controller UI |
+| `XYZ-SNX00002` | Node 2 |
+
+Further Nodes follow the same pattern (`start-node3.sh` needs `XYZ-SNX00003`).
+
+This applies to how components address **each other**, not just to your browser.
+Passing `127.0.0.1` as a launch script's registry-host argument fails under RAP=2
+for exactly the reason above — use `./start-node1.sh XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2`,
+not `127.0.0.1`.
+
+Browsing the Controller from a **Windows** host against Nodes running in WSL2 needs
+the same entries in `C:\Windows\System32\drivers\etc\hosts` (edited as
+Administrator), pointing at the WSL address rather than `127.0.0.1` — `wsl.exe
+hostname -I` prints it.
+
+The no-TLS launchers (`*-bare.sh`) bind `127.0.0.1` directly and need none of this.
 
 The Node ships a built-in NMOS Controller under `/controller/` on `--nodeControlPort` once you set `--controllerAdminPassword`. See [Controller sign-in](#controller-sign-in).
 
@@ -294,11 +335,26 @@ which `start-registry-bare.bat` provides with matching defaults. Without a
 Registry the Node APIs still start, but their consoles report connection-refused
 retries and the Controller cannot assemble a shared two-node resource view.
 
-Windows coverage is intentionally limited to the bare (no-TLS) scenario for the
-Nodes; the TLS and OAuth 2.0 node launchers are shell-only. `start-registry.bat`
-is provided for parity and for serving a TLS registry from Windows.
-
 Each launcher prints the selected Registry address before starting.
+
+The secured rigs have Windows counterparts too. `start-node1.bat` and
+`start-node2.bat` take the same arguments and policy flags as their shell
+equivalents, and `start-fake-as.bat` runs the Authorization Server, so
+Configuration C works from Command Prompt with no Keycloak and no Docker:
+
+```bat
+start-fake-as.bat
+start-registry.bat 2
+start-node1.bat XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2
+start-node2.bat XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2
+```
+
+Anything using TLS needs the hosts-file entries described in
+[Required before any TLS configuration](#required-before-any-tls-configuration),
+in `C:\Windows\System32\drivers\etc\hosts`, edited as Administrator. The
+remaining shell-only launchers are the Configuration A and B node variants
+(`start-node1-noauth2.sh`, `start-node1-nomtls.sh`) and `sync-fake-as.sh`,
+which is a maintainer tool.
 `NMOS_RDS_HOST` can override discovery, and `NMOS_RDS_REG_PORT` can override
 port 8444; the Query API port is derived as one less than the Registration API
 port.
@@ -427,6 +483,26 @@ If you're new to NMOS or to the Matrox extensions, two sets of tutorials are rec
 - **AMWA NMOS** — concept walk-throughs, architectural overviews, and worked examples are published at [specs.amwa.tv/nmos/info/](https://specs.amwa.tv/nmos/info/). Start here for the foundational vocabulary (Senders / Receivers / Sources / Flows / Devices / Nodes), the registration + discovery model, and how IS-04 / IS-05 / IS-11 fit together.
 - **Matrox NMOS Advanced Streaming Architecture (NASA)** — Matrox-extension tutorials covering the hierarchical mux model, the IS-11 sub-flow negotiation pipeline, PEP wiring, capability-layer / compat-groups usage, and the Reservation API. Available at [github.com/alabou/NMOS-MatroxOnly/tree/main/tutorials](https://github.com/alabou/NMOS-MatroxOnly/tree/main/tutorials).
 
+This repository also *generates* tutorials from real runs against a live rig,
+each step carrying a screenshot, the values actually observed, the API calls
+the run issued, and links to both the specification and the implementing
+source. Two ship today:
+
+| Tutorial | Teaches | Rig |
+|---|---|---|
+| `tutorial-jpegxs` | Activating a video sender and subscribing a receiver over JPEG XS | Two nodes + registry (bare is fine) |
+| `tutorial-security` | How TLS and OAuth 2.0 decide what a Controller may do — the two-stage sign-in, certificate identity, and per-device token scoping | Configuration C, two nodes |
+
+```bash
+export PLAYWRIGHT_BROWSERS_PATH="$PWD/.playwright"
+export NMOS_CONTROLLER_ADMIN_PASSWORD=admin
+.venv/bin/python -m nmos.agentui --scenario tutorial-security --tutorial
+```
+
+`tutorial-security` is read-only and changes nothing on the devices. See
+[nmos/agentui/FOR-AI-AGENTS.md](nmos/agentui/FOR-AI-AGENTS.md) for the driver
+itself.
+
 ---
 
 ## Project layout
@@ -455,6 +531,8 @@ nmos/                   — Core NMOS implementation
 sdp/                    — SDP encoding/decoding (Matrox profile)
 caps/                   — Capability/constraint framework (Matrox CCF)
 pep/                    — Privacy Encryption Protocol (PEP) helpers
+Certificates/build.0/   — Test PKI subset (SNX00000/1/2) so TLS runs from a clone
+fake-as/                — Test OAuth 2.0 Authorization Server, vendored (see below)
 
 nmos_node.py            — Node entry point; parses CLI and starts the server
 nmos_registry.py        — Registry entry point; Registration + Query + WebSocket listeners
@@ -462,7 +540,37 @@ run_server.py           — Lightweight wrapper for embedding nmos_node from scr
 demo_controller.py      — Standalone demo controller for manual exploration
 start-node*.sh          — Launch scripts for the three security configurations
 start-registry*.sh      — Registry launchers (bare = no TLS; the other takes a RAP value)
+start-fake-as.sh        — Test OAuth 2.0 Authorization Server (no Keycloak, no Docker)
+sync-fake-as.sh         — Refresh fake-as/ from the security/ project
 start-node*-bare.bat    — Windows launchers for the bare (registry-only) rigs
+```
+
+### The vendored Authorization Server (`fake-as/`)
+
+The TLS + OAuth 2.0 rig needs an Authorization Server. Rather than require
+Keycloak and Docker, this repository ships one: `fake-as/` holds
+`ipmx_fake_as.py` and `ipmx_security_tokens.py`, started by
+`./start-fake-as.sh`.
+
+Those two files are a **byte-identical copy** of the Authorization Server in
+the separately-released `security/` certification suite, which is their
+source of truth. The duplication is deliberate — the two projects release
+independently and neither may depend on the other — and keeping the copies
+identical rather than adapted is what makes it maintainable:
+
+* syncing is a file copy — `./sync-fake-as.sh` (and `--check` to report
+  drift without changing anything);
+* drift is a comparison — `nmos/agentui/tests/test_fake_as_vendoring.py`
+  fails if the copies differ, and skips when `security/` is not checked out,
+  which is the normal state for a standalone clone.
+
+**Edit the `security/` copy**, then re-sync. `start-fake-as.sh` prefers a
+`security/` project alongside when one is present, so a developer working on
+it sees their change without syncing first; otherwise it uses `fake-as/`.
+
+This matters beyond convenience: the tutorial and the TR-10-SEC certification
+suite then demonstrate and validate *the same* Authorization Server, not two
+implementations that merely resemble each other.
 start-registry*.bat     — Windows registry launchers
 requirements.txt        — Runtime dependencies
 requirements-agentui.txt — Extra dependencies for the agent driver (Playwright)

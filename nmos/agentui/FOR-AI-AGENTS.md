@@ -20,7 +20,7 @@ Two files matter, and the order is not optional:
 
 ## 1. Check you can actually run before promising anything
 
-Four prerequisites. Check them before telling the user what you are going to do.
+Five prerequisites. Check them before telling the user what you are going to do.
 
 ```bash
 cd nmos-reference
@@ -42,6 +42,12 @@ pgrep -f "[n]mos_registry.py" >/dev/null && echo "registry: up" || echo "registr
 
 # (d) The admin password, from the environment.
 echo "${NMOS_CONTROLLER_ADMIN_PASSWORD:?not set}"
+
+# (e) TLS rigs only: the certificate hostnames must resolve.
+#     Skip for a *-bare.sh rig, which binds 127.0.0.1 and uses no TLS.
+for h in XYZ-SNX00000 XYZ-SNX00001 XYZ-SNX00002; do
+  getent hosts "$h" >/dev/null && echo "$h: ok" || echo "$h: MISSING from /etc/hosts"
+done
 ```
 
 If **(a)** finds nothing, ask the user to start the rig. **Do not start it
@@ -56,6 +62,7 @@ before you describe what you are about to do:
 | One node, no registry | `attach-and-look`, `inspect-one-sender`, `selection-guard`, `blocked-controls`, `session-lost` |
 | One node + registry | adds `route-one-receiver`, `privacy-exclusivity` — status badges only update through the registry, so without it a run records an *unconfirmed* observation rather than a live one |
 | Two nodes + registry | adds `cross-node-reverse`, `demo-group-route-tb`, `demo-group-route-hevc`, **`tutorial-jpegxs`** |
+| Two nodes + registry + TLS/OAuth 2.0 | adds **`tutorial-security`** — read-only, and its best lesson needs both nodes: the token is scoped to SNX00001, so SNX00002 shows the refusal *and its reason* |
 
 The cross-node scenarios route from a sender on **SNX00001** to a receiver on
 **SNX00002**, so both nodes must be registered with the *same* registry. Note
@@ -69,6 +76,40 @@ rig rather than running it and narrating a truncated journal:
 ./start-node1-bare.sh        # terminal 2 — SNX00001
 ./start-node2-bare.sh        # terminal 3 — SNX00002
 ```
+
+### TLS and OAuth 2.0 rigs
+
+A node started with TLS — `start-node1.sh`, `start-node1-nomtls.sh`,
+`start-node1-noauth2.sh` — is drivable, and so is one started with
+`--oauth2`. Nothing about a scenario changes; two things about the run do.
+
+**Sign-in becomes two steps.** After the Controller's password gate the
+browser is redirected to the Authorization Server's own form, on a different
+origin, and `sign_in()` fills that too. It appears in the journal as a
+separate `sign_in_oauth2` step. The account defaults to `ipmx-operator` with
+the admin password — the pairing `start-fake-as.sh` provisions — and is
+overridable with `NMOS_OAUTH2_OPERATOR` / `NMOS_OAUTH2_OPERATOR_PASSWORD`.
+
+**Two certificates get pinned, not one.** The workspace PKI's root is in no
+browser trust store, so the Controller's leaf is pinned; the Authorization
+Server is a second origin the browser is sent to mid-login, so its leaf is
+pinned too — fetched and verified against the node's `--oauth2TrustedRootCA`
+before being trusted. The manifest records both under `target.tls_detail`,
+and `provenance.oauth2_as_pin` says how the second one was obtained. Two
+pins on an OAuth 2.0 rig is correct, not a leak of trust: each suppresses
+errors for exactly one key.
+
+A full OAuth 2.0 rig, with no Keycloak or Docker needed:
+
+```bash
+./start-fake-as.sh &                                          # AS on 9443
+./start-registry.sh 2 &                                       # registry, mTLS
+./start-node1.sh XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2  # node1
+```
+
+Requires the hosts-file entries from check **(e)** above — every component
+addresses the others by certificate name.
+
 
 If **(c)** is missing, see the setup section in the repo README. It is two commands,
 one of which downloads ~656 MB, so ask before running it.

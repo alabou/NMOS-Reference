@@ -90,8 +90,15 @@ if errorlevel 1 (
   goto done
 )
 
+rem Prefer the certificate subset bundled inside this repository, so a
+rem standalone clone of nmos-reference runs without the wider workspace PKI.
+rem That subset ships only the serials the quick-start and tutorials use;
+rem anything else falls back to the workspace-level Certificates\ tree.
+rem An explicit IPMX_CERT_ROOT always wins over both.
 if defined IPMX_CERT_ROOT (
   set "CERT_ROOT=%IPMX_CERT_ROOT%"
+) else if exist "%SCRIPT_DIR%Certificates\build.0\ExampleRootCA.pem" (
+  set "CERT_ROOT=%SCRIPT_DIR%Certificates"
 ) else (
   set "CERT_ROOT=%SCRIPT_DIR%..\Certificates"
 )

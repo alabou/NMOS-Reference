@@ -411,7 +411,7 @@ async def oauth2_login_handler(request: web.Request) -> web.StreamResponse:
     state_nonce = oauth2_client.new_state_nonce()
     session.oauth2_state_nonce = state_nonce
     redirect_uri = _oauth2_callback_uri(request)
-    auth_url = oauth2_client.build_auth_url(
+    auth_url = await oauth2_client.build_auth_url(
         redirect_uri=redirect_uri, state=state_nonce,
     )
     return _redirect(auth_url)

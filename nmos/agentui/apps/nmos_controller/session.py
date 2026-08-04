@@ -438,7 +438,67 @@ class ControllerSession:
                     "the Controller rejected the password: still on the sign-in "
                     f"page with {view.alerts or ('no visible alert',)}")
             step.note("landed_on", str(view.page_id))
-            self._capture_baselines()
+
+        # On an OAuth 2.0 rig the password gate is only the first of two. The
+        # Controller has redirected the browser to the Authorization Server and
+        # the operator is now looking at *its* form, on a different origin.
+        # Detected from where the browser actually is rather than from the
+        # node's flags: that way a rig whose Authorization Server is already
+        # holding a session, and so redirects straight back, is handled by the
+        # same code path with no second sign-in.
+        if self._page_view().page_id is PageId.OAUTH2_SIGNIN:
+            view = self._sign_in_at_authorization_server()
+
+        self._capture_baselines()
+        return view
+
+    def _sign_in_at_authorization_server(self) -> PageView:
+        """Authenticate at the Authorization Server and return to the Controller.
+
+        A separate recorded step from :meth:`sign_in`, not a continuation of it,
+        because it is a distinct act by the operator against a distinct system —
+        and because the journal should show a reader that their password went to
+        the Controller and their user account went to the Authorization Server.
+
+        Like the Controller's own gate this produces no client-side trace: the
+        Authorization Server is not instrumented by this project, so the step is
+        declared ``SERVER_ONLY`` rather than left looking like a correlation
+        failure.
+        """
+        with self._recorder.step(
+            "sign_in_oauth2",
+            intent="authorise this Controller at the Authorization Server",
+            expects_navigation=True,
+        ) as step:
+            step.touched()
+            step.correlation = CorrelationKind.SERVER_ONLY
+            before = self._page_view()
+            step.note("authorization_server", _origin_of(before.url))
+            step.note("operator", self._credentials.operator_username)
+
+            url_before = self._surface.url
+            self._adapter.authenticate_oauth2(self._surface, self._credentials)
+            self._wait(step, WaitSignal.PAGE_LOADED, UrlChangedFrom(url_before))
+
+            view = self._page_view()
+            if view.page_id is PageId.OAUTH2_SIGNIN:
+                # Still on the Authorization Server: it rejected the operator.
+                # Reported with its own alert text where there is one, because
+                # the reason belongs to that server and not to us.
+                raise LoginRejected(
+                    "the Authorization Server rejected the operator "
+                    f"{self._credentials.operator_username!r}: still on its "
+                    f"sign-in page at {view.url} with "
+                    f"{view.alerts or ('no visible alert',)}")
+            if view.page_id is PageId.LOGIN:
+                # Back at the Controller's own gate means the local session was
+                # lost while the browser was away — a different fault, and one
+                # that would otherwise present as a confusing success.
+                raise LoginRejected(
+                    "returned from the Authorization Server to the Controller's "
+                    "password gate, so the local session did not survive the "
+                    "redirect")
+            step.note("landed_on", str(view.page_id))
             return view
 
     def check_preconditions(self) -> None:
@@ -1941,3 +2001,16 @@ def _widget_kind(tag: str, classes: frozenset[str]) -> str:
 def selected_ids(view: SelectionView) -> Sequence[str]:
     """The resource ids a selection will submit, group or individual."""
     return view.group_ids or view.checked_ids
+
+
+def _origin_of(url: str) -> str:
+    """``scheme://host:port`` of a URL, for noting which server a step touched.
+
+    Recorded on the Authorization Server sign-in step so a journal reader can
+    see that the operator's credentials went somewhere other than the
+    Controller, and exactly where.
+    """
+    parts = urlsplit(url)
+    if not parts.hostname:
+        return url
+    return f"{parts.scheme}://{parts.netloc}"
