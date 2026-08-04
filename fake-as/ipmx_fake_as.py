@@ -65,6 +65,7 @@ import secrets
 import ssl
 import sys
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
@@ -241,7 +242,7 @@ class FakeASConfig:
     """Registered OAuth 2.0 clients. Empty means the authorization and
     token endpoints reject everything — see :class:`RegisteredClient`."""
 
-    operator_username: str = "ipmx-operator"
+    operator_username: str = "tr-10-sec-operator"
     """The single pre-canned end-user account the login form accepts.
 
     This AS is a test fixture: there is no user directory, no
@@ -492,7 +493,9 @@ class FakeAuthorizationServer:
 
     @web.middleware
     async def _broken_and_log_middleware(
-        self, request: web.Request, handler: Any,
+        self,
+        request: web.Request,
+        handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
     ) -> web.StreamResponse:
         """Records each request's TLS / HTTP context, and short-
         circuits the handler with 503 when broken-mode is on."""
@@ -1174,7 +1177,7 @@ def _cli() -> argparse.Namespace:
              "exactly — no wildcards, per IS-10 Behaviour - Clients.md.",
     )
     p.add_argument(
-        "--operator-username", default="ipmx-operator",
+        "--operator-username", default="tr-10-sec-operator",
         help="The single pre-canned account the sign-in form accepts.",
     )
     p.add_argument(

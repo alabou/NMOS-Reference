@@ -16,7 +16,7 @@
 #   --client-id=ID    OAuth 2.0 client_id (default: the value baked into
 #                     start-node1.sh's --oauth2ClientId)
 #   --client-secret=S Client secret (default: secret, as start-node1.sh)
-#   --operator=NAME   Pre-canned sign-in account (default: ipmx-operator)
+#   --operator=NAME   Pre-canned sign-in account (default: tr-10-sec-operator)
 #   --password=PW     Its password (default: admin, the same password
 #                     start-node1.sh gives --controllerAdminPassword)
 #   --operator-access=A  readwrite (default) or read. A read-only token
@@ -67,7 +67,7 @@ NODE_SERIAL="SNX00001"
 CONTROL_PORT=5050
 CLIENT_ID="Example.Company.Device.Client.ABC.SNX00001.example.com"
 CLIENT_SECRET="secret"
-OPERATOR="ipmx-operator"
+OPERATOR="tr-10-sec-operator"
 PASSWORD="admin"
 OPERATOR_ACCESS="readwrite"
 

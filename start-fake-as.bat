@@ -20,7 +20,7 @@ rem   --control-port=P  Controller UI port to register redirect URIs for
 rem                     (default 5050, matching start-node1.bat)
 rem   --client-id=ID    OAuth 2.0 client_id (default matches start-node1)
 rem   --client-secret=S Client secret (default secret)
-rem   --operator=NAME   Pre-canned sign-in account (default ipmx-operator)
+rem   --operator=NAME   Pre-canned sign-in account (default tr-10-sec-operator)
 rem   --password=PW     Its password (default admin)
 rem   --operator-access=A  readwrite (default) or read
 rem
@@ -47,7 +47,7 @@ set "NODE_SERIAL=SNX00001"
 set "CONTROL_PORT=5050"
 set "CLIENT_ID=Example.Company.Device.Client.ABC.SNX00001.example.com"
 set "CLIENT_SECRET=secret"
-set "OPERATOR=ipmx-operator"
+set "OPERATOR=tr-10-sec-operator"
 set "PASSWORD=admin"
 set "OPERATOR_ACCESS=readwrite"
 

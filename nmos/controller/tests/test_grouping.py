@@ -36,6 +36,7 @@ class TestParseGroupHint:
         )
         assert hint.key == "RTP 3"
         assert hint.role_label == "VIDEO 0"
+        assert hint.leaf == ("VIDEO", 0)
         assert str(hint) == "RTP 3:VIDEO 0"
 
     def test_audio_hint(self) -> None:
@@ -100,6 +101,9 @@ class TestParseGroupHint:
         assert hint is not None
         assert hint.groupable is False
         assert hint.format is None and hint.role is None
+        # No leaf identity: this is what keeps a non-groupable member out of
+        # the leaf sets / leaf-keyed maps in nmos.controller.compat.
+        assert hint.leaf is None
         # Raw post-':' text is preserved for display.
         assert hint.role_name == "THERMAL 1"
         assert hint.role_label == "THERMAL 1"

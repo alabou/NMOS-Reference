@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from typing import Any
 
 from aiohttp import web
 
@@ -74,12 +75,14 @@ async def status_events_handler(request: web.Request) -> web.StreamResponse:
             sid, rid = sid.strip(), rid.strip()
             if sid and rid:
                 pair_map[sid] = rid
-    narrowed_cs: dict[str, list | None] = {
+    narrowed_cs: dict[str, list[dict[str, Any]] | None] = {
         sid: narrowed_constraint_sets_for_pair(cache, sid, rid)
         for sid, rid in pair_map.items()
     }
 
-    def _scoped_flow_match(resource_id: str, base: dict | None) -> dict | None:
+    def _scoped_flow_match(
+        resource_id: str, base: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
         """Receiver-scope a flow-match payload for a paired sender:
         override ``matched_cs_indices`` with indices into the NARROWED CS
         the page shows, while preserving ``values_by_part`` (the flow's
@@ -132,7 +135,9 @@ async def status_events_handler(request: web.Request) -> web.StreamResponse:
         fm = _scoped_flow_match(rid, cache.get_flow_match(rid))
         if not status and fm is None:
             continue
-        payload = {"id": rid, "kind": "", "status": status}
+        # ``Any`` values, not just the strings the literal shows: the optional
+        # ``flow_match`` key below carries a nested dict.
+        payload: dict[str, Any] = {"id": rid, "kind": "", "status": status}
         if fm is not None:
             payload["flow_match"] = fm
         frame = f"event: status\ndata: {json.dumps(payload)}\n\n"

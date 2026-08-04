@@ -847,7 +847,10 @@ async def receivers_compatible(request: web.Request) -> web.Response:
     # fall through and render the usual empty-result page.
     if mode == "subset" and receivers:
         from nmos.controller.grouping import extract_group_hint
-        seen_keys: set[tuple[str, tuple[str, int]]] = set()
+        # (device_id, group identity). ``GroupHint.key`` is the normalised
+        # group-name string, not a (format, role) pair — a subset selection is
+        # constrained to one group, not to one leaf.
+        seen_keys: set[tuple[str, str]] = set()
         for r in receivers:
             hint = extract_group_hint(r.get("tags"))
             if hint is None or not hint.groupable:
@@ -2514,10 +2517,14 @@ def _build_caps_view(
             # we downcase to match.
             meta_format = actual_meta_format
             meta_layer = actual_meta_layer
-            if not meta_format and hint is not None and hint.groupable:
-                meta_format = hint.format.lower()
-            if meta_layer is None and hint is not None and hint.groupable:
-                meta_layer = hint.role
+            # ``hint.leaf`` is the (format, role) pair, non-``None`` only for a
+            # groupable hint — one check in place of a ``groupable`` test plus
+            # two separately-optional field reads.
+            hint_leaf = hint.leaf if hint is not None else None
+            if not meta_format and hint_leaf is not None:
+                meta_format = hint_leaf[0].lower()
+            if meta_layer is None and hint_leaf is not None:
+                meta_layer = hint_leaf[1]
             # Final fallback when there's no (groupable) group hint — use
             # the sender's own IS-04 ``format`` URN.
             if not meta_format:
@@ -2946,10 +2953,12 @@ def _build_configure_view(
                 continue
             mf = _short_format(cs.get(_CAPS_META_FORMAT))
             ml = _coerce_int(cs.get(_CAPS_META_LAYER))
-            if not mf and hint is not None and hint.groupable:
-                mf = hint.format.lower()
-            if ml is None and hint is not None and hint.groupable:
-                ml = hint.role
+            # Same (format, role) fallback as the caps page — see ``hint.leaf``.
+            hint_leaf = hint.leaf if hint is not None else None
+            if not mf and hint_leaf is not None:
+                mf = hint_leaf[0].lower()
+            if ml is None and hint_leaf is not None:
+                ml = hint_leaf[1]
             if not mf:
                 mf = _short_format(s.get("format"))
             raw_comp = cs.get(_CAPS_META_COMP_GROUPS)
@@ -4406,7 +4415,10 @@ async def _transport_detail(request: web.Request, kind: str) -> web.Response:
     device = cache.get_device(res.get("device_id", "") or "")
     client = _remote_client(request)
     base = client.connection_api_base(device) if device else None
-    if base is None:
+    # ``device`` is tested too: a missing device already yields ``base is
+    # None``, so this is the same branch — spelling it out lets the reads of
+    # ``device`` below stand on a narrowed type rather than an implication.
+    if device is None or base is None:
         ctx["error"] = ("This device does not publish a connection-management "
                         "control URL, so transport parameters cannot be fetched.")
         return _render(request, "transport_detail.html", ctx)
@@ -4494,7 +4506,7 @@ async def _sdp_view(request: web.Request, kind: str) -> web.Response:
     device = cache.get_device(res.get("device_id", "") or "")
     client = _remote_client(request)
     base = client.connection_api_base(device) if device else None
-    if base is None:
+    if device is None or base is None:
         ctx["error"] = ("This device does not publish a connection-management "
                         "control URL, so the SDP cannot be fetched.")
         return _render(request, "sdp_view.html", ctx)
@@ -4549,7 +4561,7 @@ async def _is11_status_detail(request: web.Request, kind: str) -> web.Response:
     device = cache.get_device(res.get("device_id", "") or "")
     client = _remote_client(request)
     base = client.streamcompat_api_base(device) if device else None
-    if base is None:
+    if device is None or base is None:
         ctx["error"] = ("This device does not implement the IS-11 "
                         "stream-compatibility API.")
         return _render(request, "is11_status.html", ctx)
@@ -4638,9 +4650,16 @@ def _facet_display_label(key: str, health_value: str, mstate: dict[str, Any]) ->
     raw code is absent (no monitor) or unrecognised."""
     if key != "link":
         return health_value
+    # Absent (no monitor) or non-numeric raw codes fall back. The type test
+    # covers "absent" explicitly instead of routing ``int(None)``'s TypeError
+    # through the handler, leaving ValueError for a numeric-looking string
+    # that isn't one (e.g. ``"up"``).
+    raw = mstate.get("link_status")
+    if not isinstance(raw, (int, float, str)):
+        return health_value
     try:
-        return _LINK_STATUS_LABELS.get(int(mstate.get("link_status")), health_value)
-    except (TypeError, ValueError):
+        return _LINK_STATUS_LABELS.get(int(raw), health_value)
+    except ValueError:
         return health_value
 
 

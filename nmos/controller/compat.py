@@ -39,6 +39,7 @@ the controller UI still renders, it just can't filter.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -56,6 +57,32 @@ _SRT_TRANSPORT = SRT_TRANSPORT_NAMESPACE + "transport:srt"
 _SRT_MP2T_TRANSPORT = SRT_TRANSPORT_NAMESPACE + "transport:srt.mp2t"
 _SRT_RTP_TRANSPORT = SRT_TRANSPORT_NAMESPACE + "transport:srt.rtp"
 _USB_TRANSPORT = USB_TRANSPORT_NAMESPACE + "transport:usb"
+
+
+def _leaf_of(m: GroupedResource) -> tuple[str, int] | None:
+    """A member's ``(format, role)`` leaf, or ``None`` when it has no
+    groupable hint. See ``GroupHint.leaf``."""
+    return m.hint.leaf if m.hint is not None else None
+
+
+def _leaves(members: Iterable[GroupedResource]) -> list[tuple[str, int]]:
+    """The leaf of every groupable member, in member order.
+
+    Group construction (``ResourceCache.grouped_views``,
+    ``_receivers_as_natural_group``) only ever puts groupable members in a
+    ``NaturalGroupView``, so in practice nothing is dropped here — the filter
+    states that invariant instead of assuming it, which keeps a stray
+    non-groupable member from putting ``None`` into a leaf tuple.
+    """
+    return [leaf for m in members if (leaf := _leaf_of(m)) is not None]
+
+
+def _by_leaf(
+    members: Iterable[GroupedResource],
+) -> dict[tuple[str, int], GroupedResource]:
+    """Groupable members keyed by leaf. Role-index disambiguates same-format
+    legs, so one member per leaf."""
+    return {leaf: m for m in members if (leaf := _leaf_of(m)) is not None}
 
 
 # ---------------------------------------------------------------------------
@@ -318,19 +345,13 @@ def compatible_sender_groups(
     ``[("AUDIO", 0), ("AUDIO", 1), ("VIDEO", 0)]``) only matches a
     sender group with the same multi-format topology.
     """
-    target_leaves = sorted(
-        ((m.hint.format, m.hint.role) for m in receiver_group.members
-         if m.hint is not None),
-    )
+    target_leaves = sorted(_leaves(receiver_group.members))
     if not target_leaves:
         return []
 
     matched: list[NaturalGroupView] = []
     for sg in sender_groups:
-        sg_leaves = sorted(
-            ((m.hint.format, m.hint.role) for m in sg.members
-             if m.hint is not None),
-        )
+        sg_leaves = sorted(_leaves(sg.members))
         if sg_leaves != target_leaves:
             continue
         if _all_roles_compatible(receiver_group, sg):
@@ -393,19 +414,13 @@ def compatible_sender_groups_superset(
     ordered by the subset's sorted ``(format, role)`` signature so
     callers can pair sender[i] ↔ receiver[i] deterministically.
     """
-    target_leaves = sorted(
-        (m.hint.format, m.hint.role)
-        for m in receiver_subset.members if m.hint is not None
-    )
+    target_leaves = sorted(_leaves(receiver_subset.members))
     if not target_leaves:
         return []
 
     results: list[SupersetMatch] = []
     for sg in sender_groups:
-        sg_leaves: set[tuple[str, int]] = {
-            (m.hint.format, m.hint.role)
-            for m in sg.members if m.hint is not None
-        }
+        sg_leaves: set[tuple[str, int]] = set(_leaves(sg.members))
         # Multiset-superset: every target leaf present in the sender.
         # Natural groups use role-index to disambiguate same-format
         # legs, so duplicates-by-identity can't occur — a plain set
@@ -420,10 +435,7 @@ def compatible_sender_groups_superset(
         # are silently ignored.
         if not _all_roles_compatible(receiver_subset, sg):
             continue
-        s_by_leaf: dict[tuple[str, int], GroupedResource] = {
-            (m.hint.format, m.hint.role): m
-            for m in sg.members if m.hint is not None
-        }
+        s_by_leaf: dict[tuple[str, int], GroupedResource] = _by_leaf(sg.members)
         matched = [s_by_leaf[leaf] for leaf in target_leaves]
         results.append(SupersetMatch(
             group=sg,
@@ -463,12 +475,12 @@ def pair_by_identity(
     s_by_leaf: dict[tuple[str, int], dict[str, Any]] = {}
     for s in senders:
         hint = extract_group_hint(s.get("tags"))
-        if hint is None or not hint.groupable:
+        key = hint.leaf if hint is not None else None
+        if key is None:
             raise ValueError(
                 f"sender {s.get('id', '?')!r} has no groupable group hint — "
                 "cannot pair by identity",
             )
-        key = (hint.format, hint.role)
         if key in s_by_leaf:
             raise ValueError(
                 f"senders {s_by_leaf[key].get('id', '?')!r} and "
@@ -480,12 +492,12 @@ def pair_by_identity(
     pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for r in receivers:
         hint = extract_group_hint(r.get("tags"))
-        if hint is None or not hint.groupable:
+        key = hint.leaf if hint is not None else None
+        if key is None:
             raise ValueError(
                 f"receiver {r.get('id', '?')!r} has no groupable group hint — "
                 "cannot pair by identity",
             )
-        key = (hint.format, hint.role)
         sender = s_by_leaf.get(key)
         if sender is None:
             raise ValueError(
@@ -617,14 +629,8 @@ def _all_roles_compatible(
         ``hint.format`` can't diverge).
       * **caps intersection** — CCF algebra.
     """
-    r_by_leaf: dict[tuple[str, int], GroupedResource] = {
-        (m.hint.format, m.hint.role): m
-        for m in receiver_group.members if m.hint is not None
-    }
-    s_by_leaf: dict[tuple[str, int], GroupedResource] = {
-        (m.hint.format, m.hint.role): m
-        for m in sender_group.members if m.hint is not None
-    }
+    r_by_leaf = _by_leaf(receiver_group.members)
+    s_by_leaf = _by_leaf(sender_group.members)
     for leaf_key, receiver in r_by_leaf.items():
         sender = s_by_leaf.get(leaf_key)
         if sender is None:

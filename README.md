@@ -17,9 +17,9 @@ An NMOS Node implementation — covering the AMWA NMOS Interface Specifications 
 ## Highlights
 
 - **NMOS Interface Specifications** — Discovery (IS-04), Connection (IS-05), Authorization (IS-10), and Stream Compatibility (IS-11; excludes the `Input` / `Output` resources).
-- **Capabilities-driven controller** — the embedded NMOS Controller consumes BCP-004-01/-02 Sender / Receiver capabilities and drives IS-11 stream-compatibility negotiation (active + supported constraint sets, parameter constraints) through the **Matrox Capability Constraint Framework (CCF)** in `caps/`. Senders and Receivers are reconfigured at runtime against what the connected peers actually advertise — the matching surface is the device's declared capabilities, not prebaked SDP templates. IS-11 `Input` / `Output` resources are not implemented (see the Matrox NMOS extensions table below).
-- **Hierarchical mux capabilities** — transport / container layering for MPEG2-TS, NDI, SRT, and RTSP, plus the AM824 / AES3 audio mux container. IS-11 carries through the mux hierarchy: the Controller negotiates and configures each sub-flow / sub-stream (video, audio, data) independently against the connected peer's per-layer constraints. Audio sub-flows can be PCM, AAC, or AM824; video sub-flows can be raw, JPEG XS, H.264, or H.265 — all selected by capability matching.
-- **BCP-008 status reporting over IS-04 (no IS-12 / MS-05-02 dependency)** — Sender / Receiver status flows through IS-04 registration. The status appears as monitor resources in the registry; any controller subscribing to the registry's `/x-nmos/query/v1.3/subscriptions/` WebSocket sees changes asynchronously as grain messages. Any registry-connected controller can observe status without implementing the NC control-protocol stack.
+- **Capabilities-driven controller** — the embedded NMOS Controller consumes BCP-004-01/-02 capabilities and drives IS-11 negotiation through the **Matrox Capability Constraint Framework (CCF)** in `caps/`, reconfiguring Senders / Receivers at runtime against what peers actually advertise rather than against prebaked SDP templates. See [Specification coverage](#specification-coverage).
+- **Hierarchical mux capabilities** — transport / container layering for MPEG2-TS, NDI, SRT, and RTSP, plus the AM824 / AES3 audio mux container, with IS-11 negotiating each sub-flow / sub-stream (video, audio, data) independently against the peer's per-layer constraints. Audio sub-flows can be PCM, AAC, or AM824; video sub-flows raw, JPEG XS, H.264, or H.265 — all selected by capability matching. See [One Model](#one-model--independent--multiplexed-streams-unified).
+- **BCP-008 status reporting over IS-04 (no IS-12 / MS-05-02 dependency)** — Sender / Receiver status flows through IS-04 registration as monitor resources, so any registry-subscribed controller observes changes without implementing the NC control-protocol stack. See [Specification coverage](#specification-coverage).
 - **VSF Technical Recommendations** — TR-10-13 (privacy-encrypted transport) and TR-10-14 (USB-over-IP and capability sets).
 - **Three security configurations**, each with launch scripts and test coverage:
   - **Config A** — Mutual TLS, no OAuth 2.0
@@ -53,10 +53,48 @@ Then open <http://127.0.0.1:5050/controller/> and sign in with the password
 `admin`. The Controller discovers both Nodes through the registry and updates
 live over the registry's WebSocket. See [NMOS Registry](#nmos-registry).
 
-### Secured quick start — the fully secured rig (Config C: mutual TLS + OAuth 2.0)
+For TLS and OAuth 2.0 — the fully secured rig — see
+[Secured quick start](#secured-quick-start--the-fully-secured-rig-config-c-mutual-tls--oauth-20).
+
+### External dependencies of the launch scripts
+
+| Component | Config A (`start-node1-noauth2.sh`) | Config B (`start-node1-nomtls.sh`) | Config C (`start-node1.sh`) |
+|---|---|---|---|
+| **NMOS Registry (IS-04)** | optional | optional | optional |
+| **OAuth 2.0 Authorization Server (IS-10)** | not used | **required** | **required** |
+| **TLS server certificate** | required | required | required |
+| **TLS client certificate** | required (mTLS) | not used | required (mTLS) |
+
+Notes on the dependencies:
+
+- **NMOS Registry**: a single Node runs **standalone** with no registry — pass `--rdsHost ""` (the launch-script default already wires this when no `$3 $4` are supplied). In this mode the embedded NMOS Controller seeds its cache **once at startup** from the local Node's resources, so the Controller UI shows the initial set of senders / receivers / sources / flows. **The cache is not live-updated** afterwards — IS-05 activations, IS-11 reconfigurations, BCP-008 status changes that happen at run-time will not appear in the Controller UI until you point the Node at a real registry. To exercise multi-Node negotiation AND see live updates, run the [registry that ships with this repository](#nmos-registry) (`./start-registry.sh`) or any other IS-04-compliant registry such as [nmos-cpp's](https://github.com/sony/nmos-cpp), passing `$3 $4` positional args on the launch script.
+
+- **OAuth 2.0 Authorization Server**: required for Configs B and C — the Node fetches JWKS from the AS, validates Bearer tokens against the published public keys, and enforces the IS-10 claim semantics (`aud`, `scope`, `x-nmos-*`). Any IS-10-compliant AS works; a [Keycloak](https://www.keycloak.org/) realm is a common choice for production deployments. Pass the AS host / port to the launch script as `$1 $2`. Config A does not contact an AS.
+- **TLS material**: each launch script references a server cert / key (and, for mTLS, a client cert / key) and a trust root. Vendors substitute their own PKI by editing the scripts or by running `nmos_node.py` directly with `--nodeCertificate` / `--nodeKey` / `--nodeTrustedRootCA`.
+
+### Dev mode — no TLS
+
+The Node also supports a **no-TLS dev mode** that sits outside Configs A/B/C — plain HTTP on every surface, no OAuth, no client-cert verification. It is **not certifiable under any security spec** (under NMOS With Control Plane Security a device shall not claim compliance while so configured), but is useful for quick connectivity experiments without PKI setup.
+
+Run `nmos_node.py` directly with the disable flags:
+
+```bash
+python3 nmos_node.py \
+  --nodeDisableTLS --rdsDisableTLS --oauth2DisableTLS \
+  --nodeAddr 127.0.0.1 --nodePort 5050 \
+  --nodeControlPort 8080 --controllerAdminPassword admin
+```
+
+The full flag surface is documented by `--help`.
+
+Verify the install by running the test suite: `python3 -m pytest -q` — see [Tests](#tests).
+
+---
+
+## Secured quick start — the fully secured rig (Config C: mutual TLS + OAuth 2.0)
 
 TLS and OAuth 2.0 everywhere, two Nodes, no Keycloak and no Docker. **Read
-[Required before any TLS configuration](#required-before-any-tls-configuration)
+[Required before any TLS configuration](#required-before-any-tls-configuration-hosts-file-entries)
 first** — without the hosts-file entries every component fails to verify its
 peers.
 
@@ -90,9 +128,13 @@ Then open <https://XYZ-SNX00001:5050/controller/> and sign in **twice**:
 | The Controller's own password form | password `admin` |
 | The Authorization Server it redirects you to | `tr-10-sec-operator` / `admin` |
 
-Your browser will warn about the certificate — the shipped PKI is a private
-test CA that no browser trusts. Accept it, or add
-`Certificates/build.0/ExampleRootCA.pem` to your browser's trust store.
+Your browser will warn about the certificate — the shipped PKI is a private test
+CA that no browser trusts. Accept the warning once per origin: the Controller on
+`XYZ-SNX00001:5050`, and the Authorization Server on `XYZ-SNX00000:9443` that
+sign-in redirects to. **Do not add the test root to a system or browser trust
+store** — it ships with the project, so everyone running it has the same root and
+its private key is not yours to control; trusting it would cover *any* site
+presented by whoever holds that key, not just this rig.
 
 Node 2 is worth starting even if you only care about one Node. The token this
 rig issues is scoped to `SNX00001`, so on the **Senders** or **Receivers**
@@ -121,7 +163,7 @@ runs standalone — see the note under
 [External dependencies of the launch scripts](#external-dependencies-of-the-launch-scripts).
 `nmos_node.py --help` documents the full flag surface.
 
-#### Required before any TLS configuration: hosts-file entries
+### Required before any TLS configuration: hosts-file entries
 
 **Every TLS configuration reaches its peers by DNS name, never by IP address.** The
 shipped certificates carry DNS SANs of the form `XYZ-SNX000nn` (plus a `.local`
@@ -157,9 +199,7 @@ not `127.0.0.1`.
 
 The no-TLS launchers (`*-bare.sh`) bind `127.0.0.1` directly and need none of this.
 
-The Node ships a built-in NMOS Controller under `/controller/` on `--nodeControlPort` once you set `--controllerAdminPassword`. See [Controller sign-in](#controller-sign-in).
-
-#### Connecting a browser on Windows to a rig running in WSL2
+### Connecting a browser on Windows to a rig running in WSL2
 
 Every launcher binds **loopback only** — `127.0.0.1` inside the WSL
 distribution, never the WSL interface address. WSL2 forwards Windows
@@ -189,19 +229,29 @@ Then browse to <https://XYZ-SNX00001:5050/controller/>. `XYZ-SNX00000` has to
 resolve on Windows too, even though you never type it: under Configuration B
 or C the Controller redirects your browser there to sign in.
 
-The certificates are issued by a private test CA, so a browser will warn.
-Installing the root once is much less tedious than clicking through warnings on
-two origins — from an Administrator PowerShell:
+The certificates are issued by a private test CA, so every TLS origin will warn.
+**Accept the warning for each origin. Do not install the test root into the
+Windows certificate store.** That root ships with the project, so every user of
+it has the same one, and its private key is not under your control — trusting it
+machine-wide would let anyone holding that key present a trusted certificate for
+*any* site to this machine, long after you are done with the rig. A per-origin
+exception costs a few clicks and goes away with the browser profile.
 
-```powershell
-Import-Certificate -FilePath '\\wsl$\<distro>\home\<you>\...\nmos-reference\Certificates\build.0\ExampleRootCA.pem' `
-                   -CertStoreLocation Cert:\LocalMachine\Root
-```
+Under Configuration B or C there are two origins to accept: the Controller on
+`XYZ-SNX00001:5050`, and the Authorization Server on `XYZ-SNX00000:9443` that
+sign-in redirects to. Visiting <https://XYZ-SNX00000:9443/> once up front gets
+its warning out of the way so the redirect lands without interruption.
 
-or run `certlm.msc` and import it under *Trusted Root Certification
-Authorities*. Chrome and Edge use the Windows store; Firefox keeps its own,
-under *Settings → Privacy & Security → Certificates → View Certificates →
-Authorities → Import*.
+How each browser surfaces it:
+
+| Browser | What you see | How to continue |
+|---|---|---|
+| Chrome | "Your connection is not private" — `NET::ERR_CERT_AUTHORITY_INVALID` | **Advanced** → **Proceed to `<name>` (unsafe)** |
+| Edge | "Your connection isn't private" — `NET::ERR_CERT_AUTHORITY_INVALID` | **Advanced** → **Continue to `<name>` (unsafe)** |
+| Firefox | "Warning: Potential Security Risk Ahead" — `SEC_ERROR_UNKNOWN_ISSUER` | **Advanced…** → **Accept the Risk and Continue** |
+
+Firefox keeps its own exception store, so accepting in Chrome or Edge does not
+cover it, and vice versa.
 
 If `localhost` forwarding is not working — occasionally it needs
 `wsl --shutdown` and a restart — a rig bound to loopback cannot be reached
@@ -214,38 +264,46 @@ curl -sk -o /dev/null -w '%{http_code}\n' https://XYZ-SNX00001:5050/controller/ 
 A 401 means the Node is serving and the problem is the WSL network layer, not
 the rig.
 
-### External dependencies of the launch scripts
+### Running the rigs from Windows Command Prompt
 
-| Component | Config A (`start-node1-noauth2.sh`) | Config B (`start-node1-nomtls.sh`) | Config C (`start-node1.sh`) |
-|---|---|---|---|
-| **NMOS Registry (IS-04)** | optional | optional | optional |
-| **OAuth 2.0 Authorization Server (IS-10)** | not used | **required** | **required** |
-| **TLS server certificate** | required | required | required |
-| **TLS client certificate** | required (mTLS) | not used | required (mTLS) |
+Every rig above has a Windows counterpart. Start the **bare** (no-TLS) rig from
+Command Prompt, one launcher per window. Both launchers prefer the repository's
+`.venv\Scripts\python.exe`:
 
-Notes on the dependencies:
-
-- **NMOS Registry**: a single Node runs **standalone** with no registry — pass `--rdsHost ""` (the launch-script default already wires this when no `$3 $4` are supplied). In this mode the embedded NMOS Controller seeds its cache **once at startup** from the local Node's resources, so the Controller UI shows the initial set of senders / receivers / sources / flows. **The cache is not live-updated** afterwards — IS-05 activations, IS-11 reconfigurations, BCP-008 status changes that happen at run-time will not appear in the Controller UI until you point the Node at a real registry. To exercise multi-Node negotiation AND see live updates, run the [registry that ships with this repository](#nmos-registry) (`./start-registry.sh`) or any other IS-04-compliant registry such as [nmos-cpp's](https://github.com/sony/nmos-cpp), passing `$3 $4` positional args on the launch script.
-
-- **OAuth 2.0 Authorization Server**: required for Configs B and C — the Node fetches JWKS from the AS, validates Bearer tokens against the published public keys, and enforces the IS-10 claim semantics (`aud`, `scope`, `x-nmos-*`). Any IS-10-compliant AS works; a [Keycloak](https://www.keycloak.org/) realm is a common choice for production deployments. Pass the AS host / port to the launch script as `$1 $2`. Config A does not contact an AS.
-- **TLS material**: each launch script references a server cert / key (and, for mTLS, a client cert / key) and a trust root. Vendors substitute their own PKI by editing the scripts or by running `nmos_node.py` directly with `--nodeCertificate` / `--nodeKey` / `--nodeTrustedRootCA`.
-
-### Dev mode — no TLS
-
-The Node also supports a **no-TLS dev mode** that sits outside Configs A/B/C — plain HTTP on every surface, no OAuth, no client-cert verification. It is **not certifiable under any security spec** (under NMOS With Control Plane Security a device shall not claim compliance while so configured), but is useful for quick connectivity experiments without PKI setup.
-
-Run `nmos_node.py` directly with the disable flags:
-
-```bash
-python3 nmos_node.py \
-  --nodeDisableTLS --rdsDisableTLS --oauth2DisableTLS \
-  --nodeAddr 127.0.0.1 --nodePort 5050 \
-  --nodeControlPort 8080 --controllerAdminPassword admin
+```bat
+start-registry-bare.bat
+start-node1-bare.bat
+start-node2-bare.bat
 ```
 
-The full flag surface is documented by `--help`.
+These launchers mirror the shell contracts. The node launchers expect an IS-04
+Registry on `127.0.0.1` (Query API port 8443, Registration API port 8444),
+which `start-registry-bare.bat` provides with matching defaults. Without a
+Registry the Node APIs still start, but their consoles report connection-refused
+retries and the Controller cannot assemble a shared two-node resource view.
 
-Verify the install by running the test suite: `python3 -m pytest -q` — see [Tests](#tests).
+Each launcher prints the selected Registry address before starting.
+
+The secured rigs have Windows counterparts too. `start-node1.bat` and
+`start-node2.bat` take the same arguments and policy flags as their shell
+equivalents, and `start-fake-as.bat` runs the Authorization Server, so
+Configuration C works from Command Prompt too:
+
+```bat
+start-fake-as.bat
+start-registry.bat 2
+start-node1.bat XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2
+start-node2.bat XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2
+```
+
+Anything using TLS needs the hosts-file entries described in
+[Required before any TLS configuration](#required-before-any-tls-configuration-hosts-file-entries),
+in `C:\Windows\System32\drivers\etc\hosts`, edited as Administrator. The
+remaining shell-only launchers are the Configuration A and B node variants
+(`start-node1-noauth2.sh`, `start-node1-nomtls.sh`).
+`NMOS_RDS_HOST` can override discovery, and `NMOS_RDS_REG_PORT` can override
+port 8444; the Query API port is derived as one less than the Registration API
+port.
 
 ---
 
@@ -294,7 +352,9 @@ banner, so the running compliance mode is visible rather than inferred.
 
 ### Controller sign-in
 
-The embedded Controller is gated by a **password-only login form** at `/controller/login`, checked against `--controllerAdminPassword`. There is **no user name**, and this is **not HTTP Basic auth** — an earlier version of the app used Basic, and a cached `Authorization: Basic` header is now ignored on the way in and stripped before any request is proxied to a Node (see `nmos/controller/auth.py` for the rationale: a native browser popup supports neither logout nor error messaging).
+The Node serves its built-in NMOS Controller under `/controller/` on `--nodeControlPort`, once you set `--controllerAdminPassword`.
+
+The Controller is gated by a **password-only login form** at `/controller/login`, checked against `--controllerAdminPassword`. There is **no user name**, and this is **not HTTP Basic auth** — an earlier version of the app used Basic, and a cached `Authorization: Basic` header is now ignored on the way in and stripped before any request is proxied to a Node (see `nmos/controller/auth.py` for the rationale: a native browser popup supports neither logout nor error messaging).
 
 Opening any page unauthenticated redirects to the login form. API paths under `/controller/api/` answer `401` with:
 
@@ -393,43 +453,8 @@ senders?"`, `"reverse-direction buttons will not appear. Start a second node."`)
 and `manifest.json` records whether a live status update was genuinely observed
 or merely unconfirmed.
 
-On Windows, start the equivalent bare nodes from Command Prompt in separate
-windows. Both launchers prefer the repository's `.venv\Scripts\python.exe`:
-
-```bat
-start-registry-bare.bat
-start-node1-bare.bat
-start-node2-bare.bat
-```
-
-These launchers mirror the shell contracts. The node launchers expect an IS-04
-Registry on `127.0.0.1` (Query API port 8443, Registration API port 8444),
-which `start-registry-bare.bat` provides with matching defaults. Without a
-Registry the Node APIs still start, but their consoles report connection-refused
-retries and the Controller cannot assemble a shared two-node resource view.
-
-Each launcher prints the selected Registry address before starting.
-
-The secured rigs have Windows counterparts too. `start-node1.bat` and
-`start-node2.bat` take the same arguments and policy flags as their shell
-equivalents, and `start-fake-as.bat` runs the Authorization Server, so
-Configuration C works from Command Prompt with no Keycloak and no Docker:
-
-```bat
-start-fake-as.bat
-start-registry.bat 2
-start-node1.bat XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2
-start-node2.bat XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2
-```
-
-Anything using TLS needs the hosts-file entries described in
-[Required before any TLS configuration](#required-before-any-tls-configuration),
-in `C:\Windows\System32\drivers\etc\hosts`, edited as Administrator. The
-remaining shell-only launchers are the Configuration A and B node variants
-(`start-node1-noauth2.sh`, `start-node1-nomtls.sh`).
-`NMOS_RDS_HOST` can override discovery, and `NMOS_RDS_REG_PORT` can override
-port 8444; the Query API port is derived as one less than the Registration API
-port.
+On Windows, start the equivalent rig from Command Prompt — see
+[Running the rigs from Windows Command Prompt](#running-the-rigs-from-windows-command-prompt).
 
 Options mirror `nmos_node.py`'s camelCase style: `--scenario`, `--controlPort`
 (disambiguate when several nodes serve a UI), `--artifactsRoot`, `--headed`,
@@ -501,7 +526,7 @@ Together with the embedded capabilities-driven NMOS Controller, the streaming en
 | **IS-04** Discovery & Registration | Node API, Registry client |
 | **IS-05** Connection Management | Senders, Receivers, staged/active model |
 | **IS-10** Authorization | OAuth 2.0 Bearer tokens, JWKS, claims |
-| **IS-11** Stream Compatibility | Sender / Receiver capability + constraint support via the Matrox CCF framework (`caps/`); dynamic reconfiguration driven by active constraint sets; per-sub-flow / per-sub-stream configuration for hierarchical mux transports. IS-11 `Input` / `Output` resources are not implemented. |
+| **IS-11** Stream Compatibility | Sender / Receiver capability + constraint support via the Matrox CCF framework (`caps/`) — supported + active constraint sets and parameter constraints; dynamic reconfiguration driven by active constraint sets; per-sub-flow / per-sub-stream configuration for hierarchical mux transports. IS-11 `Input` / `Output` resources are not implemented. |
 
 ### AMWA NMOS Best Current Practices ([specs.amwa.tv](https://specs.amwa.tv/))
 
@@ -617,7 +642,7 @@ run_server.py           — Lightweight wrapper for embedding nmos_node from scr
 demo_controller.py      — Standalone demo controller for manual exploration
 start-node*.sh          — Launch scripts for the three security configurations
 start-registry*.sh      — Registry launchers (bare = no TLS; the other takes a RAP value)
-start-fake-as.sh        — Test OAuth 2.0 Authorization Server (no Keycloak, no Docker)
+start-fake-as.sh        — Test OAuth 2.0 Authorization Server (vendored; see below)
 start-node*-bare.bat    — Windows launchers for the bare (registry-only) rigs
 start-registry*.bat     — Windows registry launchers
 requirements.txt        — Runtime dependencies

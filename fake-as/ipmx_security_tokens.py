@@ -344,18 +344,21 @@ def jwks_for(*keys: SigningKey) -> dict[str, Any]:
 def _public_jwk(key: SigningKey) -> dict[str, Any]:
     """One JWK entry for ``key``'s public component."""
     pub = key.public_key
+    # Distinct names per branch: RSAPublicNumbers and EllipticCurvePublicNumbers
+    # are unrelated types, so one shared name binds to whichever branch came
+    # first and makes the other branch's field reads unprovable.
     if isinstance(pub, rsa.RSAPublicKey):
-        numbers = pub.public_numbers()
+        rsa_numbers = pub.public_numbers()
         return {
             "kty": "RSA",
             "alg": key.alg,
             "kid": key.kid,
             "use": "sig",
-            "n": _b64url_int(numbers.n),
-            "e": _b64url_int(numbers.e),
+            "n": _b64url_int(rsa_numbers.n),
+            "e": _b64url_int(rsa_numbers.e),
         }
     if isinstance(pub, ec.EllipticCurvePublicKey):
-        numbers = pub.public_numbers()
+        ec_numbers = pub.public_numbers()
         # JWKS curve names: P-256 / P-521 (RFC 7518 §6.2.1.1).
         curve_name = "P-256" if pub.curve.name == "secp256r1" else "P-521"
         byte_len = (pub.curve.key_size + 7) // 8
@@ -365,8 +368,8 @@ def _public_jwk(key: SigningKey) -> dict[str, Any]:
             "kid": key.kid,
             "use": "sig",
             "crv": curve_name,
-            "x": _b64url(numbers.x.to_bytes(byte_len, "big")),
-            "y": _b64url(numbers.y.to_bytes(byte_len, "big")),
+            "x": _b64url(ec_numbers.x.to_bytes(byte_len, "big")),
+            "y": _b64url(ec_numbers.y.to_bytes(byte_len, "big")),
         }
     raise TypeError(f"unsupported public-key type {type(pub).__name__}")
 

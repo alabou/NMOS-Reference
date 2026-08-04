@@ -162,6 +162,23 @@ class GroupHint:
         return self.group_name
 
     @property
+    def leaf(self) -> tuple[str, int] | None:
+        """The ``(format, role)`` leaf identity, or ``None`` when the hint
+        isn't groupable.
+
+        ``format`` and ``role`` are populated *only* for groupable hints, so
+        every caller that wants the pair has to prove groupability first.
+        Returning the pair as one optional makes that a single check the type
+        checker can follow — reading the two fields separately after a
+        ``groupable`` test leaves them ``str | None`` / ``int | None``, which
+        is how ``(None, None)`` leaves could otherwise reach leaf sets and
+        break their ``sorted()`` / dict-key contracts.
+        """
+        if not self.groupable or self.format is None or self.role is None:
+            return None
+        return (self.format, self.role)
+
+    @property
     def group_index(self) -> int:
         """Best-effort trailing integer of the group name. Used ONLY for the
         USB/Thunderbolt tie-break (``_resource_group_index``); never for

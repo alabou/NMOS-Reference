@@ -72,7 +72,7 @@ OPERATOR_PASSWORD_ENV = "NMOS_OAUTH2_OPERATOR_PASSWORD"
 #: The account ``start-fake-as.sh`` registers by default. Having a default at
 #: all is what lets the OAuth 2.0 rig run with the same one exported variable
 #: as every other rig.
-DEFAULT_OPERATOR_USERNAME = "ipmx-operator"
+DEFAULT_OPERATOR_USERNAME = "tr-10-sec-operator"
 
 #: Options whose values must never reach an artifact file. ``/proc`` is
 #: world-readable and ``ps`` shows the same text, so reading these is not a new

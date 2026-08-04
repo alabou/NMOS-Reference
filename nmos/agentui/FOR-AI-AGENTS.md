@@ -86,7 +86,7 @@ A node started with TLS — `start-node1.sh`, `start-node1-nomtls.sh`,
 **Sign-in becomes two steps.** After the Controller's password gate the
 browser is redirected to the Authorization Server's own form, on a different
 origin, and `sign_in()` fills that too. It appears in the journal as a
-separate `sign_in_oauth2` step. The account defaults to `ipmx-operator` with
+separate `sign_in_oauth2` step. The account defaults to `tr-10-sec-operator` with
 the admin password — the pairing `start-fake-as.sh` provisions — and is
 overridable with `NMOS_OAUTH2_OPERATOR` / `NMOS_OAUTH2_OPERATOR_PASSWORD`.
 

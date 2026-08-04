@@ -55,7 +55,18 @@ include = ["nmos*", "caps*", "sdp*", "pep*"]
 [tool.mypy]
 strict = true
 python_version = "3.12"
-files = ["nmos"]
+# ``fake-as`` is listed explicitly because it sits outside the ``nmos``
+# package: its two modules are top-level (``ipmx_fake_as``,
+# ``ipmx_security_tokens``), which is also why it needs ``mypy_path`` below to
+# resolve the import between them. Without the entry the Authorization Server
+# was unchecked, and four --strict errors accumulated there unnoticed.
+#
+# NOTE: both files are byte-identical copies of the ones the TR-10-SEC
+# validator ships in a separate project (see start-fake-as.sh). Any fix mypy
+# prompts here MUST be mirrored there by hand — that identity is maintained by
+# discipline, not by tooling.
+files = ["nmos", "fake-as"]
+mypy_path = "fake-as"
 exclude = '''(?x)(
     ^nmos/.*/tests/
 )'''

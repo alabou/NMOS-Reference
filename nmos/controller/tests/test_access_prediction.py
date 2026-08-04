@@ -50,7 +50,7 @@ def _claims(**extra: Any) -> dict[str, Any]:
     """
     claims: dict[str, Any] = {
         "iss": "https://XYZ-SNX00000:9443/realms/TR-10-SEC",
-        "sub": "ipmx-operator",
+        "sub": "tr-10-sec-operator",
         "client_id": "Example.Company.Device.Client.ABC.SNX00001.example.com",
         "azp": "Example.Company.Device.Client.ABC.SNX00001.example.com",
         "aud": [CERT_NAMES[0]],
