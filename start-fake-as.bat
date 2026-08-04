@@ -22,6 +22,7 @@ rem   --client-id=ID    OAuth 2.0 client_id (default matches start-node1)
 rem   --client-secret=S Client secret (default secret)
 rem   --operator=NAME   Pre-canned sign-in account (default ipmx-operator)
 rem   --password=PW     Its password (default admin)
+rem   --operator-access=A  readwrite (default) or read
 rem
 rem Requires hosts-file entries. This server is reached by DNS name because
 rem its certificate carries DNS SANs and an IP literal matches none of them.
@@ -48,6 +49,7 @@ set "CLIENT_ID=Example.Company.Device.Client.ABC.SNX00001.example.com"
 set "CLIENT_SECRET=secret"
 set "OPERATOR=ipmx-operator"
 set "PASSWORD=admin"
+set "OPERATOR_ACCESS=readwrite"
 
 rem In cmd.exe, %%1 treats an equals sign as an argument separator. Keep %%*
 rem as text and peel off tokens with FOR /F so options such as --tct=1 survive.
@@ -89,6 +91,10 @@ if /i "%ARG:~0,11%"=="--operator=" (
 )
 if /i "%ARG:~0,11%"=="--password=" (
   set "PASSWORD=%ARG:~11%"
+  goto parse_options
+)
+if /i "%ARG:~0,18%"=="--operator-access=" (
+  set "OPERATOR_ACCESS=%ARG:~18%"
   goto parse_options
 )
 >&2 echo start-fake-as.bat: unknown argument %ARG%
@@ -168,7 +174,7 @@ if errorlevel 1 (
 
 echo Authorization Server (test)   https://XYZ-SNX00000:%AS_PORT%/realms/TR-10-SEC
 echo   metadata   /.well-known/oauth-authorization-server/realms/TR-10-SEC
-echo   sign in as %OPERATOR% / %PASSWORD%
+echo   sign in as %OPERATOR% / %PASSWORD% (%OPERATOR_ACCESS%)
 echo   client     %CLIENT_ID%
 echo   tokens aud XYZ-%NODE_SERIAL%
 echo.
@@ -184,7 +190,8 @@ echo.
   --client-secret "%CLIENT_SECRET%" ^
   %REDIRECT_ARGS% ^
   --operator-username "%OPERATOR%" ^
-  --operator-password "%PASSWORD%"
+  --operator-password "%PASSWORD%" ^
+  --operator-access "%OPERATOR_ACCESS%"
 set "EXIT_CODE=%ERRORLEVEL%"
 goto done
 

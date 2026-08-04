@@ -67,8 +67,17 @@
         <i class="bi bi-exclamation-triangle-fill device-cap-lock text-warning"
            title="writes blocked: {{ _reasons.write[0] }}"></i>
       {% else %}
+        {# Green is the absence of a known objection, so the wording says what
+           was actually checked: the Node's authorization flag, the token's
+           audience, its scope, and its x-nmos-* privileges. Indexed x-nmos
+           forms and any policy the Node applies beyond the token are not
+           visible from here, so this does not promise a write will succeed.
+           It previously read "controller can read and write to this device",
+           which was asserted on the audience check alone and went green for
+           read-only tokens. #}
         <i class="bi bi-check-circle-fill device-cap-lock text-success"
-           title="Authorized — controller can read and write to this device"></i>
+           title="No access problem detected — the token's audience, scope and
+                  x-nmos privileges all permit reading and writing this device"></i>
       {% endif %}
       {% if dev.device_address %}
         <span class="device-address ml-3 text-muted">{{ dev.device_address }}</span>

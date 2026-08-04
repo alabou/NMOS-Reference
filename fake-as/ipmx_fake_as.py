@@ -115,6 +115,25 @@ class OAuthError(StrEnum):
     ACCESS_DENIED = "access_denied"
 
 
+class OperatorAccess(StrEnum):
+    """How much the pre-canned operator's token is allowed to do.
+
+    Read-only is a supported configuration rather than a degraded one: it is
+    what an NMOS monitoring station should be issued, and it makes the
+    difference between reading and operating demonstrable on one rig.
+    """
+
+    READ_WRITE = "readwrite"
+    """Read and configure — what a Controller operator needs."""
+
+    READ = "read"
+    """Read only. Every state-changing call returns 403."""
+
+
+#: Scopes that are not NMOS API names and get no ``x-nmos-*`` privilege claim.
+_NON_NMOS_SCOPES: frozenset[str] = frozenset({"openid", "profile", "email"})
+
+
 AUTHORIZATION_CODE_TTL_SECONDS: int = 60
 """How long an issued authorization code stays redeemable.
 
@@ -233,6 +252,14 @@ class FakeASConfig:
     """Password for :attr:`operator_username`. Defaults to the reference
     Controller's own admin password so a tutorial operator types the
     same secret at both gates."""
+
+    operator_access: OperatorAccess = OperatorAccess.READ_WRITE
+    """Whether the operator's token authorises configuration or only reading.
+
+    Defaults to read/write: an operator signing in to a Controller is there
+    to operate the system, and a scope-only token would let them read every
+    Node and then fail every configuration call with 403. See
+    :meth:`FakeAuthorizationServer._nmos_privileges`."""
 
     @property
     def issuer(self) -> str:
@@ -941,6 +968,47 @@ class FakeAuthorizationServer:
             scope=grant.scope, grant=GrantType.REFRESH_TOKEN,
         )
 
+    def _nmos_privileges(self, scope: str) -> dict[str, Any]:
+        """Build the ``ext`` claim carrying ``x-nmos-<api>`` privileges.
+
+        Without this, a token authorises **reads only**. "NMOS With
+        OAuth2.0" § Validation:
+
+            The `scope` claim [...] MUST provide Read access to the complete
+            hierarchy of the current API [...] The `write` attribute of an
+            `x-nmos-*` claim, if present, MUST provide Write access if the
+            array of paths is ["*"] [...] The absence of a `write` attribute
+            prevents Write access.
+
+        So a scope-only token lets a Controller read a Node and then fails
+        every configuration call with 403 "insufficient permissions" —
+        IS-11 ``constraints/active``, IS-05 ``staged``, everything. An
+        operator who signed in to *operate* the system needs the privilege
+        claims too.
+
+        ``read`` is emitted alongside ``write`` because it is not optional
+        here: the same section states that "the presence of an `x-nmos-*`
+        claim MUST remove the default Read access from the `scope` claim for
+        the associated API", and that "Both Read and Write access MUST be
+        allowed in order to get Write access". Emitting ``write`` alone
+        would therefore *revoke* the read the scope had granted.
+
+        Placed under ``ext`` per the same document: the private claims
+        "SHOULD be placed in an `ext` claim to separate them from standard
+        claims".
+
+        ``openid`` is filtered out — it is an OIDC scope, not an NMOS API,
+        and an ``x-nmos-openid`` claim would be meaningless.
+        """
+        apis = [s for s in scope.split() if s and s not in _NON_NMOS_SCOPES]
+        if not apis:
+            return {}
+        allow_write = self._config.operator_access is OperatorAccess.READ_WRITE
+        grant: dict[str, Any] = {"read": ["*"]}
+        if allow_write:
+            grant["write"] = ["*"]
+        return {f"x-nmos-{api}": dict(grant) for api in apis}
+
     def _issue_tokens(
         self, *, client_id: str, subject: str, scope: str, grant: GrantType,
     ) -> web.Response:
@@ -983,6 +1051,9 @@ class FakeAuthorizationServer:
             """
             claims["sub"] = subject
             claims["jti"] = secrets.token_urlsafe(16)
+            privileges = self._nmos_privileges(scope)
+            if privileges:
+                claims["ext"] = privileges
 
         access_token = mint_token(
             tmpl, self.primary_key,
@@ -1111,6 +1182,14 @@ def _cli() -> argparse.Namespace:
         help="Password for --operator-username. Defaults to the reference "
              "Controller's own admin password.",
     )
+    p.add_argument(
+        "--operator-access", default=str(OperatorAccess.READ_WRITE),
+        choices=[str(a) for a in OperatorAccess],
+        help="Whether the operator's token authorises configuration "
+             "(readwrite, the default) or only reading. A read-only token "
+             "lets a Controller display everything and refuses every "
+             "state-changing call with 403.",
+    )
     return p.parse_args()
 
 
@@ -1139,6 +1218,7 @@ async def _amain() -> int:
         clients=clients,
         operator_username=cli.operator_username,
         operator_password=cli.operator_password,
+        operator_access=OperatorAccess(cli.operator_access),
     )
     # Provide one key per TR-10-SEC §14.3.3.2 permitted algorithm so
     # the AS can serve any DUT that prefers RS256/RS512/ES256/ES512.

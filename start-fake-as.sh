@@ -19,6 +19,10 @@
 #   --operator=NAME   Pre-canned sign-in account (default: ipmx-operator)
 #   --password=PW     Its password (default: admin, the same password
 #                     start-node1.sh gives --controllerAdminPassword)
+#   --operator-access=A  readwrite (default) or read. A read-only token
+#                     lets the Controller display everything and refuses
+#                     every state-changing call with 403 — which the
+#                     Controller now predicts and greys out in advance.
 #
 # This is a drop-in replacement for keycloak/start-keycloak.sh: same host,
 # same port, same certificate, same realm path. It needs no Docker, so the
@@ -65,6 +69,7 @@ CLIENT_ID="Example.Company.Device.Client.ABC.SNX00001.example.com"
 CLIENT_SECRET="secret"
 OPERATOR="ipmx-operator"
 PASSWORD="admin"
+OPERATOR_ACCESS="readwrite"
 
 for arg in "$@"; do
   case "$arg" in
@@ -76,6 +81,7 @@ for arg in "$@"; do
     --client-secret=*) CLIENT_SECRET="${arg#*=}" ;;
     --operator=*)      OPERATOR="${arg#*=}" ;;
     --password=*)      PASSWORD="${arg#*=}" ;;
+    --operator-access=*) OPERATOR_ACCESS="${arg#*=}" ;;
     *) echo "start-fake-as.sh: unknown arg $arg" >&2; exit 64 ;;
   esac
 done
@@ -145,7 +151,7 @@ done
 
 echo "Authorization Server (test)   https://XYZ-SNX00000:${AS_PORT}/realms/TR-10-SEC"
 echo "  metadata   /.well-known/oauth-authorization-server/realms/TR-10-SEC"
-echo "  sign in as ${OPERATOR} / ${PASSWORD}"
+echo "  sign in as ${OPERATOR} / ${PASSWORD} (${OPERATOR_ACCESS})"
 echo "  client     ${CLIENT_ID}"
 echo "  tokens aud XYZ-${NODE_SERIAL}"
 echo
@@ -161,4 +167,5 @@ exec python3 "$FAKE_AS" \
   --client-secret "$CLIENT_SECRET" \
   "${REDIRECT_ARGS[@]}" \
   --operator-username "$OPERATOR" \
-  --operator-password "$PASSWORD"
+  --operator-password "$PASSWORD" \
+  --operator-access   "$OPERATOR_ACCESS"

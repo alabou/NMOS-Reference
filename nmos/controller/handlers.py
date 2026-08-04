@@ -200,6 +200,104 @@ def _headers_with_reservation(
     return out
 
 
+#: The NMOS APIs this controller calls on a remote Node, and what each is for.
+#: Used to phrase a privilege objection in terms of the action it blocks rather
+#: than the claim name, because an operator reads the tooltip, not the token.
+_CONTROLLER_APIS: tuple[tuple[str, str], ...] = (
+    ("node", "reading this Node's resources"),
+    ("connection", "IS-05 activations"),
+    ("streamcompatibility", "IS-11 constraint changes"),
+    ("manufacturer", "Node Reservation"),
+)
+
+
+def _token_privilege(claims: dict[str, Any], api_name: str) -> dict[str, Any] | None:
+    """The ``x-nmos-<api>`` claim, from ``ext`` or the top level.
+
+    "NMOS With OAuth2.0" allows either placement: the private claims "SHOULD
+    be placed in an `ext` claim" but a Node "MUST support having the private
+    claims `x-nmos-*` either in the `ext` claim or along with the standard
+    claims". Returns ``None`` when the claim is absent, which is itself
+    meaningful — see :func:`_token_privilege_reasons`.
+    """
+    key = f"x-nmos-{api_name}"
+    ext = claims.get("ext")
+    if isinstance(ext, dict) and key in ext:
+        value = ext[key]
+    else:
+        value = claims.get(key)
+    return value if isinstance(value, dict) else None
+
+
+def _token_privilege_reasons(claims: dict[str, Any]) -> dict[str, list[str]]:
+    """Predict, from the token alone, what the remote Node will refuse.
+
+    This exists because the audience check is not the only gate the Node
+    applies, and a token that passes it can still authorise nothing but
+    reads. ``validate_access`` in :mod:`nmos.oauth2` is the authority, but it
+    cannot be called from here: under the serial-number audience rule it
+    needs the Node's TLS certificate names to evaluate ``aud``, and the
+    controller does not know them. Passing an empty list makes that check
+    fail closed by design, which would report every Device as unreachable —
+    a worse answer than the one this replaces.
+
+    So this evaluates only the gates that are decidable from the claims
+    themselves, and stays silent otherwise:
+
+    * ``scope`` missing the API — blocks read and write. A pure membership
+      test on a space-separated list.
+    * ``x-nmos-<api>`` absent while ``scope`` grants the API — blocks write.
+      "The absence of a `write` attribute prevents Write access", and an
+      absent claim has no attributes at all. **This is the case that used to
+      go unreported**: the tick went green on audience alone and the first
+      IS-11 or IS-05 write came back 403 "insufficient permissions".
+    * ``read`` / ``write`` present as ``[""]`` — explicit denial.
+    * ``read`` / ``write`` present as ``["*"]`` — explicit grant, no reason.
+
+    Indexed forms (arrays of signed integers referencing ``aud`` positions)
+    are deliberately **not** evaluated: resolving them needs the same
+    certificate names, so guessing would risk a false objection. They are
+    left to the Node, which is where the authoritative answer lives.
+    """
+    reasons: dict[str, list[str]] = {"read": [], "write": []}
+    scope = claims.get("scope")
+    granted = set(scope.split()) if isinstance(scope, str) else set()
+
+    for api_name, purpose in _CONTROLLER_APIS:
+        if api_name not in granted:
+            reasons["read"].append(
+                f"the access token's scope does not include "
+                f"{api_name!r}, so {purpose} is not authorised; "
+                f"scope is {scope!r}")
+            reasons["write"].append(
+                f"the access token's scope does not include {api_name!r} "
+                f"({purpose})")
+            continue
+
+        privilege = _token_privilege(claims, api_name)
+        if privilege is None:
+            # Scope alone grants read; write needs the private claim.
+            reasons["write"].append(
+                f"the access token carries no 'x-nmos-{api_name}' claim, so "
+                f"it authorises reads only — {purpose} will be refused with "
+                f"403. The Authorization Server must grant write privileges "
+                f"for this API.")
+            continue
+
+        for axis in ("read", "write"):
+            paths = privilege.get(axis)
+            if paths is None:
+                reasons[axis].append(
+                    f"'x-nmos-{api_name}' grants no {axis} access "
+                    f"({purpose})")
+            elif paths == [""]:
+                reasons[axis].append(
+                    f"'x-nmos-{api_name}' explicitly denies {axis} access "
+                    f"({purpose})")
+
+    return reasons
+
+
 def _device_inaccessible_reasons(
     cache: ResourceCache,
     admin: AdminSessionState,
@@ -280,6 +378,16 @@ def _device_inaccessible_reasons(
             )
             reasons["read"].append(msg)
             reasons["write"].append(msg)
+
+    # Token-privilege check. The audience check above answers "is this token
+    # for this Node"; this answers "does it actually permit what the buttons
+    # will do". Both are needed: a token can name the right Node and still
+    # authorise reads only, which is the normal shape of a scope-only token.
+    if oauth2_on_remote and admin.oauth2_tokens is not None:
+        for axis, message in _token_privilege_reasons(
+            admin.oauth2_tokens.claims,
+        ).items():
+            reasons[axis].extend(message)
 
     if device_id in admin.cert_required_devices:
         reasons["write"].append(

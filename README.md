@@ -66,21 +66,73 @@ Then open <http://127.0.0.1:5050/controller/> and sign in with the password
 `admin`. The Controller discovers both Nodes through the registry and updates
 live over the registry's WebSocket. See [NMOS Registry](#nmos-registry).
 
-For the secured configurations, three further launch scripts cover the three
-security profiles:
+### Secured quick start — the full Configuration C rig
+
+TLS and OAuth 2.0 everywhere, two Nodes, no Keycloak and no Docker. **Read
+[Required before any TLS configuration](#required-before-any-tls-configuration)
+first** — without the hosts-file entries every component fails to verify its
+peers.
+
+Four terminals, and the order matters: the Nodes need both the Authorization
+Server and the registry to be up before they start.
 
 ```bash
-# Config A — mTLS without OAuth 2.0
+# terminal 1 — OAuth 2.0 Authorization Server on 9443
+./start-fake-as.sh
+
+# terminal 2 — IS-04 registry, mutual TLS (RAP=2)
+./start-registry.sh 2
+
+# terminal 3 — Node 1 (SNX00001) + the Controller UI on 5050
+./start-node1.sh XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2
+
+# terminal 4 — Node 2 (SNX00002)
+./start-node2.sh XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2
+```
+
+The positional arguments are `<as-host> <as-port> <rds-host> <rds-port>`, so
+both Nodes are told to reach the Authorization Server at `XYZ-SNX00000:9443`
+and the registry at `XYZ-SNX00000:8444`. Give the registry its **certificate
+name**, not `127.0.0.1` — under `--rap=1` or `--rap=2` the Node verifies the
+registry's certificate, and an IP literal matches no DNS SAN in it.
+
+Then open <https://XYZ-SNX00001:5050/controller/> and sign in **twice**:
+
+| Gate | Credentials |
+|---|---|
+| The Controller's own password form | password `admin` |
+| The Authorization Server it redirects you to | `ipmx-operator` / `admin` |
+
+Your browser will warn about the certificate — the shipped PKI is a private
+test CA that no browser trusts. Accept it, or add
+`Certificates/build.0/ExampleRootCA.pem` to your browser's trust store.
+
+Node 2 is worth starting even if you only care about one Node. The token this
+rig issues is scoped to `SNX00001`, so on the **Senders** or **Receivers**
+page Node 2's device block shows the refusal *and its reason*:
+
+```
+OAuth2 token grants do not cover device serial 'SNX00002';
+current aud entries: 'XYZ-SNX00001'
+```
+
+Per-device token scoping made visible, which is what the
+`tutorial-security` walkthrough is built around — see [Tutorials](#tutorials).
+
+For a single Node in the other two profiles:
+
+```bash
+# Config A — mTLS without OAuth 2.0 (no Authorization Server needed)
 ./start-node1-noauth2.sh
 
 # Config B — OAuth 2.0 with server TLS
 ./start-node1-nomtls.sh
-
-# Config C — mTLS + OAuth 2.0
-./start-node1.sh
 ```
 
-Positional arguments to the launch script set the AS host/port and registry host/port — see `--help` in `nmos_node.py` for the full flag surface.
+Both take the same positional arguments. With no registry arguments a Node
+runs standalone — see the note under
+[External dependencies of the launch scripts](#external-dependencies-of-the-launch-scripts).
+`nmos_node.py --help` documents the full flag surface.
 
 #### Required before any TLS configuration: hosts-file entries
 
@@ -116,14 +168,64 @@ Passing `127.0.0.1` as a launch script's registry-host argument fails under RAP=
 for exactly the reason above — use `./start-node1.sh XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2`,
 not `127.0.0.1`.
 
-Browsing the Controller from a **Windows** host against Nodes running in WSL2 needs
-the same entries in `C:\Windows\System32\drivers\etc\hosts` (edited as
-Administrator), pointing at the WSL address rather than `127.0.0.1` — `wsl.exe
-hostname -I` prints it.
-
 The no-TLS launchers (`*-bare.sh`) bind `127.0.0.1` directly and need none of this.
 
 The Node ships a built-in NMOS Controller under `/controller/` on `--nodeControlPort` once you set `--controllerAdminPassword`. See [Controller sign-in](#controller-sign-in).
+
+#### Connecting a browser on Windows to a rig running in WSL2
+
+Every launcher binds **loopback only** — `127.0.0.1` inside the WSL
+distribution, never the WSL interface address. WSL2 forwards Windows
+`localhost` to the distribution's loopback, and that forwarding is the whole
+mechanism: do **not** point anything at the address `wsl.exe hostname -I`
+prints, because nothing is listening there.
+
+For a **bare** (no-TLS) rig, nothing is needed:
+
+```
+http://localhost:5050/controller/
+```
+
+For any **TLS** rig, the browser must use the certificate's own name — both so
+TLS verification passes and so the OAuth 2.0 `redirect_uri` matches one the
+Authorization Server has registered. Add to
+`C:\Windows\System32\drivers\etc\hosts`, editing it as Administrator, and note
+these are `127.0.0.1` rather than the WSL address:
+
+```
+127.0.0.1   XYZ-SNX00000
+127.0.0.1   XYZ-SNX00001
+127.0.0.1   XYZ-SNX00002
+```
+
+Then browse to <https://XYZ-SNX00001:5050/controller/>. `XYZ-SNX00000` has to
+resolve on Windows too, even though you never type it: under Configuration B
+or C the Controller redirects your browser there to sign in.
+
+The certificates are issued by a private test CA, so a browser will warn.
+Installing the root once is much less tedious than clicking through warnings on
+two origins — from an Administrator PowerShell:
+
+```powershell
+Import-Certificate -FilePath '\\wsl$\<distro>\home\<you>\...\nmos-reference\Certificates\build.0\ExampleRootCA.pem' `
+                   -CertStoreLocation Cert:\LocalMachine\Root
+```
+
+or run `certlm.msc` and import it under *Trusted Root Certification
+Authorities*. Chrome and Edge use the Windows store; Firefox keeps its own,
+under *Settings → Privacy & Security → Certificates → View Certificates →
+Authorities → Import*.
+
+If `localhost` forwarding is not working — occasionally it needs
+`wsl --shutdown` and a restart — a rig bound to loopback cannot be reached
+from Windows at all. Confirm from inside WSL first:
+
+```bash
+curl -sk -o /dev/null -w '%{http_code}\n' https://XYZ-SNX00001:5050/controller/   # expect 401
+```
+
+A 401 means the Node is serving and the problem is the WSL network layer, not
+the rig.
 
 ### External dependencies of the launch scripts
 
