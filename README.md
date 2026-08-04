@@ -27,23 +27,10 @@ An NMOS Node implementation — covering the AMWA NMOS Interface Specifications 
   - **Config C** — Mutual TLS + OAuth 2.0
 - **TLS** — cipher whitelist enforcement, ECDH curve restriction, configurable CRL (GCRL) for revocation handling.
 - **Typed JSON serializers** — generated from the NMOS JSON schemas, so the wire format and the in-memory types stay in sync.
-- **Typed Python** — `mypy --strict` clean across the `nmos/` package (tests excluded).
+- **Typed Python** — `mypy --strict` clean across the `nmos/` package and the vendored Authorization Server in `fake-as/` (tests excluded).
 - **Asyncio throughout** — aiohttp HTTP / WebSocket servers, `DispatchGroup`-based task lifecycles, errgroup-style cancellation.
 - **Bundled IS-04 registry** — `nmos_registry.py` serves the Registration and Query APIs (HTTP + WebSocket) so the whole system runs from this checkout with no third-party registry to install. See [NMOS Registry](#nmos-registry).
-- **Test suite** — 2 800+ tests across unit, integration, and end-to-end paths.
-
----
-
-## One Model — independent + multiplexed streams unified
-
-This implementation follows the Matrox **"One Model to Rule them All"** design, formalised in the [NMOS-MatroxOnly](https://github.com/alabou/NMOS-MatroxOnly) corpus. The model presents two stream topologies — that NMOS controllers typically handle through separate code paths — under a single configuration surface:
-
-- **Group of independent streams** — multiple Senders, one per essence (e.g., one audio Sender + one video Sender + one data Sender).
-- **Multiplexed stream** — one Sender carrying multiple sub-streams (e.g., a single MPEG2-TS mux containing video + audio + data).
-
-From the user's point of view the configuration model is the same: both shapes expose `video 0`, `audio 0`, `audio 1`, … and are configured through IS-11 active constraints in the same way. The Controller abstracts the underlying transport / streaming implementation. The constraint-set metadata on each Sender / Receiver — `format`, `layer`, and `layer_compatibility_groups` (alongside the natural-grouping role / role-index from BCP-002-01) — are what let one code path drive both topologies.
-
-In practice this means the same IS-11 negotiation handles MPEG2-TS, RTSP, NDI, USB-over-IP muxes, AM824 audio mux containers, **and** independent RTP / SRT senders for the same set of essences. The Controller asks "what's the user's intent for `video 0` and `audio 0`?" once; the per-Sender/Receiver hints decide whether that becomes a mux-sub-stream configuration or a coordinated independent-Sender configuration.
+- **Test suite** — 2 900+ tests across unit, integration, and end-to-end paths.
 
 ---
 
@@ -66,7 +53,7 @@ Then open <http://127.0.0.1:5050/controller/> and sign in with the password
 `admin`. The Controller discovers both Nodes through the registry and updates
 live over the registry's WebSocket. See [NMOS Registry](#nmos-registry).
 
-### Secured quick start — the full Configuration C rig
+### Secured quick start — the fully secured rig (Config C: mutual TLS + OAuth 2.0)
 
 TLS and OAuth 2.0 everywhere, two Nodes, no Keycloak and no Docker. **Read
 [Required before any TLS configuration](#required-before-any-tls-configuration)
@@ -101,7 +88,7 @@ Then open <https://XYZ-SNX00001:5050/controller/> and sign in **twice**:
 | Gate | Credentials |
 |---|---|
 | The Controller's own password form | password `admin` |
-| The Authorization Server it redirects you to | `ipmx-operator` / `admin` |
+| The Authorization Server it redirects you to | `tr-10-sec-operator` / `admin` |
 
 Your browser will warn about the certificate — the shipped PKI is a private
 test CA that no browser trusts. Accept it, or add
@@ -258,6 +245,10 @@ python3 nmos_node.py \
 
 The full flag surface is documented by `--help`.
 
+Verify the install by running the test suite: `python3 -m pytest -q` — see [Tests](#tests).
+
+---
+
 ## NMOS Registry
 
 `nmos_registry.py` is a standalone IS-04 v1.3 registry — the Registration API
@@ -321,7 +312,9 @@ curl -c cookies.txt -X POST -d "password=admin" \
 curl -b cookies.txt http://127.0.0.1:8080/controller/api/senders
 ```
 
-### Agent-driven UI driver (optional)
+---
+
+## Agent-driven UI driver (optional)
 
 `nmos/agentui/` drives the embedded Controller through a real Chromium, acting only
 through the affordances a signed-in operator has, and writes a screenshot-and-text
@@ -343,7 +336,7 @@ environment and is deliberately *not* harvested from process state.
 Fully optional: the node runtime never imports it, playwright is confined to
 `nmos/agentui/driver/`, and the default test gate never runs it.
 
-#### Setup
+### Setup
 
 ```bash
 cd nmos-reference
@@ -361,7 +354,7 @@ Everything lands in `.playwright/`: nothing enters the system package database, 
 `apt` or `sudo` step is required, and removal is `rm -rf .playwright`. Both
 `.playwright/` and `artifacts/` are gitignored.
 
-#### Running
+### Running
 
 Bring up the full rig — registry and **two** nodes — in three terminals. The
 driver attaches to what is already running and never starts anything itself:
@@ -380,7 +373,7 @@ export PLAYWRIGHT_BROWSERS_PATH="$PWD/.playwright"
 .venv/bin/python -m nmos.agentui --scenario attach-and-look
 ```
 
-##### What each scenario needs
+#### What each scenario needs
 
 The full rig runs everything, which is why it is the recommendation. A smaller
 rig still runs part of the set:
@@ -459,13 +452,18 @@ own DNS name resolves, the cleaner name-based path is used and no browser flag i
 passed at all. There is deliberately no option to disable verification, because a
 run with checks switched off looks identical to one where they work.
 
-### Verify the install
+---
 
-```bash
-python3 -m pytest -q
-```
+## One Model — independent + multiplexed streams unified
 
-Runs the full test suite (~4 minutes, 2 500+ tests). The paths come from `testpaths` in `pyproject.toml`, so no arguments are needed. See the [Tests](#tests) section for per-module invocation and marker breakdown.
+This implementation follows the Matrox **"One Model to Rule them All"** design, formalised in the [NMOS-MatroxOnly](https://github.com/alabou/NMOS-MatroxOnly) corpus. The model presents two stream topologies — that NMOS controllers typically handle through separate code paths — under a single configuration surface:
+
+- **Group of independent streams** — multiple Senders, one per essence (e.g., one audio Sender + one video Sender + one data Sender).
+- **Multiplexed stream** — one Sender carrying multiple sub-streams (e.g., a single MPEG2-TS mux containing video + audio + data).
+
+From the user's point of view the configuration model is the same: both shapes expose `video 0`, `audio 0`, `audio 1`, … and are configured through IS-11 active constraints in the same way. The Controller abstracts the underlying transport / streaming implementation. The constraint-set metadata on each Sender / Receiver — `format`, `layer`, and `layer_compatibility_groups` (alongside the natural-grouping role / role-index from BCP-002-01) — are what let one code path drive both topologies.
+
+In practice this means the same IS-11 negotiation handles MPEG2-TS (over RTP, UDP or SRT), RTSP, NDI, AES3/AM824 (over RTP) audio mux containers, **and** independent RTP senders for the same set of essences. The Controller asks "what's the user's intent for `video 0` and `audio 0`?" once; the per-Sender/Receiver hints decide whether that becomes a mux-sub-stream configuration or a coordinated independent-Sender configuration.
 
 ---
 
@@ -637,7 +635,7 @@ Keycloak and Docker, this repository ships one: `fake-as/` holds
 ## Tests
 
 ```bash
-# Full test suite (~4 minutes; 2 800+ tests)
+# Full test suite (~4 minutes; 2 900+ tests)
 # Paths come from `testpaths` in pyproject.toml — nmos/ plus caps/tests
 python3 -m pytest -q
 
