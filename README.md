@@ -12,8 +12,6 @@ A Python reference implementation of an **NMOS Node** with **Matrox NMOS extensi
 
 An NMOS Node implementation — covering the AMWA NMOS Interface Specifications (IS-04, IS-05, IS-10, IS-11), a curated set of AMWA Best Current Practices, and selected VSF Technical Recommendations — written in typed Python on top of `asyncio` + `aiohttp`. It is intended as both a working device and a teaching reference.
 
-The security surface — TLS (with cipher and curve restriction), OAuth 2.0 Bearer-token validation with JWKS lifecycle, and CRL handling — is implemented and exercised by the bundled test suite.
-
 ---
 
 ## Highlights
@@ -184,21 +182,6 @@ expect, so a Node needs only `--rdsHost`:
 The launch scripts use 8444 / 8443 / 8448 instead, matching the defaults the
 node launchers already pass.
 
-### Security model
-
-The two interfaces are deliberately **not** symmetric, and the asymmetry is
-normative. `specs/NMOS With Control Plane Security.md` (IPMX TR-10-SEC) states
-that the IS-04 Registration API "MUST not require the NMOS Nodes to use OAuth
-2.0 authorizations" and "MUST be secured using TLS with server authentication
-or mutual client-server authentication":
-
-| | Registration API | Query API |
-|---|---|---|
-| No TLS | yes (RAP=0, non-compliant dev mode) | yes |
-| TLS server auth | yes (RAP=1) | yes |
-| Mutual TLS | yes (RAP=2) | yes |
-| OAuth 2.0 | **never** | yes, over either TLS mode |
-
 The registry reports its effective Registry Access Policy in the startup
 banner, so the running compliance mode is visible rather than inferred.
 
@@ -215,11 +198,6 @@ banner, so the running compliance mode is visible rather than inferred.
   mandates, and `max_update_rate_ms` coalescing.
 - A periodic status line in nmos-cpp's exact format, so logs from the two
   implementations are directly comparable.
-
-The normative sources are mirrored under `nmos/registry/specs/` (AMWA IS-04
-`v1.3.x` at tag `v1.3.3`); see `nmos/registry/specs/README.md` for provenance.
-Responses are validated against those published schemas by
-`nmos/registry/tests/test_schema_conformance.py`.
 
 ### Controller sign-in
 
@@ -543,38 +521,16 @@ start-registry*.sh      — Registry launchers (bare = no TLS; the other takes a
 start-fake-as.sh        — Test OAuth 2.0 Authorization Server (no Keycloak, no Docker)
 sync-fake-as.sh         — Refresh fake-as/ from the security/ project
 start-node*-bare.bat    — Windows launchers for the bare (registry-only) rigs
+start-registry*.bat     — Windows registry launchers
+requirements.txt        — Runtime dependencies
+requirements-agentui.txt — Extra dependencies for the agent driver (Playwright)
 ```
-
 ### The vendored Authorization Server (`fake-as/`)
 
 The TLS + OAuth 2.0 rig needs an Authorization Server. Rather than require
 Keycloak and Docker, this repository ships one: `fake-as/` holds
 `ipmx_fake_as.py` and `ipmx_security_tokens.py`, started by
 `./start-fake-as.sh`.
-
-Those two files are a **byte-identical copy** of the Authorization Server in
-the separately-released `security/` certification suite, which is their
-source of truth. The duplication is deliberate — the two projects release
-independently and neither may depend on the other — and keeping the copies
-identical rather than adapted is what makes it maintainable:
-
-* syncing is a file copy — `./sync-fake-as.sh` (and `--check` to report
-  drift without changing anything);
-* drift is a comparison — `nmos/agentui/tests/test_fake_as_vendoring.py`
-  fails if the copies differ, and skips when `security/` is not checked out,
-  which is the normal state for a standalone clone.
-
-**Edit the `security/` copy**, then re-sync. `start-fake-as.sh` prefers a
-`security/` project alongside when one is present, so a developer working on
-it sees their change without syncing first; otherwise it uses `fake-as/`.
-
-This matters beyond convenience: the tutorial and the TR-10-SEC certification
-suite then demonstrate and validate *the same* Authorization Server, not two
-implementations that merely resemble each other.
-start-registry*.bat     — Windows registry launchers
-requirements.txt        — Runtime dependencies
-requirements-agentui.txt — Extra dependencies for the agent driver (Playwright)
-```
 
 ---
 
