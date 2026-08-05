@@ -195,12 +195,17 @@ class TestUsbTransports:
         assert desc.has_privacy is True
         assert desc.privacy_protocol is enums.USB_KV
 
-    def test_usb_descriptor_sender_port_fn_is_base_plus_index(self) -> None:
-        # activation.py:926
+    def test_usb_descriptor_sender_port_fn_is_one_slot_per_index(self) -> None:
+        """USB reserves a whole stream slot even though it has no RTCP port.
+
+        It used to advance one port per index. ``sender_index`` is shared with
+        the RTP transports, which advance two, so the two sequences interleaved
+        and a USB Sender's SourcePort landed on an RTP Sender's RtcpSourcePort.
+        """
         desc = get_transport_descriptor(enums.TransportUsb)
         assert desc.sender_port_fn(0) == AUTO_PORT_BASE
-        assert desc.sender_port_fn(1) == AUTO_PORT_BASE + 1
-        assert desc.sender_port_fn(7) == AUTO_PORT_BASE + 7
+        assert desc.sender_port_fn(1) == AUTO_PORT_BASE + 2
+        assert desc.sender_port_fn(7) == AUTO_PORT_BASE + 14
 
     def test_usb_descriptor_registered_for_transport_urn(self) -> None:
         # Lookup by the transport enum must succeed
@@ -410,10 +415,10 @@ class TestUsbIs05TransportParams:
                       "ExtPrivacyEcdhCurve"):
             assert hasattr(v, fname), f"sender params missing {fname}"
 
-    def test_sender_default_port_matches_base_plus_index(self) -> None:
+    def test_sender_default_port_matches_slot_for_index(self) -> None:
         desc = get_transport_descriptor(enums.TransportUsb)
         assert desc.sender_port_fn(0) == AUTO_PORT_BASE
-        assert desc.sender_port_fn(2) == AUTO_PORT_BASE + 2
+        assert desc.sender_port_fn(2) == AUTO_PORT_BASE + 4
 
     def test_receiver_transport_params_have_source_ip_nullable(self) -> None:
         # IS2 + IS4 — SourceIp on receiver is nullable (NNullString)

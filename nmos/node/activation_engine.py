@@ -284,8 +284,22 @@ _MAX_STREAM_INDEX = 126
 #: Base of the auto-resolved destination-port space.
 AUTO_PORT_BASE = 22000
 
-#: Ports reserved per Node: 127 stream slots × 2 (RTP data + RTCP at +1).
+#: Ports reserved per Node: 128 stream slots × 2 (RTP data + RTCP at +1).
 _NODE_PORT_BLOCK = 256
+
+#: Ports per stream slot: the data port plus its RTCP companion at +1.
+#:
+#: Every in-block transport reserves a whole slot, including the ones with no
+#: RTCP companion. Reserving only the single port they use would let a
+#: stride-1 transport's allocation drift into a stride-2 transport's RTCP
+#: port — ``sender_index`` is one space shared by every transport on the
+#: Node, so mixed strides interleave. That is how an RTP Sender's
+#: ``RtcpSourcePort`` and a USB Sender's ``SourcePort`` both landed on 22259.
+_SLOT_PORTS = 2
+
+#: Stream slots available in one Node block, shared between Senders and
+#: Receivers (see ``sender_slot_offset`` / ``receiver_slot_offset``).
+_NODE_PORT_SLOTS = _NODE_PORT_BLOCK // _SLOT_PORTS
 
 #: Distinct Node port blocks, one per value of the serial's last two digits.
 #: 100 × 256 = 25600 ports, so the space runs 22000–47599 and its highest
@@ -382,6 +396,34 @@ def node_port_offset(serial_number: str) -> int:
         return 0
 
 
+def sender_slot_offset(index: int) -> int:
+    """Offset of Sender ``index``'s port slot within its Node's block.
+
+    Senders count up from the bottom of the block; Receivers count down from
+    the top (``receiver_slot_offset``). The two ranges only meet once a single
+    Node defines more than ``_NODE_PORT_SLOTS`` (128) Senders and Receivers
+    combined, which is past the TR-10-9-v2 §17.1 stream-number ceiling for
+    either one alone.
+    """
+    return _SLOT_PORTS * min(index, _MAX_STREAM_INDEX)
+
+
+def receiver_slot_offset(index: int) -> int:
+    """Offset of Receiver ``index``'s port slot within its Node's block.
+
+    Counts down from the top of the block — see ``sender_slot_offset``.
+
+    Receivers need an identity-bearing port for the same reason Senders do:
+    a listening Receiver (SRT, RTSP, USB) binds this port locally, so two
+    Nodes on one host would otherwise bind the same one — the flat default
+    made every Node's Receiver 0 claim the same port. For multicast RTP/UDP
+    the value is only a placeholder, since the Receiver adopts the Sender's
+    port from the transport file on connection.
+    """
+    return (_NODE_PORT_BLOCK - _SLOT_PORTS
+            - _SLOT_PORTS * min(index, _MAX_STREAM_INDEX))
+
+
 def _get_unused_multicast_address_ipv4(sender_index: int, leg: Any) -> str:
     """Generate a unique IPv4 multicast address for a sender.
 
@@ -451,7 +493,8 @@ def resolve_rtp_sender(
 
     # DestinationPort: "auto" → <node block> + 2*senderIndex, keeping RTP on
     # the even port and RTCP on the odd one above it (RFC 3550 §11).
-    port = AUTO_PORT_BASE + node_port_offset(serial_number) + 2 * sender_index
+    port = (AUTO_PORT_BASE + node_port_offset(serial_number)
+            + sender_slot_offset(sender_index))
     _resolve_auto_null_field(active, "DestinationPort", port)
 
     # RtcpDestinationIp: "auto" → copy from resolved DestinationIp
@@ -519,15 +562,18 @@ def resolve_udp_sender(
     """UDP sender auto-resolution.
 
     DestinationIp="auto"   → unique multicast address
-    DestinationPort="auto" → <node block> + senderIndex (NOT 2×, unlike RTP)
+    DestinationPort="auto" → <node block> + this Sender's slot
     """
     mcast = _get_unused_multicast_address_ipv4(sender_index, leg)
     _resolve_auto_field(active, "DestinationIp", mcast)
-    # UDP port formula: <node block> + senderIndex (not 2*senderIndex — UDP
-    # has no RTCP companion port to leave room for).
+    # A whole slot, even though UDP has no RTCP companion to leave room for:
+    # ``sender_index`` is shared with the RTP transports, so consuming one
+    # port here would walk this Sender's allocation into a neighbouring RTP
+    # Sender's RTCP port. The odd port of the slot goes unused.
     _resolve_auto_null_field(
         active, "DestinationPort",
-        AUTO_PORT_BASE + node_port_offset(serial_number) + sender_index,
+        AUTO_PORT_BASE + node_port_offset(serial_number)
+        + sender_slot_offset(sender_index),
     )
 
 

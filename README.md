@@ -725,9 +725,11 @@ This repository implements an NMOS Node and a curated set of VSF IPMX / TR-10-x 
 
 **IS-05 Bulk interface is intentionally not supported.** The Node implements the per-Sender / per-Receiver IS-05 single-resource endpoints (`/single/...`) but does not expose the `/bulk/...` interface. Bulk operations are out of scope: the Controller drives multi-resource activations as coordinated single-resource calls, which keeps the connection-management state machine uniform across Senders and Receivers and avoids the partial-success semantics of bulk activations. Vendors who need IS-05 Bulk on their own products must add it themselves.
 
-**The streaming engine emulates transport, so some TR-10 stream requirements may  deliberately not be met.** The engine exists to exercise connection management, capability negotiation, encryption, status monitoring and registry orchestration end-to-end — not to be a reference for the media transport itself:
+**The streaming engine emulates transport, so some TR-10 stream requirements may deliberately not be met.** The engine exists to exercise connection management, capability negotiation, encryption, status monitoring and registry orchestration end-to-end — not to be a reference for the media transport itself:
 
 - **IGMP source-specific joins.** TR-10 requires IGMPv3 with "the source-specific method". Receivers here join with any-source `IP_ADD_MEMBERSHIP` and filter on the IS-05 `SourceIp` in the receive loop instead. For an emulated transport on a single host that is sufficient; a real product should use `IP_ADD_SOURCE_MEMBERSHIP` so the kernel enforces the source filter.
+
+- **RTCP Sender Reports** TR-10 requires a Sender to transmit RTCP Sender Reports. The streaming emulation does not.
 
 Those deviations do not affect the control-plane behaviour this project is a reference for.
 

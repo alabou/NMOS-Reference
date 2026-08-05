@@ -2117,6 +2117,10 @@ class Node:
                 constraints=[descriptor.receiver_constraints_type() for _ in range(MAX_LEGS)],
                 staged_state=descriptor.receiver_activation_type(),
                 active_state=descriptor.receiver_activation_type(),
+                # Despite the name, this carries the Node's serial number and
+                # is needed in both directions: it selects the Receiver's
+                # destination-port block just as it does the Sender's.
+                sender_name=self.serial_number,
             )
             if privacy_keys is not None:
                 activation.privacy_keys = privacy_keys

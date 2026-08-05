@@ -19,6 +19,7 @@ from nmos.node.activation import (
 from nmos.node.activation_engine import (
     AUTO_PORT_BASE,
     node_port_offset,
+    receiver_slot_offset,
     ActivationResponse,
     check_constraint,
     flip_activation,
@@ -262,7 +263,14 @@ class TestReceiverInit:
         assert has_field, f"No identifying field set on {type(staged_0).__name__}"
 
     def test_srt_receiver_port(self) -> None:
-        """SRT receiver port = 37500 + 2*index."""
+        """SRT receiver port = base + this Node's block + its slot.
+
+        An SRT Receiver binds this port to listen, so it has to carry Node
+        identity: the old ``37500 + 2*index`` formula took no serial at all,
+        which made every Node on a host bind the same listener port. It also
+        sat outside the per-Node block, so offsetting it there would have
+        collided with another Node's Sender ports.
+        """
         transport = _get_transport("urn:x-matrox:transport:srt")
         desc = get_transport_descriptor(transport)
         activation = _make_activation(desc, is_sender=False)
@@ -273,7 +281,62 @@ class TestReceiverInit:
         init_receiver_activation(activation, legs, transport, fmt, desc)
 
         staged = activation.staged[0]
-        assert staged.DestinationPort.value == 37500 + 2 * 4
+        expected = (AUTO_PORT_BASE + node_port_offset(activation.sender_name)
+                    + receiver_slot_offset(4))
+        assert staged.DestinationPort.value == expected
+
+    def test_receiver_ports_differ_per_node(self) -> None:
+        """Two Nodes must not derive the same Receiver listener port."""
+        transport = _get_transport("urn:x-matrox:transport:srt")
+        desc = get_transport_descriptor(transport)
+        fmt = _get_transport("urn:x-nmos:format:video")
+
+        ports = []
+        for serial in ("SNX00001", "SNX00002"):
+            activation = _make_activation(desc, is_sender=False)
+            activation.sender_name = serial
+            activation.receiver_index = 0
+            init_receiver_activation(
+                activation, _make_legs(), transport, fmt, desc,
+            )
+            ports.append(activation.staged[0].DestinationPort.value)
+
+        assert ports[0] != ports[1], (
+            f"both Nodes claim listener port {ports[0]}"
+        )
+
+    def test_sender_and_receiver_slots_do_not_overlap(self) -> None:
+        """A Node's Sender and Receiver allocations must stay disjoint.
+
+        Senders count up from the bottom of the Node's block and Receivers
+        down from the top, so the two only meet past 128 combined streams.
+        """
+        rtp = _get_transport("urn:x-nmos:transport:rtp")
+        srt = _get_transport("urn:x-matrox:transport:srt")
+        rtp_desc = get_transport_descriptor(rtp)
+        srt_desc = get_transport_descriptor(srt)
+        fmt = _get_transport("urn:x-nmos:format:video")
+
+        claimed: dict[int, str] = {}
+        for idx in range(8):
+            s = _make_activation(rtp_desc)
+            s.sender_name = "SNX00001"
+            s.sender_index = idx
+            init_sender_activation(s, _make_legs(), rtp, rtp_desc)
+            base = s.staged[0].SourcePort.value
+            for port in (base, base + 1):   # data + RTCP companion
+                assert port not in claimed, \
+                    f"sender {idx} port {port} already held by {claimed[port]}"
+                claimed[port] = f"sender{idx}"
+
+            r = _make_activation(srt_desc, is_sender=False)
+            r.sender_name = "SNX00001"
+            r.receiver_index = idx
+            init_receiver_activation(r, _make_legs(), srt, fmt, srt_desc)
+            rport = r.staged[0].DestinationPort.value
+            assert rport not in claimed, \
+                f"receiver {idx} port {rport} already held by {claimed[rport]}"
+            claimed[rport] = f"receiver{idx}"
 
 
 # ---------------------------------------------------------------------------

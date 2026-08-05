@@ -17,7 +17,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, cast
 
-from nmos.node.activation_engine import AUTO_PORT_BASE, node_port_offset
+from nmos.node.activation_engine import (
+    AUTO_PORT_BASE, node_port_offset, receiver_slot_offset, sender_slot_offset,
+)
 from nmos.node.types import (
     MAX_LEGS,
     Activation,
@@ -49,9 +51,13 @@ class TransportDescriptor:
     privacy_protocol: Any = None         # EnumId
     privacy_kv_protocol: Any = None      # EnumId
 
-    # Port calculation: index → port number, relative to the Node's port block
-    sender_port_fn: Callable[[int], int] = lambda i: AUTO_PORT_BASE + i
-    receiver_port_fn: Callable[[int], int] = lambda i: AUTO_PORT_BASE
+    # Port calculation: index → port number, relative to the Node's port block.
+    # Both default to a whole stream slot so that transports sharing the
+    # sender/receiver index space cannot interleave — see ``_SLOT_PORTS``.
+    sender_port_fn: Callable[[int], int] = \
+        lambda i: AUTO_PORT_BASE + sender_slot_offset(i)
+    receiver_port_fn: Callable[[int], int] = \
+        lambda i: AUTO_PORT_BASE + receiver_slot_offset(i)
 
     # Whether the ports above are offset into this Node's block (see
     # ``node_port_offset``). False for a protocol-mandated fixed port such as
@@ -214,8 +220,14 @@ def init_receiver_activation(
         _set_field(staged, "DestinationIp", ip_str)
         _set_field(active, "DestinationIp", ip_str if leg.enable else "0.0.0.0")
 
-        # Common: receiver port
+        # Common: receiver port.
+        #
+        # Offset into this Node's block for the same reason the Sender side is
+        # (see ``init_sender_activation``): a listening Receiver binds this
+        # port, so without the offset every Node on a host claims the same one.
         port = descriptor.receiver_port_fn(activation.receiver_index)
+        if descriptor.ports_in_node_block:
+            port += node_port_offset(activation.sender_name)
         _set_null_field(staged, "DestinationPort", port)
         _set_null_field(active, "DestinationPort", port)
 
@@ -260,17 +272,20 @@ def _init_rtp_sender_extra(
     _set_field(active, "RtpEnabled", leg.enable)
     _set_field(staged, "RtcpEnabled", leg.enable)
     _set_field(active, "RtcpEnabled", leg.enable)
-    rtcp_port = AUTO_PORT_BASE + node_port_offset(activation.sender_name) + 1 + 2 * idx
+    rtcp_port = (AUTO_PORT_BASE + node_port_offset(activation.sender_name)
+                 + sender_slot_offset(idx) + 1)
     _set_null_field(staged, "RtcpSourcePort", rtcp_port)
     _set_null_field(active, "RtcpSourcePort", rtcp_port)
     _set_field(staged, "DestinationIp", "auto")
     _set_field(active, "DestinationIp", "0.0.0.0")
     _set_null_field(staged, "DestinationPort", "auto")
-    _set_null_field(active, "DestinationPort", AUTO_PORT_BASE + 2 * idx)
+    _set_null_field(active, "DestinationPort",
+                    AUTO_PORT_BASE + sender_slot_offset(idx))
     _set_field(staged, "RtcpDestinationIp", "auto")
     _set_field(active, "RtcpDestinationIp", "0.0.0.0")
     _set_null_field(staged, "RtcpDestinationPort", "auto")
-    _set_null_field(active, "RtcpDestinationPort", AUTO_PORT_BASE + 1 + 2 * idx)
+    _set_null_field(active, "RtcpDestinationPort",
+                    AUTO_PORT_BASE + sender_slot_offset(idx) + 1)
     # Constraints
     cs = _get_constraint_set(constraints)
     _add_enum_constraint(cs, "RtpEnabled", [leg.enable], "cannot enable/disable RTP from transport parameters", staged)
@@ -294,7 +309,8 @@ def _init_udp_sender_extra(
     _set_field(staged, "DestinationIp", "auto")
     _set_field(active, "DestinationIp", "0.0.0.0")
     _set_null_field(staged, "DestinationPort", "auto")
-    _set_null_field(active, "DestinationPort", AUTO_PORT_BASE + idx)
+    _set_null_field(active, "DestinationPort",
+                    AUTO_PORT_BASE + sender_slot_offset(idx))
     cs = _get_constraint_set(constraints)
     _add_enum_constraint(cs, "Enabled", [leg.enable], "cannot enable/disable UDP from transport parameters", staged)
     _add_unconstrained(cs, "DestinationIp", staged)
@@ -337,7 +353,8 @@ def _init_rtp_tcp_sender_extra(
     _set_field(active, "RtpEnabled", leg.enable)
     _set_field(staged, "RtcpEnabled", leg.enable)
     _set_field(active, "RtcpEnabled", leg.enable)
-    rtcp_port = AUTO_PORT_BASE + node_port_offset(activation.sender_name) + 1 + 2 * idx
+    rtcp_port = (AUTO_PORT_BASE + node_port_offset(activation.sender_name)
+                 + sender_slot_offset(idx) + 1)
     _set_null_field(staged, "RtcpSourcePort", rtcp_port)
     _set_null_field(active, "RtcpSourcePort", rtcp_port)
     cs = _get_constraint_set(constraints)
@@ -421,7 +438,8 @@ def _init_websocket_sender_extra(
             else str(leg.ipv4.address) if leg.ipv4.address
             else "auto"
         )
-    port = AUTO_PORT_BASE + idx
+    port = (AUTO_PORT_BASE + node_port_offset(activation.sender_name)
+            + sender_slot_offset(idx))
     if leg.use_ipv6:
         uri = f"wss://[{ip_str}]:{port}/x-manufacturer/wss"
     else:
@@ -496,10 +514,13 @@ def _init_srt_receiver_extra(
     staged: Any, active: Any, constraints: Any,
     leg: Leg, activation: Activation, format_enum: Any = None, **extra: Any,
 ) -> None:
-    """SRT receiver: DestinationIp/Port (binding), SourceIp/Port, Protocol, Latency."""
-    idx = activation.receiver_index
-    _set_null_field(staged, "DestinationPort", 37500 + 2 * idx)
-    _set_null_field(active, "DestinationPort", 37500 + 2 * idx)
+    """SRT receiver: DestinationIp (binding), SourceIp/Port, Protocol, Latency.
+
+    DestinationPort is deliberately not set here: ``init_receiver_activation``
+    already assigned this Receiver's slot within the Node's port block, and
+    re-deriving it locally would drop the Node offset and hand every Node on a
+    host the same listener port.
+    """
     _set_null_field(staged, "SourceIp", None)
     _set_null_field(active, "SourceIp", None)
     _set_null_field(staged, "SourcePort", "auto")
@@ -870,7 +891,7 @@ def _build_registry() -> dict[Any, TransportDescriptor]:
         has_privacy=True,
         privacy_protocol=enums.UDP,
         privacy_kv_protocol=enums.UDP_KV,
-        sender_port_fn=lambda i: AUTO_PORT_BASE + i,
+        sender_port_fn=lambda i: AUTO_PORT_BASE + sender_slot_offset(i),
         init_sender_extra=_init_udp_sender_extra,
         init_receiver_extra=_init_udp_receiver_extra,
         sender_auto_resolvers={"flip_resolve": resolve_udp_sender},
@@ -888,7 +909,7 @@ def _build_registry() -> dict[Any, TransportDescriptor]:
         has_privacy=True,
         privacy_protocol=enums.SRT,
         sender_port_fn=lambda i: AUTO_PORT_BASE + 2 * i,
-        receiver_port_fn=lambda i: 37500 + 2 * i,
+        receiver_port_fn=lambda i: AUTO_PORT_BASE + receiver_slot_offset(i),
         init_sender_extra=_init_srt_sender_extra,
         init_receiver_extra=_init_srt_receiver_extra,
         sender_auto_resolvers={"flip_resolve": resolve_srt_sender},
@@ -922,7 +943,7 @@ def _build_registry() -> dict[Any, TransportDescriptor]:
         receiver_activation_type=NRtspReceiverActivationValue,
         has_privacy=True,
         privacy_protocol=enums.RTSP,
-        sender_port_fn=lambda i: AUTO_PORT_BASE + i,
+        sender_port_fn=lambda i: AUTO_PORT_BASE + sender_slot_offset(i),
         init_sender_extra=_init_rtsp_sender_extra,
         init_receiver_extra=_init_rtsp_receiver_extra,
         sender_auto_resolvers={"flip_resolve": resolve_noop},
@@ -938,7 +959,7 @@ def _build_registry() -> dict[Any, TransportDescriptor]:
         receiver_activation_type=NUsbReceiverActivationValue,
         has_privacy=True,
         privacy_protocol=enums.USB_KV,
-        sender_port_fn=lambda i: AUTO_PORT_BASE + i,
+        sender_port_fn=lambda i: AUTO_PORT_BASE + sender_slot_offset(i),
         init_sender_extra=_init_usb_sender_extra,
         init_receiver_extra=_init_usb_receiver_extra,
         sender_auto_resolvers={"flip_resolve": resolve_noop},
@@ -983,8 +1004,8 @@ def _build_registry() -> dict[Any, TransportDescriptor]:
         receiver_constraints_type=NWebSocketTransportConstraintsValue,
         receiver_activation_type=NWebSocketReceiverActivationValue,
         has_privacy=False,
-        sender_port_fn=lambda i: AUTO_PORT_BASE + i,
-        receiver_port_fn=lambda i: AUTO_PORT_BASE + i,
+        sender_port_fn=lambda i: AUTO_PORT_BASE + sender_slot_offset(i),
+        receiver_port_fn=lambda i: AUTO_PORT_BASE + receiver_slot_offset(i),
         init_sender_extra=_init_websocket_sender_extra,
         init_receiver_extra=_init_websocket_receiver_extra,
         sender_auto_resolvers={"flip_resolve": resolve_noop},
