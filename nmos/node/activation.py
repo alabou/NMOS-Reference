@@ -225,6 +225,8 @@ def init_receiver_activation(
         # Offset into this Node's block for the same reason the Sender side is
         # (see ``init_sender_activation``): a listening Receiver binds this
         # port, so without the offset every Node on a host claims the same one.
+        # This is the default only — ``transport_params`` on an IS-05 PATCH win,
+        # and an SDP transport file fills whatever the PATCH left unset.
         port = descriptor.receiver_port_fn(activation.receiver_index)
         if descriptor.ports_in_node_block:
             port += node_port_offset(activation.sender_name)
@@ -458,6 +460,16 @@ def _init_websocket_sender_extra(
 # Transport-specific init_extra functions (RECEIVER)
 # ---------------------------------------------------------------------------
 
+def _receiver_slot_port(activation: Activation) -> int:
+    """This Receiver's data port inside its Node's block.
+
+    Mirrors what ``init_receiver_activation`` assigned, for the few extras
+    that need to derive a companion port from it.
+    """
+    return (AUTO_PORT_BASE + node_port_offset(activation.sender_name)
+            + receiver_slot_offset(activation.receiver_index))
+
+
 def _init_rtp_receiver_extra(
     staged: Any, active: Any, constraints: Any,
     leg: Leg, activation: Activation, format_enum: Any = None, **extra: Any,
@@ -469,14 +481,20 @@ def _init_rtp_receiver_extra(
     _set_field(active, "RtcpEnabled", leg.enable)
     _set_null_field(staged, "SourceIp", None)
     _set_null_field(active, "SourceIp", None)
+    # Only ``staged`` becomes "auto": ``active`` keeps the slot that
+    # init_receiver_activation assigned inside this Node's port block.
+    # Re-deriving it here dropped the Node offset, so every Node on a host
+    # advertised the same Receiver port. A PATCH or an SDP transport file may
+    # override it later, but neither is guaranteed to — see
+    # ``receiver_slot_offset`` for the precedence.
     _set_null_field(staged, "DestinationPort", "auto")
-    _set_null_field(active, "DestinationPort", AUTO_PORT_BASE)  # resolved from "auto"
     _set_null_field(staged, "MulticastIp", None)
     _set_null_field(active, "MulticastIp", None)
     _set_field(staged, "RtcpDestinationIp", "auto")
     _set_field(active, "RtcpDestinationIp", "0.0.0.0")
     _set_null_field(staged, "RtcpDestinationPort", "auto")
-    _set_null_field(active, "RtcpDestinationPort", AUTO_PORT_BASE + 1)  # resolved from "auto"
+    _set_null_field(active, "RtcpDestinationPort",
+                    _receiver_slot_port(activation) + 1)
     cs = _get_constraint_set(constraints)
     _add_enum_constraint(cs, "RtpEnabled", [leg.enable], context=staged)
     _add_enum_constraint(cs, "RtcpEnabled", [leg.enable], context=staged)
@@ -498,8 +516,9 @@ def _init_udp_receiver_extra(
     _set_field(active, "Enabled", leg.enable)
     _set_null_field(staged, "SourceIp", None)
     _set_null_field(active, "SourceIp", None)
+    # See _init_rtp_receiver_extra: ``active`` keeps the common-path slot,
+    # which stands unless a PATCH or an SDP transport file supplies a port.
     _set_null_field(staged, "DestinationPort", "auto")
-    _set_null_field(active, "DestinationPort", 0)
     _set_null_field(staged, "MulticastIp", None)
     _set_null_field(active, "MulticastIp", None)
     cs = _get_constraint_set(constraints)

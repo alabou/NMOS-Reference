@@ -416,9 +416,14 @@ def receiver_slot_offset(index: int) -> int:
     Receivers need an identity-bearing port for the same reason Senders do:
     a listening Receiver (SRT, RTSP, USB) binds this port locally, so two
     Nodes on one host would otherwise bind the same one — the flat default
-    made every Node's Receiver 0 claim the same port. For multicast RTP/UDP
-    the value is only a placeholder, since the Receiver adopts the Sender's
-    port from the transport file on connection.
+    made every Node's Receiver 0 claim the same port.
+
+    A Receiver's port has three sources, in precedence order: explicit
+    ``transport_params`` on the IS-05 PATCH; then an SDP transport file,
+    which fills only the fields the PATCH left unset; then this default.
+    So it is not merely a placeholder that every connection overwrites — it
+    is the operative port whenever a Controller enables a Receiver without
+    naming one and without supplying a transport file.
     """
     return (_NODE_PORT_BLOCK - _SLOT_PORTS
             - _SLOT_PORTS * min(index, _MAX_STREAM_INDEX))
@@ -514,14 +519,20 @@ def resolve_rtp_receiver(
 ) -> None:
     """RTP receiver auto-resolution.
 
-    DestinationPort="auto"     → AUTO_PORT_BASE (a placeholder: a
-                                 receiver takes the real port from
-                                 the sender's SDP)
+    DestinationPort="auto"     → this Receiver's slot in the Node's port
+                                 block (the default; a PATCH or an SDP
+                                 transport file may supply one instead —
+                                 see ``receiver_slot_offset``)
     RtcpDestinationIp="auto"   → InterfaceIp, override with MulticastIp if present
     RtcpDestinationPort="auto" → DestinationPort + 1
     """
-    # DestinationPort: "auto" → base (placeholder, see docstring)
-    _resolve_auto_null_field(active, "DestinationPort", AUTO_PORT_BASE)
+    # DestinationPort: "auto" → this Node's Receiver slot (see docstring).
+    # A flat base made every Node on a host resolve to the same port, which
+    # collides whenever the Receiver binds a port that neither the PATCH nor
+    # a transport file supplied.
+    rx_port = (AUTO_PORT_BASE + node_port_offset(serial_number)
+               + receiver_slot_offset(receiver_index))
+    _resolve_auto_null_field(active, "DestinationPort", rx_port)
 
     # RtcpDestinationIp: "auto" → InterfaceIp, then override with MulticastIp
     rtcp_field = getattr(active, "RtcpDestinationIp", None)
@@ -550,9 +561,9 @@ def resolve_rtp_receiver(
                 if dp is not None and dp != "auto":
                     rtcp_port_field.value = int(dp) + 1
                 else:
-                    rtcp_port_field.value = AUTO_PORT_BASE + 1
+                    rtcp_port_field.value = rx_port + 1
             else:
-                rtcp_port_field.value = AUTO_PORT_BASE + 1
+                rtcp_port_field.value = rx_port + 1
 
 
 def resolve_udp_sender(
@@ -583,9 +594,14 @@ def resolve_udp_receiver(
 ) -> None:
     """UDP receiver auto-resolution.
 
-    DestinationPort="auto" → AUTO_PORT_BASE (placeholder, see above)
+    DestinationPort="auto" → this Receiver's slot (the default; see
+                             ``receiver_slot_offset`` for precedence)
     """
-    _resolve_auto_null_field(active, "DestinationPort", AUTO_PORT_BASE)
+    _resolve_auto_null_field(
+        active, "DestinationPort",
+        AUTO_PORT_BASE + node_port_offset(serial_number)
+        + receiver_slot_offset(receiver_index),
+    )
 
 
 def resolve_srt_sender(
