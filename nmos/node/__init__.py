@@ -28,6 +28,7 @@ import os
 import struct
 import time
 from collections import deque
+from enum import IntEnum
 from typing import Any
 
 from nmos.errors import (
@@ -711,6 +712,75 @@ def _apply_privacy_to_media(media: Any, active_params: Any, E: Any,
         media.ext_map[1].uri = "urn:ietf:params:rtp-hdrext:PEP-Short-IV-Counter"
 
 
+class AacFrameLength(IntEnum):
+    """AAC frame length in samples, per ISO/IEC 14496-3:2005 §4.4.1.
+
+    The GASpecificConfig ``frameLengthFlag`` selects the IMDCT length, while the
+    SDP's ``constantDuration``, ``ptime``/``maxptime`` and ``framecount`` are all
+    derived from that same length. Deriving the flag from the enum keeps the two
+    in agreement: a mismatch would tell the decoder one frame length while the
+    RTP timing implies another.
+
+    Per the spec, the flag means different lengths for the low-delay object type:
+
+    ``LONG``  — flag 0: 1024 lines, or 512 for ER AAC LD
+    ``SHORT`` — flag 1:  960 lines, or 480 for ER AAC LD
+    """
+
+    LONG = 1024
+    SHORT = 960
+
+    @property
+    def frame_length_flag(self) -> int:
+        """The GASpecificConfig frameLengthFlag value declaring this length."""
+        return 0 if self is AacFrameLength.LONG else 1
+
+    @property
+    def low_delay_samples(self) -> int:
+        """Frame length for ER AAC LD / ELD, which halve the IMDCT length."""
+        return int(self) // 2
+
+
+# AudioSpecificConfig trailer for error-resilient object types (17, 19-27 and
+# ER AAC ELD): a 2-bit epConfig. 0 selects no error protection, which is all we
+# signal — epConfig 2 or 3 would pull in ErrorProtectionSpecificConfig.
+_EP_CONFIG = 0
+
+# ELDSpecificConfig terminates its extension loop with an eldExtType of
+# ELDEXT_TERM. The loop is a do/while, so this is written even when there are no
+# extensions; omitting it leaves a decoder reading past the end of the config.
+_ELDEXT_TERM = 0
+
+# ISO/IEC 14496-3:2005 Table 1.29 StreamMuxConfig, for a single-program,
+# single-layer stream. The 15 bits preceding the AudioSpecificConfig are
+# audioMuxVersion=0, allStreamsSameTimeFraming=1, numSubFrames=0, numProgram=0,
+# numLayer=0; the 13 bits following it are frameLengthType=0,
+# latmBufferFullness=0xff, otherDataPresent=0, crcCheckPresent=0.
+_SMC_PREFIX, _SMC_PREFIX_BITS = 0x2000, 15
+_SMC_SUFFIX, _SMC_SUFFIX_BITS = 0x0FC, 13
+
+
+def _asc_hex(asc: int, asc_bits: int) -> str:
+    """Render an AudioSpecificConfig as byte-aligned hex (RFC 3640 ``config=``)."""
+    pad = -asc_bits % 8
+    return f"{asc << pad:0{(asc_bits + pad) // 4}x}"
+
+
+def _smc_hex(asc: int, asc_bits: int) -> str:
+    """Wrap an AudioSpecificConfig in a StreamMuxConfig and render it as
+    byte-aligned hex (RFC 6416 ``config=``).
+
+    The ASC is bit-packed between the two fixed field groups, so its exact bit
+    width — not its byte-aligned rendering — decides where they land.
+    """
+    total = _SMC_PREFIX_BITS + asc_bits + _SMC_SUFFIX_BITS
+    smc = ((_SMC_PREFIX << (asc_bits + _SMC_SUFFIX_BITS))
+           | (asc << _SMC_SUFFIX_BITS)
+           | _SMC_SUFFIX)
+    pad = -total % 8
+    return f"{smc << pad:0{(total + pad) // 4}x}"
+
+
 def _populate_media_for_leg(*, media: Any, transport: str, category: str,
                               extra: Any, active_params: Any,
                               flow_inner: Any, node: Any, sender: Any,
@@ -934,32 +1004,75 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
                 bitrate_kbps = (flow_inner.Bitrate.value
                                 if hasattr(flow_inner, 'Bitrate') and flow_inner.Bitrate.defined else 0)
 
-                samples_per_frame = 1024
+                # The AudioSpecificConfig builders below encode the sampling
+                # frequency and channel configuration as literals, so the flow
+                # must match what they declare.
+                if media.sample_rate != 48000:
+                    raise ValueError("invalid flow, implementation only support 48 KHz sample rate")
+                if media.channels not in (2, 6):
+                    raise ValueError("invalid flow, implementation only support stereo and 5.1 channels")
+
+                # Single knob: switch to AacFrameLength.SHORT to emit 960-line
+                # frames. Everything below — the ASC frameLengthFlag, the access
+                # unit duration, ptime/maxptime, constantDuration and framecount
+                # — is derived from it, so the config and the RTP timing cannot
+                # disagree about the frame length.
+                frame_length = AacFrameLength.LONG
+                samples_per_frame = int(frame_length)
+                flf = frame_length.frame_length_flag
                 ch = media.channels
                 is_latm = mt == AudioCodedAacLATM.s
                 # RFC 6416 (LATM / ADTS) carries the config in band; the
                 # generic RFC 3640 mode carries it out of band in the SDP.
                 out_of_band_config = mt == AudioCodedAac.s
 
-                def _simple(asc_object: int) -> tuple[int, int, str, str]:
-                    asc = (asc_object << 11) | (3 << 7) | (ch << 3) | (1 << 2)
-                    smc = ((0x2000 << 16) + 11 | (asc << 11) | 0x0FC) << 6
-                    return asc, samples_per_frame, f"{smc:012x}", f"{asc:04x}"
+                # Every builder returns (asc, asc_bits, duration). The configs are
+                # rendered once after dispatch, so bit widths stay attached to the
+                # value that determines them.
 
-                def _extended(asc_object: int) -> tuple[int, int, str, str]:
-                    # SBR / PS envelope around AAC-LC, extension frequency == frequency
+                def _simple(asc_object: int) -> tuple[int, int, int]:
+                    # AudioSpecificConfig (Table 1.13) + GASpecificConfig (Table 4.1):
+                    # objectType(5) freq(4) chan(4) frameLengthFlag dependsOnCoreCoder
+                    # extensionFlag.
+                    asc = (asc_object << 11) | (3 << 7) | (ch << 3) | (flf << 2)
+                    return asc, 16, samples_per_frame
+
+                def _extended(asc_object: int) -> tuple[int, int, int]:
+                    # SBR / PS envelope around AAC-LC, extension frequency == frequency.
+                    # objectType(5) freq(4) chan(4) extFreq(4) innerObjectType(5)
+                    # then GASpecificConfig(3). AAC-LC is not error resilient, so no
+                    # epConfig follows.
                     lc = AAC_OBJECT_TYPES["LC"]
-                    asc = ((asc_object << 27) | (3 << 23) | (ch << 19) | (3 << 15)
-                           | (lc << 10) | (1 << 9))
-                    smc = ((0x2000 << 25) + 11 | (asc << 11) | 0x0FC) << 5
-                    return asc, samples_per_frame, f"{smc:014x}", f"{asc:08x}"
+                    asc = ((asc_object << 20) | (3 << 16) | (ch << 12) | (3 << 8)
+                           | (lc << 3) | (flf << 2))
+                    return asc, 25, samples_per_frame
 
-                def _eld(asc_object: int) -> tuple[int, int, str, str]:
+                def _error_resilient(asc_object: int) -> tuple[int, int, int]:
+                    # Object types 17 and 19-27 are error resilient, so
+                    # AudioSpecificConfig appends a 2-bit epConfig after the
+                    # GASpecificConfig (Table 1.13).
+                    asc, bits, duration = _simple(asc_object)
+                    return (asc << 2) | _EP_CONFIG, bits + 2, duration
+
+                def _low_delay(asc_object: int) -> tuple[int, int, int]:
+                    # ER AAC LD (object type 23) is error resilient like the above,
+                    # but frameLengthFlag denotes a halved IMDCT for it — 512 lines
+                    # when the flag is 0, 480 when it is 1.
+                    asc, bits, _full = _error_resilient(asc_object)
+                    return asc, bits, frame_length.low_delay_samples
+
+                def _eld(asc_object: int) -> tuple[int, int, int]:
+                    # Escape-coded object type 39 (Table 1.14: 31 then a 6-bit
+                    # audioObjectTypeExt of 39-32), then freq(4) and chan(4), then
+                    # ELDSpecificConfig — frameLengthFlag plus the three resilience
+                    # flags and ldSbrPresentFlag, all zero here — then the extension
+                    # loop, which always writes at least one eldExtType, terminated
+                    # by ELDEXT_TERM. epConfig follows in the enclosing ASC.
                     esc = AAC_OBJECT_TYPES["ER_ESCAPE"]
-                    asc = ((esc << 19) | ((asc_object - 32) << 13) | (3 << 9)
-                           | (ch << 5) | (1 << 4))
-                    smc = ((0x2000 << 22) + 11 | (asc << 11) | 0x0FC) << 5
-                    return asc, samples_per_frame // 2, f"{smc:014x}", f"{asc:06x}"
+                    asc = ((esc << 25) | ((asc_object - 32) << 19) | (3 << 15)
+                           | (ch << 11) | (flf << 10)
+                           | (_ELDEXT_TERM << 2) | _EP_CONFIG)
+                    return asc, 30, frame_length.low_delay_samples
 
                 # profile → (object type emitted in the fmtp, ASC builder)
                 _AAC_PROFILES: dict[str, tuple[int, Any]] = {
@@ -968,7 +1081,7 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
                     AacProfileHighQuality.s: (AAC_OBJECT_TYPES["LTP"],
                                               lambda: _simple(AAC_OBJECT_TYPES["LTP"])),
                     AacProfileNatural.s: (AAC_OBJECT_TYPES["ER_LTP"],
-                                          lambda: _simple(AAC_OBJECT_TYPES["ER_LTP"])),
+                                          lambda: _error_resilient(AAC_OBJECT_TYPES["ER_LTP"])),
                     AacProfileAAC.s: (AAC_OBJECT_TYPES["LC"],
                                       lambda: _simple(AAC_OBJECT_TYPES["LC"])),
                     AacProfileHighEfficiencyAAC.s: (AAC_OBJECT_TYPES["LC"],
@@ -976,7 +1089,7 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
                     AacProfileHighEfficiencyAACv2.s: (AAC_OBJECT_TYPES["LC"],
                                                       lambda: _extended(AAC_OBJECT_TYPES["PS"])),
                     AacProfileLowDelayAAC.s: (AAC_OBJECT_TYPES["ER_LD"],
-                                              lambda: _simple(AAC_OBJECT_TYPES["ER_LD"])),
+                                              lambda: _low_delay(AAC_OBJECT_TYPES["ER_LD"])),
                     AacProfileLowDelayAACv2.s: (AAC_OBJECT_TYPES["ER_ELD"],
                                                 lambda: _eld(AAC_OBJECT_TYPES["ER_ELD"])),
                 }
@@ -984,13 +1097,18 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
                 if entry is None:
                     raise ValueError(f"unsupported AAC profile '{profile}' for SDP")
                 object_type, build = entry
-                _asc, duration, latm_config, generic_config = build()
+                _asc, _asc_bits, duration = build()
+                generic_config = _asc_hex(_asc, _asc_bits)
+                latm_config = _smc_hex(_asc, _asc_bits)
 
                 media.p_time_us = (duration * 1000000) // media.sample_rate
                 media.max_p_time_us = media.p_time_us
                 media.aac_constant_duration = duration
                 media.aac_object_type = object_type
-                media.frame_count = samples_per_frame
+                # a=framecount is the number of audio samples carried in a packet,
+                # which is the access unit duration (one AU per packet) — not the
+                # nominal 1024-sample AAC frame length. They differ for AAC-LD/ELD.
+                media.frame_count = duration
                 media.codec_profile_level_id = _get_aac_profile_level_id(profile, level)
                 media.aac_config = "" if not out_of_band_config else (
                     latm_config if is_latm else generic_config)

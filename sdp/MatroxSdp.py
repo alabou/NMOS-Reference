@@ -112,7 +112,7 @@ AAC_OBJECT_TYPES = {
     "LTP": 4,
     "SBR": 5,
     "ER_LC": 17,
-    "ER_LTP": 18,
+    "ER_LTP": 19,  # ISO/IEC 14496-3:2005 Table 1.16; 18 is reserved
     "ER_LD": 23,
     "PS": 29,
     "ER_ESCAPE": 31,
