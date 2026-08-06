@@ -412,7 +412,7 @@ def check_sdp_st2110_20(md: MediaDescriptor) -> None:
     valid_transfers = {
         MatroxSdpEnums.TransferSDR, MatroxSdpEnums.TransferPQ, MatroxSdpEnums.TransferHLG, MatroxSdpEnums.TransferLinear,
         MatroxSdpEnums.TransferBT2100LINPQ, MatroxSdpEnums.TransferBT2100LINHLG, MatroxSdpEnums.TransferST2065_1,
-        MatroxSdpEnums.TransferST248_1, MatroxSdpEnums.TransferDensity, MatroxSdpEnums.TransferUnspecified,
+        MatroxSdpEnums.TransferST428_1, MatroxSdpEnums.TransferDensity, MatroxSdpEnums.TransferUnspecified,
         MatroxSdpEnums.TransferST2115LOGS3
     }
     if md.transfer_characteristic is None:

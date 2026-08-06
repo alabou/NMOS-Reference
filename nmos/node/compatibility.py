@@ -2115,6 +2115,8 @@ def get_sdp_to_caps(
     def _transfer_from_sdp(transfer: Any) -> str | None:
         """Map SDP transfer characteristic to NMOS (getTransferCharacteristicFromSdp)."""
         t = str(transfer).upper() if transfer else ""
+        # Keys are SDP spellings, values NMOS ones; the two vocabularies agree on
+        # every transfer characteristic. Anything else maps to UNSPECIFIED.
         _MAP = {
             SDR.s: SDR.s, HLG.s: HLG.s, PQ.s: PQ.s, LINEAR.s: LINEAR.s,
             BT2100LINPQ.s: BT2100LINPQ.s, BT2100LINHLG.s: BT2100LINHLG.s,
@@ -2233,7 +2235,12 @@ def get_sdp_to_caps(
                 _s(CapFormatMediaType.s, "video/" + str(encoding))
 
         elif enc_str == "h264":
-            if not _check(check_sdp_rfc6184, check_sdp_st2110_10, check_sdp_st2110_22):
+            # H.264 over RTP is RFC 6184 on its own; the ST 2110 constraints only
+            # bind when the stream declares itself IPMX. Checking them
+            # unconditionally would reject conformant non-IPMX senders.
+            if not _check(check_sdp_rfc6184):
+                return None
+            if getattr(media, 'ipmx', False) and not _check(check_sdp_st2110_10, check_sdp_st2110_22):
                 return None
             _s(CapFormatMediaType.s, VideoCodedH264.s)
             if not media.codec_profile_level_id:
@@ -2265,7 +2272,10 @@ def get_sdp_to_caps(
                 _i(CapTransportBitRate.s, media.bitrate_kbits)
 
         elif enc_str == "h265":
-            if not _check(check_sdp_rfc7798, check_sdp_st2110_10, check_sdp_st2110_22):
+            # As for H.264: RFC 7798 always, ST 2110 only for IPMX streams.
+            if not _check(check_sdp_rfc7798):
+                return None
+            if getattr(media, 'ipmx', False) and not _check(check_sdp_st2110_10, check_sdp_st2110_22):
                 return None
             _s(CapFormatMediaType.s, VideoCodedH265.s)
             if not media.h265_interop_constraints or not media.h265_profile_compatibility_indicator:

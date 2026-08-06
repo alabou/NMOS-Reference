@@ -224,7 +224,7 @@ class MatroxSdpEnums(Enum):
     TransferBT2100LINPQ                  = EnumId("BT2100LINPQ")
     TransferBT2100LINHLG                 = EnumId("BT2100LINHLG")
     TransferST2065_1                     = EnumId("ST2065-1")
-    TransferST248_1                      = EnumId("ST248-1")
+    TransferST428_1                      = EnumId("ST428-1")
     TransferDensity                      = EnumId("DENSITY")
     TransferST2115LOGS3                  = EnumId("ST2115LOGS3")
     RangeNarrow                          = EnumId("NARROW")
