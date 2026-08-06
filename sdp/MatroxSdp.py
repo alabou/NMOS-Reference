@@ -147,8 +147,16 @@ class EnumId:
 
 class MatroxSdpEnums(Enum):
 
+    # Members wrap an EnumId, and __hash__/__str__ delegate to it so a member and
+    # the EnumId the parser stores are interchangeable: they compare equal (via
+    # EnumId.__eq__), hash alike, and render alike. Without __str__ a member would
+    # stringify as "MatroxSdpEnums.RangeFull" instead of "FULL".
+
     def __hash__(self):
         return hash(self.value.s)
+
+    def __str__(self) -> str:
+        return self.value.s
 
     Audio                                = EnumId("audio")                # media type
     Video                                = EnumId("video")                # media type
