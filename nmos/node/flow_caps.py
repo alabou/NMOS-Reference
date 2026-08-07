@@ -248,9 +248,9 @@ def get_flow_to_caps(node: Any, flow_ptr: Any) -> Any:
             _add(_cap_from_enum(CapTransportParameterSetsTransportMode,
                                 sender.ParameterSetsTransportMode))
 
-        # privacy and hkep are reported only when true, matching
-        # FlowToCapabilities. This is a deliberate divergence from the SDP side,
-        # which always states both values.
+        # privacy and hkep are reported only when true. get_sdp_to_caps, and both
+        # test-suite converters, do the same: a stream that is not protected
+        # states nothing rather than asserting false.
         if sender.Privacy.defined and sender.Privacy.value:
             _add(_cap_bool(CapTransportPrivacy, True))
         if sender.HKEP.defined and sender.HKEP.value:

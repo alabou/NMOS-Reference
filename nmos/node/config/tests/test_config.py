@@ -1114,7 +1114,7 @@ class TestParametrizedConstraintPropagation:
             r_ver_after, c_ver_after = _get_receiver_version(receiver)
             snap_after = _receiver_constraints_snapshot(receiver)
 
-            # Propagation is gate-conditional (faithful to the Go reference): the
+            # Propagation is gate-conditional: the
             # receiver's native constraints are only rewritten when the compliant
             # generic properties satisfy one of the receiver's NON-native
             # constraint sets (checkReceiverNativePropertiesCompatibility) AND a

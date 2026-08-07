@@ -3557,7 +3557,7 @@ class Node:
         # sub-flows in place (e.g. an AAC->L24 sub-layer change); without their
         # own cascade those changes keep the old id+version and NEVER reach the
         # registry — the registry (and the controller's caps/green) stay stale.
-        # This mirrors Go's forceActiveConstraints, which cascades every flow
+        # This mirrors forceActiveConstraints, which cascades every flow
         # (trunk + each sub-flow via updateFlowToCompliantFlow). The cascade
         # order is sub-flows FIRST: update_flow(sub-flow) repoints THIS trunk's
         # Parents to the new sub-flow id (the trunk is the sub-flow's child,

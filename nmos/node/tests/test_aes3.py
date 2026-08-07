@@ -386,7 +386,7 @@ class TestAes3FullyDescribedSourceFlow:
 
         A capability range like audio_layers:[1,4] only restricts what is
         multiplexed; on the force/reset path it resolves to the range minimum
-        (faithful to Go's getPropertyFromIntCapability). So audio_layers may be
+        (faithful to getPropertyFromIntCapability). So audio_layers may be
         less than the number of available audio sub-flows, but never more, and
         the parent structure is preserved.
         """

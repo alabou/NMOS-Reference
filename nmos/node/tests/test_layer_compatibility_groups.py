@@ -54,8 +54,6 @@ KEY_GROUPS = "urn:x-matrox:cap:meta:layer_compatibility_groups"
 
 class TestBitmaskSemantics:
     """Unit tests for get_bitmask_from_compatibility_groups.
-
-    Reference behavior at nmosNodeCompatibility:3543-3556.
     """
 
     def test_single_group_sets_one_bit(self) -> None:
@@ -302,8 +300,7 @@ class TestMuxSubflowIntersection:
 
 class TestWriteBack:
     """_write_layer_compatibility_groups writes compliant groups back to
-    FlowCore.LayerCompatibilityGroups. Reference logic lives at
-    nmosNodeCompatibility (inside each update*Flow function)."""
+    FlowCore.LayerCompatibilityGroups."""
 
     def _make_flow_ptr_with_core(self) -> Any:
         """Construct a minimal object exposing FlowCore.LayerCompatibilityGroups

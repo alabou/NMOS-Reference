@@ -2477,11 +2477,17 @@ def get_sdp_to_caps(
     else:
         _s(CapTransportClockRefType.s, Internal.s)
 
+    # privacy and hkep are reported only when true, matching get_flow_to_caps and
+    # both test-suite converters. A stream that is not protected simply says
+    # nothing, rather than asserting false: the SDP carries no attribute for the
+    # negative case either, so there is nothing to state.
     privacy_val = getattr(media, 'privacy', False)
-    _b(CapTransportPrivacy.s, bool(privacy_val))
+    if privacy_val:
+        _b(CapTransportPrivacy.s, True)
 
     hkep_val = getattr(media, 'hkep', False)
-    _b(CapTransportHkep.s, bool(hkep_val))
+    if hkep_val:
+        _b(CapTransportHkep.s, True)
 
     if verbose:
         print(f"  [get_sdp_props] Extracted {len(caps)} properties from SDP")
