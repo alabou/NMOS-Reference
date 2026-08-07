@@ -1147,62 +1147,72 @@ def _populate_media_for_leg(*, media: Any, transport: str, category: str,
                     )
                 media.encoding_name = enc.value
 
-            if hasattr(flow_inner, 'FrameWidth') and flow_inner.FrameWidth.defined:
-                media.width = flow_inner.FrameWidth.value
-            if hasattr(flow_inner, 'FrameHeight') and flow_inner.FrameHeight.defined:
-                media.height = flow_inner.FrameHeight.value
-            if hasattr(flow_inner, 'Colorspace') and flow_inner.Colorspace.defined:
-                cs = str(flow_inner.Colorspace.value)
-                media.colorimetry, media.color_range = _get_sdp_colorimetry(cs, E)
+            # RFC 6184 / RFC 7798 define no geometry fmtp parameters of their own.
+            # H.264 and H.265 carry the ST 2110-22 set (width / height / depth /
+            # exactframerate / sampling / colorimetry / TCS / interlace) only when the
+            # stream is IPMX, which is what obliges them to be ST 2110-22 conformant.
+            # Raw (ST 2110-20) and JPEG XS (ST 2110-22) always carry it, so only the
+            # two H.26x encodings are conditional here.
+            _st2110_geometry = node.ipmx or media.encoding_name not in (
+                E.EncodingH264.value, E.EncodingH265.value)
 
-            if hasattr(flow_inner, 'TransferCharacteristic') and flow_inner.TransferCharacteristic.defined:
-                tc = str(flow_inner.TransferCharacteristic.value)
-                _tcs_map = {SDR.s: E.TransferSDR, PQ.s: E.TransferPQ, HLG.s: E.TransferHLG}
-                if tc in _tcs_map:
-                    media.transfer_characteristic = _tcs_map[tc].value
+            if _st2110_geometry:
+                if hasattr(flow_inner, 'FrameWidth') and flow_inner.FrameWidth.defined:
+                    media.width = flow_inner.FrameWidth.value
+                if hasattr(flow_inner, 'FrameHeight') and flow_inner.FrameHeight.defined:
+                    media.height = flow_inner.FrameHeight.value
+                if hasattr(flow_inner, 'Colorspace') and flow_inner.Colorspace.defined:
+                    cs = str(flow_inner.Colorspace.value)
+                    media.colorimetry, media.color_range = _get_sdp_colorimetry(cs, E)
 
-            if hasattr(flow_inner, 'InterlaceMode') and flow_inner.InterlaceMode.defined:
-                im = str(flow_inner.InterlaceMode.value)
-                if im == InterlacedTff.s:
-                    media.interlaced = True
-                    media.top_field_first = True
-                elif im == InterlacedBff.s:
-                    media.interlaced = True
-                elif im == InterlacedPsf.s:
-                    media.interlaced = True
-                    media.segmented = True
+                if hasattr(flow_inner, 'TransferCharacteristic') and flow_inner.TransferCharacteristic.defined:
+                    tc = str(flow_inner.TransferCharacteristic.value)
+                    _tcs_map = {SDR.s: E.TransferSDR, PQ.s: E.TransferPQ, HLG.s: E.TransferHLG}
+                    if tc in _tcs_map:
+                        media.transfer_characteristic = _tcs_map[tc].value
 
-            try:
-                flow_core = _get_flow_core(node.flows.get(sender.FlowId.value))
-                if flow_core.GrainRate.defined:
-                    gr = flow_core.GrainRate.value
-                    media.exact_frame_rate_numerator = gr.Numerator.value if gr.Numerator.defined else 0
-                    media.exact_frame_rate_denominator = gr.Denominator.value if gr.Denominator.defined else 1
-            except InvalidObject:
-                pass
+                if hasattr(flow_inner, 'InterlaceMode') and flow_inner.InterlaceMode.defined:
+                    im = str(flow_inner.InterlaceMode.value)
+                    if im == InterlacedTff.s:
+                        media.interlaced = True
+                        media.top_field_first = True
+                    elif im == InterlacedBff.s:
+                        media.interlaced = True
+                    elif im == InterlacedPsf.s:
+                        media.interlaced = True
+                        media.segmented = True
 
-            if hasattr(flow_inner, 'Components') and flow_inner.Components.defined:
-                comps = flow_inner.Components.value
-                if comps and comps[0].BitDepth.defined:
-                    media.depth = comps[0].BitDepth.value
-                if comps:
-                    names = [str(c.Name.value) if c.Name.defined else "" for c in comps]
-                    if set(names) & {R.s, G.s, B.s}:
-                        media.sampling = E.SamplingRGB.value
-                    elif len(comps) >= 3:
-                        # Chroma subsampling from the component geometry:
-                        # full-size chroma = 4:4:4; half width = 4:2:2;
-                        # half width and half height = 4:2:0.
-                        w0 = comps[0].Width.value if comps[0].Width.defined else 0
-                        w1 = comps[1].Width.value if comps[1].Width.defined else 0
-                        h0 = comps[0].Height.value if comps[0].Height.defined else 0
-                        h1 = comps[1].Height.value if comps[1].Height.defined else 0
-                        if w0 == w1:
-                            media.sampling = E.SamplingYCbCr_444.value
-                        elif h0 == h1:
-                            media.sampling = E.SamplingYCbCr_422.value
-                        else:
-                            media.sampling = E.SamplingYCbCr_420.value
+                try:
+                    flow_core = _get_flow_core(node.flows.get(sender.FlowId.value))
+                    if flow_core.GrainRate.defined:
+                        gr = flow_core.GrainRate.value
+                        media.exact_frame_rate_numerator = gr.Numerator.value if gr.Numerator.defined else 0
+                        media.exact_frame_rate_denominator = gr.Denominator.value if gr.Denominator.defined else 1
+                except InvalidObject:
+                    pass
+
+                if hasattr(flow_inner, 'Components') and flow_inner.Components.defined:
+                    comps = flow_inner.Components.value
+                    if comps and comps[0].BitDepth.defined:
+                        media.depth = comps[0].BitDepth.value
+                    if comps:
+                        names = [str(c.Name.value) if c.Name.defined else "" for c in comps]
+                        if set(names) & {R.s, G.s, B.s}:
+                            media.sampling = E.SamplingRGB.value
+                        elif len(comps) >= 3:
+                            # Chroma subsampling from the component geometry:
+                            # full-size chroma = 4:4:4; half width = 4:2:2;
+                            # half width and half height = 4:2:0.
+                            w0 = comps[0].Width.value if comps[0].Width.defined else 0
+                            w1 = comps[1].Width.value if comps[1].Width.defined else 0
+                            h0 = comps[0].Height.value if comps[0].Height.defined else 0
+                            h1 = comps[1].Height.value if comps[1].Height.defined else 0
+                            if w0 == w1:
+                                media.sampling = E.SamplingYCbCr_444.value
+                            elif h0 == h1:
+                                media.sampling = E.SamplingYCbCr_422.value
+                            else:
+                                media.sampling = E.SamplingYCbCr_420.value
 
             # b=AS carries the transport bitrate (essence + transport overhead).  Read the
             # sender's transport Bitrate attribute so the SDP matches the published transport

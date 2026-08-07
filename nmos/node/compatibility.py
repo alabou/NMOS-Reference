@@ -2243,6 +2243,12 @@ def get_sdp_to_caps(
             if getattr(media, 'ipmx', False) and not _check(check_sdp_st2110_10, check_sdp_st2110_22):
                 return None
             _s(CapFormatMediaType.s, VideoCodedH264.s)
+            # Only an IPMX stream is obliged to be ST 2110-22 conformant, so only
+            # then does its fmtp carry the geometry parameters. A plain RFC 6184
+            # SDP has no standing to declare them, and any it did carry would be
+            # unverifiable, so they are ignored rather than trusted.
+            if getattr(media, 'ipmx', False):
+                _extract_video_common()
             if not media.codec_profile_level_id:
                 return None
             try:
@@ -2278,6 +2284,9 @@ def get_sdp_to_caps(
             if getattr(media, 'ipmx', False) and not _check(check_sdp_st2110_10, check_sdp_st2110_22):
                 return None
             _s(CapFormatMediaType.s, VideoCodedH265.s)
+            # As for H.264: geometry only from an IPMX (ST 2110-22) stream.
+            if getattr(media, 'ipmx', False):
+                _extract_video_common()
             if not media.h265_interop_constraints or not media.h265_profile_compatibility_indicator:
                 return None
             try:
