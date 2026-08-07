@@ -18,6 +18,7 @@ from __future__ import annotations
 from fractions import Fraction
 from typing import Any
 
+from nmos.enums import Internal, Ptp
 from nmos.node.codec import get_sdp_color_sampling
 
 
@@ -127,11 +128,14 @@ def get_flow_to_caps(node: Any, flow_ptr: Any) -> Any:
             caps[cap.name] = cap
 
     # --- Extract source-level properties (clock, sync) ---
-    def _get_source_sync(flow_core: Any) -> tuple[str, bool | None]:
+    def _get_source_sync(flow_core: Any) -> tuple[str | None, bool | None]:
         """Get clock name and synchronous_media from the flow's source.
 
-        ``clock_name`` is a REQUIRED IS-04 source member, read as-is (an
-        undefined value is a genuine spec violation and stays fatal).
+        ``clock_name`` is a REQUIRED IS-04 source member but is NULLABLE
+        (``"type": ["string", "null"]`` in source_core.json). A null value means
+        the source references no clock at all, so it is returned as ``None``
+        rather than stringified into the literal "None". An undefined value
+        remains a spec violation and stays fatal.
 
         ``synchronous_media`` (``urn:x-matrox:synchronous_media``) is an
         OPTIONAL source member, so it is returned as ``None`` when absent
@@ -154,12 +158,43 @@ def get_flow_to_caps(node: Any, flow_ptr: Any) -> Any:
         src_val = src_inner.value if hasattr(src_inner, 'value') else src_inner
         src_core = getattr(src_val, 'SourceCore', src_val)
 
-        clk_name: str = str(src_core.ClockName.value)
+        clk_raw = src_core.ClockName.value
+        clk_name: str | None = None if clk_raw is None else str(clk_raw)
         sync_media: bool | None = (
             src_core.SynchronousMedia.value
             if src_core.SynchronousMedia.defined else None
         )
         return clk_name, sync_media
+
+    def _clock_ref_type(clk_name: str | None) -> str:
+        """Resolve a source's ``clock_name`` to its IS-04 ``ref_type``.
+
+        The Node's ``clocks[]`` array is authoritative: every entry declares its
+        own ``ref_type`` ("ptp" or "internal"), and nothing in IS-04 ties a
+        particular name to a particular type. Naming a PTP clock anything other
+        than "clk0" is legal, so the name alone cannot be trusted.
+
+        The literal fallback applies only when the caller cannot supply the clock
+        list — the controller converts registry JSON through a shim node that
+        carries just the sources (see nmos/controller/flow_match.py).
+        """
+        if clk_name is None:
+            # A null clock_name means no external reference: the stream is
+            # free-running, which is exactly what "internal" states. Reporting it
+            # keeps the Flow consistent with the SDP for the same stream, whose
+            # missing a=ts-refclk:ptp also yields "internal" -- and an omitted
+            # capability would not be checked by the inclusion test at all.
+            return Internal.s
+
+        lookup = getattr(node, "_lookup_clock_by_name", None)
+        if lookup is not None:
+            try:
+                clock_inner = lookup(clk_name)
+                if clock_inner is not None and clock_inner.RefType.defined:
+                    return str(clock_inner.RefType.value)
+            except (AttributeError, TypeError):
+                pass
+        return Ptp.s if clk_name == "clk0" else Internal.s
 
     def _add_transport_caps(flow_core: Any) -> None:
         """Add transport caps (clock ref, sync) if layer < 0 or undefined.
@@ -170,8 +205,7 @@ def get_flow_to_caps(node: Any, flow_ptr: Any) -> Any:
         layer = flow_core.Layer.value if flow_core.Layer.defined else -1
         if layer < 0:
             clk_name, sync_media = _get_source_sync(flow_core)
-            ptp_str = "ptp" if clk_name == "clk0" else "internal"
-            _add(_cap_str(CapTransportClockRefType, ptp_str))
+            _add(_cap_str(CapTransportClockRefType, _clock_ref_type(clk_name)))
             # Optional source member — omit the cap when the source doesn't
             # declare it (rather than inventing a value).
             if sync_media is not None:
@@ -281,12 +315,17 @@ def get_flow_to_caps(node: Any, flow_ptr: Any) -> Any:
         _add_transport_caps(flow_val.FlowCore)
 
     elif isinstance(poly, (NFlowDataJson, NFlowDataJsonValue)):
-        # NFlowDataJson branch
+        # NFlowDataJson branch. application/json is IS-07 event data carried over
+        # MQTT or WebSocket, not an RTP media stream, so it has no PTP timing and
+        # no transport capabilities to report.
         _add(_cap_from_enum(CapFormatMediaType, flow_val.MediaType))
 
     elif isinstance(poly, (NFlowDataSdianc, NFlowDataSdiancValue)):
-        # NFlowDataSdianc branch
+        # NFlowDataSdianc branch. video/smpte291 is an ST 2110-40 RTP stream: it is
+        # clocked and PTP-locked like any other essence, and get_sdp_to_caps reports
+        # clock_ref_type and synchronous_media for it, so the flow must agree.
         _add(_cap_from_enum(CapFormatMediaType, flow_val.MediaType))
+        _add_transport_caps(flow_val.FlowCore)
 
     elif isinstance(poly, (NFlowMux, NFlowMuxValue)):
         # NFlowMux branch

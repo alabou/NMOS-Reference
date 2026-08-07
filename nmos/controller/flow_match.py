@@ -118,9 +118,53 @@ class FlowMatch:
     values_by_part: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
+class _JsonClock:
+    """Minimal stand-in for NClockPtpValue / NClockInternalValue.
+
+    ``get_flow_to_caps`` reads only ``.RefType.defined`` and ``.RefType.value``
+    off a clock, and the registry JSON already carries ``ref_type`` as the exact
+    string the capability wants ("ptp" / "internal", per clock_ptp.json and
+    clock_internal.json). Decoding into the generated polymorphic NClock types
+    would buy nothing.
+    """
+
+    def __init__(self, ref_type: str) -> None:
+        self.RefType = SimpleNamespace(defined=True, value=ref_type)
+
+
+def node_clocks_for_source(
+    cache: Any, source_json: dict[str, Any] | None
+) -> dict[str, _JsonClock] | None:
+    """Resolve source -> device -> node -> ``clocks[]`` from the registry cache.
+
+    Returns a ``name -> _JsonClock`` mapping, or ``None`` when the chain cannot
+    be walked. ``None`` is an ordinary outcome, not an error: ``clocks`` may be
+    an empty array (node.json sets no minItems) and the node record may not have
+    reached the cache yet during a resync.
+    """
+    if cache is None or not isinstance(source_json, dict):
+        return None
+    try:
+        device = cache.get_device(source_json.get("device_id", "") or "")
+        if not isinstance(device, dict):
+            return None
+        node = cache.get_node(device.get("node_id", "") or "")
+        if not isinstance(node, dict):
+            return None
+        out: dict[str, _JsonClock] = {}
+        for entry in node.get("clocks") or []:
+            if isinstance(entry, dict) and entry.get("name") and entry.get("ref_type"):
+                out[entry["name"]] = _JsonClock(entry["ref_type"])
+        return out or None
+    except Exception as exc:
+        log.debug("node clocks lookup failed: %s", exc)
+        return None
+
+
 def flow_caps_from_json(
     flow_json: dict[str, Any] | None,
     source_json: dict[str, Any] | None,
+    node_clocks: dict[str, _JsonClock] | None = None,
 ) -> Any:
     """Convert an IS-04 flow JSON (+ its source, for audio) to a CCF CapSet.
 
@@ -158,6 +202,11 @@ def flow_caps_from_json(
             sources[source_json["id"]] = nsrc
 
         shim = SimpleNamespace(sources=sources)
+        if node_clocks:
+            # Same duck-typed contract the real Node exposes; without it
+            # get_flow_to_caps falls back to the clk0 == ptp convention, which
+            # is only valid for our own nodes.
+            shim._lookup_clock_by_name = node_clocks.get
         capset = get_flow_to_caps(shim, nflow)
     except Exception as exc:
         log.debug("flow→caps conversion failed: %s", exc)
@@ -196,7 +245,11 @@ def _operating_capsets(
     ``cache=None`` (or a non-mux flow) yields just the trunk.
     """
     out: dict[str, Any] = {}
-    trunk = flow_caps_from_json(flow_json, source_json)
+    # Sub-flows share the trunk's clock by rule, so one resolution covers all.
+    node_clocks = node_clocks_for_source(cache, source_json)
+    if node_clocks is None:
+        log.debug("node clocks unresolved; clock_ref_type uses the clk0 fallback")
+    trunk = flow_caps_from_json(flow_json, source_json, node_clocks)
     if trunk is not None:
         out[_part_key(trunk.format, trunk.layer)] = trunk
 
@@ -207,7 +260,7 @@ def _operating_capsets(
             if not isinstance(sub_flow, dict):
                 continue
             sub_src = cache.get_source(sub_flow.get("source_id", "") or "")
-            sub_caps = flow_caps_from_json(sub_flow, sub_src)
+            sub_caps = flow_caps_from_json(sub_flow, sub_src, node_clocks)
             if sub_caps is not None:
                 out[_part_key(sub_caps.format, sub_caps.layer)] = sub_caps
     return out
