@@ -35,70 +35,70 @@ from nmos.codec import aac, h264, h265, jxsv
 # Helper: derive SDP color sampling from video components
 # ---------------------------------------------------------------------------
 
-def get_sdp_color_sampling(components: list[Any]) -> str:
+def get_sdp_color_sampling(components: list[Any]) -> str | None:
     """Derive the SDP color sampling string from a video component array.
 
-    Examines the component names (Y/Cb/Cr or R/G/B) and the width/height
-    ratios between luma and chroma planes to determine the sub-sampling.
+    Components are matched by NAME, not by position: IS-04's flow_video_raw
+    schema declares ``components`` as a plain array (``minItems: 1``, no
+    ``maxItems``, no tuple form), so neither the order nor the count is
+    constrained. A flow listing ``Cb, Y, Cr``, or carrying an extra ``A`` /
+    ``DepthMap`` plane, is conformant and must still classify.
+
+    The ratio is taken between the planes themselves rather than against the
+    flow's ``frame_width`` / ``frame_height``: nothing in IS-04 ties luma to
+    those, and the per-component ``width`` / ``height`` are required members,
+    so they are the reliable basis.
 
     Args:
-        components: list of NVideoComponentValue (must be exactly 3 elements).
+        components: list of NVideoComponentValue.
 
     Returns:
-        One of "RGB", "YCbCr-4:4:4", "YCbCr-4:2:2", or "YCbCr-4:2:0".
-
-    Raises:
-        InvalidParameter: If the component array is invalid or the sampling
-            pattern cannot be determined.
+        One of "RGB", "YCbCr-4:4:4", "YCbCr-4:2:2", "YCbCr-4:2:0", or ``None``
+        when the sampling cannot be determined -- an unrecognised colour system
+        such as ICtCp, or plane sizes matching no known pattern. ``None`` means
+        "undeterminable", which callers deriving capabilities report by omitting
+        the capability; callers validating against a codec profile treat it as
+        an error.
     """
-    if len(components) != 3:
-        raise InvalidParameter("invalid array of video components")
-
-    try:
-        name0 = components[0].Name.value
-        name1 = components[1].Name.value
-        name2 = components[2].Name.value
-    except NotAvailable:
-        raise InvalidParameter("invalid array of video components — missing name")
-
-    # --- RGB path ---
-    if name0 is R and name1 is G and name2 is B:
+    by_name: dict[Any, Any] = {}
+    for comp in components:
         try:
-            w0 = components[0].Width.value
-            w1 = components[1].Width.value
-            w2 = components[2].Width.value
-            h0 = components[0].Height.value
-            h1 = components[1].Height.value
-            h2 = components[2].Height.value
+            by_name.setdefault(comp.Name.value, comp)
         except NotAvailable:
-            raise InvalidParameter("invalid array of video components")
+            return None
 
-        if w0 == w1 == w2 and h0 == h1 == h2:
-            return "RGB"
-
-    # --- YCbCr path ---
-    if name0 is Y and name1 is Cb and name2 is Cr:
+    def wh(comp: Any) -> tuple[int, int] | None:
         try:
-            w0 = components[0].Width.value
-            w1 = components[1].Width.value
-            w2 = components[2].Width.value
-            h0 = components[0].Height.value
-            h1 = components[1].Height.value
-            h2 = components[2].Height.value
+            return comp.Width.value, comp.Height.value
         except NotAvailable:
-            raise InvalidParameter("invalid array of video components")
+            return None
 
-        if w0 == w1 == w2 and h0 == h1 == h2:
+    # YCbCr is tested first: a malformed array carrying both colour systems
+    # must not be reported as RGB on the strength of the names alone.
+    if all(n in by_name for n in (Y, Cb, Cr)):
+        y, cb, cr = (wh(by_name[n]) for n in (Y, Cb, Cr))
+        if y is None or cb is None or cr is None:
+            return None
+        if cb != cr:
+            return None            # chroma planes must match each other
+        (yw, yh), (cw, ch) = y, cb
+        if (yw, yh) == (cw, ch):
             return "YCbCr-4:4:4"
-
-        if w0 == 2 * w1 == 2 * w2 and h0 == h1 == h2:
+        if yw == 2 * cw and yh == ch:
             return "YCbCr-4:2:2"
-
-        if w0 == 2 * w1 == 2 * w2 and h0 == 2 * h1 == 2 * h2:
+        if yw == 2 * cw and yh == 2 * ch:
             return "YCbCr-4:2:0"
+        return None
 
-    raise InvalidParameter("invalid array of video components")
+    if all(n in by_name for n in (R, G, B)):
+        r, g, b = (wh(by_name[n]) for n in (R, G, B))
+        if r is None or g is None or b is None:
+            return None
+        # RGB is only RGB when the three planes are the same size; the names
+        # on their own do not establish it.
+        return "RGB" if r == g == b else None
 
+    return None
 
 # ---------------------------------------------------------------------------
 # Helper: validate color sampling against a profile's allowed list
@@ -196,6 +196,10 @@ def check_h264_profile(
         raise InvalidParameter("missing bit depth")
 
     sampling = get_sdp_color_sampling(components)
+    if sampling is None:
+        # Validating against a codec profile: an undeterminable sampling cannot
+        # be checked, and silently skipping the check would be worse than failing.
+        raise InvalidParameter("cannot determine color sampling from components")
 
     profile_info = h264.ALL_PROFILES.get(profile)
     if profile_info is None:
@@ -331,6 +335,10 @@ def select_h264_level_from_coded_flow(flow: Any) -> None:
         raise InvalidParameter("missing bit depth")
 
     sampling = get_sdp_color_sampling(components)
+    if sampling is None:
+        # Validating against a codec profile: an undeterminable sampling cannot
+        # be checked, and silently skipping the check would be worse than failing.
+        raise InvalidParameter("cannot determine color sampling from components")
 
     try:
         width = flow.FrameWidth.value
@@ -436,6 +444,10 @@ def check_h265_profile(
         raise InvalidParameter("missing bit depth")
 
     sampling = get_sdp_color_sampling(components)
+    if sampling is None:
+        # Validating against a codec profile: an undeterminable sampling cannot
+        # be checked, and silently skipping the check would be worse than failing.
+        raise InvalidParameter("cannot determine color sampling from components")
 
     profile_info = h265.ALL_PROFILES.get(profile)
     if profile_info is None:
@@ -564,6 +576,10 @@ def select_h265_level_from_coded_flow(flow: Any) -> None:
         raise InvalidParameter("missing bit depth")
 
     sampling = get_sdp_color_sampling(components)
+    if sampling is None:
+        # Validating against a codec profile: an undeterminable sampling cannot
+        # be checked, and silently skipping the check would be worse than failing.
+        raise InvalidParameter("cannot determine color sampling from components")
 
     try:
         width = flow.FrameWidth.value
@@ -668,6 +684,10 @@ def check_jxsv_profile(
         raise InvalidParameter("missing bit depth")
 
     sampling = get_sdp_color_sampling(components)
+    if sampling is None:
+        # Validating against a codec profile: an undeterminable sampling cannot
+        # be checked, and silently skipping the check would be worse than failing.
+        raise InvalidParameter("cannot determine color sampling from components")
 
     profile_info = jxsv.ALL_PROFILES.get(profile)
     if profile_info is None:
@@ -794,6 +814,10 @@ def select_jxsv_level_from_coded_flow(flow: Any) -> None:
         raise InvalidParameter("missing bit depth")
 
     sampling = get_sdp_color_sampling(components)
+    if sampling is None:
+        # Validating against a codec profile: an undeterminable sampling cannot
+        # be checked, and silently skipping the check would be worse than failing.
+        raise InvalidParameter("cannot determine color sampling from components")
 
     try:
         width = flow.FrameWidth.value

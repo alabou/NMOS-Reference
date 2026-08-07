@@ -17,7 +17,8 @@ import pytest
 from nmos.enums import (
     EnumRegistry,
     Progressive,
-    Y, Cb, Cr, R, G, B,
+    # video components, in IS-04 flow_video_raw enum order
+    Y, Cb, Cr, I, Ct, Cp, A, R, G, B,
     # H.264
     H264ProfileBaseline,
     H264ProfileHigh,
@@ -296,14 +297,49 @@ class TestGetSdpColorSampling:
         comps = _make_rgb_components()
         assert get_sdp_color_sampling(comps) == "RGB"
 
-    def test_wrong_component_count(self) -> None:
-        with pytest.raises(InvalidParameter):
-            get_sdp_color_sampling([])
+    # IS-04's flow_video_raw declares components as a plain array (minItems 1,
+    # no maxItems, no tuple form), so neither order nor count is constrained and
+    # an undeterminable sampling is reported as None rather than raising.
+
+    def test_empty_components(self) -> None:
+        assert get_sdp_color_sampling([]) is None
 
     def test_two_components(self) -> None:
         comps = _make_ycbcr_444_components()[:2]
-        with pytest.raises(InvalidParameter):
-            get_sdp_color_sampling(comps)
+        assert get_sdp_color_sampling(comps) is None
+
+    def test_order_does_not_matter(self) -> None:
+        y, cb, cr = _make_ycbcr_422_components()
+        assert get_sdp_color_sampling([cb, y, cr]) == "YCbCr-4:2:2"
+
+    def test_extra_component_tolerated(self) -> None:
+        comps = _make_ycbcr_422_components() + [_make_component(A, 1920, 1080, 8)]
+        assert get_sdp_color_sampling(comps) == "YCbCr-4:2:2"
+
+    def test_rgb_requires_equal_planes(self) -> None:
+        r, g, b = _make_rgb_components()
+        assert get_sdp_color_sampling([r, _make_component(G, 960, 1080, 8), b]) is None
+
+    def test_ycbcr_wins_over_rgb_when_both_present(self) -> None:
+        comps = _make_ycbcr_422_components() + _make_rgb_components()
+        assert get_sdp_color_sampling(comps) == "YCbCr-4:2:2"
+
+    def test_mismatched_chroma_planes(self) -> None:
+        y, cb, _ = _make_ycbcr_422_components()
+        assert get_sdp_color_sampling([y, cb, _make_component(Cr, 480, 1080, 8)]) is None
+
+    def test_unrecognised_colour_system(self) -> None:
+        comps = [_make_component(I, 1920, 1080, 8),
+                 _make_component(Ct, 960, 1080, 8),
+                 _make_component(Cp, 960, 1080, 8)]
+        assert get_sdp_color_sampling(comps) is None
+
+    def test_luma_need_not_match_frame_dimensions(self) -> None:
+        """The ratio is plane-to-plane; IS-04 ties luma to no frame_width."""
+        comps = [_make_component(Y, 3840, 2160, 8),
+                 _make_component(Cb, 1920, 2160, 8),
+                 _make_component(Cr, 1920, 2160, 8)]
+        assert get_sdp_color_sampling(comps) == "YCbCr-4:2:2"
 
 
 # ===========================================================================

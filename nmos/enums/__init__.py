@@ -234,9 +234,12 @@ DENSITY = EnumRegistry.get("DENSITY")
 ST2115LOGS3 = EnumRegistry.get("ST2115LOGS3")
 
 # === Video components ===
+# Declared in the order of the IS-04 flow_video_raw component name enum:
+# Y, Cb, Cr, I, Ct, Cp, A, R, G, B, DepthMap. I/Ct/Cp are the ICtCp system.
 Y = EnumRegistry.get("Y")
 Cb = EnumRegistry.get("Cb")
 Cr = EnumRegistry.get("Cr")
+I = EnumRegistry.get("I")  # noqa: E741 - IS-04 component name, not an ambiguous identifier
 Ct = EnumRegistry.get("Ct")
 Cp = EnumRegistry.get("Cp")
 R = EnumRegistry.get("R")

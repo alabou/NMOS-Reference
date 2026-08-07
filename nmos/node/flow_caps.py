@@ -279,8 +279,13 @@ def get_flow_to_caps(node: Any, flow_ptr: Any) -> Any:
         # Color sampling and component depth from components.
         # An undefined Components is treated as a fatal error — internal data from pipeline builder.
         components = flow_val.Components.value
+        # None means the sampling could not be determined (an unrecognised colour
+        # system, or plane sizes matching no known pattern). Omitting the capability
+        # states nothing, which is the honest report -- unlike dropping a value that
+        # was known, which would silently remove a constraint.
         sampling_str = get_sdp_color_sampling(components)
-        _add(_cap_str(CapFormatColorSampling, sampling_str))
+        if sampling_str is not None:
+            _add(_cap_str(CapFormatColorSampling, sampling_str))
         _add(_cap_int(CapFormatComponentDepth, components[0].BitDepth.value))
 
         _add_transport_caps(flow_val.FlowCore)
@@ -297,8 +302,13 @@ def get_flow_to_caps(node: Any, flow_ptr: Any) -> Any:
 
         # Color sampling and component depth from components.
         components = flow_val.Components.value
+        # None means the sampling could not be determined (an unrecognised colour
+        # system, or plane sizes matching no known pattern). Omitting the capability
+        # states nothing, which is the honest report -- unlike dropping a value that
+        # was known, which would silently remove a constraint.
         sampling_str = get_sdp_color_sampling(components)
-        _add(_cap_str(CapFormatColorSampling, sampling_str))
+        if sampling_str is not None:
+            _add(_cap_str(CapFormatColorSampling, sampling_str))
         _add(_cap_int(CapFormatComponentDepth, components[0].BitDepth.value))
 
         _add(_cap_from_int(CapFormatBitRate, flow_val.Bitrate))
