@@ -2471,6 +2471,13 @@ def get_sdp_to_caps(
     else:
         _b(CapTransportSynchronousMedia.s, True)
 
+    # a=fmtp TP= carries the ST 2110-21 sender type (2110TPN / TPNL / TPW). It
+    # applies to any media the SDP describes, so it sits with the other common
+    # transport properties rather than in an encoding branch.
+    sender_type = getattr(media, 'sender_type', None)
+    if sender_type is not None:
+        _s(CapTransportSenderType.s, str(sender_type))
+
     ts_ref = getattr(media, 'ts_ref_clock_source', None)
     if ts_ref is not None and str(ts_ref).lower() == Ptp.s:
         _s(CapTransportClockRefType.s, Ptp.s)
