@@ -179,8 +179,8 @@ class TestFlowCapsFromJson:
         # synchronous_media (urn:x-matrox:synchronous_media) is an OPTIONAL
         # source member; third-party sources (e.g. Matrox ConvertIP) may omit
         # it. The conversion must NOT abort — it builds the format caps and
-        # simply omits the synchronous_media cap (regression: an unguarded
-        # read raised NotAvailable → None → no green CS / no values).
+        # reports the member's default (regression: an unguarded read raised
+        # NotAvailable → None → no green CS / no values).
         src = _video_source()
         src.pop("urn:x-matrox:synchronous_media", None)
         caps = flow_caps_from_json(_video_raw_flow(), src)
@@ -190,8 +190,12 @@ class TestFlowCapsFromJson:
         assert "urn:x-nmos:cap:format:color_sampling" in caps.caps
         # clock_ref_type still derived from the (required) clock_name…
         assert "urn:x-matrox:cap:transport:clock_ref_type" in caps.caps
-        # …but synchronous_media is omitted, not invented.
-        assert "urn:x-matrox:cap:transport:synchronous_media" not in caps.caps
+        # …and synchronous_media reports False, the same default the SDP writer
+        # applies for an absent member (it becomes mediaclk:sender, which
+        # get_sdp_to_caps reads back as False). Omitting it instead would leave
+        # a receiver's synchronous_media constraint unchecked.
+        sync = caps.caps["urn:x-matrox:cap:transport:synchronous_media"]
+        assert sync.value.enumerated == {False}
 
 
 # ---------------------------------------------------------------------------

@@ -128,7 +128,7 @@ def get_flow_to_caps(node: Any, flow_ptr: Any) -> Any:
             caps[cap.name] = cap
 
     # --- Extract source-level properties (clock, sync) ---
-    def _get_source_sync(flow_core: Any) -> tuple[str | None, bool | None]:
+    def _get_source_sync(flow_core: Any) -> tuple[str | None, bool]:
         """Get clock name and synchronous_media from the flow's source.
 
         ``clock_name`` is a REQUIRED IS-04 source member but is NULLABLE
@@ -138,15 +138,16 @@ def get_flow_to_caps(node: Any, flow_ptr: Any) -> Any:
         remains a spec violation and stays fatal.
 
         ``synchronous_media`` (``urn:x-matrox:synchronous_media``) is an
-        OPTIONAL source member, so it is returned as ``None`` when absent
-        rather than read raw. The node's own pipeline-built sources always
-        set it (node behaviour unchanged), but this function is reused by the
-        controller on arbitrary registry sources from other products/vendors
-        that may legitimately omit it — an unguarded ``.value`` would raise
-        ``NotAvailable`` and abort the whole flow→caps conversion, leaving the
-        resource with no caps and no flow-match.
+        OPTIONAL source member, so an unguarded ``.value`` would raise
+        ``NotAvailable`` on the third-party registry sources the controller
+        feeds through here. Absent means False — the same default
+        ``_populate_media_for_leg`` applies when writing the SDP, where it
+        becomes ``mediaclk:sender`` and reads back as False — so the Flow and
+        the SDP agree about one stream. Omitting instead would leave the
+        receiver's constraint unchecked, since an absent capability is not
+        visited by the inclusion test.
 
-        Returns (clock_name, synchronous_media | None).
+        Returns (clock_name, synchronous_media).
         """
         source_id = flow_core.SourceId.value
         source_ptr = node.sources.get(source_id)
@@ -160,9 +161,9 @@ def get_flow_to_caps(node: Any, flow_ptr: Any) -> Any:
 
         clk_raw = src_core.ClockName.value
         clk_name: str | None = None if clk_raw is None else str(clk_raw)
-        sync_media: bool | None = (
-            src_core.SynchronousMedia.value
-            if src_core.SynchronousMedia.defined else None
+        sync_media: bool = (
+            bool(src_core.SynchronousMedia.value)
+            if src_core.SynchronousMedia.defined else False
         )
         return clk_name, sync_media
 
@@ -206,10 +207,7 @@ def get_flow_to_caps(node: Any, flow_ptr: Any) -> Any:
         if layer < 0:
             clk_name, sync_media = _get_source_sync(flow_core)
             _add(_cap_str(CapTransportClockRefType, _clock_ref_type(clk_name)))
-            # Optional source member — omit the cap when the source doesn't
-            # declare it (rather than inventing a value).
-            if sync_media is not None:
-                _add(_cap_bool(CapTransportSynchronousMedia, sync_media))
+            _add(_cap_bool(CapTransportSynchronousMedia, sync_media))
 
     # --- Dispatch by flow type ---
 
