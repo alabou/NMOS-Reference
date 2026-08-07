@@ -32,7 +32,7 @@ from nmos.enums import (
     # Clock ref
     Ptp, Internal,
     # Interlace / colorspace / transfer characteristic
-    Progressive, InterlacedTff, InterlacedBff,
+    Progressive, InterlacedTff, InterlacedBff, InterlacedPsf,
     BT601, BT709, BT2020, BT2100, XYZ, UNSPECIFIED,
     BT601_5, BT709_2, ST2065_1, ST2065_3, ST428_1,
     SDR, HLG, PQ, LINEAR, BT2100LINPQ, BT2100LINHLG, DENSITY, ST2115LOGS3,
@@ -2145,8 +2145,13 @@ def get_sdp_to_caps(
             _i(CapFormatComponentDepth.s, media.depth)
         if media.exact_frame_rate_numerator and media.exact_frame_rate_denominator:
             _r(CapFormatGrainRate.s, media.exact_frame_rate_numerator, media.exact_frame_rate_denominator)
+        # ST 2110-20 signals PsF as "interlace; segmented" -- segmented qualifies
+        # interlace rather than replacing it, so it must be tested inside the
+        # interlaced branch or a PsF stream reads back as interlaced_bff.
         if not media.interlaced:
             _s(CapFormatInterlaceMode.s, Progressive.s)
+        elif getattr(media, 'segmented', False):
+            _s(CapFormatInterlaceMode.s, InterlacedPsf.s)
         else:
             _s(CapFormatInterlaceMode.s, InterlacedTff.s if media.top_field_first else InterlacedBff.s)
 

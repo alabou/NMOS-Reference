@@ -1261,3 +1261,65 @@ class TestReceiverCapMemberSemantics:
         # constraint_sets: [] → defined (even though empty).
         assert _receiver_constraint_sets_defined(
             self._receiver({"constraint_sets": []})) is True
+
+class TestSdpInterlaceMode:
+    """interlace_mode derived from the SDP fmtp by get_sdp_to_caps.
+
+    ST 2110-20 signals PsF as "interlace; segmented": segmented QUALIFIES
+    interlace rather than replacing it. Testing the two as siblings made the PsF
+    branch unreachable and a PsF stream reported interlaced_bff, which a receiver
+    constraining interlace_mode to interlaced_psf would then reject.
+    """
+
+    RX = "d290f1ee-6c54-4b01-90e6-d701748f0851"
+
+    def _caps(self, fmtp_extra: str) -> Any:
+        from types import SimpleNamespace
+        import sdp.MatroxSdpCheck as check_mod
+        from nmos.node.compatibility import get_sdp_to_caps
+        from nmos.node.store import to_static_id
+        from sdp.MatroxSdp import MatroxSdp
+
+        text = (
+            "v=0\r\no=- 1 1 IN IP4 192.168.1.1\r\ns=x\r\nt=0 0\r\n"
+            "m=video 5000 RTP/AVP 96\r\nc=IN IP4 239.1.1.1/64\r\n"
+            "a=rtpmap:96 raw/90000\r\n"
+            "a=fmtp:96 width=1920; height=1080; depth=10; exactframerate=25; "
+            "sampling=YCbCr-4:2:2; colorimetry=BT709; TCS=SDR; RANGE=NARROW"
+            + fmtp_extra + "\r\n"
+            "a=ts-refclk:ptp=IEEE1588-2008:00-11-22-33-44-55-66-77:0\r\n"
+            "a=mediaclk:direct=0\r\n"
+        )
+        # The fixture is a hand-written fmtp, not a full ST 2110 session, so the
+        # conformance checks are neutralised to isolate the interlace derivation.
+        saved = {n: getattr(check_mod, n) for n in
+                 ("check_sdp_rfc4175", "check_sdp_st2110_10",
+                  "check_sdp_st2110_20", "check_sdp_st2110_21")}
+        for n in saved:
+            setattr(check_mod, n, lambda m: None)
+        try:
+            parsed = MatroxSdp()
+            assert not parsed.decode(text)
+            node = SimpleNamespace(sdp={to_static_id(self.RX): parsed})
+            capset = get_sdp_to_caps(node, self.RX)
+        finally:
+            for n, fn in saved.items():
+                setattr(check_mod, n, fn)
+        return capset
+
+    def _mode(self, fmtp_extra: str) -> str:
+        from caps.MatroxCCF import CapFormatInterlaceMode
+        capset = self._caps(fmtp_extra)
+        return next(iter(capset.caps[CapFormatInterlaceMode].value.enumerated))
+
+    def test_progressive(self) -> None:
+        assert self._mode("") == "progressive"
+
+    def test_interlaced_tff(self) -> None:
+        assert self._mode("; interlace; top-field-first") == "interlaced_tff"
+
+    def test_interlaced_bff(self) -> None:
+        assert self._mode("; interlace") == "interlaced_bff"
+
+    def test_psf_is_not_reported_as_bff(self) -> None:
+        assert self._mode("; interlace; segmented") == "interlaced_psf"
