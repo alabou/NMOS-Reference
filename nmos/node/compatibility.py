@@ -2161,8 +2161,15 @@ def get_sdp_to_caps(
 
     # --- Common audio transport ---
     def _extract_audio_transport() -> None:
-        if media.bitrate_kbits:
-            _i(CapTransportBitRate.s, media.bitrate_kbits)
+        """Transport capabilities common to every audio encoding.
+
+        transport:bit_rate is deliberately NOT here. For uncompressed essence the
+        bit rate is fully determined by sample_rate x channels x sample_depth, so
+        stating it constrains nothing a receiver cannot already derive from the
+        format capabilities -- the same reason video/raw does not report it while
+        jxsv/H.264/H.265 do. Only the AAC family, whose bit rate is an independent
+        parameter, reports it; those branches emit it themselves.
+        """
         # packet_time capabilities are expressed in MILLISECONDS (float);
         # the SDP layer stores ptime/maxptime in microseconds.
         ptime_us = getattr(media, 'p_time_us', 0)
@@ -2394,6 +2401,10 @@ def get_sdp_to_caps(
                 _s(CapTransportParameterSetsTransportMode.s, InBand.s)
             else:
                 _s(CapTransportParameterSetsTransportMode.s, OutOfBand.s)
+            # AAC bit rate is an independent parameter, so the transport rate
+            # from b=AS is worth reporting (unlike L-PCM / AM824).
+            if media.bitrate_kbits:
+                _i(CapTransportBitRate.s, media.bitrate_kbits)
             _extract_audio_transport()
             # RFC 3640: constant duration overrides ptime
             if media.aac_constant_duration and media.sample_rate:
@@ -2434,6 +2445,10 @@ def get_sdp_to_caps(
                     return None  # Error: no config available
                 else:
                     _s(CapTransportParameterSetsTransportMode.s, OutOfBand.s)
+            # AAC bit rate is an independent parameter, so the transport rate
+            # from b=AS is worth reporting (unlike L-PCM / AM824).
+            if media.bitrate_kbits:
+                _i(CapTransportBitRate.s, media.bitrate_kbits)
             _extract_audio_transport()
             if media.aac_constant_duration and media.sample_rate:
                 ptime_us = (media.aac_constant_duration * 1000000) // media.sample_rate
