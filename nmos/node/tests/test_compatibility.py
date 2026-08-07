@@ -1262,6 +1262,73 @@ class TestReceiverCapMemberSemantics:
         assert _receiver_constraint_sets_defined(
             self._receiver({"constraint_sets": []})) is True
 
+def _sdp_caps(fmtp_extra: str) -> Any:
+    """get_sdp_to_caps over a minimal raw-video SDP with `fmtp_extra` appended.
+
+    The fixture is a hand-written fmtp rather than a full ST 2110 session, so the
+    conformance checks are neutralised to isolate the capability derivation.
+    """
+    from types import SimpleNamespace
+    import sdp.MatroxSdpCheck as check_mod
+    from nmos.node.compatibility import get_sdp_to_caps
+    from nmos.node.store import to_static_id
+    from sdp.MatroxSdp import MatroxSdp
+
+    rx = "d290f1ee-6c54-4b01-90e6-d701748f0851"
+    text = (
+        "v=0\r\no=- 1 1 IN IP4 192.168.1.1\r\ns=x\r\nt=0 0\r\n"
+        "m=video 5000 RTP/AVP 96\r\nc=IN IP4 239.1.1.1/64\r\n"
+        "a=rtpmap:96 raw/90000\r\n"
+        "a=fmtp:96 width=1920; height=1080; depth=10; exactframerate=25; "
+        "sampling=YCbCr-4:2:2" + fmtp_extra + "\r\n"
+        "a=ts-refclk:ptp=IEEE1588-2008:00-11-22-33-44-55-66-77:0\r\n"
+        "a=mediaclk:direct=0\r\n"
+    )
+    saved = {n: getattr(check_mod, n) for n in
+             ("check_sdp_rfc4175", "check_sdp_st2110_10",
+              "check_sdp_st2110_20", "check_sdp_st2110_21")}
+    for n in saved:
+        setattr(check_mod, n, lambda m: None)
+    try:
+        parsed = MatroxSdp()
+        assert not parsed.decode(text)
+        node = SimpleNamespace(sdp={to_static_id(rx): parsed})
+        return get_sdp_to_caps(node, rx)
+    finally:
+        for n, fn in saved.items():
+            setattr(check_mod, n, fn)
+
+
+class TestSdpColorspace:
+    """colorspace derived from the SDP fmtp by get_sdp_to_caps.
+
+    RANGE is optional in ST 2110-20 (absent means NARROW) and only FULL changes
+    the mapping, so colorimetry alone determines the colorspace. Requiring RANGE
+    to be present suppressed a value the SDP had already stated.
+    """
+
+    def _colorspace(self, fmtp_extra: str) -> Any:
+        from caps.MatroxCCF import CapFormatColorspace
+        cap = _sdp_caps(fmtp_extra).caps.get(CapFormatColorspace)
+        return next(iter(cap.value.enumerated)) if cap else None
+
+    def test_colorimetry_with_narrow_range(self) -> None:
+        assert self._colorspace("; colorimetry=BT709; RANGE=NARROW") == "BT709"
+
+    def test_colorimetry_without_range(self) -> None:
+        """RANGE is optional; its absence must not suppress the colorspace."""
+        assert self._colorspace("; colorimetry=BT709") == "BT709"
+
+    def test_full_range_reports_unspecified(self) -> None:
+        assert self._colorspace("; colorimetry=BT709; RANGE=FULL") == "UNSPECIFIED"
+
+    def test_unmapped_colorimetry(self) -> None:
+        assert self._colorspace("; colorimetry=SMPTE240M") == "UNSPECIFIED"
+
+    def test_no_colorimetry_at_all(self) -> None:
+        assert self._colorspace("") is None
+
+
 class TestSdpInterlaceMode:
     """interlace_mode derived from the SDP fmtp by get_sdp_to_caps.
 
@@ -1271,41 +1338,8 @@ class TestSdpInterlaceMode:
     constraining interlace_mode to interlaced_psf would then reject.
     """
 
-    RX = "d290f1ee-6c54-4b01-90e6-d701748f0851"
-
     def _caps(self, fmtp_extra: str) -> Any:
-        from types import SimpleNamespace
-        import sdp.MatroxSdpCheck as check_mod
-        from nmos.node.compatibility import get_sdp_to_caps
-        from nmos.node.store import to_static_id
-        from sdp.MatroxSdp import MatroxSdp
-
-        text = (
-            "v=0\r\no=- 1 1 IN IP4 192.168.1.1\r\ns=x\r\nt=0 0\r\n"
-            "m=video 5000 RTP/AVP 96\r\nc=IN IP4 239.1.1.1/64\r\n"
-            "a=rtpmap:96 raw/90000\r\n"
-            "a=fmtp:96 width=1920; height=1080; depth=10; exactframerate=25; "
-            "sampling=YCbCr-4:2:2; colorimetry=BT709; TCS=SDR; RANGE=NARROW"
-            + fmtp_extra + "\r\n"
-            "a=ts-refclk:ptp=IEEE1588-2008:00-11-22-33-44-55-66-77:0\r\n"
-            "a=mediaclk:direct=0\r\n"
-        )
-        # The fixture is a hand-written fmtp, not a full ST 2110 session, so the
-        # conformance checks are neutralised to isolate the interlace derivation.
-        saved = {n: getattr(check_mod, n) for n in
-                 ("check_sdp_rfc4175", "check_sdp_st2110_10",
-                  "check_sdp_st2110_20", "check_sdp_st2110_21")}
-        for n in saved:
-            setattr(check_mod, n, lambda m: None)
-        try:
-            parsed = MatroxSdp()
-            assert not parsed.decode(text)
-            node = SimpleNamespace(sdp={to_static_id(self.RX): parsed})
-            capset = get_sdp_to_caps(node, self.RX)
-        finally:
-            for n, fn in saved.items():
-                setattr(check_mod, n, fn)
-        return capset
+        return _sdp_caps("; colorimetry=BT709; RANGE=NARROW" + fmtp_extra)
 
     def _mode(self, fmtp_extra: str) -> str:
         from caps.MatroxCCF import CapFormatInterlaceMode

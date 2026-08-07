@@ -2131,7 +2131,11 @@ def get_sdp_to_caps(
             _i(CapFormatFrameWidth.s, media.width)
         if media.height:
             _i(CapFormatFrameHeight.s, media.height)
-        if media.colorimetry is not None and media.color_range is not None:
+        # RANGE is optional in ST 2110-20 -- absent means NARROW -- and only FULL
+        # changes the mapping, so colorimetry alone determines the colorspace.
+        # Requiring RANGE suppressed a determinable value, and an omitted
+        # capability is not checked by the inclusion test at all.
+        if media.colorimetry is not None:
             cs = _colorspace_from_sdp(media.colorimetry, media.color_range)
             if cs:
                 _s(CapFormatColorspace.s, cs)
