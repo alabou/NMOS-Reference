@@ -120,13 +120,15 @@ def _collapse_venv_launchers(
     """Drop each venv launcher that its own base interpreter supersedes.
 
     A Windows virtual-environment Python launcher starts the base interpreter as
-    a child and waits for it. Both processes expose the same command line, but
-    only the base interpreter owns the sockets, so the launcher is suppressed and
-    the child's PID is the one reported.
+    a child and waits for it. Both processes expose the same script and arguments,
+    but ``argv[0]`` changes from the venv launcher to the base interpreter. Only
+    the base interpreter owns the sockets, so the launcher is suppressed and the
+    child's PID is the one reported.
 
-    The pair is identified by the actual parent/child link AND a matching command
-    line — never by a matching command line alone. Two nodes started
-    independently from the same launcher script share an identical command line
+    The pair is identified by the actual parent/child link AND matching script
+    and arguments after ``argv[0]`` — never by matching arguments alone. Two
+    nodes started independently from the same launcher script share an identical
+    command line
     without being one process reported twice, and collapsing those would erase a
     real ambiguity: :func:`nmos.agentui.apps.nmos_controller.discovery.discover`
     refuses to guess between candidates and relies on the COUNT being truthful,
@@ -146,7 +148,8 @@ def _collapse_venv_launchers(
         entry.parent_pid
         for entry in scanned
         if entry.parent_pid in launcher_pids
-        and argv_by_pid.get(entry.parent_pid) == entry.process.argv
+        and (parent_argv := argv_by_pid.get(entry.parent_pid)) is not None
+        and parent_argv[1:] == entry.process.argv[1:]
     }
     # PID order rather than CIM enumeration order: a snapshot of something in
     # motion should at least be reported deterministically.

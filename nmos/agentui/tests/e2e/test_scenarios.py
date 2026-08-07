@@ -157,7 +157,7 @@ class TestBlockedControlsEvidence:
         # be evidenced at all.
         manifest = _run("blocked-controls", artifacts_root)
         root = artifacts_root / str(manifest["run_id"])
-        markdown = (root / "journal.md").read_text()
+        markdown = (root / "journal.md").read_text(encoding="utf-8")
 
         reasons = [
             str(s["error"]["reason"])  # type: ignore[index]

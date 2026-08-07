@@ -119,11 +119,14 @@ class TestProcScan:
         assert list(iter_processes()) == [expected]
 
 
-#: A Windows venv invocation. Both halves of the launcher pair report this
-#: verbatim — which is precisely why the command line cannot identify the pair.
+#: A Windows venv invocation. The base interpreter child reports the same script
+#: and arguments but replaces the venv launcher at ``argv[0]``.
 WIN_NODE_ARGV = (
     r"C:\repo\.venv\Scripts\python.exe", "nmos_node.py",
     "--nodeControlPort", "5050",
+)
+BASE_NODE_ARGV = (
+    r"C:\Python312\python.exe", *WIN_NODE_ARGV[1:],
 )
 
 
@@ -152,7 +155,7 @@ class TestCollapseVenvLaunchers:
     def test_launcher_is_superseded_by_its_own_base_interpreter(self) -> None:
         scanned = [
             _scanned(100, launcher=True),
-            _scanned(101, parent_pid=100),
+            _scanned(101, parent_pid=100, argv=BASE_NODE_ARGV),
         ]
         assert [p.pid for p in proc_scan._collapse_venv_launchers(scanned)] == [101]
 
@@ -161,9 +164,9 @@ class TestCollapseVenvLaunchers:
         # one of these, and the ambiguity error never fired.
         scanned = [
             _scanned(100, launcher=True),
-            _scanned(101, parent_pid=100),
+            _scanned(101, parent_pid=100, argv=BASE_NODE_ARGV),
             _scanned(200, launcher=True),
-            _scanned(201, parent_pid=200),
+            _scanned(201, parent_pid=200, argv=BASE_NODE_ARGV),
         ]
         assert [p.pid for p in proc_scan._collapse_venv_launchers(scanned)] == [
             101, 201,
