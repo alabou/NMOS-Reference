@@ -1357,3 +1357,144 @@ class TestSdpInterlaceMode:
 
     def test_psf_is_not_reported_as_bff(self) -> None:
         assert self._mode("; interlace; segmented") == "interlaced_psf"
+
+class TestSenderDerivedTransportCaps:
+    """Transport capabilities that live on the Sender rather than the Flow.
+
+    get_flow_to_caps reaches the Sender through flow.Senders -- IS-04's forward
+    link -- so no scan of node.senders is needed. They are trunk-only, scoped as
+    FlowToCapabilities scopes them: st2110_21_sender_type on every format except
+    mux, bit_rate and the three codec transport modes on coded essence only,
+    privacy and hkep everywhere and only when true.
+    """
+
+    def _node(self, config_name: str) -> Any:
+        import json
+        from pathlib import Path as _P
+        from nmos.node import Node
+        from nmos.node.config import ConfigBuilder
+
+        node = Node()
+        node.init(serial_number="TST12345")
+        config_path = _P(__file__).parent.parent / "config" / "builtin" / f"{config_name}.json"
+        with open(config_path) as f:
+            config = json.load(f)
+        builder = ConfigBuilder(node, verbose=False)
+        for sender_cfg in config.get("senders", []):
+            builder._build_sender_pipeline(sender_cfg)
+        return node
+
+    def _caps_by_media_type(self, config_name: str) -> dict[str, Any]:
+        """media_type -> CapSet, for every sender-carried flow in the config."""
+        from nmos.node.flow_caps import get_flow_to_caps
+        from caps.MatroxCCF import CapFormatMediaType
+
+        node = self._node(config_name)
+        out: dict[str, Any] = {}
+        for _static_id, sender in node.senders.snapshot().items():
+            sv = sender.get() if hasattr(sender, "get") else sender
+            sv = sv.value if hasattr(sv, "value") else sv
+            if not sv.FlowId.defined or not sv.FlowId.value:
+                continue
+            flow_ptr = node.flows.get(sv.FlowId.value)
+            if flow_ptr is None:
+                continue
+            capset = get_flow_to_caps(node, flow_ptr)
+            if not hasattr(capset, "caps"):
+                continue
+            mt = capset.caps.get(CapFormatMediaType)
+            if mt is not None:
+                out[next(iter(mt.value.enumerated))] = capset
+        return out
+
+    def _flow_and_sender(self, config_name: str, media_type: str) -> Any:
+        """(node, flow_ptr, sender_value) for the first sender carrying media_type."""
+        from caps.MatroxCCF import CapFormatMediaType
+        from nmos.node.flow_caps import get_flow_to_caps
+
+        node = self._node(config_name)
+        for _static_id, sender in node.senders.snapshot().items():
+            sv = sender.get() if hasattr(sender, "get") else sender
+            sv = sv.value if hasattr(sv, "value") else sv
+            if not sv.FlowId.defined or not sv.FlowId.value:
+                continue
+            flow_ptr = node.flows.get(sv.FlowId.value)
+            if flow_ptr is None:
+                continue
+            capset = get_flow_to_caps(node, flow_ptr)
+            if not hasattr(capset, "caps"):
+                continue
+            mt = capset.caps.get(CapFormatMediaType)
+            if mt is not None and next(iter(mt.value.enumerated)) == media_type:
+                return node, flow_ptr, sv
+        return None, None, None
+
+    def test_coded_video_reports_the_coded_only_capabilities(self) -> None:
+        """H.264 carries bit_rate and the three codec transport modes."""
+        from caps.MatroxCCF import (CapTransportBitRate,
+                                    CapTransportPacketTransmissionMode,
+                                    CapTransportParameterSetsFlowMode,
+                                    CapTransportParameterSetsTransportMode)
+        caps = self._caps_by_media_type("config5")
+        h264 = caps.get("video/H264")
+        if h264 is None:
+            pytest.skip("config5 carries no video/H264 sender")
+        for cap in (CapTransportBitRate, CapTransportPacketTransmissionMode,
+                    CapTransportParameterSetsFlowMode,
+                    CapTransportParameterSetsTransportMode):
+            assert cap in h264.caps, f"{cap} missing from a coded flow"
+
+    def test_coded_only_capabilities_are_gated_on_coded_essence(self) -> None:
+        """The gate is `coded`, not merely the Sender leaving the fields unset.
+
+        bit_rate is planted on a RAW sender: if the gate were dropped the
+        capability would appear, so this fails on the gate rather than on the
+        field happening to be undefined.
+        """
+        from nmos.node.flow_caps import get_flow_to_caps
+        from caps.MatroxCCF import CapTransportBitRate
+
+        node, flow_ptr, sender = self._flow_and_sender("config1", "video/raw")
+        if node is None:
+            pytest.skip("config1 carries no video/raw sender")
+        sender.Bitrate.value = 43200
+        capset = get_flow_to_caps(node, flow_ptr)
+        assert CapTransportBitRate not in capset.caps, \
+            "bit_rate leaked onto raw essence"
+
+    def test_privacy_is_reported_only_when_true(self) -> None:
+        """False must be omitted, not stated -- matching FlowToCapabilities."""
+        from nmos.node.flow_caps import get_flow_to_caps
+        from caps.MatroxCCF import CapTransportPrivacy
+
+        node, flow_ptr, sender = self._flow_and_sender("config1", "video/raw")
+        if node is None:
+            pytest.skip("config1 carries no video/raw sender")
+
+        sender.Privacy.value = False
+        capset = get_flow_to_caps(node, flow_ptr)
+        assert CapTransportPrivacy not in capset.caps, \
+            "privacy=false must be omitted, not reported"
+
+        sender.Privacy.value = True
+        capset = get_flow_to_caps(node, flow_ptr)
+        assert capset.caps[CapTransportPrivacy].value.enumerated == {True}
+
+    def test_sender_derived_caps_are_trunk_only(self) -> None:
+        """A mux sub-flow has no Sender of its own, so it reports none of them."""
+        from nmos.node.flow_caps import get_flow_to_caps
+        from caps.MatroxCCF import (CapTransport_ST2110_21_SenderType,
+                                    CapTransportBitRate, CapTransportPrivacy,
+                                    CapTransportHkep)
+        node = self._node("config5")
+        checked = 0
+        for _static_id, flow_ptr in node.flows.snapshot().items():
+            capset = get_flow_to_caps(node, flow_ptr)
+            if not hasattr(capset, "caps") or capset.layer is None:
+                continue          # trunk flows are allowed to carry them
+            for cap in (CapTransport_ST2110_21_SenderType, CapTransportBitRate,
+                        CapTransportPrivacy, CapTransportHkep):
+                assert cap not in capset.caps, f"{cap} on a layer-{capset.layer} sub-flow"
+            checked += 1
+        if checked == 0:
+            pytest.skip("config5 carries no mux sub-flows")

@@ -53,6 +53,10 @@ def get_flow_to_caps(node: Any, flow_ptr: Any) -> Any:
             CapFormatProfile, CapFormatLevel, CapFormatSublevel, CapFormatFbblevel,
             CapFormatVideoLayers, CapFormatAudioLayers, CapFormatDataLayers,
             CapTransportClockRefType, CapTransportSynchronousMedia,
+            CapTransport_ST2110_21_SenderType, CapTransportBitRate,
+            CapTransportPacketTransmissionMode, CapTransportParameterSetsFlowMode,
+            CapTransportParameterSetsTransportMode,
+            CapTransportPrivacy, CapTransportHkep,
         )
     except ImportError:
         # CCF not available — return a plain dict as fallback
@@ -197,7 +201,63 @@ def get_flow_to_caps(node: Any, flow_ptr: Any) -> Any:
                 pass
         return Ptp.s if clk_name == "clk0" else Internal.s
 
-    def _add_transport_caps(flow_core: Any) -> None:
+    def _get_sender(flow_core: Any) -> Any:
+        """The Sender that carries this Flow, or ``None``.
+
+        IS-04 links Flow to Sender through ``flow.Senders``, so no scan of
+        ``node.senders`` is needed. A Flow may in principle be carried by more
+        than one Sender; the transport attributes read here describe how the
+        essence is put on the wire and are identical across them, so the first
+        is taken.
+
+        ``None`` is an ordinary outcome: mux sub-flows have no Sender of their
+        own, and the controller converts registry JSON through a shim node whose
+        decoded Flows carry no Sender pointers. Sender-derived capabilities are
+        then simply not reported.
+        """
+        try:
+            senders = flow_core.Senders
+            if not senders.defined:
+                return None
+            for sender in senders._value._inner.values():
+                return sender
+        except (AttributeError, TypeError):
+            return None
+        return None
+
+    def _add_sender_caps(flow_core: Any, coded: bool, mux: bool) -> None:
+        """Transport capabilities that live on the Sender, not the Flow.
+
+        Scoped exactly as FlowToCapabilities scopes them: st2110_21_sender_type
+        on every format except mux; bit_rate and the three codec transport modes
+        on coded essence only; privacy and hkep everywhere.
+        """
+        sender = _get_sender(flow_core)
+        if sender is None:
+            return
+
+        if not mux:
+            _add(_cap_from_enum(CapTransport_ST2110_21_SenderType, sender.SenderType))
+
+        if coded:
+            _add(_cap_from_int(CapTransportBitRate, sender.Bitrate))
+            _add(_cap_from_enum(CapTransportPacketTransmissionMode,
+                                sender.PacketTransmissionMode))
+            _add(_cap_from_enum(CapTransportParameterSetsFlowMode,
+                                sender.ParameterSetsFlowMode))
+            _add(_cap_from_enum(CapTransportParameterSetsTransportMode,
+                                sender.ParameterSetsTransportMode))
+
+        # privacy and hkep are reported only when true, matching
+        # FlowToCapabilities. This is a deliberate divergence from the SDP side,
+        # which always states both values.
+        if sender.Privacy.defined and sender.Privacy.value:
+            _add(_cap_bool(CapTransportPrivacy, True))
+        if sender.HKEP.defined and sender.HKEP.value:
+            _add(_cap_bool(CapTransportHkep, True))
+
+    def _add_transport_caps(flow_core: Any, coded: bool = False,
+                            mux: bool = False) -> None:
         """Add transport caps (clock ref, sync) if layer < 0 or undefined.
 
         Only adds these for top-level flows (not mux sub-flows): the layer
@@ -208,6 +268,7 @@ def get_flow_to_caps(node: Any, flow_ptr: Any) -> Any:
             clk_name, sync_media = _get_source_sync(flow_core)
             _add(_cap_str(CapTransportClockRefType, _clock_ref_type(clk_name)))
             _add(_cap_bool(CapTransportSynchronousMedia, sync_media))
+            _add_sender_caps(flow_core, coded, mux)
 
     # --- Dispatch by flow type ---
 
@@ -262,7 +323,7 @@ def get_flow_to_caps(node: Any, flow_ptr: Any) -> Any:
         _add(_cap_from_bool(CapFormatConstantBitRate, flow_val.ConstantBitrate))
         _add(_cap_from_enum(CapFormatProfile, flow_val.Profile))
         _add(_cap_from_enum(CapFormatLevel, flow_val.Level))
-        _add_transport_caps(flow_val.FlowCore)
+        _add_transport_caps(flow_val.FlowCore, coded=True)
 
     elif isinstance(poly, (NFlowVideoRaw, NFlowVideoRawValue)):
         # NFlowVideoRaw branch
@@ -315,7 +376,7 @@ def get_flow_to_caps(node: Any, flow_ptr: Any) -> Any:
         _add(_cap_from_enum(CapFormatLevel, flow_val.Level))
         _add(_cap_from_enum(CapFormatSublevel, flow_val.Sublevel))
         _add(_cap_from_enum(CapFormatFbblevel, flow_val.Fbblevel))
-        _add_transport_caps(flow_val.FlowCore)
+        _add_transport_caps(flow_val.FlowCore, coded=True)
 
     elif isinstance(poly, (NFlowData, NFlowDataValue)):
         # NFlowData branch
@@ -341,7 +402,7 @@ def get_flow_to_caps(node: Any, flow_ptr: Any) -> Any:
         _add(_cap_from_int(CapFormatVideoLayers, flow_val.VideoLayers))
         _add(_cap_from_int(CapFormatAudioLayers, flow_val.AudioLayers))
         _add(_cap_from_int(CapFormatDataLayers, flow_val.DataLayers))
-        _add_transport_caps(flow_val.FlowCore)
+        _add_transport_caps(flow_val.FlowCore, mux=True)
 
     # Extract format and layer from the flow for CCF part matching.
     # Only sub-flows (mux children with Layer set) carry format/layer — standalone
