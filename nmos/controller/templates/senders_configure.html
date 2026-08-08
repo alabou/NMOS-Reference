@@ -37,10 +37,9 @@
 
       {# ---------- Action toggles + Reset ----------
          Toggle initial state reflects the live state read from the
-         cache + IS-11 at page render: any-wise OR, so green means
-         "at least one sender is already in that state". Pressing the
-         button off then uniformly drives every sender off, which is
-         always a safe and meaningful operation. #}
+         cache + IS-11 at page render. Amber means the selected senders
+         disagree; pressing it normalises all to off, and a second press
+         drives all on. #}
       {# Phase 5: master toggles disabled when any selected sender's
          Device is not writable for the current admin (no OAuth2 grant
          or client cert required for writes). Pointless to fire an
@@ -49,18 +48,18 @@
       <div class="config-actions mb-3" role="group">
         <span class="mr-2 align-self-center text-muted">Senders</span>
         <button type="button"
-                class="btn btn-toggle {% if any_constrained %}btn-toggle-on{% else %}btn-toggle-off{% endif %}"
+                class="btn btn-toggle {% if constrained_state == 'true' %}btn-toggle-on{% elif constrained_state == 'mixed' %}btn-toggle-mixed{% else %}btn-toggle-off{% endif %}"
                 data-action="constrain"
-                aria-pressed="{{ 'true' if any_constrained else 'false' }}"
-                title="{% if not _writable %}At least one selected sender's device is not writable for this admin (OAuth2 grants or client cert missing).{% elif not all_is11_supported %}At least one selected sender's device does not expose the IS-11 stream-compatibility API — constraining is not available for this selection.{% else %}Apply the active constraint sets to every selected sender (IS-11).{% endif %}"
+                aria-pressed="{{ constrained_state }}"
+                title="{% if not _writable %}At least one selected sender's device is not writable for this admin (OAuth2 grants or client cert missing).{% elif not all_is11_supported %}At least one selected sender's device does not expose the IS-11 stream-compatibility API — constraining is not available for this selection.{% elif constrained_state == 'mixed' %}Some selected senders are constrained and some are not. Press to unconstrain all; press again to constrain all.{% else %}Apply the active constraint sets to every selected sender (IS-11).{% endif %}"
                 {% if not all_is11_supported or not _writable %}disabled{% endif %}>
           Constrain
         </button>
         <button type="button"
-                class="btn btn-toggle ml-2 {% if any_sender_active %}btn-toggle-on{% else %}btn-toggle-off{% endif %}"
+                class="btn btn-toggle ml-2 {% if sender_active_state == 'true' %}btn-toggle-on{% elif sender_active_state == 'mixed' %}btn-toggle-mixed{% else %}btn-toggle-off{% endif %}"
                 data-action="activate"
-                aria-pressed="{{ 'true' if any_sender_active else 'false' }}"
-                title="{% if not _writable %}At least one selected sender's device is not writable for this admin (OAuth2 grants or client cert missing).{% else %}Toggle the activation state of every selected sender.{% endif %}"
+                aria-pressed="{{ sender_active_state }}"
+                title="{% if not _writable %}At least one selected sender's device is not writable for this admin (OAuth2 grants or client cert missing).{% elif sender_active_state == 'mixed' %}Some selected senders are active and some are idle. Press to deactivate all; press again to activate all.{% else %}Toggle the activation state of every selected sender.{% endif %}"
                 {% if not _writable %}disabled{% endif %}>
           Activate
         </button>

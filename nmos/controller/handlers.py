@@ -200,6 +200,25 @@ def _headers_with_reservation(
     return out
 
 
+def _aggregate_toggle_state(values: list[bool]) -> str:
+    """Return the truthful ARIA state for one aggregate toggle.
+
+    A configure-page button controls every selected resource, so a boolean OR
+    loses information as soon as those resources disagree. ``aria-pressed``
+    explicitly supports ``"mixed"`` for that case; use it as the canonical
+    state shared by the server render, browser reconciliation, and AgentUI.
+
+    An empty selection is treated as off. Configure pages normally contain at
+    least one resource, but the conservative default keeps malformed/stale URLs
+    from rendering an apparently active control.
+    """
+    if not values or not any(values):
+        return "false"
+    if all(values):
+        return "true"
+    return "mixed"
+
+
 #: The NMOS APIs this controller calls on a remote Node, and what each is for.
 #: Used to phrase a privilege objection in terms of the action it blocks rather
 #: than the claim name, because an operator reads the tooltip, not the token.
@@ -766,15 +785,15 @@ async def senders_configure(request: web.Request) -> web.Response:
             "filters": filters,
             "sender_ids_csv": ",".join(sender_ids),
             "sender_state":   sender_state,
-            # Any-wise OR so the Constrain / Activate toggles render
-            # green if *at least one* selected sender is currently in
-            # that state. The matching flip-off action (unconstrain /
-            # deactivate) is then always meaningful — it unconditionally
-            # drives every sender to the off state, regardless of which
-            # were on to begin with.
-            "any_constrained": any(s["constrained"] for s in sender_state.values()),
-            "any_sender_active":
-                any(s["active"] for s in sender_state.values()),
+            # Preserve all-on, all-off, and mixed as distinct states. A
+            # mixed press normalises every sender to off; the next press can
+            # then apply on uniformly.
+            "constrained_state": _aggregate_toggle_state([
+                s["constrained"] for s in sender_state.values()
+            ]),
+            "sender_active_state": _aggregate_toggle_state([
+                s["active"] for s in sender_state.values()
+            ]),
             # True iff every selected sender's device advertises the
             # IS-11 stream-compat control. When False the template
             # renders the master Constrain toggle ``disabled`` — PUT
@@ -1158,17 +1177,18 @@ async def receivers_configure(request: web.Request) -> web.Response:
             "sender_state":      sender_state,
             "receiver_state":    receiver_state,
             "privacy_view":      privacy_view,
-            # Any-wise OR — green if at least one resource is in the
-            # "on" state. Flip-off then uniformly drives everyone
-            # off, so Unconstrain / Deactivate are always safe to
-            # press without the operator having to reason about
-            # mixed-state pages.
-            "any_constrained":
-                any(s["constrained"] for s in sender_state.values()),
-            "any_sender_active":
-                any(s["active"] for s in sender_state.values()),
-            "any_receiver_active":
-                any(r["active"] for r in receiver_state.values()),
+            # Preserve all-on, all-off, and mixed as distinct states. This
+            # same aggregate contract is used by the templates, JavaScript,
+            # and AgentUI driver.
+            "constrained_state": _aggregate_toggle_state([
+                s["constrained"] for s in sender_state.values()
+            ]),
+            "sender_active_state": _aggregate_toggle_state([
+                s["active"] for s in sender_state.values()
+            ]),
+            "receiver_active_state": _aggregate_toggle_state([
+                r["active"] for r in receiver_state.values()
+            ]),
             # Same gate as the senders-path: master Constrain toggle
             # disabled when any selected sender's device doesn't
             # advertise IS-11.

@@ -41,9 +41,9 @@
          adds one extra toggle that the JS drives pair-by-index
          (sender[i] → receiver[i]) against
          /api/receivers/{id}/activate (or deactivate). #}
-      {# Toggles reflect the live state at page render — any-wise OR
-         so green means "at least one resource is already in that
-         state". See senders_configure.html for the rationale. #}
+      {# Toggles reflect the live state at page render. Amber means
+         the selected resources disagree; pressing it normalises all
+         to off, and a second press drives all on. #}
       {# Phase 5: this configure page sets up the sender ↔ receiver
          pair end-to-end. If EITHER side is on a Device the current
          admin can't read+write, NONE of the master toggles can do
@@ -69,18 +69,18 @@
       <div class="config-actions mb-3" role="group">
         <span class="mr-2 align-self-center text-muted">Senders</span>
         <button type="button"
-                class="btn btn-toggle {% if any_constrained %}btn-toggle-on{% else %}btn-toggle-off{% endif %}"
+                class="btn btn-toggle {% if constrained_state == 'true' %}btn-toggle-on{% elif constrained_state == 'mixed' %}btn-toggle-mixed{% else %}btn-toggle-off{% endif %}"
                 data-action="constrain"
-                aria-pressed="{{ 'true' if any_constrained else 'false' }}"
-                title="{% if not _both_writable %}{{ _block_reason }}{% elif not all_is11_supported %}At least one paired sender's device does not expose the IS-11 stream-compatibility API — constraining is not available for this selection.{% else %}Apply the active constraint sets to every paired sender (IS-11).{% endif %}"
+                aria-pressed="{{ constrained_state }}"
+                title="{% if not _both_writable %}{{ _block_reason }}{% elif not all_is11_supported %}At least one paired sender's device does not expose the IS-11 stream-compatibility API — constraining is not available for this selection.{% elif constrained_state == 'mixed' %}Some paired senders are constrained and some are not. Press to unconstrain all; press again to constrain all.{% else %}Apply the active constraint sets to every paired sender (IS-11).{% endif %}"
                 {% if not all_is11_supported or not _both_writable %}disabled{% endif %}>
           Constrain
         </button>
         <button type="button"
-                class="btn btn-toggle ml-2 {% if any_sender_active %}btn-toggle-on{% else %}btn-toggle-off{% endif %}"
+                class="btn btn-toggle ml-2 {% if sender_active_state == 'true' %}btn-toggle-on{% elif sender_active_state == 'mixed' %}btn-toggle-mixed{% else %}btn-toggle-off{% endif %}"
                 data-action="activate"
-                aria-pressed="{{ 'true' if any_sender_active else 'false' }}"
-                title="{% if not _both_writable %}{{ _block_reason }}{% else %}Toggle the activation state of every paired sender.{% endif %}"
+                aria-pressed="{{ sender_active_state }}"
+                title="{% if not _both_writable %}{{ _block_reason }}{% elif sender_active_state == 'mixed' %}Some paired senders are active and some are idle. Press to deactivate all; press again to activate all.{% else %}Toggle the activation state of every paired sender.{% endif %}"
                 {% if not _both_writable %}disabled{% endif %}>
           Activate
         </button>
@@ -89,10 +89,10 @@
 
         <span class="mr-2 align-self-center text-muted">Receivers</span>
         <button type="button"
-                class="btn btn-toggle {% if any_receiver_active %}btn-toggle-on{% else %}btn-toggle-off{% endif %}"
+                class="btn btn-toggle {% if receiver_active_state == 'true' %}btn-toggle-on{% elif receiver_active_state == 'mixed' %}btn-toggle-mixed{% else %}btn-toggle-off{% endif %}"
                 data-action="activate_receivers"
-                aria-pressed="{{ 'true' if any_receiver_active else 'false' }}"
-                title="{% if not _both_writable %}{{ _block_reason }}{% else %}Toggle the activation state of every selected receiver (and its paired sender).{% endif %}"
+                aria-pressed="{{ receiver_active_state }}"
+                title="{% if not _both_writable %}{{ _block_reason }}{% elif receiver_active_state == 'mixed' %}Some selected receivers are active and some are idle. Press to deactivate all; press again to activate all.{% else %}Toggle the activation state of every selected receiver (and its paired sender).{% endif %}"
                 {% if not _both_writable %}disabled{% endif %}>
           Activate
         </button>

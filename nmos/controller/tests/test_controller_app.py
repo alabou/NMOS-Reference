@@ -1410,13 +1410,10 @@ class TestPages:
         assert "_eventSource.close()" in js
 
     @pytest.mark.asyncio
-    async def test_configure_toggles_reflect_any_active_constrained(
+    async def test_configure_toggles_reflect_all_active_constrained(
         self, controller_client: TestClient,
     ) -> None:
-        """Toggle buttons on the receivers-configure page reflect the
-        any-wise OR of the live state: green if at least one
-        sender/receiver is in that state. Pressing off then drives
-        every resource off uniformly.
+        """A uniformly-on selection renders every aggregate toggle on.
         """
         cache: ResourceCache = controller_client.app["_test_cache"]
         remote: RemoteNodeClient = controller_client.app["_test_remote_stub"]
@@ -1476,9 +1473,8 @@ class TestPages:
     async def test_senders_configure_toggles_reflect_live_state(
         self, controller_client: TestClient,
     ) -> None:
-        """The senders-only configure page uses the same any-wise OR
-        button initialisation as the receivers path: green if at least
-        one selected sender is in that state. Column header is just
+        """The senders-only configure page uses the same aggregate
+        button initialisation as the receivers path. Column header is just
         ``sender`` — the cell content carries the state.
         """
         cache: ResourceCache = controller_client.app["_test_cache"]
@@ -1522,6 +1518,87 @@ class TestPages:
         # initially-active sender.
         assert "controller.initStatusStream();" in text
         assert 'data-live-active="true"' in text
+
+    @pytest.mark.asyncio
+    async def test_senders_configure_toggles_preserve_mixed_state(
+        self, controller_client: TestClient,
+    ) -> None:
+        """One-on/one-off is mixed, never collapsed into a green true state."""
+        cache: ResourceCache = controller_client.app["_test_cache"]
+        remote: RemoteNodeClient = controller_client.app["_test_remote_stub"]
+        sid_on = "11111111-1111-1111-1111-111111111111"
+        sid_off = "22222222-2222-2222-2222-222222222222"
+
+        for sid, active in ((sid_on, True), (sid_off, False)):
+            sender = _make_sender(sid, "dev1", active=active)
+            sender["caps"] = {"constraint_sets": [{
+                "urn:x-nmos:cap:meta:label": "Native",
+                "urn:x-nmos:cap:meta:enabled": True,
+            }]}
+            await cache.upsert("sender", sender)
+
+        async def _active_constraints(
+            _base: str,
+            sender_id: str,
+            _headers: dict[str, str],
+            *,
+            trace_id: str = "",
+        ) -> RemoteCallResult:
+            del trace_id
+            sets = ([{"urn:x-nmos:cap:meta:label": "X"}]
+                    if sender_id == sid_on else [])
+            return RemoteCallResult(status=200, body={"constraint_sets": sets})
+
+        remote.get_sender_active_constraints = AsyncMock(  # type: ignore[method-assign]
+            side_effect=_active_constraints,
+        )
+        resp = await controller_client.get(
+            f"{PREFIX}/senders/configure?sender_ids={sid_on},{sid_off}"
+            f"&conset_{sid_on}=0&conset_{sid_off}=0",
+        )
+        assert resp.status == 200
+        text = await resp.text()
+
+        import re
+        def _btn(action: str) -> str:
+            match = re.search(
+                r'<button[^>]*data-action="' + re.escape(action) + r'"[^>]*>',
+                text,
+            )
+            return match.group(0) if match else ""
+
+        for action in ("constrain", "activate"):
+            button = _btn(action)
+            assert "btn-toggle-mixed" in button
+            assert 'aria-pressed="mixed"' in button
+            assert "btn-toggle-on" not in button
+
+    @pytest.mark.asyncio
+    async def test_controller_js_normalises_mixed_toggles_safely(
+        self, controller_client: TestClient,
+    ) -> None:
+        """Browser state uses ARIA as truth and exposes partial outcomes."""
+        resp = await controller_client.get(f"{PREFIX}/static/controller.js")
+        assert resp.status == 200
+        js = await resp.text()
+        assert "const newState = currentState === 'false';" in js
+        assert "_setToggleState(btn, 'mixed');" in js
+        assert "btn-toggle-mixed" in js
+
+    @pytest.mark.asyncio
+    async def test_controller_js_selection_guard_names_the_selected_resource(
+        self, controller_client: TestClient,
+    ) -> None:
+        """The shared empty-selection guard must not call receivers senders."""
+        resp = await controller_client.get(f"{PREFIX}/static/controller.js")
+        assert resp.status == 200
+        js = await resp.text()
+        assert 'idsFieldId === "receiver_ids"' in js
+        assert "individual ${resourceNoun}" in js
+        assert (
+            'alert("Please select one group or one or more individual senders.")'
+            not in js
+        )
 
     @pytest.mark.asyncio
     async def test_configure_toggles_off_when_nothing_active(

@@ -26,9 +26,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import partial
 
-from .apps.nmos_controller.session import ControllerSession, selected_ids
+from .apps.nmos_controller.session import ControllerSession
 from .core.affordance import Control
-from .apps.nmos_controller.views import ParamWidget, ResourceRow
+from .apps.nmos_controller.views import ParamWidget, ResourceRow, StatusView
 from .enums import Affordance, RowAction, ToggleAction
 from .errors import (
     ActionFailed,
@@ -64,8 +64,8 @@ def _first_selectable(rows: Sequence[ResourceRow]) -> ResourceRow:
     return rows[0]
 
 
-def _toggle_is_on(control: Control) -> bool:
-    """Read a toggle's current position from ``aria-pressed``.
+def _toggle_state(control: Control) -> bool | None:
+    """Read an aggregate toggle as on, off, or mixed.
 
     Needed because the configure buttons are toggles, not commands: pressing
     "Constrain" while it is already on sends an *un*constrain. A scenario that
@@ -74,7 +74,10 @@ def _toggle_is_on(control: Control) -> bool:
     """
     if control.snapshot is None:
         return False
-    return control.snapshot.attr("aria-pressed") == "true"
+    state = control.snapshot.attr("aria-pressed")
+    if state == "mixed":
+        return None
+    return state == "true"
 
 
 def _ensure_toggle(session: ControllerSession, action: ToggleAction,
@@ -94,7 +97,24 @@ def _ensure_toggle(session: ControllerSession, action: ToggleAction,
         )
         return False
 
-    if _toggle_is_on(control) is want:
+    state = _toggle_state(control)
+    if state is None:
+        session.note(
+            f"{action} is mixed; pressing it first normalises every selected "
+            f"resource to off ({why})."
+        )
+        try:
+            session.press_toggle(action)
+        except ActionFailed as failed:
+            for resource_id, message in failed.failures:
+                session.note(f"{action} rejected for {resource_id}: {message}")
+            return False
+        except BlockedControl as blocked:
+            session.note(f"{action} refused before acting: {blocked.reason!r}.")
+            return False
+        control = session.read_toggles()[action]
+
+    if _toggle_state(control) is want:
         session.note(f"{action} is already {'on' if want else 'off'} ({why}).")
         return True
 
@@ -108,7 +128,30 @@ def _ensure_toggle(session: ControllerSession, action: ToggleAction,
     except BlockedControl as blocked:
         session.note(f"{action} refused before acting: “{blocked.reason}”.")
         return False
-    return True
+    return _toggle_state(session.read_toggles()[action]) is want
+
+
+def _confirm_receiver_status(
+    session: ControllerSession,
+    resource_id: str,
+    *,
+    expected_active: bool,
+) -> StatusView:
+    """Read, and when necessary await, a receiver marker on its list page."""
+    status = session.read_status(resource_id)
+    if not expected_active or status.badge_text != "idle":
+        return status
+
+    try:
+        status = session.await_live_status_change(resource_id=resource_id)
+        session.note(f"A live receiver status update arrived for {resource_id}.")
+    except LiveUpdateNotObserved:
+        session.note(
+            f"No live receiver status change seen for {resource_id}. Recorded "
+            "as unconfirmed because the list-page marker did not move away "
+            "from its page-load value."
+        )
+    return status
 
 
 # ---------------------------------------------------------------------------
@@ -216,31 +259,12 @@ def _inspect_one_sender(session: ControllerSession) -> None:
 def _selection_guard(session: ControllerSession) -> None:
     """Demonstrate the page's own client-side refusal.
 
-    Selecting two receivers and then a single sender trips the guard, which raises
-    a native alert *before* navigating. The scenario asserts the browser did not
-    move — a refusal must not be mistaken for a slow page.
+    Submitting an empty receiver selection is reachable on every rig and trips a
+    native alert before navigation. The scenario verifies that the browser did
+    not move, so a refusal cannot be mistaken for a slow page.
     """
     session.open_receivers()
     session.clear_selection()
-    rows = session.read_rows()
-    if len(rows) < 2:
-        session.note(
-            f"Only {len(rows)} receiver(s) present; this scenario needs two to "
-            f"trip the guard. Nothing further to show."
-        )
-        return
-
-    session.select_resource(resource_id=rows[0].resource_id)
-    session.select_resource(resource_id=rows[1].resource_id)
-    session.submit_selection()
-
-    sender_rows = session.read_rows()
-    if not sender_rows:
-        session.note("No compatible senders offered, so the guard cannot be shown.")
-        return
-
-    session.clear_selection()
-    session.select_resource(resource_id=sender_rows[0].resource_id)
     before = session.read_page()
     try:
         session.submit_selection()
@@ -254,8 +278,8 @@ def _selection_guard(session: ControllerSession) -> None:
         if after.url != before.url:
             raise
         return
-    session.note(
-        "The submission was accepted — this selection did not trip the guard."
+    raise AssertionError(
+        "The page accepted an empty receiver selection instead of guarding it."
     )
 
 
@@ -368,7 +392,7 @@ def _route_one_receiver(session: ControllerSession) -> None:
         session.note("No compatible senders for this receiver; stopping.")
         return
     session.clear_selection()
-    chosen = session.select_resource(resource_id=sender_rows[0].resource_id)
+    session.select_resource(resource_id=sender_rows[0].resource_id)
     session.submit_selection()
 
     sets = session.read_constraint_sets()
@@ -402,9 +426,12 @@ def _route_one_receiver(session: ControllerSession) -> None:
     sender_up = _ensure_toggle(session, ToggleAction.ACTIVATE, True,
                                why="the sender must transmit before the receiver "
                                    "can lock onto it")
+    receiver_up = False
     if sender_up:
-        _ensure_toggle(session, ToggleAction.ACTIVATE_RECEIVERS, True,
-                       why="the sender is active, so the receiver can now join")
+        receiver_up = _ensure_toggle(
+            session, ToggleAction.ACTIVATE_RECEIVERS, True,
+            why="the sender is active, so the receiver can now join",
+        )
     else:
         session.note(
             "Not activating the receiver: its sender is not active, so the "
@@ -419,7 +446,11 @@ def _route_one_receiver(session: ControllerSession) -> None:
         "Back on the Receivers list to check the traffic lights, which is where "
         "the per-facet status actually appears."
     )
-    status = session.read_status(target.resource_id)
+    # The list page owns the receiver's live marker. Observe that receiver
+    # before navigating to the static monitor detail page.
+    status = _confirm_receiver_status(
+        session, target.resource_id, expected_active=receiver_up,
+    )
     session.note(
         f"{target.resource_id}: badge reads {status.badge_text!r}, overall "
         f"{status.overall}, facets "
@@ -434,20 +465,6 @@ def _route_one_receiver(session: ControllerSession) -> None:
             "No monitor link on this row, so this device publishes no BCP-008 "
             "monitor — which is what a grey badge means."
         )
-
-    # Only credited if a marker moved away from its page-load value.
-    for resource_id in selected_ids(chosen) or (target.resource_id,):
-        try:
-            session.await_live_status_change(resource_id=resource_id)
-            session.note(f"A live status update arrived for {resource_id}.")
-            return
-        except LiveUpdateNotObserved:
-            session.note(
-                f"No live status change seen for {resource_id}. Recorded as "
-                f"unconfirmed — the page-load markers are unchanged, so nothing "
-                f"here evidences a server-sent update."
-            )
-
 
 # ---------------------------------------------------------------------------
 # 6. privacy-exclusivity  (mutating)

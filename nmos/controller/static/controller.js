@@ -459,6 +459,9 @@
     //   * member checkboxes → exactly ``requiredCount`` boxes checked.
     const form = document.getElementById(formId);
     if (!form) return false;
+    const resourceNoun = idsFieldId === "receiver_ids"
+      ? "receivers"
+      : "senders";
 
     // Mode inference (the form's ``selection_mode`` hidden field,
     // when present, picks the server-side branch):
@@ -496,7 +499,9 @@
         .join(",");
       mode = "subset";
     } else {
-      alert("Please select one group or one or more individual senders.");
+      alert(
+        `Please select one group or one or more individual ${resourceNoun}.`,
+      );
       return false;
     }
 
@@ -826,6 +831,22 @@
     }
   }
 
+  function _setToggleState(btn, state) {
+    const ariaState = (state === true || state === 'true')
+      ? 'true'
+      : (state === 'mixed' ? 'mixed' : 'false');
+    btn.classList.toggle('btn-toggle-on', ariaState === 'true');
+    btn.classList.toggle('btn-toggle-off', ariaState === 'false');
+    btn.classList.toggle('btn-toggle-mixed', ariaState === 'mixed');
+    btn.setAttribute('aria-pressed', ariaState);
+  }
+
+  function _aggregateToggleState(values) {
+    if (values.length === 0 || values.every(value => !value)) return 'false';
+    if (values.every(Boolean)) return 'true';
+    return 'mixed';
+  }
+
   async function _runToggle(btn, form) {
     // The browser normally suppresses click events on ``disabled``
     // buttons, but a programmatic dispatch (e.g. a test harness or a
@@ -834,8 +855,11 @@
     // silently sending a doomed PUT. Cheap and defensive.
     if (btn.disabled) return;
     const action = btn.getAttribute('data-action');
-    const isOn = btn.classList.contains('btn-toggle-on');
-    const newState = !isOn;
+    const currentState = btn.getAttribute('aria-pressed') || 'false';
+    // Off turns every resource on. On and mixed both drive every resource to
+    // the safer off state; a second press can then turn a normalised selection
+    // on. This preserves safe-off behaviour without claiming mixed means on.
+    const newState = currentState === 'false';
     const senderIds = _senderIdsFromConfigureForm(form);
     if (senderIds.length === 0) return;
 
@@ -857,10 +881,12 @@
     });
 
     let anyFailed = false;
+    let successCount = 0;
     for (const sid of senderIds) {
       const resultId = resultIdFor(sid);
       const res = await _fireSenderAction(action, newState, sid, form);
       if (res.ok) {
+        successCount += 1;
         const status = res.status != null ? res.status : 'ok';
         _setResultCell(resultId, 'ok', `OK (${status})`, null, cellTarget);
       } else {
@@ -891,13 +917,12 @@
 
     btn.classList.remove('is-working');
     btn.disabled = false;
-    // Flip the toggle only if every sender succeeded — partial
-    // failure leaves the button in its prior position so the admin
-    // can re-try instead of losing track of intent.
+    // A complete operation has a definite state. A partial operation is mixed;
+    // retaining the prior state would deny that some resources changed.
     if (!anyFailed) {
-      btn.classList.toggle('btn-toggle-on', newState);
-      btn.classList.toggle('btn-toggle-off', !newState);
-      btn.setAttribute('aria-pressed', String(newState));
+      _setToggleState(btn, newState);
+    } else if (successCount > 0) {
+      _setToggleState(btn, 'mixed');
     }
   }
 
@@ -1235,7 +1260,7 @@
     // a mux sender on the configure page has one result cell PER
     // constraint-set row. Every selector here must therefore update
     // ALL matches, not just the first. Using querySelector left the
-    // 2nd+ cells with a stale ``data-live-active``, so the any-wise OR
+    // 2nd+ cells with a stale ``data-live-active``, so aggregate state
     // in ``_reconcileConfigureToggles`` kept the Activate toggle green
     // after a deactivate until a full page reload.
     const badgeText = status.monitored
@@ -1264,7 +1289,7 @@
     // ``data-result-for-receiver``. Both exist on the receivers
     // configure page; only the sender one exists on the senders
     // configure page. ``data-live-active`` caches the live value so
-    // ``_reconcileConfigureToggles`` can compute the any-wise OR
+    // ``_reconcileConfigureToggles`` can compute the aggregate state
     // without re-parsing textContent.
     document.querySelectorAll(
       `.result-cell[data-result-for="${resourceId}"]`,
@@ -1671,10 +1696,10 @@
     }
   }
 
-  // Top-row Activate / Receivers-Activate toggles are "any-wise OR":
-  // green when at least one resource is in the ``active`` state. After
-  // each SSE push we rescan every per-resource state cell and flip
-  // the right toggle if the aggregate changed. The Constrain toggle
+  // Top-row Activate / Receivers-Activate toggles preserve all-on,
+  // all-off, and mixed as distinct states. After each SSE push we
+  // rescan every per-resource state cell and update the right toggle
+  // if the aggregate changed. The Constrain toggle
   // isn't reconciled here — constrained state isn't streamed (see
   // sender_state_map in handlers.py) and stays driven by local
   // action dispatch.
@@ -1740,20 +1765,20 @@
     const receiverCells = document.querySelectorAll(
       ".result-cell[data-result-for-receiver]",
     );
-    const anyActive = (cells) => Array.from(cells).some(
-      c => c.getAttribute("data-live-active") === "true",
+    const aggregateState = (cells) => _aggregateToggleState(
+      Array.from(cells).map(
+        c => c.getAttribute("data-live-active") === "true",
+      ),
     );
-    const setToggle = (action, on) => {
+    const setToggle = (action, state) => {
       const btn = document.querySelector(
         `.btn-toggle[data-action="${action}"]`,
       );
       if (!btn) return;
-      btn.classList.toggle("btn-toggle-on", on);
-      btn.classList.toggle("btn-toggle-off", !on);
-      btn.setAttribute("aria-pressed", String(on));
+      _setToggleState(btn, state);
     };
-    setToggle("activate", anyActive(senderCells));
-    setToggle("activate_receivers", anyActive(receiverCells));
+    setToggle("activate", aggregateState(senderCells));
+    setToggle("activate_receivers", aggregateState(receiverCells));
   }
 
 })();

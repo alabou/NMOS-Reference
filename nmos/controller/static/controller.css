@@ -494,6 +494,13 @@ option.flow-match,
 .btn-toggle-on:hover {
   background: #286b2c;
 }
+.btn-toggle-mixed {
+  background: #b26a00;
+  border-color: #754600;
+}
+.btn-toggle-mixed:hover {
+  background: #995b00;
+}
 .btn-toggle:disabled,
 .btn-toggle.is-working {
   cursor: wait;
