@@ -2371,6 +2371,15 @@ def get_sdp_to_caps(
                 _i(CapFormatChannelCount.s, media.channels)
             if media.sample_rate:
                 _r(CapFormatSampleRate.s, media.sample_rate)
+            # a=fmtp channel-order= is defined by ST 2110-30 section 6.2.2 for any
+            # audio, but it is reported as a capability for AM824 only. ST 2110-31
+            # section 6.2 adds the AES3 grouping symbol -- "Either Non-PCM signals
+            # or PCM signal, or one subframe of each" -- so for AM824 the parameter
+            # states something a Receiver cannot otherwise know. Under ST 2110-30
+            # every channel is PCM by construction and the symbols carry only
+            # soundfield layout, which channel_count and the Flow already describe.
+            if media.channel_order:
+                _s(CapTransportChannelOrder.s, media.channel_order)
             _extract_audio_transport()
 
         elif enc_lower == "mpeg4-generic":
