@@ -387,6 +387,190 @@ class TestPollingTask:
         assert store.current_token(admin, "dev1") is None
 
     @pytest.mark.asyncio
+    async def test_keepalive_transport_failure_keeps_the_token(self) -> None:
+        """A request that never reached the Node must not cost us the session.
+
+        ``RemoteNodeClient`` reports every ``aiohttp.ClientError`` as
+        ``status=0``, so a connection refusal, TLS failure or timeout arrives
+        here looking like any other non-200. It is not: a 401 is the Node
+        saying the session is gone, whereas a transport failure says only that
+        we could not ask. The session is still alive on the Node until its
+        AliveTime window closes, so the token stays.
+        """
+        import time
+        import nmos.controller.reservation as res_mod
+
+        store, client, admin_store = _new_store()
+        admin = admin_store.get_or_create("s")
+        stub_acquire: Any = client.acquire_exclusive
+        stub_keepalive: Any = client.keepalive_exclusive
+        stub_acquire.return_value = RemoteCallResult(status=200, body="t")
+        stub_keepalive.return_value = RemoteCallResult(
+            status=res_mod.TRANSPORT_FAILURE, body=None,
+            error="Cannot connect to host",
+        )
+
+        await store.acquire(admin, "dev1", "https://n/e/", oauth2_on_remote=False)
+        # Inside the AliveTime window: keepalive is due, but the session
+        # cannot have lapsed yet.
+        fake_now = time.monotonic() + res_mod.HALF_ALIVETIME + 5
+        original = time.monotonic
+        time.monotonic = lambda: fake_now  # type: ignore[assignment]
+        try:
+            await store._tick()
+        finally:
+            time.monotonic = original  # type: ignore[assignment]
+
+        stub_keepalive.assert_awaited_once()
+        assert store.current_token(admin, "dev1") == "t", (
+            "an unreachable Node cost us a token that was never invalidated"
+        )
+
+    @pytest.mark.asyncio
+    async def test_keepalive_transport_failure_retries_next_tick(self) -> None:
+        """The retry needs no extra bookkeeping — and must actually happen.
+
+        A failed keepalive leaves ``alive_until`` untouched, so the branch
+        stays true and the next tick tries again. This pins that, because a
+        version that merely swallowed the failure would sit idle until the
+        window closed and then reacquire — losing the session just as slowly.
+        """
+        import time
+        import nmos.controller.reservation as res_mod
+
+        store, client, admin_store = _new_store()
+        admin = admin_store.get_or_create("s")
+        stub_acquire: Any = client.acquire_exclusive
+        stub_keepalive: Any = client.keepalive_exclusive
+        stub_acquire.return_value = RemoteCallResult(status=200, body="t")
+        stub_keepalive.return_value = RemoteCallResult(
+            status=res_mod.TRANSPORT_FAILURE, body=None, error="timeout")
+
+        await store.acquire(admin, "dev1", "https://n/e/", oauth2_on_remote=False)
+        base = time.monotonic() + res_mod.HALF_ALIVETIME + 5
+        original = time.monotonic
+        try:
+            for offset in (0.0, 1.0, 2.0):
+                time.monotonic = lambda o=offset: base + o  # type: ignore
+                await store._tick()
+        finally:
+            time.monotonic = original  # type: ignore[assignment]
+
+        assert stub_keepalive.await_count == 3, (
+            f"keepalive was attempted {stub_keepalive.await_count}x across "
+            f"three ticks inside the AliveTime window"
+        )
+        assert store.current_token(admin, "dev1") == "t"
+
+    @pytest.mark.asyncio
+    async def test_keepalive_transport_failure_reacquires_once_alive_lapses(
+        self,
+    ) -> None:
+        """Retrying is bounded by the AliveTime window, not unbounded.
+
+        Once the window has closed with no successful keepalive the Node has
+        dropped the session however unreachable it was — so discarding the
+        token becomes correct, because a reacquire can now succeed. Without
+        this the controller would hold a dead token forever.
+        """
+        import time
+        import nmos.controller.reservation as res_mod
+
+        store, client, admin_store = _new_store()
+        admin = admin_store.get_or_create("s")
+        stub_acquire: Any = client.acquire_exclusive
+        stub_keepalive: Any = client.keepalive_exclusive
+        stub_acquire.return_value = RemoteCallResult(status=200, body="t")
+        stub_keepalive.return_value = RemoteCallResult(
+            status=res_mod.TRANSPORT_FAILURE, body=None, error="unreachable")
+
+        await store.acquire(admin, "dev1", "https://n/e/", oauth2_on_remote=False)
+        # Past the whole AliveTime window: the Node cannot still hold it.
+        fake_now = time.monotonic() + res_mod.ALIVETIME + 1
+        original = time.monotonic
+        time.monotonic = lambda: fake_now  # type: ignore[assignment]
+        try:
+            await store._tick()
+        finally:
+            time.monotonic = original  # type: ignore[assignment]
+
+        assert store.current_token(admin, "dev1") is None, (
+            "token retained past the AliveTime window, so no reacquire can "
+            "ever be attempted"
+        )
+
+    @pytest.mark.asyncio
+    async def test_keepalive_401_still_discards_immediately(self) -> None:
+        """The carve-out is for transport failures only.
+
+        A 401 is the Node's own answer, and waiting out the AliveTime window
+        before reacquiring would just delay recovery.
+        """
+        import time
+        import nmos.controller.reservation as res_mod
+
+        store, client, admin_store = _new_store()
+        admin = admin_store.get_or_create("s")
+        stub_acquire: Any = client.acquire_exclusive
+        stub_keepalive: Any = client.keepalive_exclusive
+        stub_acquire.return_value = RemoteCallResult(status=200, body="t")
+        stub_keepalive.return_value = RemoteCallResult(status=401, body=None)
+
+        await store.acquire(admin, "dev1", "https://n/e/", oauth2_on_remote=False)
+        # Well inside the AliveTime window, where a transport failure would
+        # have kept the token.
+        fake_now = time.monotonic() + res_mod.HALF_ALIVETIME + 5
+        original = time.monotonic
+        time.monotonic = lambda: fake_now  # type: ignore[assignment]
+        try:
+            await store._tick()
+        finally:
+            time.monotonic = original  # type: ignore[assignment]
+
+        assert store.current_token(admin, "dev1") is None
+
+    @pytest.mark.asyncio
+    async def test_renew_transport_failure_keeps_the_token_and_defers(
+        self,
+    ) -> None:
+        """A renew that never arrived must not discard the token either.
+
+        Renewal is the less urgent of the two operations — its threshold fires
+        with at least half the Session Lifetime still to run, and it is
+        keepalive that stops a session lapsing — so this defers rather than
+        retrying every tick, and leaves the lapse decision to keepalive.
+        """
+        import time
+        import nmos.controller.reservation as res_mod
+
+        store, client, admin_store = _new_store()
+        admin = admin_store.get_or_create("s")
+        stub_acquire: Any = client.acquire_exclusive
+        stub_renew: Any = client.renew_exclusive
+        stub_keepalive: Any = client.keepalive_exclusive
+        stub_acquire.return_value = RemoteCallResult(status=200, body="t")
+        stub_renew.return_value = RemoteCallResult(
+            status=res_mod.TRANSPORT_FAILURE, body=None, error="conn refused")
+        stub_keepalive.return_value = RemoteCallResult(status=200, body=None)
+
+        await store.acquire(admin, "dev1", "https://n/e/", oauth2_on_remote=False)
+        base = time.monotonic() + res_mod.HALF_LIFETIME + 5
+        original = time.monotonic
+        try:
+            for offset in (0.0, 1.0, 2.0):
+                time.monotonic = lambda o=offset: base + o  # type: ignore
+                await store._tick()
+        finally:
+            time.monotonic = original  # type: ignore[assignment]
+
+        assert store.current_token(admin, "dev1") == "t"
+        assert stub_renew.await_count == 1, (
+            f"renew retried {stub_renew.await_count}x instead of deferring"
+        )
+        sess = next(s for s in store.snapshot() if s.node_id == "dev1")
+        assert sess.renew_after > base
+
+    @pytest.mark.asyncio
     async def test_admin_gone_drops_session(self) -> None:
         """If the admin session has been discarded (logout), the
         polling task releases the orphaned reservation session too."""

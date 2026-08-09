@@ -61,6 +61,18 @@ POLL_INTERVAL: Final[float] = 1.0     # per-second tick
 #: a status comparison reads as a typo for one of the 4xx everyone knows.
 HTTP_TOO_EARLY: Final[int] = 425
 
+#: Not an HTTP status: what :class:`RemoteNodeClient` reports when the request
+#: never completed an HTTP exchange at all — connection refused, DNS failure,
+#: TLS handshake failure, timeout (see ``api_client.py``, which maps every
+#: ``aiohttp.ClientError`` to this).
+#:
+#: It has to be distinguished from a real status, because the two say opposite
+#: things about the reservation. A ``401`` is the Node telling us our session
+#: is gone. A transport failure tells us nothing whatsoever about the session —
+#: only that we could not ask. Treating them alike is what made a single
+#: dropped packet discard a perfectly valid token.
+TRANSPORT_FAILURE: Final[int] = 0
+
 # How long to wait before retrying a renew that came back ``425 Too Early``.
 #
 # §Verifying Ownership: "If the renewal returns a `425 Too Early` status, the
@@ -70,6 +82,15 @@ HTTP_TOO_EARLY: Final[int] = 425
 # trigger is a threshold rather than an edge: without one, a 425 would be
 # re-attempted on every one-second tick for as long as the threshold held.
 RENEW_TOO_EARLY_RETRY: Final[float] = 60.0
+
+# How long to wait before retrying a renew that never reached the Node.
+#
+# Shorter than the 425 deferral because the reason is different: a 425 is a
+# definite "not yet" from a Node we can talk to, whereas a transport failure
+# is an unknown we want to resolve reasonably soon. Still an interval rather
+# than a per-tick retry, since renewal is not urgent — the renew threshold
+# fires with at least half the Session Lifetime still to run.
+RENEW_TRANSPORT_ERROR_RETRY: Final[float] = 30.0
 
 
 def _owner_from_link(link: str) -> str:
@@ -150,9 +171,10 @@ class ReservationSession:
     renew_after: float = 0.0
     """Earliest monotonic time at which renew may be attempted again.
 
-    Set when the Node answers a renew with ``425 Too Early``: the token stays
-    valid (§Verifying Ownership guarantees at least half a Session Lifetime),
-    so the right response is to defer rather than to discard. Zero means "no
+    Set whenever a renew attempt should be repeated later rather than treated
+    as the loss of the session — either the Node answered ``425 Too Early``
+    (§Verifying Ownership guarantees the token stays valid for at least half a
+    Session Lifetime) or the request never reached it. Zero means "no
     deferral", which is the normal state.
 
     Deliberately a separate field rather than a nudge to ``expires_at``:
@@ -490,6 +512,25 @@ class SessionStore:
             ),
             oauth2_on_remote=sess.oauth2_on_remote,
         )
+        if result.status == TRANSPORT_FAILURE:
+            # Same reasoning as the keepalive path: nothing was learned about
+            # the session, so nothing is discarded. Renewal is the less urgent
+            # of the two — the threshold fires with at least half the Session
+            # Lifetime still to run — and it is keepalive, not renew, that
+            # keeps the session from lapsing. So defer and let the keepalive
+            # branch be the one that decides the session is really gone.
+            sess.renew_after = time.monotonic() + RENEW_TRANSPORT_ERROR_RETRY
+            log.info(
+                "renew unreachable node=%s (%s) — token kept, retrying in %.0fs",
+                sess.node_id, result.error or "transport failure",
+                RENEW_TRANSPORT_ERROR_RETRY,
+            )
+            self._emit(
+                "reservation_renew_unreachable",
+                node_id=sess.node_id, status=result.status,
+                retry_in=RENEW_TRANSPORT_ERROR_RETRY,
+            )
+            return
         if result.status == HTTP_TOO_EARLY:
             # Not a failure. The Node refuses renew until a third of the
             # Session Lifetime has passed, and §Verifying Ownership says the
@@ -545,7 +586,52 @@ class SessionStore:
             ),
             oauth2_on_remote=sess.oauth2_on_remote,
         )
+        if result.status == TRANSPORT_FAILURE:
+            # The request never reached the Node, so the session's state is
+            # unknown rather than lost. Keep the token and try again: the
+            # session remains alive on the Node until its AliveTime window
+            # closes, and ``alive_until`` is exactly when that happens, so it
+            # doubles as the deadline for retrying.
+            #
+            # Retries land on subsequent ticks without any extra bookkeeping:
+            # a failed keepalive leaves ``alive_until`` untouched, so the
+            # branch that sent us here is still true a second later. That
+            # bounds the attempts too — at most HALF_ALIVETIME of them before
+            # the window closes.
+            now = time.monotonic()
+            if now < sess.alive_until:
+                log.info(
+                    "keepalive unreachable node=%s (%s) — token kept, "
+                    "%.0fs of AliveTime left",
+                    sess.node_id, result.error or "transport failure",
+                    sess.alive_until - now,
+                )
+                self._emit(
+                    "reservation_keepalive_unreachable",
+                    node_id=sess.node_id, status=result.status,
+                    alive_for=sess.alive_until - now,
+                )
+                return
+            # The window has closed with no successful keepalive, so the Node
+            # has dropped the session however unreachable it was. Now — and
+            # only now — is discarding the token the right answer, because a
+            # reacquire can actually succeed.
+            log.warning(
+                "keepalive unreachable node=%s and AliveTime elapsed — "
+                "will reacquire", sess.node_id,
+            )
+            self._emit(
+                "reservation_keepalive_lapsed",
+                node_id=sess.node_id, status=result.status,
+            )
+            sess.token = ""
+            sess.expires_at = 0.0
+            sess.alive_until = 0.0
+            sess.renew_after = 0.0
+            return
         if result.status != 200:
+            # A real HTTP status is the Node's own answer — a 401 means the
+            # session is gone. Discard and reacquire, as before.
             log.warning(
                 "keepalive failed node=%s status=%s — will reacquire",
                 sess.node_id, result.status,
@@ -557,6 +643,7 @@ class SessionStore:
             sess.token = ""
             sess.expires_at = 0.0
             sess.alive_until = 0.0
+            sess.renew_after = 0.0
             return
         sess.alive_until = time.monotonic() + ALIVETIME
         self._emit("reservation_keepalive", node_id=sess.node_id)
