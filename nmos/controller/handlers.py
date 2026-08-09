@@ -574,10 +574,26 @@ def _extract_remote_error_text(body: Any) -> str:
                 return val
         return ""
     if isinstance(body, str):
+        text = body.strip()
+        if not text:
+            return ""
+        # An endpoint that serves something other than JSON still reports its
+        # errors as NError JSON, and that body reaches us unparsed — the
+        # transport-file endpoint serves ``application/sdp`` on success, so its
+        # 404 arrives here as a string. NError is pretty-printed, so its first
+        # line is a lone "{"; taking the first line would hand the operator a
+        # brace where the reason should be. Parse before falling back.
+        if text[0] in "{[":
+            try:
+                parsed = json.loads(text)
+            except ValueError:
+                pass
+            else:
+                if isinstance(parsed, dict):
+                    return _extract_remote_error_text(parsed)
         # Some servers return multi-line HTML on auth failure — keep
         # only the first 160 chars so the result cell stays readable.
-        snippet = body.strip().splitlines()[0] if body.strip() else ""
-        return snippet[:160]
+        return text.splitlines()[0][:160]
     return str(body)[:160]
 
 
@@ -651,6 +667,78 @@ def _remote_envelope(
         "message":    message,
         "error_kind": error_kind,
         "device_id":  device_id,
+    }
+
+
+async def _sender_inactive_hint(
+    client: RemoteNodeClient,
+    s_base: str,
+    sender_id: str,
+    forwarded_headers: dict[str, str],
+    *,
+    trace_id: str = "",
+) -> str:
+    """Name the precondition behind a failed transport-file fetch, when it is
+    the one an operator actually trips over.
+
+    A Sender publishes no transport file while it is inactive, so a 404 here is
+    almost always the ordering rule: the Receiver was activated before its
+    Sender. Reporting that as *"HTTP 404: Not Found"* is accurate and useless —
+    it describes the Controller's failed request rather than the operator's
+    mistake, and gives them nothing to act on.
+
+    Asked only on the failure path, so the successful activation still costs one
+    round trip. Returns an empty string whenever the Sender is *not* the
+    explanation — a Sender that is active but has no transport file is a real
+    fault, and must not be papered over with a confident wrong answer.
+    """
+    result = await client.get_sender_active(
+        s_base, sender_id, forwarded_headers, trace_id=trace_id,
+    )
+    if (
+        result.status == 200
+        and isinstance(result.body, dict)
+        and result.body.get("master_enable") is False
+    ):
+        return ("the Sender is not active — activate the Sender before its "
+                "Receiver")
+    return ""
+
+
+def _upstream_failure_envelope(
+    what: str, result: RemoteCallResult, *, hint: str = "",
+) -> dict[str, Any]:
+    """Envelope for a *prerequisite* remote call that failed mid-action.
+
+    Some handlers make a call of their own before the one the operator asked
+    for — activating a receiver first fetches the sender's SDP, for instance.
+    When that prerequisite fails there is no single proxied result to wrap, so
+    the envelope is built here instead of by :func:`_remote_envelope`.
+
+    It must still carry ``message``: that is the field the browser's result cell
+    reads first (``controller.js``), and an envelope without one falls all the
+    way through to a bare ``HTTP 502`` — discarding an upstream explanation that
+    was usually the entire answer.
+
+    ``hint`` names the operator's *own* precondition when the caller could work
+    it out, and then leads the message — because "the Sender is not active" is
+    what they can act on, whereas the upstream status describes a request they
+    never made. The technical form stays in ``error`` and the raw ``body``, both
+    of which reach the cell's tooltip, so nothing is lost by leading with the
+    useful sentence.
+    """
+    detail = _extract_remote_error_text(result.body)
+    if result.error and not result.status:
+        upstream = result.error
+    elif detail:
+        upstream = f"HTTP {result.status}: {detail}"
+    else:
+        upstream = f"HTTP {result.status}"
+    return {
+        "error":   what,
+        "status":  result.status,
+        "body":    result.body,
+        "message": hint if hint else f"{what} — {upstream}",
     }
 
 
@@ -1405,12 +1493,17 @@ async def api_receiver_activate(request: web.Request) -> web.Response:
         s_base, sender_id, forwarded_s, trace_id=trace_id,
     )
     if sdp_result.status != 200 or not isinstance(sdp_result.body, str):
+        # A Sender with no transport file is nearly always one that is not
+        # transmitting yet, which is the operator's ordering mistake rather
+        # than a fault. Ask the Sender before reporting, so the cell can name
+        # the precondition instead of the Controller's failed sub-request.
         return web.json_response(
-            {
-                "error": "failed to fetch sender transportfile",
-                "status": sdp_result.status,
-                "body": sdp_result.body,
-            },
+            _upstream_failure_envelope(
+                "failed to fetch sender transportfile", sdp_result,
+                hint=await _sender_inactive_hint(
+                    client, s_base, sender_id, forwarded_s, trace_id=trace_id,
+                ),
+            ),
             status=502,
         )
 
@@ -1431,11 +1524,10 @@ async def api_receiver_activate(request: web.Request) -> web.Response:
         )
         if active_result.status != 200 or not isinstance(active_result.body, dict):
             return web.json_response(
-                {
-                    "error": "failed to fetch sender active params for PEP",
-                    "status": active_result.status,
-                    "body": active_result.body,
-                },
+                _upstream_failure_envelope(
+                    "failed to fetch sender active params for PEP",
+                    active_result,
+                ),
                 status=502,
             )
         forwarded_fields = sender_to_receiver_fields(
@@ -1698,11 +1790,9 @@ async def _activate_sender_with_privacy(
         )
         if r_active.status != 200 or not isinstance(r_active.body, dict):
             return web.json_response(
-                {
-                    "error": "failed to fetch receiver active params for ECDH",
-                    "status": r_active.status,
-                    "body": r_active.body,
-                },
+                _upstream_failure_envelope(
+                    "failed to fetch receiver active params for ECDH", r_active,
+                ),
                 status=502,
             )
         ecdh_fields = receiver_to_sender_fields(
@@ -2279,6 +2369,14 @@ def _simple_value(v: Any) -> str:
                 return str(num)
             return f"{num}/{den}"
         return "{…}"
+    # Booleans are spelled the way JSON spells them. ``str(True)`` gives
+    # ``"True"``, which is Python's spelling and appears nowhere in IS-11: the
+    # constraint travels the wire as ``true``, the ``<option value>`` beside
+    # this text is ``json.dumps``-encoded, and a reader learning the
+    # specification from this UI should not be shown a third spelling. Checked
+    # before ``int``, since ``bool`` is a subclass of it.
+    if isinstance(v, bool):
+        return "true" if v else "false"
     return str(v)
 
 

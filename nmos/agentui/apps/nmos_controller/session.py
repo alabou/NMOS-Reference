@@ -527,16 +527,25 @@ class ControllerSession:
 
     def _navigate(self, verb: str, selector: str, intent: str,
                   expect: tuple[PageId, ...]) -> PageView:
-        """Follow a navigation link by clicking it."""
+        """Follow a navigation link by clicking it.
+
+        The wait is on the navigation *counter*, not on the URL. An operator may
+        click "Receivers" while already on the receivers page — the natural move
+        after coming back from a detail page, and the one §15 of
+        OPERATING-THE-CONTROLLER.md asks for so ``clear_selection()`` runs on a
+        fresh list. That reloads the same address, so a URL comparison would
+        never be satisfied and the verb would time out on a click that worked.
+        ``press_refresh`` already waits this way for the same reason.
+        """
         with self._recorder.step(verb, intent=intent,
                                  expects_navigation=True) as step:
             step.touched()
             control = self._require(step, self._control(selector),
                                     what=f"the {verb.replace('_', ' ')} link")
-            url_before = self._surface.url
+            navigations_before = self._surface.navigation_count()
             self._surface.click(control.selector)
             self._require_wait(step, WaitSignal.PAGE_LOADED,
-                               UrlChangedFrom(url_before))
+                               NavigationSince(navigations_before))
             return self._settle_page(step, expect=expect)
 
     def open_senders(self) -> PageView:
@@ -1253,7 +1262,15 @@ class ControllerSession:
         The name lives in ``td.cs-label`` and the preference in the last column —
         not in ``data-`` attributes, and not in the disclosure cell, which holds
         only "▸ #N". Preference is what identifies a native set.
+
+        Format, layer and preference carry no class, so they are addressed by
+        position — and the position depends on the page. The read-only
+        ``receivers/view-caps`` table has nothing to submit and so emits no
+        leading radio cell, putting every one of those three columns one place
+        earlier than on the selectable tables. Deriving the layout from the page
+        is what keeps a shifted read from passing itself off as real data.
         """
+        columns = pages.caps_columns(self._recorder.page_id())
         row = pages.caps_row(resource_id, index)
         snapshot = self._surface.snapshot(row)
         radio = self._surface.snapshot(pages.caps_row_radio(resource_id, index))
@@ -1272,9 +1289,9 @@ class ControllerSession:
             index=index,
             label=normalise_text(label_cell.text) if label_cell else "",
             media_type=cell(pages.CAPS_CELL_MEDIA_TYPE),
-            meta_format=cell(pages.CAPS_CELL_FORMAT),
-            meta_layer=cell(pages.CAPS_CELL_LAYER),
-            preference=_as_int(cell(pages.CAPS_CELL_PREFERENCE)),
+            meta_format=cell(columns.meta_format),
+            meta_layer=cell(columns.meta_layer),
+            preference=_as_int(cell(columns.preference)),
             part=(snapshot.attr("data-cs-part") or "") if snapshot else "",
             chosen=bool(radio and radio.checked),
             expanded=bool(detail and not detail.has_attr("hidden")),

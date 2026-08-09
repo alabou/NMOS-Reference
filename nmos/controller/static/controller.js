@@ -23,7 +23,7 @@
   // while the cache-bust reached 60, so for eighteen versions anything reading
   // the reported version was told about JavaScript that had not been served in
   // months. Re-synced here; bump both together or the report is fiction.
-  const CONTROLLER_JS_VERSION = "61";
+  const CONTROLLER_JS_VERSION = "62";
 
   const controller = {};
   window.controller = controller;
@@ -908,8 +908,13 @@
         // treatment (e.g. cert-required pops an inline alert).
         const env = res.body || {};
         _maybeAlertCertRequired(env);
+        // ``env.error`` is part of the envelope and is consulted before giving
+        // up on a bare status: an envelope may legitimately carry a reason
+        // without a pre-computed ``message``, and dropping it leaves the cell
+        // saying "HTTP 502" when the server had already named the cause.
         const msg = env.message
           || res.error
+          || env.error
           || `HTTP ${res.status || '?'}`;
         // Tooltip: full raw body (stringified) so the operator can
         // hover the cell to see the NError debug / full error text.

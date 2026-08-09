@@ -373,10 +373,17 @@ is a hack that will not work reliably.
 **So: always sign out at the end of a run that acquired exclusivity.** Do not rely
 on the browser closing.
 
-Also worth telling a reader: the panel does **not** show a held reservation after a
-page load. `is-reserved` is applied by JavaScript following an acquire and is never
-server-rendered, and the checkbox is not rendered checked from server state — so
-returning to the configure page looks as though nothing is held even when it is.
+Also worth telling a reader: the panel **does** show a held reservation after a page
+load. `is-reserved`, the checkbox's `checked`, and the "· reserved on N nodes" note
+are all rendered from `privacy_view.reserved_all` / `reserved_node_ids`, which come
+from the admin session's `acquired_nodes` (`privacy_section.html:54-60`, `:233`,
+`:263`). So coming back to a configure page still holding a reservation shows it as
+held.
+
+This used to be the other way round — the class was applied only by JavaScript after
+an acquire, so a reloaded panel always claimed nothing was held. Do not describe that
+older behaviour: a tutorial written against it teaches the opposite of what the
+interface now does.
 
 Do not cite a file you have not confirmed exists — paths drift. A quick
 `ls` or `grep -n "^def "` before citing costs nothing and keeps the tutorial

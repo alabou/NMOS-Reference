@@ -28,6 +28,7 @@ Three things about this UI shaped the selectors materially:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 from ...enums import PageId, RowAction, ToggleAction
@@ -417,24 +418,67 @@ def caps_row_cell(resource_id: str, index: int) -> str:
     return f'{caps_row(resource_id, index)} td.caps-set-cell'
 
 
-#: Cells of a constraint-set row, in the order the template emits them
-#: (``senders_caps.html:22-34`` and ``receivers_caps.html`` are identical):
-#: radio, disclosure, label, media type, format, layer, preference.
+#: Cells of a constraint-set row that carry their own class, so they are found
+#: by name on every layout.
 #:
 #: ``cs-label`` is the *name* — and is also where the green flow-match class lands.
 #: An earlier version read the disclosure cell instead and saw only "▸ #0", losing
 #: the name entirely.
 CAPS_CELL_LABEL = "td.cs-label"
 CAPS_CELL_MEDIA_TYPE = "td.caps-summary"
-CAPS_CELL_FORMAT = "td:nth-child(5)"
-CAPS_CELL_LAYER = "td:nth-child(6)"
 
-#: Preference. The highest-preference set is pre-selected by default
-#: (``receivers_caps.html:154``), and a preference of 100 is what marks a set as
-#: **native** — there is no explicit "native" marker anywhere in the markup.
-CAPS_CELL_PREFERENCE = "td:nth-child(7)"
 
-#: Preference value that identifies a native constraint set.
+@dataclass(frozen=True, slots=True)
+class CapsColumns:
+    """Positional constraint-set cells, for one capabilities table layout.
+
+    These three columns carry no class of their own, so they can only be
+    addressed by position — which makes them layout-dependent in a way the
+    class-based selectors above are not.
+    """
+
+    meta_format: str
+    meta_layer: str
+    preference: str
+
+
+#: The **selectable** layout — ``senders_caps.html:22-34`` and
+#: ``receivers_caps.html:20-33``, which are identical to each other:
+#: radio, disclosure, label, media type, format, layer, preference.
+CAPS_COLUMNS_SELECTABLE = CapsColumns(
+    meta_format="td:nth-child(5)",
+    meta_layer="td:nth-child(6)",
+    preference="td:nth-child(7)",
+)
+
+#: The **read-only** layout — ``receivers_view_caps.html:16-25``. It has nothing
+#: to submit, so it emits no radio cell and every positional column sits one
+#: place earlier: disclosure, label, media type, format, layer, preference.
+#:
+#: Reading the selectable positions here shifts silently rather than failing:
+#: ``format`` returns the layer, ``layer`` returns the preference, and
+#: ``preference`` finds no seventh cell at all — so *every* set reports
+#: ``native=False``, including the native one. Wrong data that looks right is
+#: worse than a missing selector, which is why the two layouts are named apart
+#: instead of sharing one set of positions.
+CAPS_COLUMNS_READ_ONLY = CapsColumns(
+    meta_format="td:nth-child(4)",
+    meta_layer="td:nth-child(5)",
+    preference="td:nth-child(6)",
+)
+
+
+def caps_columns(page_id: PageId) -> CapsColumns:
+    """The column layout the given capabilities page renders."""
+    if page_id is PageId.RECEIVERS_VIEW_CAPS:
+        return CAPS_COLUMNS_READ_ONLY
+    return CAPS_COLUMNS_SELECTABLE
+
+
+#: Preference value that identifies a native constraint set. The highest-
+#: preference set is pre-selected by default (``receivers_caps.html:154``), and
+#: a preference of 100 is what marks a set as **native** — there is no explicit
+#: "native" marker anywhere in the markup.
 NATIVE_PREFERENCE = 100
 
 
