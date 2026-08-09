@@ -202,6 +202,191 @@ class TestPollingTask:
         assert store.current_token(admin, "dev1") is None
 
     @pytest.mark.asyncio
+    async def test_renew_too_early_keeps_the_token(self) -> None:
+        """``425 Too Early`` is not a failure and MUST NOT discard the token.
+
+        §Verifying Ownership: "If the renewal returns a `425 Too Early` status,
+        the token SHOULD be considered to be still valid for at least half of
+        its 'Session Lifetime'."
+
+        Discarding it sends the next tick to reacquire, which the Node refuses
+        with 423 because its own session is still alive — leaving the
+        controller holding no usable token, unable to release, and unable to
+        reacquire, while the UI still shows the reservation as held.
+        """
+        import time
+        import nmos.controller.reservation as res_mod
+
+        store, client, admin_store = _new_store()
+        admin = admin_store.get_or_create("s")
+        stub_acquire: Any = client.acquire_exclusive
+        stub_renew: Any = client.renew_exclusive
+        stub_acquire.return_value = RemoteCallResult(status=200, body="t")
+        stub_renew.return_value = RemoteCallResult(
+            status=res_mod.HTTP_TOO_EARLY, body={"error": "too early to renew"},
+        )
+
+        await store.acquire(admin, "dev1", "https://n/e/", oauth2_on_remote=False)
+        fake_now = time.monotonic() + res_mod.HALF_LIFETIME + 5
+        original = time.monotonic
+        time.monotonic = lambda: fake_now  # type: ignore[assignment]
+        try:
+            await store._tick()
+        finally:
+            time.monotonic = original  # type: ignore[assignment]
+
+        stub_renew.assert_awaited_once()
+        assert store.current_token(admin, "dev1") == "t", (
+            "a 425 discarded the session token"
+        )
+        sess = next(s for s in store.snapshot() if s.node_id == "dev1")
+        assert sess.renew_after > fake_now, "no retry deferral was recorded"
+        assert sess.expires_at > 0.0, "expiry was zeroed on a 425"
+
+    @pytest.mark.asyncio
+    async def test_renew_too_early_is_not_retried_every_tick(self) -> None:
+        """The deferral must actually suppress the next attempt.
+
+        The renew trigger is a threshold, not an edge, so without a deferral a
+        425 would be re-sent on every one-second tick for as long as the
+        threshold held.
+        """
+        import time
+        import nmos.controller.reservation as res_mod
+
+        store, client, admin_store = _new_store()
+        admin = admin_store.get_or_create("s")
+        stub_acquire: Any = client.acquire_exclusive
+        stub_renew: Any = client.renew_exclusive
+        stub_keepalive: Any = client.keepalive_exclusive
+        stub_acquire.return_value = RemoteCallResult(status=200, body="t")
+        stub_renew.return_value = RemoteCallResult(
+            status=res_mod.HTTP_TOO_EARLY, body=None)
+        stub_keepalive.return_value = RemoteCallResult(status=200, body=None)
+
+        await store.acquire(admin, "dev1", "https://n/e/", oauth2_on_remote=False)
+        base = time.monotonic() + res_mod.HALF_LIFETIME + 5
+        original = time.monotonic
+        try:
+            for offset in (0.0, 1.0, 2.0):        # three consecutive ticks
+                time.monotonic = lambda o=offset: base + o  # type: ignore
+                await store._tick()
+        finally:
+            time.monotonic = original  # type: ignore[assignment]
+        assert stub_renew.await_count == 1, (
+            f"renew was retried {stub_renew.await_count}x within the "
+            f"deferral window"
+        )
+        # Asserted together on purpose: a single renew is also what happens if
+        # the 425 discarded the token (the later ticks would then be taking the
+        # reacquire branch instead), so the count alone does not distinguish a
+        # working deferral from the bug it replaced.
+        assert store.current_token(admin, "dev1") == "t"
+
+    @pytest.mark.asyncio
+    async def test_deferred_renew_still_keeps_the_session_alive(self) -> None:
+        """A session waiting out a 425 must still be kept alive.
+
+        Both branches are due at once here: the renew threshold has passed
+        (deferred) and the keepalive window has too. If the deferred renew
+        short-circuited the tick, the session would lapse on inactivity while
+        waiting — turning a benign 425 into a lost reservation.
+        """
+        import time
+        import nmos.controller.reservation as res_mod
+
+        store, client, admin_store = _new_store()
+        admin = admin_store.get_or_create("s")
+        stub_acquire: Any = client.acquire_exclusive
+        stub_renew: Any = client.renew_exclusive
+        stub_keepalive: Any = client.keepalive_exclusive
+        stub_acquire.return_value = RemoteCallResult(status=200, body="t")
+        stub_renew.return_value = RemoteCallResult(
+            status=res_mod.HTTP_TOO_EARLY, body=None)
+        stub_keepalive.return_value = RemoteCallResult(status=200, body=None)
+
+        await store.acquire(admin, "dev1", "https://n/e/", oauth2_on_remote=False)
+        original = time.monotonic
+        try:
+            # Tick 1: renew is due, comes back 425, deferral recorded.
+            first = time.monotonic() + res_mod.HALF_LIFETIME + 5
+            time.monotonic = lambda: first  # type: ignore[assignment]
+            await store._tick()
+            # Tick 2: still inside the deferral, and now the keepalive is due.
+            second = first + res_mod.HALF_ALIVETIME + 1
+            time.monotonic = lambda: second  # type: ignore[assignment]
+            await store._tick()
+        finally:
+            time.monotonic = original  # type: ignore[assignment]
+
+        assert stub_renew.await_count == 1
+        stub_keepalive.assert_awaited_once()
+        assert store.current_token(admin, "dev1") == "t"
+
+    @pytest.mark.asyncio
+    async def test_renew_success_clears_the_deferral(self) -> None:
+        """Once a renew succeeds, the 425 deferral must not linger."""
+        import time
+        import nmos.controller.reservation as res_mod
+
+        store, client, admin_store = _new_store()
+        admin = admin_store.get_or_create("s")
+        stub_acquire: Any = client.acquire_exclusive
+        stub_renew: Any = client.renew_exclusive
+        stub_acquire.return_value = RemoteCallResult(status=200, body="t")
+        stub_renew.return_value = RemoteCallResult(
+            status=res_mod.HTTP_TOO_EARLY, body=None)
+
+        await store.acquire(admin, "dev1", "https://n/e/", oauth2_on_remote=False)
+        original = time.monotonic
+        try:
+            first = time.monotonic() + res_mod.HALF_LIFETIME + 5
+            time.monotonic = lambda: first  # type: ignore[assignment]
+            await store._tick()
+            sess = next(s for s in store.snapshot() if s.node_id == "dev1")
+            assert sess.renew_after > first
+
+            # Past the deferral, and this time the Node accepts.
+            stub_renew.return_value = RemoteCallResult(status=200, body="t2")
+            later = first + res_mod.RENEW_TOO_EARLY_RETRY + 1
+            time.monotonic = lambda: later  # type: ignore[assignment]
+            await store._tick()
+        finally:
+            time.monotonic = original  # type: ignore[assignment]
+
+        assert store.current_token(admin, "dev1") == "t2"
+        sess = next(s for s in store.snapshot() if s.node_id == "dev1")
+        assert sess.renew_after == 0.0, "deferral survived a successful renew"
+
+    @pytest.mark.asyncio
+    async def test_renew_failure_other_than_425_still_reacquires(self) -> None:
+        """A genuine renew failure must keep the old zero-the-token behaviour.
+
+        The 425 branch is a carve-out, not a blanket change: a 401 means the
+        session really is gone and reacquiring is the correct recovery.
+        """
+        import time
+        import nmos.controller.reservation as res_mod
+
+        store, client, admin_store = _new_store()
+        admin = admin_store.get_or_create("s")
+        stub_acquire: Any = client.acquire_exclusive
+        stub_renew: Any = client.renew_exclusive
+        stub_acquire.return_value = RemoteCallResult(status=200, body="t")
+        stub_renew.return_value = RemoteCallResult(status=401, body=None)
+
+        await store.acquire(admin, "dev1", "https://n/e/", oauth2_on_remote=False)
+        fake_now = time.monotonic() + res_mod.HALF_LIFETIME + 5
+        original = time.monotonic
+        time.monotonic = lambda: fake_now  # type: ignore[assignment]
+        try:
+            await store._tick()
+        finally:
+            time.monotonic = original  # type: ignore[assignment]
+
+        assert store.current_token(admin, "dev1") is None
+
+    @pytest.mark.asyncio
     async def test_admin_gone_drops_session(self) -> None:
         """If the admin session has been discarded (logout), the
         polling task releases the orphaned reservation session too."""

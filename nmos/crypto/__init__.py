@@ -19,9 +19,45 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Final
 
 from nmos.errors import Busy, NotAllowed, Skip
+
+
+# ---------------------------------------------------------------------------
+# Session timings, fixed by "NMOS With Node Reservation.md"
+# ---------------------------------------------------------------------------
+#
+# The specification pins these, and there is no protocol mechanism for a
+# client to discover what a Node uses. An operator who set them per-instance
+# would have to configure every device in the deployment identically, with
+# nothing able to detect a mismatch — a renew/keepalive schedule computed
+# against the wrong window fails silently. So this implementation always runs
+# the defaults: ``nmos_node.py`` constructs ``ExclusiveSession()`` with no
+# arguments and exposes no option to change them.
+#
+# The constructor keeps the parameters because the specification does permit
+# an administrator to lengthen the Lifetime, and because the expiry tests need
+# a short one — but the values are now *validated* rather than clamped. Silent
+# clamping is what let an out-of-spec AliveTime look accepted.
+
+#: §Definitions: "By default the lifetime of a session is 60 minutes."
+DEFAULT_LIFETIME_SECONDS: Final[float] = 3600.0
+
+#: §Session Lifetime versus AliveTime: the Lifetime "MAY be changed by an
+#: administrator ... to a maximum of 24 hours".
+MAX_LIFETIME_SECONDS: Final[float] = 86400.0
+
+#: §Definitions: "By default the AliveTime of a session is 60 seconds."
+DEFAULT_ALIVE_TIME_SECONDS: Final[float] = 60.0
+
+#: §Definitions: the AliveTime "MAY be configured by an administrator from 60
+#: seconds to 120 seconds ... Implementations MUST NOT use other values for
+#: the AliveTime." §Session Lifetime versus AliveTime restates it as a MUST:
+#: "The 'Session AliveTime' MUST be 60 or 120 seconds as configured by an
+#: administrator." Two discrete values, not a range — so this is a membership
+#: test, not a clamp.
+PERMITTED_ALIVE_TIME_SECONDS: Final[tuple[float, ...]] = (60.0, 120.0)
 
 
 @dataclass
@@ -70,17 +106,45 @@ class ExclusiveSession:
 
     def __init__(
         self,
-        lifetime: float = 3600.0,
-        alive_time: float = 60.0,
+        lifetime: float = DEFAULT_LIFETIME_SECONDS,
+        alive_time: float = DEFAULT_ALIVE_TIME_SECONDS,
     ) -> None:
         """Initialize session manager.
 
         Args:
-            lifetime: Total session lifetime in seconds (default 60 min, range 60s-24h).
-            alive_time: Inactivity timeout in seconds (default 60s, range 1s-60s).
+            lifetime: Total session lifetime in seconds. Must be positive and
+                no more than :data:`MAX_LIFETIME_SECONDS`.
+            alive_time: Inactivity timeout in seconds. Must be one of
+                :data:`PERMITTED_ALIVE_TIME_SECONDS` — the specification
+                allows exactly 60 or 120 and forbids every other value.
+
+        Raises:
+            ValueError: if either argument is outside what the specification
+                permits. Both were previously clamped into range, which meant
+                an out-of-spec AliveTime was silently coerced: 120 s (legal)
+                became 60 s, and 1 s (illegal) was accepted as-is. Failing
+                loudly is the only way a misconfiguration is visible, since
+                the protocol gives a peer no way to discover the value in use.
         """
-        self.lifetime: float = max(60.0, min(lifetime, 86400.0))
-        self.alive_time: float = max(1.0, min(alive_time, 60.0))
+        if not 0.0 < lifetime <= MAX_LIFETIME_SECONDS:
+            raise ValueError(
+                f"session lifetime {lifetime!r}s is out of range: must be "
+                f"positive and at most {MAX_LIFETIME_SECONDS:.0f}s (24 hours), "
+                f"per 'NMOS With Node Reservation' §Session Lifetime versus "
+                f"AliveTime"
+            )
+        if alive_time not in PERMITTED_ALIVE_TIME_SECONDS:
+            permitted = " or ".join(
+                f"{v:.0f}" for v in PERMITTED_ALIVE_TIME_SECONDS
+            )
+            raise ValueError(
+                f"session AliveTime {alive_time!r}s is not permitted: must be "
+                f"exactly {permitted} seconds. 'NMOS With Node Reservation' "
+                f"§Definitions: \"Implementations MUST NOT use other values "
+                f"for the AliveTime.\""
+            )
+        self.lifetime: float = lifetime
+        self.alive_time: float = alive_time
         self.private: Any = None
         self.user: Any = None
         self._lock: threading.Lock = threading.Lock()
@@ -112,11 +176,29 @@ class ExclusiveSession:
             return token
 
     def renew(self, token: str) -> str:
-        """Get a new token (same session ID, new HMAC key).
+        """Get a new token (same session ID, new HMAC key), extending the Lifetime.
 
         Only allowed after 1/3 of lifetime has elapsed.
         Raises Skip if called too early.
         Raises NotAllowed if not the session owner.
+
+        **Renewal restarts the Lifetime clock.** That is the whole purpose of
+        the operation, and the specification assigns it to renew alone —
+        §KeepAlive: "The KeepAlive operation MUST NOT extend the session
+        Lifetime. Only the Renew operation extends the session Lifetime."
+
+        ``creation_time`` is therefore reset here. Leaving it at the original
+        acquire — which is what this did — meant no amount of correct renewing
+        could keep a session alive: :meth:`_is_alive_internal` measures the
+        Lifetime from ``creation_time``, so every session died exactly
+        ``lifetime`` seconds after it was first acquired, and the next
+        keepalive or renew came back 401. The owner then reacquired and
+        silently got a *different* session, releasing exclusivity for the gap
+        and changing the exclusive key mixed into the PEP derivation.
+
+        Note the ordering: the 1/3 gate is evaluated against the *previous*
+        creation_time before it is overwritten, so each renewal must wait
+        another third of a Lifetime — the gate stays meaningful.
         """
         with self._lock:
             s = self._session
@@ -134,6 +216,7 @@ class ExclusiveSession:
             # Generate new HMAC key, keep session ID
             s.hmac_key = os.urandom(16)
             s.token = _make_token(s.session_id, s.hmac_key)
+            s.creation_time = now      # the Lifetime restarts from this renewal
             s.keepalive_time = now
             return s.token
 

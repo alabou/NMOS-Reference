@@ -56,6 +56,21 @@ ALIVETIME: Final[float] = 60.0        # 60 s AliveTime window
 HALF_ALIVETIME: Final[float] = 30.0   # keepalive when < 30 s remains
 POLL_INTERVAL: Final[float] = 1.0     # per-second tick
 
+#: ``425 Too Early`` (RFC 8470), the status §Renew mandates when renewal is
+#: attempted "before 1/3 of the session lifetime". Named because a bare 425 in
+#: a status comparison reads as a typo for one of the 4xx everyone knows.
+HTTP_TOO_EARLY: Final[int] = 425
+
+# How long to wait before retrying a renew that came back ``425 Too Early``.
+#
+# §Verifying Ownership: "If the renewal returns a `425 Too Early` status, the
+# token SHOULD be considered to be still valid for at least half of its
+# 'Session Lifetime'." So there is no urgency — the safe move is to keep the
+# token and try again later. A retry interval is needed because the renew
+# trigger is a threshold rather than an edge: without one, a 425 would be
+# re-attempted on every one-second tick for as long as the threshold held.
+RENEW_TOO_EARLY_RETRY: Final[float] = 60.0
+
 
 def _owner_from_link(link: str) -> str:
     """Extract the owner the Node named in its ``Link`` header.
@@ -132,6 +147,22 @@ class ReservationSession:
     token: str = ""
     expires_at: float = 0.0
     alive_until: float = 0.0
+    renew_after: float = 0.0
+    """Earliest monotonic time at which renew may be attempted again.
+
+    Set when the Node answers a renew with ``425 Too Early``: the token stays
+    valid (§Verifying Ownership guarantees at least half a Session Lifetime),
+    so the right response is to defer rather than to discard. Zero means "no
+    deferral", which is the normal state.
+
+    Deliberately a separate field rather than a nudge to ``expires_at``:
+    ``expires_at`` is what the keepalive and renew thresholds are both derived
+    from, and moving it to encode a retry delay would misstate how long the
+    session is believed to last. Keeping them apart also lets a deferred renew
+    fall through to the keepalive branch in the same tick, which matters — a
+    session waiting to renew must still be kept alive or it lapses on
+    inactivity while waiting.
+    """
 
 
 class SessionStore:
@@ -416,7 +447,10 @@ class SessionStore:
             if not sess.token:
                 await self._try_reacquire(sess)
                 continue
-            if now + HALF_LIFETIME > sess.expires_at:
+            # ``renew_after`` defers a renew the Node called too early. Note
+            # this is not a ``continue`` when deferred: the session still
+            # needs keeping alive while it waits, or it lapses on inactivity.
+            if now + HALF_LIFETIME > sess.expires_at and now >= sess.renew_after:
                 await self._try_renew(sess)
                 continue
             if now + HALF_ALIVETIME > sess.alive_until:
@@ -445,6 +479,7 @@ class SessionStore:
         sess.token = result.body
         sess.expires_at = now + LIFETIME
         sess.alive_until = now + ALIVETIME
+        sess.renew_after = 0.0     # a fresh session carries no renew deferral
         self._emit("reservation_reacquired", node_id=sess.node_id)
 
     async def _try_renew(self, sess: ReservationSession) -> None:
@@ -455,6 +490,31 @@ class SessionStore:
             ),
             oauth2_on_remote=sess.oauth2_on_remote,
         )
+        if result.status == HTTP_TOO_EARLY:
+            # Not a failure. The Node refuses renew until a third of the
+            # Session Lifetime has passed, and §Verifying Ownership says the
+            # token "SHOULD be considered to be still valid for at least half
+            # of its 'Session Lifetime'" in exactly this case. So keep it and
+            # come back later.
+            #
+            # Discarding it here — which is what the generic non-200 branch
+            # below used to do — was actively harmful: zeroing the token sends
+            # the next tick down the reacquire path, and the Node refuses that
+            # with 423 because its own session is still very much alive. The
+            # session then sticks in a state where the controller holds no
+            # usable token, cannot release, and every reacquire is rejected,
+            # while the panel still shows the reservation as held.
+            sess.renew_after = time.monotonic() + RENEW_TOO_EARLY_RETRY
+            log.info(
+                "renew too early node=%s — token remains valid, retrying in %.0fs",
+                sess.node_id, RENEW_TOO_EARLY_RETRY,
+            )
+            self._emit(
+                "reservation_renew_too_early",
+                node_id=sess.node_id, status=result.status,
+                retry_in=RENEW_TOO_EARLY_RETRY,
+            )
+            return
         if result.status != 200 or not isinstance(result.body, str):
             log.warning(
                 "renew failed node=%s status=%s — will reacquire",
@@ -468,11 +528,13 @@ class SessionStore:
             sess.token = ""
             sess.expires_at = 0.0
             sess.alive_until = 0.0
+            sess.renew_after = 0.0
             return
         now = time.monotonic()
         sess.token = result.body
         sess.expires_at = now + LIFETIME
         sess.alive_until = now + ALIVETIME
+        sess.renew_after = 0.0     # the deferral, if any, has been discharged
         self._emit("reservation_renewed", node_id=sess.node_id)
 
     async def _try_keepalive(self, sess: ReservationSession) -> None:
