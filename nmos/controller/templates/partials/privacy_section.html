@@ -153,7 +153,7 @@
         These devices have no common
         {% if not privacy_view.protocols %}<code>ext_privacy_protocol</code>{% endif %}
         {% if not privacy_view.protocols and not privacy_view.modes %} / {% endif %}
-        {% if not privacy_view.modes %}<code>ext_privacy_mode</code>{% endif %}
+        {% if not privacy_view.modes %} <code>ext_privacy_mode</code>{% endif %}
         value — they cannot interoperate. Pick a different
         sender/receiver selection.
       </div>
@@ -259,12 +259,22 @@
                  data-title-unavailable="{{ t_excl_unavailable }}"
                  data-title-available="{{ t_excl_available }}"
                  title="{% if lock_all %}{{ t_excl_locked }}{% elif not privacy_view.exclusivity_ok %}{{ t_excl_unavailable }}{% else %}{{ t_excl_available }}{% endif %}">
+            {# The leading space inside each ``{% if %}`` body is load-bearing.
+               The environment runs with ``trim_blocks`` + ``lstrip_blocks``
+               (nmos/controller/app.py), so the indentation before a block tag
+               and the newline after one are both removed: two bare boolean
+               attributes on adjacent lines render as ``checkeddisabled`` — one
+               unknown attribute, with ``checked`` AND ``disabled`` silently
+               lost. Keeping the separator inside the block body puts it in
+               template *data*, which neither flag touches. Covered by
+               ``test_privacy.py::test_exclusivity_switch_attributes_are_separated``
+               and by the repo-wide guard in ``test_template_attributes.py``. #}
             <input type="checkbox"
                    class="custom-control-input"
                    id="privacy-exclusivity"
                    data-role="privacy-exclusivity"
-                   {% if privacy_view.reserved_all %}checked{% endif %}
-                   {% if excl_locked %}disabled{% endif %}>
+                   {% if privacy_view.reserved_all %} checked{% endif %}
+                   {% if excl_locked %} disabled{% endif %}>
             <span class="custom-control-label">
               Exclusivity
               {# The only label variant is the fixed "(not available)"

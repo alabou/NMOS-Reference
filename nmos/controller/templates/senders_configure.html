@@ -306,8 +306,8 @@
                                     {% for opt in w.options %}
                                       <option value="{{ opt.value }}"
                                               data-flow-key="{{ opt.key }}"
-                                              {% if opt.flow_match %}class="flow-match"{% endif %}
-                                              {% if opt.display in w.selected %}selected{% endif %}>{{ opt.display }}</option>
+                                              {% if opt.flow_match %} class="flow-match"{% endif %}
+                                              {% if opt.display in w.selected %} selected{% endif %}>{{ opt.display }}</option>
                                     {% endfor %}
                                   </select>
                                 {% elif w.kind == 'range' %}
