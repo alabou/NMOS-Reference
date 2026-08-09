@@ -1447,9 +1447,10 @@ class ControllerSession:
         holding the full error body — so a capture even slightly later shows a
         believable screen from which the result has silently disappeared.
 
-        Success is read from the result cells only. The button's own colour flips
-        only when *every* resource succeeded, which makes a partial failure
-        indistinguishable from a button that was never pressed.
+        Success is read from the result cells only. The button's own colour is a
+        three-state summary — on, off, or amber/``mixed`` after a partial success —
+        so it says whether the resources now agree, not which ones failed or why.
+        Only the cells carry the per-resource verdict this method returns.
         """
         with self._recorder.step(
             "press_toggle",

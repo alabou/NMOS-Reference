@@ -95,6 +95,57 @@ def test_ensure_toggle_normalises_mixed_to_off_in_one_press() -> None:
     assert fake.presses == 1
 
 
+class _StuckMixedSession(_ToggleSession):
+    """A toggle whose press only partially succeeds, so it stays mixed.
+
+    The real page produces this whenever some resources accept the action and
+    others reject it: ``_runToggle`` sets the button to ``mixed`` rather than
+    claiming a state the selection does not actually hold.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("mixed")
+
+    def press_toggle(self, action: ToggleAction) -> None:
+        assert action is ToggleAction.CONSTRAIN
+        self.presses += 1
+        self.state = "mixed"
+
+
+def test_ensure_toggle_stops_when_the_normalising_press_leaves_it_mixed() -> None:
+    # Falling through would press a second time, and the browser maps a mixed
+    # button to "drive everything off" — so wanting *on* would issue another
+    # off-press and produce a trace that reads like an attempted activation.
+    fake = _StuckMixedSession()
+
+    reached = _ensure_toggle(
+        cast(ControllerSession, fake),
+        ToggleAction.CONSTRAIN,
+        True,
+        why="apply one desired state to the selection",
+    )
+
+    assert reached is False
+    assert fake.presses == 1
+    assert any("still mixed" in note for note in fake.notes)
+
+
+def test_ensure_toggle_reports_failure_when_the_press_does_not_take() -> None:
+    # A press that silently fails to move the button must not be reported as
+    # success — the scenario's later steps depend on the state it claims.
+    fake = _ToggleSession("false")
+    fake.press_toggle = lambda action: None       # type: ignore[method-assign]
+
+    reached = _ensure_toggle(
+        cast(ControllerSession, fake),
+        ToggleAction.CONSTRAIN,
+        True,
+        why="the sender must be constrained before it can transmit",
+    )
+
+    assert reached is False
+
+
 class _GuardSession:
     def __init__(self) -> None:
         self.submissions = 0

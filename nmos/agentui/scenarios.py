@@ -113,6 +113,17 @@ def _ensure_toggle(session: ControllerSession, action: ToggleAction,
             session.note(f"{action} refused before acting: {blocked.reason!r}.")
             return False
         control = session.read_toggles()[action]
+        if _toggle_state(control) is None:
+            # The normalising press only partially succeeded, so the selection
+            # still disagrees. Falling through would press again, and a mixed
+            # button maps to "drive everything off" — so wanting *on* would
+            # issue a second off-press and report a failure whose trace reads
+            # as an attempted activation. Stop here and say what was observed.
+            session.note(
+                f"{action} is still mixed after the normalising press; some "
+                f"resources did not change. Not pressing again ({why})."
+            )
+            return False
 
     if _toggle_state(control) is want:
         session.note(f"{action} is already {'on' if want else 'off'} ({why}).")
@@ -465,6 +476,7 @@ def _route_one_receiver(session: ControllerSession) -> None:
             "No monitor link on this row, so this device publishes no BCP-008 "
             "monitor — which is what a grey badge means."
         )
+
 
 # ---------------------------------------------------------------------------
 # 6. privacy-exclusivity  (mutating)

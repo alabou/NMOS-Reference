@@ -486,7 +486,11 @@ WORKING_CLASS = "is-working"
 #: success criterion.
 SUBMITTING_CLASS = "is-submitting"
 
-#: Result cells. receivers_configure.html:306-321.
+#: Result cells. receivers_configure.html:306-341.
+#:
+#: The receiver selector matches on attribute *presence*, and the template omits
+#: ``data-result-for-receiver`` entirely for a sender with no paired receiver —
+#: so an unpaired row yields no receiver cell rather than one with an empty id.
 RESULT_CELLS_SENDER = ".result-cell[data-result-for]"
 RESULT_CELLS_RECEIVER = ".result-cell[data-result-for-receiver]"
 
@@ -502,7 +506,7 @@ def result_cell(resource_id: str, *, receiver_side: bool = False) -> str:
 
 
 #: Parameter widgets, addressed by the (sender, parameter, part) triple that
-#: uniquely identifies one editable value. receivers_configure.html:344-399.
+#: uniquely identifies one editable value. receivers_configure.html:356-403.
 PARAM_INPUTS = ".param-input[data-sender-id][data-param-urn]"
 
 

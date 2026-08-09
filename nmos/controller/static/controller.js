@@ -13,7 +13,17 @@
   const PREFIX = "/controller";
   // Bump on every JS change so a console beacon + a CSS/JS cache-bust
   // both confirm the running version in one step.
-  const CONTROLLER_JS_VERSION = "43";
+  //
+  // This MUST equal the ``?v=`` on the controller.css / controller.js
+  // references in ``templates/base.html``. That is the whole mechanism: the
+  // query string decides which file the browser fetches, and this constant —
+  // exposed as ``window.controller.version`` and logged to the console — is
+  // the only way to observe which one it actually ran. The two started equal
+  // at 41 and were then bumped independently until this one stalled at 43
+  // while the cache-bust reached 60, so for eighteen versions anything reading
+  // the reported version was told about JavaScript that had not been served in
+  // months. Re-synced here; bump both together or the report is fiction.
+  const CONTROLLER_JS_VERSION = "61";
 
   const controller = {};
   window.controller = controller;

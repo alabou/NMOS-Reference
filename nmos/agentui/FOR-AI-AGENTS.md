@@ -495,6 +495,9 @@ In `artifacts/agentui/<timestamp>-<scenario>-<id>/`:
 | `steps/` | before/after screenshots per step |
 
 Check `manifest.json` before reporting success. `fidelity_clean` must be `true`;
-`sse` tells you whether a live update was genuinely observed or merely hoped for.
-Give the user the path to `tutorial.md` (or `journal.md`), and note that
-`artifacts/` is gitignored, so it is not in version control.
+`sse` tells you whether a live update was genuinely observed or merely hoped for;
+`controller_js_version` is the front-end build the browser actually ran, held
+equal to the pages' `?v=` cache-bust by a test, so it is safe to quote when a run
+is the evidence that a UI change works. Give the user the path to `tutorial.md`
+(or `journal.md`), and note that `artifacts/` is gitignored, so it is not in
+version control.

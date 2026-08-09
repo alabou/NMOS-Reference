@@ -317,9 +317,21 @@
                     {%- endif -%}
                   </td>
                   {% set rs = receiver_state.get(paired_receiver.id, {}) if paired_receiver else {} %}
+                  {# Both data attributes are emitted only for a sender that
+                     actually has a paired receiver. ``_reconcileConfigureToggles``
+                     selects on the *presence* of ``data-result-for-receiver``,
+                     and it aggregates with all/any/mixed semantics — so an
+                     unpaired row carrying an empty attribute would contribute a
+                     spurious ``false`` and report ``mixed`` while every real
+                     receiver is active. The server computes the same aggregate
+                     over ``receiver_state`` (paired receivers only), so omitting
+                     the attribute here is what keeps the two definitions
+                     identical rather than merely coincidentally equal. #}
                   <td class="result-cell text-muted small"
-                      data-result-for-receiver="{{ paired_receiver.id if paired_receiver else '' }}"
-                      data-live-active="{{ 'true' if (paired_receiver and rs.active) else 'false' }}">
+                      {%- if paired_receiver %}
+                      data-result-for-receiver="{{ paired_receiver.id }}"
+                      data-live-active="{{ 'true' if rs.active else 'false' }}"
+                      {%- endif %}>
                     {%- if not paired_receiver -%}
                       —
                     {%- elif rs.active -%}
