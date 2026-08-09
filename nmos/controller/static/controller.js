@@ -23,7 +23,7 @@
   // while the cache-bust reached 60, so for eighteen versions anything reading
   // the reported version was told about JavaScript that had not been served in
   // months. Re-synced here; bump both together or the report is fiction.
-  const CONTROLLER_JS_VERSION = "62";
+  const CONTROLLER_JS_VERSION = "63";
 
   const controller = {};
   window.controller = controller;
@@ -1745,12 +1745,26 @@
       panel.getAttribute("data-exclusivity-available") === "1"
     );
 
+    // Reasons are reconciled alongside affordances. A ``title`` is written by
+    // the server from whichever branch was true at page load, and that branch
+    // is exactly what changes here — so re-enabling a control without
+    // rewriting its title leaves it working while still telling the operator
+    // to "Deactivate the selection to change". Both wordings ride on the
+    // element as ``data-title-*`` so the text stays defined once, in the
+    // template that also renders the initial ``title``.
+    const _swapTitle = (el, key) => {
+      if (!el) return;
+      const text = el.getAttribute(`data-title-${key}`);
+      if (text !== null) el.title = text;
+    };
+
     // Dropdowns: toggle ``disabled`` to match live activity.
     for (const role of [
       "privacy-protocol", "privacy-mode", "privacy-curve",
     ]) {
       const el = form.querySelector(`[data-role="${role}"]`);
       if (el) el.disabled = anyActive;
+      _swapTitle(el, anyActive ? "locked" : "unlocked");
     }
 
     // Exclusivity switch — disable for either reason, leave the
@@ -1762,6 +1776,15 @@
     if (excl) {
       excl.disabled = anyActive || !exclusivityAvailable;
     }
+    // Three states, and "active" wins because it is the one the operator can
+    // act on: a Node that never advertised the reservation service will not
+    // start doing so, whereas deactivating the selection is a next step.
+    // The title sits on the wrapping label — the switch's own input is hidden
+    // by Bootstrap and could never show a tooltip.
+    _swapTitle(
+      form.querySelector('[data-role="privacy-exclusivity-label"]'),
+      anyActive ? "locked" : (exclusivityAvailable ? "available" : "unavailable"),
+    );
 
     // Locked-note: server-rendered inline span on the footer row.
     // Show/hide via the HTML ``hidden`` attribute so the panel

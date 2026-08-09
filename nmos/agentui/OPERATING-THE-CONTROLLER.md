@@ -115,24 +115,22 @@ The controls carry their own explanation, which the driver reports verbatim:
 > *"Deactivate the selection to change — the exclusive key is only mixed into the
 > encryption key at activation"*
 
-### A stale-reason trap on the privacy controls
+### Reasons on the privacy controls are live
 
-Once you deactivate through the UI, the privacy controls are re-enabled by
-JavaScript **without their `title` being rewritten**. `_reconcilePrivacyLock` in
-`controller.js` sets `el.disabled`, the explanatory note's `hidden`, and
-`data-privacy-locked` — but never touches the title, which the server rendered from
-the locked branch at page load.
+`_reconcilePrivacyLock` in `controller.js` reconciles the `title` along with
+`el.disabled`, the explanatory note's `hidden`, and `data-privacy-locked`, so all
+four agree at every moment — including after a deactivation that never reloaded
+the page. Each control carries both wordings as `data-title-*`, rendered by
+`privacy_section.html` from the same strings it uses for the initial `title`, so
+the live swap cannot drift from the server render.
 
-So an **enabled** privacy control can still be carrying *"Deactivate the selection
-to change…"*. Trust the affordance, not the reason:
+The switch's reason lives on its wrapping `<label>`, not on the `<input>` —
+Bootstrap hides the input, so that is the only element a tooltip can appear on.
 
-- **authoritative:** the control's `disabled` state, the locked note's visibility,
-  and `#privacy-form[data-privacy-locked]` — all three are reconciled live;
-- **possibly stale:** the `title`, until the next full page load.
-
-Only quote a reason when the control is genuinely refused. The driver's
-`BlockedControl.reason` is safe by construction, since it is only ever raised for a
-control that *is* blocked.
+This used to be a trap worth a paragraph: only `disabled` was reconciled, and an
+**enabled**, working control could still be carrying *"Deactivate the selection to
+change…"* until the next full page load. It no longer can, and a scenario should
+not be written to work around it.
 
 ### The full sequence
 

@@ -164,6 +164,23 @@
          reason. Re-using the same ``disabled`` attribute Bootstrap
          already styles — no extra CSS required. #}
       {% set lock_all = privacy_view.any_active %}
+
+      {# Every title below has a locked and an unlocked wording, and which one
+         applies changes *after* the page is rendered: the SSE handler
+         re-enables these controls the moment the selection goes idle. So each
+         control carries BOTH wordings as ``data-title-*`` and
+         ``_reconcilePrivacyLock`` swaps ``title`` alongside ``disabled``.
+
+         The strings are set once here and reused for the initial ``title`` and
+         the data attributes, so the server render and the live swap cannot say
+         different things. Before this, only ``disabled`` was reconciled and the
+         title kept its page-load wording — leaving an enabled, working control
+         insisting "Deactivate the selection to change". #}
+      {% set t_pep_locked = "Deactivate the selection to change — PEP parameters are only applied at activation" %}
+      {% set t_excl_locked = "Deactivate the selection to change — the exclusive key is only mixed into the encryption key at activation" %}
+      {% set t_excl_unavailable = "At least one Node in the selection does not advertise the reservation service." %}
+      {% set t_excl_available = "Reserve every Node in the selection so no other controller can change its configuration while we drive activation." %}
+
       <form class="privacy-form form-inline mt-3" id="privacy-form"
             data-privacy-locked="{{ '1' if lock_all else '0' }}"
             onsubmit="return false;">
@@ -176,7 +193,9 @@
                   id="privacy-protocol"
                   data-role="privacy-protocol"
                   {% if lock_all %}disabled{% endif %}
-                  title="{% if lock_all %}Deactivate the selection to change — PEP parameters are only applied at activation{% else %}Privacy Encryption Protocol{% endif %}">
+                  data-title-locked="{{ t_pep_locked }}"
+                  data-title-unlocked="Privacy Encryption Protocol"
+                  title="{% if lock_all %}{{ t_pep_locked }}{% else %}Privacy Encryption Protocol{% endif %}">
             {% for p in privacy_view.protocols %}
               <option value="{{ p }}">{{ p }}</option>
             {% endfor %}
@@ -191,7 +210,9 @@
                   id="privacy-mode"
                   data-role="privacy-mode"
                   {% if lock_all %}disabled{% endif %}
-                  title="{% if lock_all %}Deactivate the selection to change — PEP parameters are only applied at activation{% else %}Privacy Encryption Mode{% endif %}">
+                  data-title-locked="{{ t_pep_locked }}"
+                  data-title-unlocked="Privacy Encryption Mode"
+                  title="{% if lock_all %}{{ t_pep_locked }}{% else %}Privacy Encryption Mode{% endif %}">
             {% for m in privacy_view.modes %}
               <option value="{{ m }}">{{ m }}</option>
             {% endfor %}
@@ -209,7 +230,9 @@
                   id="privacy-curve"
                   data-role="privacy-curve"
                   {% if lock_all %}disabled{% endif %}
-                  title="{% if lock_all %}Deactivate the selection to change — PEP parameters are only applied at activation{% else %}ECDH curve{% endif %}">
+                  data-title-locked="{{ t_pep_locked }}"
+                  data-title-unlocked="ECDH curve"
+                  title="{% if lock_all %}{{ t_pep_locked }}{% else %}ECDH curve{% endif %}">
             {% for c in privacy_view.curves %}
               <option value="{{ c }}">{{ c }}</option>
             {% endfor %}
@@ -224,8 +247,18 @@
                reservation service at all. #}
         {% set excl_locked = lock_all or (not privacy_view.exclusivity_ok) %}
         <div class="form-group ml-auto privacy-exclusivity">
+          {# The reason lives on the LABEL, not the input: a Bootstrap
+             custom-switch hides its ``<input>``, so the label is both the
+             visible click target and the only place a tooltip can appear.
+             ``_reconcilePrivacyLock`` therefore swaps ``disabled`` on the input
+             and ``title`` here — a fix that only rewrote the input's title
+             would change nothing an operator can see. #}
           <label class="custom-control custom-switch m-0"
-                 title="{% if lock_all %}Deactivate the selection to change — the exclusive key is only mixed into the encryption key at activation{% elif not privacy_view.exclusivity_ok %}At least one Node in the selection does not advertise the reservation service.{% else %}Reserve every Node in the selection so no other controller can change its configuration while we drive activation.{% endif %}">
+                 data-role="privacy-exclusivity-label"
+                 data-title-locked="{{ t_excl_locked }}"
+                 data-title-unavailable="{{ t_excl_unavailable }}"
+                 data-title-available="{{ t_excl_available }}"
+                 title="{% if lock_all %}{{ t_excl_locked }}{% elif not privacy_view.exclusivity_ok %}{{ t_excl_unavailable }}{% else %}{{ t_excl_available }}{% endif %}">
             <input type="checkbox"
                    class="custom-control-input"
                    id="privacy-exclusivity"
