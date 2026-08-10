@@ -197,6 +197,30 @@ def _event_kinds(events: list[object]) -> list[int]:
 
 
 @pytest.mark.skipif(not HAS_CCF, reason="MatroxCCF not available")
+def _activated_monitor(resource_id: str, is_sender: bool) -> "ResourceMonitor":
+    """A ResourceMonitor in the Active state, as the transports leave it.
+
+    BCP-008-02 §"Essence Status" (and §"Stream Status" in BCP-008-01) allow
+    essence/stream to be Healthy, PartiallyHealthy or Unhealthy only "when the
+    sender is Active"; while inactive the value MUST be Inactive. So a
+    compatibility state only shows on the essence facet of an *active*
+    resource, and a test that fed the event into a never-activated monitor was
+    asserting a state the specification does not permit.
+    """
+    from nmos.node.events import (
+        EngineEvent, EventId, AlertDomain, AlertScope, EventState,
+    )
+    from nmos.node.status_monitor import ResourceMonitor
+    scope = AlertScope.SENDER if is_sender else AlertScope.RECEIVER
+    monitor = ResourceMonitor(resource_id=resource_id, is_sender=is_sender)
+    monitor.process_event(EngineEvent(
+        domain=AlertDomain.VENDOR_TRANSPORT, scope=scope,
+        event=EventId.VENDOR_TRANSPORT_ACTIVATE, state=EventState.NORMAL,
+        count=1, id=resource_id, name="*", info="activate",
+    ))
+    return monitor
+
+
 class TestCompatibilityStateEmitsEssenceEvent:
     """Track A: sender ``active_constraints_violation`` → essence
     UNHEALTHY, and recovery → HEALTHY.
@@ -341,7 +365,7 @@ class TestCompatibilityStateEmitsEssenceEvent:
         from nmos.node.status_monitor import (
             ResourceMonitor, NC_HEALTHY, NC_UNHEALTHY,
         )
-        monitor = ResourceMonitor(resource_id="sender-test", is_sender=True)
+        monitor = _activated_monitor("sender-test", is_sender=True)
         violated = EngineEvent(
             domain=AlertDomain.VENDOR_ESSENCE, scope=AlertScope.SENDER,
             event=EventId.VENDOR_ESSENCE_CONSTRAINT_VIOLATED,
@@ -369,7 +393,7 @@ class TestCompatibilityStateEmitsEssenceEvent:
         from nmos.node.status_monitor import (
             ResourceMonitor, NC_PARTIALLY_HEALTHY,
         )
-        monitor = ResourceMonitor(resource_id="sender-test", is_sender=True)
+        monitor = _activated_monitor("sender-test", is_sender=True)
         partial = EngineEvent(
             domain=AlertDomain.VENDOR_ESSENCE, scope=AlertScope.SENDER,
             event=EventId.VENDOR_ESSENCE_CONSTRAINT_PARTIAL,

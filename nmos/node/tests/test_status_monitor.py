@@ -385,21 +385,35 @@ class TestResourceMonitor:
         assert len(clipped) == MAX_STATUS_MESSAGE_LEN
         assert clipped.endswith("...")
 
-    def test_emit_transport_error_link_event_carries_cause(self) -> None:
-        """emit_transport_error(link_down=True) propagates the specific cause to
-        the LINK event, so the message names the real fault (e.g. a USB connect
-        error), not a generic 'link down'."""
+    def test_emit_transport_error_does_not_infer_link_down_from_the_cause(
+        self,
+    ) -> None:
+        """A connection fault over a working interface raises no LINK event.
+
+        This test previously asserted the opposite — that
+        ``emit_transport_error(..., link_down=True)`` carried a cause such as
+        "connect error: refused" onto the LINK event. That was the bug: a
+        refused connection is the peer's doing, and BCP-008-01 §"Link Status"
+        scopes linkStatus to "the health of all the physical links", defined
+        over interfaces. Publishing AllDown for it sent operators to inspect
+        cabling that was never at fault, so the ``link_down`` argument is gone
+        and the interface is consulted instead. ``lo`` is up on any running
+        host, so nothing here may raise a link event.
+
+        See ``test_link_status_attribution.py`` for the interface check itself
+        and for the case where a genuinely down interface still reports one.
+        """
         import asyncio
         from nmos.node.events import emit_transport_error
         q: asyncio.Queue = asyncio.Queue()
         emit_transport_error(q, "test-receiver", "lo", is_sender=False,
-                             info="connect error: refused", link_down=True)
+                             info="connect error: refused")
         events = []
         while not q.empty():
             events.append(q.get_nowait())
-        link_events = [e for e in events if e.domain == AlertDomain.LINK]
-        assert link_events, "expected a LINK event"
-        assert link_events[0].info == "connect error: refused"
+        assert [e.event for e in events] == [EventId.TRANSPORT_STREAM_ERROR]
+        assert events[0].info == "connect error: refused"
+        assert not [e for e in events if e.domain == AlertDomain.LINK]
 
     def test_shared_activation_time_delays_link(self) -> None:
         """BCP-008: After activation, ALL domain worse transitions are delayed
@@ -631,3 +645,127 @@ class TestStatusMonitorIntegration:
         assert overall == NC_HEALTHY, f"Expected overall=Healthy(1), got {overall}"
         assert transmission == NC_HEALTHY, f"Expected transmission=Healthy(1), got {transmission}"
         assert link == NC_HEALTHY, f"Expected link=Healthy(1), got {link}"
+
+
+class TestDeactivatedResourceStaysInactive:
+    """Reaching Inactive is not the same as staying Inactive.
+
+    BCP-008-01 §"Deactivating a receiver" requires overallStatus,
+    connectionStatus and streamStatus to reach Inactive on deactivation;
+    BCP-008-02 §"Deactivating a sender" says the same for overallStatus,
+    transmissionStatus and essenceStatus. And the overallStatus mapping is
+    explicit that "When the Receiver is Inactive the overallStatus uses the
+    Inactive option".
+
+    Only the transition was implemented. ``process_one_domain`` publishes
+    without delay whenever either side of a transition is Inactive — the rule
+    that makes activation responsive — so any event arriving after the
+    deactivation flipped the status straight back out of Inactive. One
+    trailing ``TRANSPORT_OK`` from a stream that had recovered moments before
+    shutdown left a deactivated resource reporting Healthy overall.
+    """
+
+    @staticmethod
+    def _emit(mon: ResourceMonitor, domain: int, eid: int, info: str = "") -> None:
+        scope = AlertScope.SENDER if mon.is_sender else AlertScope.RECEIVER
+        mon.process_event(EngineEvent(domain, scope, eid, EventState.WARNING,
+                                      1, mon.resource_id, "lo", info))
+
+    def _activated(self, is_sender: bool) -> ResourceMonitor:
+        mon = ResourceMonitor("res-1", is_sender=is_sender)
+        self._emit(mon, AlertDomain.VENDOR_TRANSPORT,
+                   EventId.VENDOR_TRANSPORT_ACTIVATE)
+        self._emit(mon, AlertDomain.VENDOR_ESSENCE,
+                   EventId.VENDOR_ESSENCE_START)
+        assert mon.transport.status == NC_HEALTHY
+        assert mon.essence.status == NC_HEALTHY
+        return mon
+
+    def _deactivate(self, mon: ResourceMonitor) -> None:
+        """The pair the transports emit on shutdown, in order."""
+        self._emit(mon, AlertDomain.VENDOR_ESSENCE,
+                   EventId.VENDOR_ESSENCE_STOP, "stopping")
+        self._emit(mon, AlertDomain.VENDOR_TRANSPORT,
+                   EventId.VENDOR_TRANSPORT_DEACTIVATE, "deactivate")
+
+    @pytest.mark.parametrize("is_sender", [False, True])
+    def test_deactivation_reaches_inactive(self, is_sender: bool) -> None:
+        mon = self._activated(is_sender)
+        self._deactivate(mon)
+        assert mon.transport.status == NC_INACTIVE
+        assert mon.essence.status == NC_INACTIVE
+        assert mon.overall_status == NC_INACTIVE
+
+    @pytest.mark.parametrize("is_sender", [False, True])
+    def test_trailing_events_cannot_resurrect_a_deactivated_resource(
+        self, is_sender: bool,
+    ) -> None:
+        """The regression, for both directions.
+
+        ``ESSENCE_OK`` alone used to revive streamStatus / essenceStatus, and
+        ``TRANSPORT_OK`` used to revive connectionStatus / transmissionStatus
+        *and* overallStatus.
+        """
+        mon = self._activated(is_sender)
+        self._deactivate(mon)
+
+        for domain, eid in (
+            (AlertDomain.ESSENCE, EventId.ESSENCE_OK),
+            (AlertDomain.TRANSPORT, EventId.TRANSPORT_OK),
+            (AlertDomain.TRANSPORT, EventId.TRANSPORT_PACKET_LATE),
+            (AlertDomain.ESSENCE, EventId.ESSENCE_STREAM_ERROR),
+            (AlertDomain.VENDOR_ESSENCE, EventId.VENDOR_ESSENCE_START),
+        ):
+            self._emit(mon, domain, eid, "late arrival")
+            assert mon.transport.status == NC_INACTIVE, (
+                f"{eid} moved the transport domain off Inactive")
+            assert mon.essence.status == NC_INACTIVE, (
+                f"{eid} moved the essence domain off Inactive")
+            assert mon.overall_status == NC_INACTIVE, (
+                f"{eid} left a deactivated resource reporting "
+                f"{mon.overall_status}")
+
+    @pytest.mark.parametrize("is_sender", [False, True])
+    def test_a_resource_never_activated_stays_inactive(
+        self, is_sender: bool,
+    ) -> None:
+        mon = ResourceMonitor("res-1", is_sender=is_sender)
+        for domain, eid in ((AlertDomain.TRANSPORT, EventId.TRANSPORT_OK),
+                            (AlertDomain.ESSENCE, EventId.ESSENCE_OK)):
+            self._emit(mon, domain, eid)
+        assert mon.transport.status == NC_INACTIVE
+        assert mon.essence.status == NC_INACTIVE
+        assert mon.overall_status == NC_INACTIVE
+
+    @pytest.mark.parametrize("is_sender", [False, True])
+    def test_reactivation_still_works(self, is_sender: bool) -> None:
+        """The gate must not be a one-way door."""
+        mon = self._activated(is_sender)
+        self._deactivate(mon)
+        self._emit(mon, AlertDomain.VENDOR_TRANSPORT,
+                   EventId.VENDOR_TRANSPORT_ACTIVATE)
+        assert mon.transport.status == NC_HEALTHY
+        assert mon.essence.status == NC_HEALTHY
+        assert mon.overall_status == NC_HEALTHY
+
+    def test_link_is_not_gated_by_activation(self) -> None:
+        """linkStatus keeps describing the interface while the resource is idle.
+
+        It appears in neither specification's deactivation list, and
+        BCP-008-01 §"Link Status" scopes it to "the health of all the physical
+        links" — which does not stop being meaningful when a receiver is idle.
+        The published value is still delayed by the reporting delay, so the
+        tick is what makes the distinction between "not gated" and "gated"
+        observable.
+        """
+        mon = self._activated(is_sender=False)
+        self._deactivate(mon)
+        self._emit(mon, AlertDomain.LINK, EventId.LINK_DOWN, "cable unplugged")
+        mon.activation_time = time.monotonic() - 10.0
+        mon.tick()
+        assert mon.link.status == NC_UNHEALTHY, (
+            "link status was gated by activation; it describes the interface, "
+            "not the stream"
+        )
+        # ...and it must not drag overall status out of Inactive.
+        assert mon.overall_status == NC_INACTIVE

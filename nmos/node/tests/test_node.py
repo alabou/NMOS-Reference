@@ -336,13 +336,22 @@ class TestMonitorSources:
         A separate ``CLOCK_OK`` (emitted by the activation handlers only when
         the effective clock is a locked PTP reference) is what greens it."""
         import asyncio
-        from nmos.node.events import emit_starting, emit_clock_locked
+        from nmos.node.events import (
+            emit_activate, emit_starting, emit_clock_locked,
+        )
         from nmos.node.status_monitor import (
             ResourceMonitor, NC_HEALTHY, NC_INACTIVE,
         )
         for is_sender in (True, False):
             q: asyncio.Queue = asyncio.Queue()
             rid = "test-sender" if is_sender else "test-receiver"
+            # Activation is the pair ``emit_activate`` + ``emit_starting``,
+            # in that order, and every transport emits both. Only the second
+            # was emitted here, which the monitor now correctly ignores:
+            # BCP-008 permits a non-Inactive transport/essence status only
+            # while the resource is Active, so a resource that never activated
+            # stays Inactive no matter what stream events arrive.
+            emit_activate(q, rid, "eth0", is_sender=is_sender)
             emit_starting(q, rid, "eth0", is_sender=is_sender)
             mon = ResourceMonitor(rid, is_sender=is_sender)
             while not q.empty():

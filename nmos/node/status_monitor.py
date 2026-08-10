@@ -287,6 +287,39 @@ class ResourceMonitor:
     overall_status: int = NC_INACTIVE
     overall_message: str = ""
 
+    active: bool = False
+    """Whether the resource is currently activated.
+
+    Gates the two domains whose statuses the specification ties to activation:
+    transport (connectionStatus / transmissionStatus) and essence
+    (streamStatus / essenceStatus). While this is False they stay Inactive and
+    stream-level events are dropped.
+
+    Needed because "transition to Inactive" is not the same as "stay
+    Inactive", and only the first was implemented. BCP-008-01 §"Deactivating a
+    receiver" and BCP-008-02 §"Deactivating a sender" require those statuses
+    to reach Inactive on deactivation, and §overallStatus mapping requires
+    "When the Receiver is Inactive the overallStatus uses the Inactive
+    option". But ``process_one_domain`` publishes immediately whenever either
+    side of a transition is Inactive — the rule that makes activation
+    responsive — so a single event arriving after deactivation flipped the
+    status straight back out of Inactive with no delay. A trailing recovery
+    (``TRANSPORT_OK`` / ``ESSENCE_OK``) from a stream that had recovered just
+    before shutdown was enough to leave a deactivated resource reporting
+    Healthy, overall status included.
+
+    It also covers the resource that has never been activated at all: it
+    starts Inactive and no stray event can promote it.
+
+    Link and synchronization are deliberately NOT gated. Neither appears in
+    either specification's deactivation list: linkStatus describes "the health
+    of all the physical links", which does not stop being meaningful when a
+    receiver is idle, and synchronization has its own NotUsed value. Their
+    contribution to overallStatus is already neutralised while inactive,
+    because ``compute_overall_status`` returns Inactive whenever the transport
+    domain is Inactive.
+    """
+
     def process_event(self, event: EngineEvent) -> bool:
         """Route an engine event to the appropriate domain.
 
@@ -353,8 +386,17 @@ class ResourceMonitor:
         elif domain in (AlertDomain.TRANSPORT, AlertDomain.VENDOR_TRANSPORT):
             # MvAlertDomainTransport, MvAlertDomainVendorTransport
 
+            # Step 0: while deactivated, only an activation may move these
+            # statuses. See ``active`` for why: without this, one trailing
+            # stream event promotes a deactivated resource straight out of
+            # Inactive, because the Inactive branch of the hysteresis
+            # deliberately publishes without delay.
+            if not self.active and event.event != EventId.VENDOR_TRANSPORT_ACTIVATE:
+                return False
+
             # Step 1: Activation reset
             if event.event == EventId.VENDOR_TRANSPORT_ACTIVATE:
+                self.active = True
                 self._handle_activation_reset()
                 changed = True  # Counter reset triggers publish
 
@@ -379,8 +421,18 @@ class ResourceMonitor:
                 u, _w = _route_to_domain(self.essence, NC_INACTIVE, event)
                 if u:
                     changed = True
+                # Last, so the routing above still ran: from here on both
+                # domains hold Inactive until the next activation.
+                self.active = False
 
         elif domain in (AlertDomain.ESSENCE, AlertDomain.VENDOR_ESSENCE):
+            # Same gate as the transport domain. The shutdown pair is ordered
+            # stopping-then-deactivate, so ``VENDOR_ESSENCE_STOP`` still
+            # arrives while active and is what takes essence to Inactive;
+            # anything after the deactivation is dropped.
+            if not self.active:
+                return False
+
             if self.is_sender:
                 new_state = get_essence_new_state(event)
             else:

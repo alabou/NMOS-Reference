@@ -186,7 +186,7 @@ async def srt_receiver(
         except OSError as exc:
             emit_transport_error(
                 event_queue, receiver_id, interface_name, is_sender=False,
-                info=f"receiver socket setup failed: {exc}", link_down=True,
+                info=f"receiver socket setup failed: {exc}",
             )
             raise
 
@@ -202,7 +202,7 @@ async def srt_receiver(
         except OSError as exc:
             emit_transport_error(
                 event_queue, receiver_id, interface_name, is_sender=False,
-                info=f"receiver hello send failed: {exc}", link_down=True,
+                info=f"receiver hello send failed: {exc}",
             )
             raise
 
@@ -231,7 +231,7 @@ async def srt_receiver(
             except OSError as exc:
                 emit_transport_error(
                     event_queue, receiver_id, interface_name, is_sender=False,
-                    info=f"recv error: {exc}", link_down=True,
+                    info=f"recv error: {exc}",
                 )
                 pending_recovery.add(EventId.TRANSPORT_OK)
                 ok = False

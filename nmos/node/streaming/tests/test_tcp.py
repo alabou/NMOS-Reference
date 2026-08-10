@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import struct
 import uuid
 
 import pytest
@@ -204,3 +205,170 @@ class TestTcpLoopback:
         assert event_ids.count(EventId.VENDOR_TRANSPORT_ACTIVATE) == 2
         assert event_ids.count(EventId.VENDOR_ESSENCE_STOP) == 2
         assert event_ids.count(EventId.VENDOR_TRANSPORT_DEACTIVATE) == 2
+
+
+class TestTcpSenderServesManyClients:
+    """A listening sender is not point-to-point.
+
+    ``tcp_sender`` used to keep a list of accepted writers but only ever write
+    to ``client_writer[0]``, and a failing write broke the send loop, which
+    ended the sender altogether. So a second receiver connected and was never
+    sent anything, and the first receiver disconnecting closed the listener
+    while IS-04/IS-05 still advertised the sender as transmitting.
+
+    These tests use raw connections rather than ``tcp_receiver`` so the frames
+    each client actually gets can be counted directly.
+    """
+
+    @staticmethod
+    async def _read_frame(reader: asyncio.StreamReader, timeout: float = 4.0) -> bytes:
+        header = await asyncio.wait_for(reader.readexactly(4), timeout)
+        (length,) = struct.unpack("<I", header)
+        return await asyncio.wait_for(reader.readexactly(length), timeout)
+
+    @staticmethod
+    def _drain_queue(queue: "asyncio.Queue[EngineEvent]") -> list[EngineEvent]:
+        events: list[EngineEvent] = []
+        while not queue.empty():
+            events.append(queue.get_nowait())
+        return events
+
+    async def _start_sender(
+        self, port: int, queue: "asyncio.Queue[EngineEvent]",
+        stop: asyncio.Event, sid: str,
+    ) -> "asyncio.Task[None]":
+        task = asyncio.create_task(tcp_sender(
+            listen_ip="127.0.0.1", listen_port=port,
+            sender_id=sid, interface_name="lo",
+            event_queue=queue, stop_event=stop,
+        ))
+        await asyncio.sleep(0.3)          # let the listener bind
+        return task
+
+    @pytest.mark.asyncio
+    async def test_two_clients_both_receive_the_same_stream(self) -> None:
+        queue: asyncio.Queue[EngineEvent] = asyncio.Queue(maxsize=200)
+        stop = asyncio.Event()
+        sid = str(uuid.uuid4())
+        task = await self._start_sender(19910, queue, stop, sid)
+        try:
+            r1, w1 = await asyncio.open_connection("127.0.0.1", 19910)
+            r2, w2 = await asyncio.open_connection("127.0.0.1", 19910)
+
+            first = await self._read_frame(r1)
+            second = await self._read_frame(r2)
+            assert first, "first client received no frame"
+            assert second, "second client received no frame"
+            # One stream fanned out, so the same packet reaches both. This
+            # also proves the frame is encrypted/built once rather than per
+            # client, which the PEP counter requires.
+            assert first == second
+
+            for w in (w1, w2):
+                w.close()
+        finally:
+            stop.set()
+            await asyncio.gather(task, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    async def test_one_client_leaving_does_not_disturb_the_other(self) -> None:
+        """The regression that took the whole sender down."""
+        queue: asyncio.Queue[EngineEvent] = asyncio.Queue(maxsize=200)
+        stop = asyncio.Event()
+        sid = str(uuid.uuid4())
+        task = await self._start_sender(19911, queue, stop, sid)
+        try:
+            r1, w1 = await asyncio.open_connection("127.0.0.1", 19911)
+            r2, w2 = await asyncio.open_connection("127.0.0.1", 19911)
+            await self._read_frame(r1)
+            await self._read_frame(r2)
+
+            # The first client goes away, as a TCP client normally will.
+            w1.close()
+            await w1.wait_closed()
+
+            # The survivor keeps being served — two more packets, so the
+            # sender has been through the write path after the disconnect.
+            assert await self._read_frame(r2)
+            assert await self._read_frame(r2)
+            assert not task.done(), "the sender ended when a client left"
+
+            events = self._drain_queue(queue)
+            offenders = [
+                e for e in events
+                if e.id == sid and e.event in (
+                    EventId.LINK_DOWN,
+                    EventId.TRANSPORT_STREAM_ERROR,
+                    EventId.TRANSPORT_PACKET_LOST,
+                    EventId.TRANSPORT_PACKET_LATE,
+                )
+            ]
+            assert not offenders, (
+                f"a client disconnecting raised an alert on the sender: "
+                f"{[(e.event, e.info) for e in offenders]} — a peer closing "
+                f"its connection is ordinary and is not a link or "
+                f"transmission fault"
+            )
+            w2.close()
+        finally:
+            stop.set()
+            await asyncio.gather(task, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    async def test_sender_keeps_listening_for_a_late_client(self) -> None:
+        """No deadline on the first connection.
+
+        The sender used to report "no client connected within 30s" and return,
+        closing the listener — so a receiver activated later than that found
+        nothing to connect to, which is incompatible with attaching several
+        receivers over time.
+        """
+        queue: asyncio.Queue[EngineEvent] = asyncio.Queue(maxsize=200)
+        stop = asyncio.Event()
+        sid = str(uuid.uuid4())
+        task = await self._start_sender(19912, queue, stop, sid)
+        try:
+            # Idle with no client at all, then attach.
+            await asyncio.sleep(2.5)
+            assert not task.done(), "the sender ended while idle"
+            reader, writer = await asyncio.open_connection("127.0.0.1", 19912)
+            assert await self._read_frame(reader), "late client received nothing"
+
+            events = self._drain_queue(queue)
+            idle_alerts = [
+                e for e in events
+                if e.id == sid and e.event in (
+                    EventId.LINK_DOWN, EventId.TRANSPORT_STREAM_ERROR)
+            ]
+            assert not idle_alerts, (
+                f"an idle sender raised an alert: "
+                f"{[(e.event, e.info) for e in idle_alerts]} — having no "
+                f"client yet is idle, not faulty"
+            )
+            writer.close()
+        finally:
+            stop.set()
+            await asyncio.gather(task, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    async def test_deactivation_stops_accepting_promptly(self) -> None:
+        """Deactivation is checked between packets and closes the listener."""
+        queue: asyncio.Queue[EngineEvent] = asyncio.Queue(maxsize=200)
+        stop = asyncio.Event()
+        sid = str(uuid.uuid4())
+        task = await self._start_sender(19913, queue, stop, sid)
+        reader, writer = await asyncio.open_connection("127.0.0.1", 19913)
+        await self._read_frame(reader)
+
+        stop.set()
+        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True),
+                              timeout=5.0)
+        writer.close()
+
+        with pytest.raises((ConnectionRefusedError, OSError)):
+            r, w = await asyncio.open_connection("127.0.0.1", 19913)
+            w.close()
+
+        events = self._drain_queue(queue)
+        ids = [e.event for e in events if e.id == sid]
+        assert EventId.VENDOR_TRANSPORT_DEACTIVATE in ids

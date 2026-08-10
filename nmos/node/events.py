@@ -319,12 +319,88 @@ def emit_is11_compatibility_event(
     ))
 
 
+#: ``IFF_UP`` from ``<net/if.h>`` — the interface is administratively up.
+_IFF_UP = 0x1
+
+#: ``operstate`` values that mean the interface is *not* carrying traffic.
+#: "unknown" is NOT among them: loopback reports it, and it means the driver
+#: does not track operational state rather than that the link is down.
+_OPERSTATE_DOWN = frozenset({"down", "lowerlayerdown", "notpresent"})
+
+_SYSFS_NET = "/sys/class/net"
+
+
+def is_link_down(interface_name: str) -> bool | None:
+    """Whether the named network interface is down.
+
+    ``True`` down, ``False`` up, ``None`` when it cannot be determined here.
+
+    This asks the operating system about the interface. It deliberately does
+    *not* infer link state from a socket error, because a socket error says
+    nothing about the local interface: BCP-008-01 §"Link Status" scopes
+    linkStatus to "the health of all the physical links associated with the
+    receiver", with AllUp / SomeDown / AllDown defined over *interfaces*. A
+    peer that refuses a connection, closes one, or stops sending leaves our
+    Ethernet exactly as it was.
+
+    An interface counts as up only when it is **both** administratively up and
+    carrying — the two conditions ``IFF_UP`` and ``IFF_RUNNING`` name. Sysfs
+    splits them across two files, and only the first is in ``flags``:
+
+    * ``flags`` carries the administrative flags. ``IFF_RUNNING`` is *never*
+      set there — reading it out of ``flags`` reports every interface on the
+      machine, loopback included, as down.
+    * ``carrier`` is the operational half: 1 carrying, 0 not. Where a driver
+      does not publish it, ``operstate`` is consulted instead.
+
+    ``None`` is returned where the interface cannot be inspected — no sysfs,
+    or a name that does not exist. Callers must not treat that as "down":
+    claiming AllDown because we could not look is the same false alarm as
+    claiming it because a peer hung up.
+    """
+    try:
+        with open(f"{_SYSFS_NET}/{interface_name}/flags") as handle:
+            flags = int(handle.read().strip(), 16)
+    except (OSError, ValueError):
+        return None
+    if not flags & _IFF_UP:
+        return True
+
+    try:
+        with open(f"{_SYSFS_NET}/{interface_name}/carrier") as handle:
+            return handle.read().strip() != "1"
+    except (OSError, ValueError):
+        # Reading ``carrier`` fails with ENOENT/EINVAL on some drivers, and
+        # notably while the interface is down, so fall through rather than
+        # concluding anything from the failure itself.
+        pass
+
+    try:
+        with open(f"{_SYSFS_NET}/{interface_name}/operstate") as handle:
+            return handle.read().strip().lower() in _OPERSTATE_DOWN
+    except OSError:
+        return None
+
+
 def emit_transport_error(
     queue: asyncio.Queue[EngineEvent] | None,
     resource_id: str, interface_name: str, is_sender: bool,
-    info: str = "", link_down: bool = False,
+    info: str = "",
 ) -> None:
-    """Emit transport error (1-2 events)."""
+    """Emit a transport error, plus a link-down event if the link really is down.
+
+    The transport error always goes out: something went wrong with the stream,
+    and that is what connection/transmission status is for. Whether the *link*
+    is also down is then a separate question, answered by asking the operating
+    system about the interface rather than by interpreting the socket error.
+
+    Every receiver in the streaming emulation used to decide this with a
+    ``link_down=True`` argument at the call site, passed for any socket
+    problem at all — so a sender closing its TCP connection, an ordinary end
+    to a stream, published linkStatus AllDown on a node whose interface was
+    working perfectly, sending an operator to inspect cabling. The parameter
+    is gone rather than defaulted, so no call site can make that claim again.
+    """
     scope = AlertScope.SENDER if is_sender else AlertScope.RECEIVER
     role = "sender" if is_sender else "receiver"
     emit_event(queue, EngineEvent(
@@ -333,14 +409,12 @@ def emit_transport_error(
         count=1, id=resource_id, name=interface_name,
         info=info or f"{role} packet lost",
     ))
-    if link_down:
+    if is_link_down(interface_name) is True:
         emit_event(queue, EngineEvent(
             domain=AlertDomain.LINK, scope=scope,
             event=EventId.LINK_DOWN, state=EventState.INACTIVE,
             count=1, id=resource_id, name=interface_name,
-            # Carry the specific cause (e.g. "connect error: …") so the link
-            # message names the real fault, not a generic "link down".
-            info=info or "link down",
+            info=f"link down on {interface_name}",
         ))
 
 

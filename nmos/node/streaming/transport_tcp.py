@@ -46,29 +46,53 @@ async def tcp_sender(
     encrypt_fn: Any | None = None,
     stop_event: asyncio.Event | None = None,
 ) -> None:
-    """TCP sender: listen for one connection, then send test packets.
+    """TCP sender: listen for connections, then send test packets to each.
 
-    Used for RTSP, RTP-TCP, NDI transports.
+    Used for RTSP, RTP-TCP, USB and NDI transports.
+
+    **Many clients, one stream, served independently.** A listening socket is
+    not a point-to-point link: several receivers may connect to the same
+    sender, and each has to get the stream and be able to leave without
+    affecting the others.
+
+    Two properties follow, and both were previously absent:
+
+    * The frame is built and encrypted **once** per packet and fanned out
+      to every connected client. It must not be encrypted per client — the
+      PEP counter ``ctr`` advances once per packet, so re-encrypting would
+      give each client a different counter for the same stream position.
+    * A failing write drops **that** client only. The stream continues for
+      everyone else, and continues when the last client leaves, because a
+      sender that no receiver happens to be reading is idle rather than
+      broken — the same stance the multicast UDP sender takes, where the
+      sender has no idea who is listening.
+
+    The earlier version kept a list of accepted writers but only ever wrote
+    to ``client_writer[0]``: a second receiver connected, was never sent
+    anything, and timed out; and when the first receiver disconnected the
+    write error broke the loop, which took the whole sender down (listener
+    closed, engine state ERROR) while IS-04 and IS-05 still advertised it as
+    actively transmitting.
     """
     import uuid
 
     emit_activate(event_queue, sender_id, interface_name, is_sender=True)
 
-    writer: asyncio.StreamWriter | None = None
     server: asyncio.Server | None = None
+    # Insertion-ordered so the fan-out is deterministic; a dict is used as an
+    # ordered set because StreamWriter is not hashable-by-value but is
+    # hashable by identity, which is exactly the identity we want.
+    clients: dict[asyncio.StreamWriter, str] = {}
 
     try:
         emit_starting(event_queue, sender_id, interface_name, is_sender=True)
 
-        # Wait for one client connection
-        connected = asyncio.Event()
-        client_writer: list[asyncio.StreamWriter] = []
-
         async def handle_client(
             reader: asyncio.StreamReader, w: asyncio.StreamWriter,
         ) -> None:
-            client_writer.append(w)
-            connected.set()
+            peer = w.get_extra_info("peername")
+            clients[w] = str(peer)
+            print(f"    Client connected: {peer} ({len(clients)} total)")
 
         # A listen failure (port in use, address not local) is reported and
         # re-raised: the event drives the monitor, the exception takes
@@ -90,20 +114,20 @@ async def tcp_sender(
         print(f"    Listening: {listen_ip}:{listen_port}")
         print(f"    PEP: {'enabled' if encrypt_fn else 'disabled'}")
 
-        # Wait for connection or stop
-        try:
-            await asyncio.wait_for(connected.wait(), timeout=30.0)
-        except asyncio.TimeoutError:
-            emit_transport_error(
-                event_queue, sender_id, interface_name, is_sender=True,
-                info="no client connected within 30s",
-            )
-            return
-
-        writer = client_writer[0]
-        peer = writer.get_extra_info("peername")
-        print(f"    Client connected: {peer}")
-
+        # No wait for a first client, and no deadline on one arriving.
+        #
+        # This used to block for up to 30 s and then report a transport error
+        # and return, which ended the sender: the listener closed, so a client
+        # arriving on the 31st second found nothing to connect to. That is
+        # incompatible with serving several receivers, which by nature attach
+        # at times of the operator's choosing — in the reference rig, simply
+        # activating the sender and then walking the UI to a second receiver
+        # takes a comparable time.
+        #
+        # A sender with no clients is idle, not faulty, so no alert is raised
+        # for it either. That matches the multicast UDP sender, which likewise
+        # transmits without knowing whether anything is listening, and keeps
+        # transmissionStatus Healthy while it does so.
         sid = uuid.UUID(sender_id)
         sequence = 0
         timestamp_ns = 0
@@ -124,15 +148,28 @@ async def tcp_sender(
             # TCP framing: length prefix + payload
             frame = struct.pack(_LEN_FORMAT, len(data)) + data
 
-            try:
-                writer.write(frame)
-                await writer.drain()
-            except (ConnectionError, OSError) as exc:
-                emit_transport_error(
-                    event_queue, sender_id, interface_name, is_sender=True,
-                    info=f"send error: {exc}", link_down=True,
-                )
-                break
+            # Fan out to every client. Iterate over a snapshot so a client
+            # dropped mid-loop doesn't mutate the mapping being walked.
+            for writer, peer in list(clients.items()):
+                try:
+                    writer.write(frame)
+                    await writer.drain()
+                except (ConnectionError, OSError) as exc:
+                    # A client going away is ordinary for a listening
+                    # transport, so this raises no alert: the sender is not
+                    # faulty, its link is not down, and the remaining clients
+                    # are unaffected. Reporting it as a transport error with
+                    # ``link_down=True`` — which is what happened before —
+                    # published linkStatus AllDown for a remote socket close,
+                    # sending an operator to inspect network interfaces that
+                    # were never in trouble.
+                    clients.pop(writer, None)
+                    print(f"    Client disconnected: {peer} "
+                          f"({exc}); {len(clients)} remaining")
+                    try:
+                        writer.close()
+                    except OSError:
+                        pass
 
             sequence += 1
             timestamp_ns += DEFAULT_PERIOD_NS
@@ -146,8 +183,12 @@ async def tcp_sender(
                 pass
 
     finally:
-        if writer is not None:
-            writer.close()
+        for writer in list(clients):
+            try:
+                writer.close()
+            except OSError:
+                pass
+        clients.clear()
         if server is not None:
             server.close()
         emit_stopping(event_queue, sender_id, interface_name, is_sender=True)
@@ -191,7 +232,7 @@ async def tcp_receiver(
         except (asyncio.TimeoutError, ConnectionError, OSError) as exc:
             emit_transport_error(
                 event_queue, receiver_id, interface_name, is_sender=False,
-                info=f"connect error: {exc}", link_down=True,
+                info=f"connect error: {exc}",
             )
             return
 
@@ -222,7 +263,7 @@ async def tcp_receiver(
             except (asyncio.IncompleteReadError, ConnectionError, OSError):
                 emit_transport_error(
                     event_queue, receiver_id, interface_name, is_sender=False,
-                    info="connection lost", link_down=True,
+                    info="connection lost",
                 )
                 break
 
@@ -248,7 +289,7 @@ async def tcp_receiver(
             except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError):
                 emit_transport_error(
                     event_queue, receiver_id, interface_name, is_sender=False,
-                    info="incomplete frame", link_down=True,
+                    info="incomplete frame",
                 )
                 break
 
@@ -518,7 +559,7 @@ async def tcp_bidirectional_receiver(
             # receiver that never connected. Mirrors ``tcp_receiver``.
             emit_transport_error(
                 event_queue, receiver_id, interface_name, is_sender=False,
-                info=f"connect error: {exc}", link_down=True,
+                info=f"connect error: {exc}",
             )
             return result
 
