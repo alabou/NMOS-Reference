@@ -384,7 +384,18 @@ nmonitor_state = TypeDesc(
     name="NMonitorState",
     members=[
         MemberDesc(name="MonitorOverallStatus", type_name="NInt", json_key="overall_status", optional=True),
-        MemberDesc(name="MonitorOverallStatusMessage", type_name="NString", json_key="overall_status_message", optional=True),
+        # ``overall_message``, not ``overall_status_message``. The IS-04
+        # binding in "NMOS With Status Reporting.md" names this attribute
+        # ``overall_message`` — in the prose ("It MAY have an
+        # ``overall_message`` attribute"), in the BCP-008 property mapping
+        # table (overallStatusMessage → overall_message) and in the
+        # specification's own example JSON. Publishing
+        # ``overall_status_message`` meant a controller implementing the
+        # published binding looked for ``overall_message``, found nothing,
+        # and silently showed no status message at all — losing exactly the
+        # diagnostic text BCP-008 recommends populating ("receiver socket
+        # timeout", "Previously: ...").
+        MemberDesc(name="MonitorOverallStatusMessage", type_name="NString", json_key="overall_message", optional=True),
         MemberDesc(name="MonitorLinkStatus", type_name="NInt", json_key="link_status", optional=True),
         MemberDesc(name="MonitorSynchronizationStatus", type_name="NInt", json_key="synchronization_status", optional=True),
         MemberDesc(name="MonitorTransmissionStatus", type_name="NInt", json_key="transmission_status", optional=True),

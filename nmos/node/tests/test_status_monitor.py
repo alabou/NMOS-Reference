@@ -60,9 +60,30 @@ class TestEventConverters:
                                EventState.WARNING, 1, "test", "*", "")
 
         assert get_essence_new_state(_e(EventId.ESSENCE_STREAM_ERROR)) == NC_UNHEALTHY
-        assert get_essence_new_state(_e(EventId.VENDOR_ESSENCE_STOP)) == NC_UNHEALTHY
         assert get_essence_new_state(_e(EventId.ESSENCE_OK)) == NC_HEALTHY
         assert get_essence_new_state(_e(EventId.VENDOR_ESSENCE_START)) == NC_HEALTHY
+
+    def test_stop_is_inactive_not_a_fault(self) -> None:
+        """``VENDOR_ESSENCE_STOP`` means "shutting down", not "broken".
+
+        It is raised only from the transports' shutdown paths, always paired
+        with ``VENDOR_TRANSPORT_DEACTIVATE``, and carries
+        ``EventState.INACTIVE``. The deactivation clauses of BCP-008-01 and
+        BCP-008-02 require a resource being deactivated to reach Inactive
+        without generating an intermediate PartiallyHealthy or Unhealthy
+        state, so this must not map to a fault. ``ESSENCE_STREAM_ERROR`` is
+        the event that means a genuine essence fault.
+        """
+        stop = EngineEvent(AlertDomain.VENDOR_ESSENCE, AlertScope.SENDER,
+                           EventId.VENDOR_ESSENCE_STOP, EventState.INACTIVE,
+                           1, "test", "*", "sender stopping")
+        assert get_essence_new_state(stop) == NC_INACTIVE
+        assert get_stream_new_state(stop) == NC_INACTIVE
+
+        fault = EngineEvent(AlertDomain.ESSENCE, AlertScope.SENDER,
+                            EventId.ESSENCE_STREAM_ERROR, EventState.WARNING,
+                            1, "test", "*", "essence broken")
+        assert get_essence_new_state(fault) == NC_UNHEALTHY
 
     def test_stream_same_as_essence(self) -> None:
         e = EngineEvent(AlertDomain.ESSENCE, AlertScope.RECEIVER,

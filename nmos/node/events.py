@@ -299,7 +299,7 @@ def emit_is11_compatibility_event(
             ``"partial"`` (PARTIALLY_HEALTHY, e.g. sender
             ``no_essence``/``awaiting_essence``), or ``"healthy"``
             (recovery edge).
-        info: human-readable ``overall_status_message`` text.
+        info: human-readable ``overall_message`` text.
     """
     scope = AlertScope.SENDER if is_sender else AlertScope.RECEIVER
     if tier == "violation":

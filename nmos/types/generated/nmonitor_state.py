@@ -19,7 +19,7 @@ def _assign_value(field: Any, value: Any) -> None:
 class NMonitorStateEnums:
     """JSON property name enums for NMonitorState."""
     MonitorOverallStatus = EnumRegistry.get("overall_status")
-    MonitorOverallStatusMessage = EnumRegistry.get("overall_status_message")
+    MonitorOverallStatusMessage = EnumRegistry.get("overall_message")
     MonitorLinkStatus = EnumRegistry.get("link_status")
     MonitorSynchronizationStatus = EnumRegistry.get("synchronization_status")
     MonitorTransmissionStatus = EnumRegistry.get("transmission_status")

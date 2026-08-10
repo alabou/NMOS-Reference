@@ -138,7 +138,7 @@ class MonitorSenderInfo:
     """
     auto_reset: bool = False
     overall_status: int = 0
-    overall_status_message: str = ""
+    overall_message: str = ""
     link_status: int = 0
     transmission_status: int = 0
     synchronization_status: int = 0
@@ -157,7 +157,7 @@ class MonitorReceiverInfo:
     """
     auto_reset: bool = False
     overall_status: int = 0
-    overall_status_message: str = ""
+    overall_message: str = ""
     link_status: int = 0
     connection_status: int = 0
     synchronization_status: int = 0

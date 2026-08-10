@@ -430,11 +430,28 @@ class TestOverallStatusComputation:
 
 
 class TestEssenceConnectionInjection:
-    """Verify essence errors inject into connection status (receiver only)."""
+    """Verify the essence start/stop pair is mirrored into connection status.
+
+    Receiver-only. The injection exists so the connection domain moves with
+    the essence domain for these two lifecycle events; it deliberately does
+    NOT cover generic essence errors.
+    """
 
     @pytest.mark.asyncio
-    async def test_essence_error_degrades_connection(self) -> None:
-        """Receiver: essence error + connection healthy → connection unhealthy."""
+    async def test_stop_takes_stream_and_connection_inactive_together(
+        self,
+    ) -> None:
+        """A stop event must take both domains to Inactive, not to Unhealthy.
+
+        This test used to be called ``test_essence_error_degrades_connection``
+        and asserted Unhealthy on both — but it drove the injection with
+        ``VENDOR_ESSENCE_STOP``, which is a shutdown signal rather than an
+        error (its own comment noted that a generic ``ESSENCE_STREAM_ERROR``
+        does not inject at all). Asserting a fault for a clean stop is what
+        BCP-008-01 §"Deactivating a receiver" forbids, so the assertion has
+        been corrected to the specified behaviour rather than the behaviour
+        that happened to exist.
+        """
         node = _make_node()
         _build_config(node, "config1")
         rids = _get_receiver_ids(node)
@@ -445,8 +462,6 @@ class TestEssenceConnectionInjection:
         task = asyncio.create_task(run_status_monitor(node))
         await asyncio.sleep(4.5)
 
-        # VENDOR_ESSENCE_STOP injects NC_UNHEALTHY into connection
-        # (only this specific event, not generic ESSENCE_STREAM_ERROR)
         _emit(node, AlertDomain.VENDOR_ESSENCE, AlertScope.RECEIVER,
               EventId.VENDOR_ESSENCE_STOP, rid, info="receiver stopping")
         await asyncio.sleep(1.0)
@@ -458,9 +473,122 @@ class TestEssenceConnectionInjection:
             pass
 
         ms = _read_monitor_state(node, rid, is_sender=False)
-        assert ms["MonitorStreamStatus"] == NC_UNHEALTHY
-        assert ms["MonitorConnectionStatus"] == NC_UNHEALTHY, \
-            f"Essence error should inject into connection, got {ms['MonitorConnectionStatus']}"
+        assert ms["MonitorStreamStatus"] == NC_INACTIVE
+        assert ms["MonitorConnectionStatus"] == NC_INACTIVE, \
+            f"the stop event must take connection to Inactive, not through " \
+            f"a fault state; got {ms['MonitorConnectionStatus']}"
+
+    @pytest.mark.asyncio
+    async def test_start_takes_connection_healthy(self) -> None:
+        """The other half of the pair still propagates as before."""
+        node = _make_node()
+        _build_config(node, "config1")
+        rid = _get_receiver_ids(node)[0]
+
+        _emit_receiver_lifecycle(node, rid)
+        task = asyncio.create_task(run_status_monitor(node))
+        await asyncio.sleep(2.0)
+        _emit(node, AlertDomain.VENDOR_ESSENCE, AlertScope.RECEIVER,
+              EventId.VENDOR_ESSENCE_START, rid)
+        await asyncio.sleep(1.0)
+
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        ms = _read_monitor_state(node, rid, is_sender=False)
+        assert ms["MonitorStreamStatus"] == NC_HEALTHY
+        assert ms["MonitorConnectionStatus"] == NC_HEALTHY
+
+
+class TestDeactivationIsNotAFault:
+    """BCP-008-01 §"Deactivating a receiver" / BCP-008-02 §"Deactivating a
+    sender": a resource being deactivated MUST reach Inactive without
+    generating an intermediate PartiallyHealthy or Unhealthy state. Since the
+    transition counters increment only on a move to a less healthy state, and
+    transitions to/from neutral states are ignored, a clean deactivation must
+    leave every counter exactly as it was.
+
+    The counters are the durable evidence here: the intermediate Unhealthy was
+    overwritten by the deactivation a moment later, so on a live rig the only
+    lasting trace was the inflated count.
+    """
+
+    @staticmethod
+    def _counters(ms: dict) -> dict:
+        return {k: v for k, v in ms.items() if k.endswith("Counter")}
+
+    @pytest.mark.asyncio
+    async def test_receiver_deactivation_leaves_counters_untouched(
+        self,
+    ) -> None:
+        node = _make_node()
+        _build_config(node, "config1")
+        rid = _get_receiver_ids(node)[0]
+
+        _emit_receiver_lifecycle(node, rid)
+        task = asyncio.create_task(run_status_monitor(node))
+        await asyncio.sleep(4.5)          # past the activation reporting delay
+
+        before = self._counters(_read_monitor_state(node, rid, is_sender=False))
+        assert _read_monitor_state(node, rid, is_sender=False)[
+            "MonitorOverallStatus"] == NC_HEALTHY
+
+        # The exact pair the transports emit on shutdown, in order.
+        _emit(node, AlertDomain.VENDOR_ESSENCE, AlertScope.RECEIVER,
+              EventId.VENDOR_ESSENCE_STOP, rid, info="receiver stopping")
+        _emit(node, AlertDomain.VENDOR_TRANSPORT, AlertScope.RECEIVER,
+              EventId.VENDOR_TRANSPORT_DEACTIVATE, rid, info="receiver deactivate")
+        await asyncio.sleep(1.5)
+
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        ms = _read_monitor_state(node, rid, is_sender=False)
+        assert ms["MonitorOverallStatus"] == NC_INACTIVE
+        assert ms["MonitorConnectionStatus"] == NC_INACTIVE
+        assert ms["MonitorStreamStatus"] == NC_INACTIVE
+        assert self._counters(ms) == before, (
+            "a clean deactivation incremented a transition counter, so it "
+            "passed through an unhealthy state on the way to Inactive"
+        )
+
+    @pytest.mark.asyncio
+    async def test_sender_deactivation_leaves_counters_untouched(self) -> None:
+        node = _make_node()
+        _build_config(node, "config1")
+        sid = _get_sender_ids(node)[0]
+
+        _emit_sender_lifecycle(node, sid)
+        task = asyncio.create_task(run_status_monitor(node))
+        await asyncio.sleep(4.5)
+
+        before = self._counters(_read_monitor_state(node, sid, is_sender=True))
+
+        _emit(node, AlertDomain.VENDOR_ESSENCE, AlertScope.SENDER,
+              EventId.VENDOR_ESSENCE_STOP, sid, info="sender stopping")
+        _emit(node, AlertDomain.VENDOR_TRANSPORT, AlertScope.SENDER,
+              EventId.VENDOR_TRANSPORT_DEACTIVATE, sid, info="sender deactivate")
+        await asyncio.sleep(1.5)
+
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        ms = _read_monitor_state(node, sid, is_sender=True)
+        assert ms["MonitorOverallStatus"] == NC_INACTIVE
+        assert ms["MonitorTransmissionStatus"] == NC_INACTIVE
+        assert ms["MonitorEssenceStatus"] == NC_INACTIVE
+        assert self._counters(ms) == before, (
+            "a clean deactivation incremented a transition counter"
+        )
 
 
 class TestMultipleConfigs:

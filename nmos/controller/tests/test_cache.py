@@ -195,14 +195,37 @@ class TestExtractMonitorState:
         assert extract_monitor_state(None) is None  # type: ignore[arg-type]
 
     def test_overall_message_preserved(self) -> None:
-        # The serialized monitor_state attribute is ``overall_status_message``
-        # (NMonitorState.MonitorOverallStatusMessage); the UI exposes it under
-        # ``overall_message``.
+        """``overall_message`` is the attribute name the IS-04 binding defines,
+        and what this Node publishes."""
         src = self._receiver_source()
-        src["monitor_state"]["overall_status_message"] = "stream locked"
+        src["monitor_state"]["overall_message"] = "stream locked"
         out = extract_monitor_state(src)
         assert out is not None
         assert out["overall_message"] == "stream locked"
+
+    def test_legacy_message_attribute_still_read(self) -> None:
+        """A Node still publishing ``overall_status_message`` must not lose its
+        message.
+
+        The old spelling predates the correction and is what the Go
+        implementation's type generator still emits, so such a Node remains a
+        legitimate peer. Strict in what we send, tolerant in what we accept —
+        the alternative is a controller that shows no status message for a
+        whole class of Nodes, which is the failure the correction removes.
+        """
+        src = self._receiver_source()
+        src["monitor_state"]["overall_status_message"] = "legacy peer message"
+        out = extract_monitor_state(src)
+        assert out is not None
+        assert out["overall_message"] == "legacy peer message"
+
+    def test_specified_name_wins_when_both_are_present(self) -> None:
+        src = self._receiver_source()
+        src["monitor_state"]["overall_message"] = "current"
+        src["monitor_state"]["overall_status_message"] = "stale"
+        out = extract_monitor_state(src)
+        assert out is not None
+        assert out["overall_message"] == "current"
 
 
 class TestResourceCacheUpsert:

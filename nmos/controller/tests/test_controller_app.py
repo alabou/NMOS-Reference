@@ -5533,7 +5533,11 @@ class TestResourceInspector:
                 "essence_status": 1,
                 "link_counter": 2, "synchronization_counter": 0,
                 "transmission_counter": 5, "essence_counter": 7,
-                "overall_status_message": "all facets nominal",
+                # The attribute name the IS-04 binding defines, so this
+                # fixture represents a conformant Node. The controller also
+                # still reads the older ``overall_status_message`` for
+                # non-updated peers — covered explicitly in test_cache.py.
+                "overall_message": "all facets nominal",
             },
         })
         resp = await controller_client.get(f"{PREFIX}/senders/{sid}/monitor")

@@ -2576,7 +2576,7 @@ class Node:
         state.set_to_default()
 
         state.MonitorOverallStatus.value = info.overall_status
-        state.MonitorOverallStatusMessage.value = info.overall_status_message
+        state.MonitorOverallStatusMessage.value = info.overall_message
         state.MonitorLinkStatus.value = info.link_status
         state.MonitorSynchronizationStatus.value = info.synchronization_status
 

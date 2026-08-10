@@ -193,10 +193,20 @@ def extract_monitor_state(
     result: dict[str, Any] = {}
     for facet, attr in attr_map.items():
         result[facet] = decode_status_code(state.get(attr), facet)
-    # The serialized monitor_state attribute is ``overall_status_message``
-    # (NMonitorState.MonitorOverallStatusMessage); expose it under the UI's
-    # ``overall_message`` key.
-    msg = state.get("overall_status_message")
+    # ``overall_message`` is the attribute name the IS-04 binding defines
+    # ("NMOS With Status Reporting.md": overallStatusMessage →
+    # overall_message), and what this Node now publishes.
+    #
+    # ``overall_status_message`` is still accepted because a Node that has not
+    # picked up that correction — including any built from the Go
+    # implementation, whose type generator still emits the old key — remains a
+    # legitimate peer on the network. Strict in what we send, tolerant in what
+    # we accept: the alternative is a controller that silently shows no status
+    # message for a whole class of Nodes, which is the very failure this
+    # correction removes. Remove the fallback once no such Node is in service.
+    msg = state.get("overall_message")
+    if not isinstance(msg, str) or not msg:
+        msg = state.get("overall_status_message")
     if isinstance(msg, str) and msg:
         result["overall_message"] = msg
     return result

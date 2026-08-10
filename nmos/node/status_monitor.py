@@ -126,9 +126,36 @@ def get_essence_new_state(event: EngineEvent) -> int:
     """
     eid = event.event
     if eid in (EventId.ESSENCE, EventId.ESSENCE_STREAM_ERROR,
-               EventId.VENDOR_ESSENCE_BASE, EventId.VENDOR_ESSENCE_STOP,
+               EventId.VENDOR_ESSENCE_BASE,
                EventId.VENDOR_ESSENCE_CONSTRAINT_VIOLATED):
         return NC_UNHEALTHY
+    elif eid == EventId.VENDOR_ESSENCE_STOP:
+        # Inactive, not Unhealthy. This event means "the essence stopped
+        # because we are shutting down" — ``emit_stopping`` is called only
+        # from the transports' shutdown paths, always immediately followed by
+        # ``emit_deactivate``, and it carries ``EventState.INACTIVE`` to say
+        # so. It is never raised for a mid-stream essence fault; that is
+        # ``ESSENCE_STREAM_ERROR`` above.
+        #
+        # BCP-008-01 §"Deactivating a receiver" and BCP-008-02
+        # §"Deactivating a sender": a resource being deactivated "MUST
+        # cleanly [disconnect/interrupt] ... by not generating intermediate
+        # unhealthy states (PartiallyHealthy or Unhealthy) and instead
+        # transition directly and immediately ... to Inactive". Mapping this
+        # to Unhealthy generated exactly such an intermediate state, and
+        # because the transition counters "MUST increment each time the
+        # associated status transitions to a less healthy state" while
+        # "transitions to/from neutral states like Inactive or NotUsed are
+        # ignored", every ordinary deactivation permanently inflated the
+        # stream and connection counters — the record an operator relies on
+        # to judge whether a resource has been misbehaving.
+        #
+        # The Unhealthy never even reached a client: the
+        # VENDOR_TRANSPORT_DEACTIVATE that follows sets both domains to
+        # Inactive a moment later (see the mapping above and Step 4 of
+        # ``process_event``), so the counter increment was the whole of its
+        # lasting effect.
+        return NC_INACTIVE
     elif eid == EventId.VENDOR_ESSENCE_CONSTRAINT_PARTIAL:
         # IS-11 sender no_essence / awaiting_essence — amber, not a fault.
         return NC_PARTIALLY_HEALTHY
@@ -365,9 +392,18 @@ class ResourceMonitor:
 
             # Essence→Connection injection
             # "Monitors test suite consider Transport as the main event"
+            #
+            # The start/stop pair is mirrored into the connection domain so
+            # both move together. ``STOP`` injects **Inactive** rather than
+            # Unhealthy for the reason given in ``get_essence_new_state``: it
+            # signals a shutdown, and the deactivation clauses of BCP-008-01
+            # and BCP-008-02 forbid an intermediate unhealthy state on the way
+            # to Inactive. Injecting Unhealthy here is what pushed the
+            # *connection* counter up on every clean deactivation, in addition
+            # to the stream counter.
             if not self.is_sender:
                 if event.event == EventId.VENDOR_ESSENCE_STOP:
-                    u, _w = _route_to_domain(self.transport, NC_UNHEALTHY, event)
+                    u, _w = _route_to_domain(self.transport, NC_INACTIVE, event)
                     if u:
                         changed = True
                 elif event.event == EventId.VENDOR_ESSENCE_START:
@@ -523,7 +559,7 @@ def _publish_status(node: Any, monitor: ResourceMonitor) -> None:
         sender_info = MonitorSenderInfo(
             auto_reset=True,
             overall_status=monitor.overall_status,
-            overall_status_message=monitor.overall_message,
+            overall_message=monitor.overall_message,
             link_status=monitor.link.status,
             transmission_status=monitor.transport.status,
             synchronization_status=monitor.sync.status,
@@ -538,7 +574,7 @@ def _publish_status(node: Any, monitor: ResourceMonitor) -> None:
         receiver_info = MonitorReceiverInfo(
             auto_reset=True,
             overall_status=monitor.overall_status,
-            overall_status_message=monitor.overall_message,
+            overall_message=monitor.overall_message,
             link_status=monitor.link.status,
             connection_status=monitor.transport.status,
             synchronization_status=monitor.sync.status,
