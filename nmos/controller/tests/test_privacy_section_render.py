@@ -91,6 +91,10 @@ def _privacy_view(*, reserved_all: bool, any_active: bool) -> dict[str, Any]:
         "curves": [],
         "has_ecdh_modes": False,
         "exclusivity_ok": True,
+        # Writability is a third gate on the switch (see
+        # ``test_exclusivity_gating.py``); held open here so these tests
+        # isolate the attribute-collapse behaviour they exist to check.
+        "writable": True,
         "any_active": any_active,
         "node_ids": ["node-a", "node-b"],
         "reserved_node_ids": ["node-a", "node-b"] if reserved_all else [],

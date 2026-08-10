@@ -1946,8 +1946,21 @@ class Node:
             _node_tags.update(self._security_tags)
             nv.ResourceCore.Tags.value = _node_tags
 
-            # Node href (required)
-            nv.Href.value = f"http://{host}:{port}/"
+            # Node href (required). Scheme and authorization follow the
+            # Node's actual posture, exactly as the Device ``controls[]``
+            # below do — these three fields are what a controller reads to
+            # decide how to reach the Node API, so a mismatch sends it to a
+            # port that is not serving that scheme, or lets it omit a bearer
+            # the Node requires.
+            #
+            # Both were previously hard-coded to ``http`` with
+            # ``Authorization`` left at its default of false, so a Node in
+            # Configuration C advertised ``http://host:port/`` and
+            # ``authorization: false`` while in fact serving HTTPS and
+            # rejecting every unauthenticated request with 401.
+            node_scheme = Https.s if self.tls_enabled else Http.s
+
+            nv.Href.value = f"{node_scheme}://{host}:{port}/"
 
             # API versions and endpoints (required by NNodeApi validator)
             from nmos.types.generated.nnode_endpoint import NNodeEndpointValue
@@ -1958,7 +1971,12 @@ class Node:
             ep.set_to_default()
             ep.Host.value = host
             ep.Port.value = port
-            ep.Protocol.value = _ER.get(Http.s)
+            ep.Protocol.value = _ER.get(node_scheme)
+            # IS-04 v1.3 added ``authorization`` to the endpoint: it states
+            # whether this API requires an OAuth 2.0 bearer. Mirrors
+            # ``self.oauth2`` the same way each Device control's own
+            # ``Authorization`` does.
+            ep.Authorization.value = self.oauth2
             api.Endpoints.value = [ep]
 
             # Default clocks: PTP "clk0" + Internal "clk1"

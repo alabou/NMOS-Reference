@@ -23,7 +23,7 @@
   // while the cache-bust reached 60, so for eighteen versions anything reading
   // the reported version was told about JavaScript that had not been served in
   // months. Re-synced here; bump both together or the report is fiction.
-  const CONTROLLER_JS_VERSION = "63";
+  const CONTROLLER_JS_VERSION = "64";
 
   const controller = {};
   window.controller = controller;
@@ -1684,7 +1684,24 @@
               ? `already held by ${f.owner}`
               : "already held by another controller";
           }
-          return `${f.node_id}: ${f.reason}`;
+          // Same reasoning as the 423 case above: name the cause, don't
+          // echo the transport. ``reason`` is a server-side exception
+          // string that embeds the Node UUID and the remote's JSON body,
+          // so pasting it whole produced status lines like
+          // "00000000-…-453036130001: acquire failed for node '…'
+          // status=403 detail={'code': 403, 'error': 'Forbidden', …}" —
+          // accurate and unreadable. The status is the actionable part.
+          const reason = String(f.reason || "");
+          if (/\b403\b/.test(reason)) {
+            return "not authorised — the access token grants no write access";
+          }
+          if (/\b401\b/.test(reason)) {
+            return "not authorised — sign in again";
+          }
+          if (/\b0\b|transport|connect/i.test(reason)) {
+            return "the Node could not be reached";
+          }
+          return reason;
         };
         const summary = failed.length
           ? [...new Set(failed.map(describe))].join("; ")
@@ -1744,6 +1761,13 @@
     const exclusivityAvailable = (
       panel.getAttribute("data-exclusivity-available") === "1"
     );
+    // Likewise fixed for the page's lifetime: whether this admin may write
+    // to every Device in the selection. Without it this handler would
+    // re-enable the switch on the first status frame, undoing the server's
+    // gating and offering a control whose acquire is answered 403.
+    const exclusivityWritable = (
+      panel.getAttribute("data-exclusivity-writable") !== "0"
+    );
 
     // Reasons are reconciled alongside affordances. A ``title`` is written by
     // the server from whichever branch was true at page load, and that branch
@@ -1774,16 +1798,21 @@
     // keeps the row width perfectly stable across status events.
     const excl = form.querySelector('[data-role="privacy-exclusivity"]');
     if (excl) {
-      excl.disabled = anyActive || !exclusivityAvailable;
+      excl.disabled = anyActive || !exclusivityAvailable || !exclusivityWritable;
     }
     // Three states, and "active" wins because it is the one the operator can
     // act on: a Node that never advertised the reservation service will not
     // start doing so, whereas deactivating the selection is a next step.
     // The title sits on the wrapping label — the switch's own input is hidden
     // by Bootstrap and could never show a tooltip.
+    // Same precedence as the server render: active is the actionable
+    // instruction, then service availability, then authorization.
     _swapTitle(
       form.querySelector('[data-role="privacy-exclusivity-label"]'),
-      anyActive ? "locked" : (exclusivityAvailable ? "available" : "unavailable"),
+      anyActive ? "locked"
+        : !exclusivityAvailable ? "unavailable"
+          : !exclusivityWritable ? "unauthorized"
+            : "available",
     );
 
     // Locked-note: server-rendered inline span on the footer row.

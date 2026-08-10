@@ -66,7 +66,13 @@
         reads it so it doesn't re-enable Exclusivity on an
         inactivity event when the real reason it was disabled was
         "no service advertised". #}
-     data-exclusivity-available="{{ '1' if privacy_view.exclusivity_ok else '0' }}">
+     data-exclusivity-available="{{ '1' if privacy_view.exclusivity_ok else '0' }}"
+     {# Read by ``_reconcilePrivacyLock`` for the same reason as
+        ``exclusivity-available``: that handler recomputes ``disabled`` on
+        every status frame, so a gate it does not know about is undone the
+        moment the first frame arrives. Like availability, this is fixed for
+        the page's lifetime — the admin's grants do not change mid-page. #}
+     data-exclusivity-writable="{{ '1' if privacy_view.writable else '0' }}">
   <div class="privacy-panel-header d-flex align-items-center">
     <strong>Privacy Encryption</strong>
     <div class="privacy-indicators ml-auto d-flex align-items-center">
@@ -179,6 +185,9 @@
       {% set t_pep_locked = "Deactivate the selection to change — PEP parameters are only applied at activation" %}
       {% set t_excl_locked = "Deactivate the selection to change — the exclusive key is only mixed into the encryption key at activation" %}
       {% set t_excl_unavailable = "At least one Node in the selection does not advertise the reservation service." %}
+      {# The switch POSTs as soon as it is toggled, so — unlike the dropdowns
+         beside it — it has to predict a refusal rather than discover one. #}
+      {% set t_excl_unauthorized = "Not authorised to reserve these Nodes — the access token grants no write access, so the reservation would be refused with 403." %}
       {% set t_excl_available = "Reserve every Node in the selection so no other controller can change its configuration while we drive activation." %}
 
       <form class="privacy-form form-inline mt-3" id="privacy-form"
@@ -240,12 +249,19 @@
         </div>
         {% endif %}
 
-        {# Exclusivity can be locked for TWO independent reasons:
-             * any resource is active (the new rule — takes priority
-               since it's an actionable instruction); or
+        {# Exclusivity can be locked for THREE independent reasons:
+             * any resource is active (takes priority since it's an
+               actionable instruction); or
              * some Node in the selection doesn't advertise the
-               reservation service at all. #}
-        {% set excl_locked = lock_all or (not privacy_view.exclusivity_ok) %}
+               reservation service at all; or
+             * this admin isn't authorised to write to every Device in the
+               selection, so the acquire POST would come back 403.
+           The last one is the same prediction the master Constrain /
+           Activate toggles make via ``all_senders_writable``. It belongs
+           here too because this switch — alone among the panel's controls —
+           issues its request on toggle rather than on a later action. #}
+        {% set excl_locked = lock_all or (not privacy_view.exclusivity_ok)
+                             or (not privacy_view.writable) %}
         <div class="form-group ml-auto privacy-exclusivity">
           {# The reason lives on the LABEL, not the input: a Bootstrap
              custom-switch hides its ``<input>``, so the label is both the
@@ -257,8 +273,9 @@
                  data-role="privacy-exclusivity-label"
                  data-title-locked="{{ t_excl_locked }}"
                  data-title-unavailable="{{ t_excl_unavailable }}"
+                 data-title-unauthorized="{{ t_excl_unauthorized }}"
                  data-title-available="{{ t_excl_available }}"
-                 title="{% if lock_all %}{{ t_excl_locked }}{% elif not privacy_view.exclusivity_ok %}{{ t_excl_unavailable }}{% else %}{{ t_excl_available }}{% endif %}">
+                 title="{% if lock_all %}{{ t_excl_locked }}{% elif not privacy_view.exclusivity_ok %}{{ t_excl_unavailable }}{% elif not privacy_view.writable %}{{ t_excl_unauthorized }}{% else %}{{ t_excl_available }}{% endif %}">
             {# The leading space inside each ``{% if %}`` body is load-bearing.
                The environment runs with ``trim_blocks`` + ``lstrip_blocks``
                (nmos/controller/app.py), so the indentation before a block tag

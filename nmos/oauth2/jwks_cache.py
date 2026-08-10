@@ -6,8 +6,13 @@
 Reference-node implements the spec's full lifecycle for the OAuth 2.0
 Authorization Server's signing keys:
 
-  - Initial fetch at boot/restart, and on explicit administrative
-    request.
+  - Initial fetch at boot/restart. The specification also names "an
+    explicit administrative request" as a trigger; this implementation
+    does **not** provide one, by choice — there is no way for a peer to
+    discover a Node's key-refresh state, so an operator-driven refetch
+    would be an interface with no protocol counterpart. The consequence
+    is that an unplanned Authorization Server key rotation is recovered
+    by restarting the Node rather than by asking it to refetch.
   - Periodic refresh every **23 hours plus a random 0–3600 s jitter**,
     so a fleet of devices doesn't stampede the AS together.
   - **36-hour hard invalidation** of any previously-fetched key set:

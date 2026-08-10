@@ -35,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import urllib.parse
 from typing import Any, Callable, Final
 
 from aiohttp import web
@@ -389,7 +390,8 @@ def _device_inaccessible_reasons(
         aud = admin.oauth2_tokens.claims.get("aud", [])
         if isinstance(aud, str):
             aud = [aud]
-        if serial and not _aud_covers_serial(aud, serial):
+        hostnames = _device_hostnames(device) if device is not None else ()
+        if serial and not _aud_covers_serial(aud, serial, hostnames):
             msg = (
                 f"OAuth2 token grants do not cover device serial "
                 f"{serial!r}; current aud entries: "
@@ -419,24 +421,83 @@ def _device_inaccessible_reasons(
     return reasons
 
 
-def _aud_covers_serial(aud: list[Any], serial: str) -> bool:
-    """Mirror the Node-side aud check in serial-number mode.
+def _device_hostnames(device: dict[str, Any]) -> tuple[str, ...]:
+    """Host names this controller reaches the Device on, from ``controls[]``.
 
-    Returns True iff at least one ``aud`` entry covers a Node whose
-    instance-id is ``serial``. ``"*"`` covers everything; otherwise
-    the entry must contain ``serial`` as a substring (matches the
-    spec-pseudocode and ``aud_entry_allows_current_node`` in
-    :mod:`nmos.oauth2`). Tolerates non-string aud entries (treated
-    as no-match).
+    Used as a stand-in for the Node's TLS certificate identities in
+    :func:`_aud_covers_serial`. The substitution is sound for the ``https``
+    controls that matter here: the controller only reaches such a control by
+    completing a TLS handshake in which this very host name was matched
+    against the certificate, so it *is* one of the certificate's identities.
+
+    It is not the *complete* identity list — a certificate normally carries
+    several SANs and an ``aud`` entry may legitimately name one the controller
+    never connects to. That asymmetry is why the caller treats a match as
+    proof of coverage and a non-match as inconclusive rather than as proof of
+    exclusion.
+    """
+    hosts: list[str] = []
+    for ctl in device.get("controls") or []:
+        if not isinstance(ctl, dict):
+            continue
+        href = ctl.get("href")
+        if not isinstance(href, str):
+            continue
+        host = urllib.parse.urlsplit(href).hostname
+        if host and host not in hosts:
+            hosts.append(host)
+    return tuple(hosts)
+
+
+def _aud_covers_serial(
+    aud: list[Any], serial: str, hostnames: tuple[str, ...] = (),
+) -> bool:
+    """Mirror the Node-side aud check, for both of its rules.
+
+    Returns True iff at least one ``aud`` entry plausibly covers a Node whose
+    instance-id is ``serial``. ``aud_entry_allows_current_node`` in
+    :mod:`nmos.oauth2` is the authority, and it accepts an entry under
+    **either** of the specification's two rules:
+
+    * the **serial-number rule** — the entry contains the Node's instance-id;
+    * the **DNS-name rule** — the entry, read as a possibly-wildcarded DNS
+      pattern per RFC 4592, matches one of the Node's certificate identities.
+
+    Only the first was implemented here, which made the UI disagree with the
+    Node for every Authorization Server that mints DNS-mode audiences. A
+    spec-valid ``aud: ["*.local"]`` is accepted by all three Nodes in the
+    reference rig, yet every Device was painted ``READS_BLOCKED`` and the
+    master toggles disabled — a working deployment rendered unusable, which
+    is a far worse failure than the 403 this check exists to predict.
+
+    The DNS rule needs certificate identities, which a controller cannot read
+    from IS-04. ``hostnames`` supplies the names it actually connects on
+    instead (see :func:`_device_hostnames`); RFC 4592 matching is delegated to
+    :mod:`nmos.oauth2` rather than reimplemented, so the two cannot drift.
+
+    **Deliberately permissive.** Coverage here means "do not pre-emptively
+    block", so an entry that might be accepted is treated as accepted. The
+    opposite bias is not available: this check cannot see the Node's full SAN
+    list, so demanding a match would refuse audiences the Node would honour.
+    A wrong "covered" costs the operator one honest 401/403 from the Node,
+    with its reason; a wrong "not covered" removes the control entirely and
+    reports a device as unreachable when it is not.
+
+    Tolerates non-string aud entries (treated as no-match).
     """
     if not serial:
         # Empty serial would be a substring of every string; guard
         # explicitly so an unknown serial doesn't read as "covered".
         return False
+    from nmos.oauth2 import _dns_wildcard_matches
     for entry in aud:
         if entry == "*":
             return True
-        if isinstance(entry, str) and serial in entry:
+        if not isinstance(entry, str):
+            continue
+        if serial in entry:
+            return True
+        if any(_dns_wildcard_matches(entry, name) for name in hostnames):
             return True
     return False
 
@@ -3421,6 +3482,27 @@ async def _build_privacy_view(
     held: set[str] = _admin_session(request).acquired_nodes
     reserved_node_ids = [n for n in node_ids if n in held]
 
+    # Whether this admin may WRITE to every Device in the selection.
+    #
+    # The Exclusivity switch is the only control in this panel that issues a
+    # request the moment it is toggled — the Protocol / Mode / Curve dropdowns
+    # only edit form state, and nothing leaves the browser until a master
+    # toggle is pressed, which is separately gated on the same signal via
+    # ``all_senders_writable``. So the switch needs the same prediction, and
+    # without it a read-only operator was offered a control whose POST the
+    # Node answers 403 "insufficient permissions" every time.
+    #
+    # ``exclusivity_ok`` is NOT this: it reports whether every Node advertises
+    # the reservation service at all, which is a property of the devices
+    # rather than of the operator's grants.
+    admin_for_writes = _admin_session(request)
+    writable = all(
+        not _device_inaccessible_reasons(
+            cache, admin_for_writes, resource.get("device_id", "") or "",
+        ).get("write")
+        for resource in (*senders, *receivers)
+    )
+
     return {
         "pep_available":    opts.pep_available,
         "protocols":        opts.protocols,
@@ -3428,6 +3510,11 @@ async def _build_privacy_view(
         "curves":           opts.curves,
         "has_ecdh_modes":   has_ecdh_modes,
         "exclusivity_ok":   opts.exclusivity_ok,
+        # True iff the admin's token/credentials permit writes on every
+        # Device in the selection. Gates the Exclusivity switch — see the
+        # comment where it is computed for why ``exclusivity_ok`` is not a
+        # substitute.
+        "writable":         writable,
         "any_active":       any_active,
         "node_ids":         node_ids,
         "reserved_node_ids": reserved_node_ids,
