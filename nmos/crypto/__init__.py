@@ -15,6 +15,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import math
 import os
 import threading
 import time
@@ -36,28 +37,66 @@ from nmos.errors import Busy, NotAllowed, Skip
 # the defaults: ``nmos_node.py`` constructs ``ExclusiveSession()`` with no
 # arguments and exposes no option to change them.
 #
-# The constructor keeps the parameters because the specification does permit
-# an administrator to lengthen the Lifetime, and because the expiry tests need
-# a short one — but the values are now *validated* rather than clamped. Silent
-# clamping is what let an out-of-spec AliveTime look accepted.
+# The constructor keeps the Lifetime parameter because the specification does
+# permit an administrator to lengthen it — but the values are *validated*
+# rather than clamped. Silent clamping is what let an out-of-spec AliveTime
+# look accepted.
 
 #: §Definitions: "By default the lifetime of a session is 60 minutes."
 DEFAULT_LIFETIME_SECONDS: Final[float] = 3600.0
 
-#: §Session Lifetime versus AliveTime: the Lifetime "MAY be changed by an
-#: administrator ... to a maximum of 24 hours".
+#: §Session Lifetime versus AliveTime: "The configured 'Session Lifetime' MUST
+#: be 60 minutes or greater, to a maximum of 24 hours."
+#:
+#: The floor is what makes the whole scheduling scheme safe. A client that has
+#: not yet determined a Node's Lifetime "MUST assume the minimum 'Session
+#: Lifetime' of 60 minutes when scheduling its first Renew" — so a Node running
+#: anything shorter would silently expire sessions under a conforming client,
+#: with no protocol signal to detect it. Enforcing the floor here is what makes
+#: that assumption sound rather than hopeful.
+MIN_LIFETIME_SECONDS: Final[float] = 3600.0
+
+#: §Session Lifetime versus AliveTime: "... to a maximum of 24 hours".
 MAX_LIFETIME_SECONDS: Final[float] = 86400.0
 
-#: §Definitions: "By default the AliveTime of a session is 60 seconds."
-DEFAULT_ALIVE_TIME_SECONDS: Final[float] = 60.0
+#: §Definitions: "The AliveTime of a session is 60 seconds."
+#: §Session Lifetime versus AliveTime: "The 'Session AliveTime' MUST be 60
+#: seconds."
+#:
+#: A single mandated value — not a default and not a range. The protocol gives
+#: a client no way to discover the AliveTime in use, so every client must
+#: schedule keepalives against 60 s regardless; a Node running anything else
+#: would be undetectably incompatible. Fixing it removes the knob rather than
+#: leaving one nobody can safely turn.
+ALIVE_TIME_SECONDS: Final[float] = 60.0
 
-#: §Definitions: the AliveTime "MAY be configured by an administrator from 60
-#: seconds to 120 seconds ... Implementations MUST NOT use other values for
-#: the AliveTime." §Session Lifetime versus AliveTime restates it as a MUST:
-#: "The 'Session AliveTime' MUST be 60 or 120 seconds as configured by an
-#: administrator." Two discrete values, not a range — so this is a membership
-#: test, not a clamp.
-PERMITTED_ALIVE_TIME_SECONDS: Final[tuple[float, ...]] = (60.0, 120.0)
+
+class TooEarly(Skip):
+    """Renew attempted before 1/3 of the Session Lifetime has elapsed.
+
+    Carries the ``Retry-After`` delay the Node must return with its ``425 Too
+    Early`` response. §Renew: "The delay MUST be the number of seconds
+    remaining until half of the 'Session Lifetime' has elapsed, measured from
+    the most recent successful ``Acquire`` or ``Renew`` of the session."
+
+    Note the delay targets the *half* Lifetime, not the 1/3 gate that caused
+    the rejection — "The delay therefore indicates the point at which the
+    session SHOULD be renewed and not the earliest point at which a ``Renew``
+    would be permitted." Pointing at the gate would send every client back at
+    the earliest legal instant instead of the recommended one.
+
+    A subclass of :class:`~nmos.errors.Skip` so that callers written against
+    the older control-flow signal keep working; new code catches this and
+    reads :attr:`retry_after`. Computing the delay here rather than exposing a
+    second query method keeps it atomic with the rejection — the session lock
+    is held for both, so the value cannot describe a state that has already
+    moved on.
+    """
+
+    def __init__(self, retry_after: int, msg: str = "too early to renew") -> None:
+        super().__init__(msg)
+        #: Whole seconds until the half-Lifetime point. Always >= 1.
+        self.retry_after: int = retry_after
 
 
 @dataclass
@@ -107,41 +146,40 @@ class ExclusiveSession:
     def __init__(
         self,
         lifetime: float = DEFAULT_LIFETIME_SECONDS,
-        alive_time: float = DEFAULT_ALIVE_TIME_SECONDS,
+        alive_time: float = ALIVE_TIME_SECONDS,
     ) -> None:
         """Initialize session manager.
 
         Args:
-            lifetime: Total session lifetime in seconds. Must be positive and
-                no more than :data:`MAX_LIFETIME_SECONDS`.
-            alive_time: Inactivity timeout in seconds. Must be one of
-                :data:`PERMITTED_ALIVE_TIME_SECONDS` — the specification
-                allows exactly 60 or 120 and forbids every other value.
+            lifetime: Total session lifetime in seconds. Must be at least
+                :data:`MIN_LIFETIME_SECONDS` and no more than
+                :data:`MAX_LIFETIME_SECONDS`.
+            alive_time: Inactivity timeout in seconds. Must be exactly
+                :data:`ALIVE_TIME_SECONDS` — the specification mandates one
+                value and forbids every other.
 
         Raises:
             ValueError: if either argument is outside what the specification
                 permits. Both were previously clamped into range, which meant
-                an out-of-spec AliveTime was silently coerced: 120 s (legal)
-                became 60 s, and 1 s (illegal) was accepted as-is. Failing
-                loudly is the only way a misconfiguration is visible, since
-                the protocol gives a peer no way to discover the value in use.
+                an out-of-spec value was silently coerced. Failing loudly is
+                the only way a misconfiguration is visible, since the protocol
+                gives a peer no way to discover the values in use.
         """
-        if not 0.0 < lifetime <= MAX_LIFETIME_SECONDS:
+        if not MIN_LIFETIME_SECONDS <= lifetime <= MAX_LIFETIME_SECONDS:
             raise ValueError(
-                f"session lifetime {lifetime!r}s is out of range: must be "
-                f"positive and at most {MAX_LIFETIME_SECONDS:.0f}s (24 hours), "
-                f"per 'NMOS With Node Reservation' §Session Lifetime versus "
-                f"AliveTime"
+                f"session lifetime {lifetime!r}s is out of range: must be at "
+                f"least {MIN_LIFETIME_SECONDS:.0f}s (60 minutes) and at most "
+                f"{MAX_LIFETIME_SECONDS:.0f}s (24 hours), per 'NMOS With Node "
+                f"Reservation' §Session Lifetime versus AliveTime: \"The "
+                f"configured 'Session Lifetime' MUST be 60 minutes or greater, "
+                f"to a maximum of 24 hours.\""
             )
-        if alive_time not in PERMITTED_ALIVE_TIME_SECONDS:
-            permitted = " or ".join(
-                f"{v:.0f}" for v in PERMITTED_ALIVE_TIME_SECONDS
-            )
+        if alive_time != ALIVE_TIME_SECONDS:
             raise ValueError(
                 f"session AliveTime {alive_time!r}s is not permitted: must be "
-                f"exactly {permitted} seconds. 'NMOS With Node Reservation' "
-                f"§Definitions: \"Implementations MUST NOT use other values "
-                f"for the AliveTime.\""
+                f"exactly {ALIVE_TIME_SECONDS:.0f} seconds. 'NMOS With Node "
+                f"Reservation' §Session Lifetime versus AliveTime: \"The "
+                f"'Session AliveTime' MUST be 60 seconds.\""
             )
         self.lifetime: float = lifetime
         self.alive_time: float = alive_time
@@ -179,7 +217,8 @@ class ExclusiveSession:
         """Get a new token (same session ID, new HMAC key), extending the Lifetime.
 
         Only allowed after 1/3 of lifetime has elapsed.
-        Raises Skip if called too early.
+        Raises :class:`TooEarly` (a ``Skip``) if called too early, carrying the
+        ``Retry-After`` delay the caller must put on the ``425`` response.
         Raises NotAllowed if not the session owner.
 
         **Renewal restarts the Lifetime clock.** That is the whole purpose of
@@ -211,7 +250,20 @@ class ExclusiveSession:
             now = time.time()
             elapsed = now - s.creation_time
             if elapsed < self.lifetime / 3:
-                raise Skip("too early to renew")
+                # §Renew: the delay counts down to the *half* Lifetime, the
+                # point at which the session SHOULD be renewed — not to the
+                # 1/3 gate just failed. Rounded up so a client that honours it
+                # exactly cannot land a fraction of a second short and collect
+                # a second 425; clamped at 1 so the value never reads as
+                # "retry immediately".
+                #
+                # The gate guarantees elapsed < lifetime/3, so the delay
+                # exceeds lifetime/6 — 600 s at the minimum Lifetime. The
+                # clamp is therefore unreachable in practice and is here to
+                # keep the invariant local rather than inherited from the
+                # bounds enforced in __init__.
+                remaining = self.lifetime / 2 - elapsed
+                raise TooEarly(max(1, math.ceil(remaining)))
 
             # Generate new HMAC key, keep session ID
             s.hmac_key = os.urandom(16)

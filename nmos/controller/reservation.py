@@ -14,8 +14,10 @@ Implements the admin-driven Node-Reservation lifecycle:
 * **Keepalive / renew** — a single background task ticks every
   second and, for every active session, posts ``keepalive`` when
   ``now + HALF_ALIVETIME > alive_until`` and ``renew`` when
-  ``now + HALF_LIFETIME > expires_at``. On failure the session's
+  ``now + lifetime / 2 > expires_at``. On failure the session's
   token is zeroed, prompting the next tick to re-``acquire``.
+  ``lifetime`` starts at the specified 60-minute minimum and is
+  replaced by the value derived from a ``425 Too Early``.
 
 * **Release** — explicit release either from the browser (unticking
   Exclusivity) or on admin logout (``release_all(admin)``). Runs
@@ -47,12 +49,22 @@ from nmos.controller.debug_trace import DebugTrace
 log = logging.getLogger(__name__)
 
 
-# Reservation policy constants. ``LIFETIME`` is the Node-side
-# session lifetime — we renew at half of that. ``ALIVETIME`` is
-# the Node's AliveTime window; we keepalive at half.
-LIFETIME: Final[float] = 3600.0       # 60 min session lifetime
-HALF_LIFETIME: Final[float] = 1800.0  # renew when < 30 min remains
-ALIVETIME: Final[float] = 60.0        # 60 s AliveTime window
+# Reservation policy constants.
+#
+# ``MIN_LIFETIME`` is the floor the specification puts on a Node's Session
+# Lifetime, and §Session Lifetime versus AliveTime makes assuming it the
+# client's obligation: "A client that has not determined the 'Session Lifetime'
+# configured on a Node MUST assume the minimum 'Session Lifetime' of 60 minutes
+# when scheduling its first `Renew`."
+#
+# Assuming the *minimum* rather than a guess is what makes the schedule safe in
+# both directions. A Node configured longer answers an early renew with
+# ``425 Too Early`` and a ``Retry-After`` that corrects us (see
+# ``_apply_too_early``); a Node configured shorter cannot exist, because the
+# floor is normative and Nodes enforce it. Overestimating, by contrast, would
+# let the session expire silently between renews.
+MIN_LIFETIME: Final[float] = 3600.0   # 60 min — the specified minimum
+ALIVETIME: Final[float] = 60.0        # 60 s AliveTime window, fixed by spec
 HALF_ALIVETIME: Final[float] = 30.0   # keepalive when < 30 s remains
 POLL_INTERVAL: Final[float] = 1.0     # per-second tick
 
@@ -73,14 +85,20 @@ HTTP_TOO_EARLY: Final[int] = 425
 #: dropped packet discard a perfectly valid token.
 TRANSPORT_FAILURE: Final[int] = 0
 
-# How long to wait before retrying a renew that came back ``425 Too Early``.
+# Fallback deferral for a ``425 Too Early`` that arrived without a usable
+# ``Retry-After`` header.
 #
-# §Verifying Ownership: "If the renewal returns a `425 Too Early` status, the
-# token SHOULD be considered to be still valid for at least half of its
-# 'Session Lifetime'." So there is no urgency — the safe move is to keep the
-# token and try again later. A retry interval is needed because the renew
-# trigger is a threshold rather than an edge: without one, a 425 would be
-# re-attempted on every one-second tick for as long as the threshold held.
+# §Renew requires the Node to send one, and when it does we defer by exactly
+# that (``_apply_too_early``) and learn the Node's real Session Lifetime in the
+# process. This constant covers the non-conformant case only. Hard-failing
+# instead would be worse than useless: §Verifying Ownership guarantees the
+# token stays valid for at least half a Session Lifetime after a 425, so
+# retrying later always works — it just wastes requests without the header to
+# aim them.
+#
+# A retry interval is needed at all because the renew trigger is a threshold
+# rather than an edge: without one, a 425 would be re-attempted on every
+# one-second tick for as long as the threshold held.
 RENEW_TOO_EARLY_RETRY: Final[float] = 60.0
 
 # How long to wait before retrying a renew that never reached the Node.
@@ -168,6 +186,25 @@ class ReservationSession:
     token: str = ""
     expires_at: float = 0.0
     alive_until: float = 0.0
+    renewed_at: float = 0.0
+    """Monotonic time of the most recent successful ``Acquire`` or ``Renew``.
+
+    The origin the Node measures both of its renew rules from — §Renew gates
+    the 1/3 boundary and computes the ``Retry-After`` delay "since the most
+    recent successful `Acquire` or `Renew` of the session". Deriving the Node's
+    Session Lifetime from a 425 needs the same origin locally, so it is
+    recorded rather than inferred from ``expires_at``: inferring would assume
+    the very Lifetime the derivation is trying to discover.
+    """
+    lifetime: float = MIN_LIFETIME
+    """Believed Session Lifetime of this Node, in seconds.
+
+    Starts at the specified minimum, which §Session Lifetime versus AliveTime
+    requires a client to assume before it knows better, and is replaced by the
+    value derived from the first ``425 Too Early`` (:meth:`SessionStore._apply_too_early`).
+    Per-session rather than global because it is a per-Node configuration —
+    one controller may hold reservations on Nodes with different Lifetimes.
+    """
     renew_after: float = 0.0
     """Earliest monotonic time at which renew may be attempted again.
 
@@ -346,8 +383,9 @@ class SessionStore:
             exclusive_key_hex=admin.exclusive_key_hex,
             oauth2_on_remote=oauth2_on_remote,
             token=token,
-            expires_at=now + LIFETIME,
+            expires_at=now + MIN_LIFETIME,
             alive_until=now + ALIVETIME,
+            renewed_at=now,
         )
         async with self._lock:
             self._sessions[key] = sess
@@ -436,7 +474,7 @@ class SessionStore:
 
         The per-session branch order is:
           1. If ``token == ""`` — (re)acquire.
-          2. Else if ``now + HALF_LIFETIME > expires_at`` — renew.
+          2. Else if ``now + sess.lifetime / 2 > expires_at`` — renew.
           3. Else if ``now + HALF_ALIVETIME > alive_until`` — keepalive.
         """
         log.info("reservation poll task started")
@@ -472,7 +510,7 @@ class SessionStore:
             # ``renew_after`` defers a renew the Node called too early. Note
             # this is not a ``continue`` when deferred: the session still
             # needs keeping alive while it waits, or it lapses on inactivity.
-            if now + HALF_LIFETIME > sess.expires_at and now >= sess.renew_after:
+            if now + sess.lifetime / 2 > sess.expires_at and now >= sess.renew_after:
                 await self._try_renew(sess)
                 continue
             if now + HALF_ALIVETIME > sess.alive_until:
@@ -499,10 +537,83 @@ class SessionStore:
         assert isinstance(result.body, str)
         now = time.monotonic()
         sess.token = result.body
-        sess.expires_at = now + LIFETIME
+        sess.renewed_at = now
+        # A reacquire is a brand-new session on the Node, so the Lifetime it
+        # will be measured against is whatever that Node is configured with.
+        # Anything previously derived still applies — the configuration did not
+        # change just because we lost and remade the session — so ``lifetime``
+        # is deliberately left alone and only the schedule is rebased.
+        sess.expires_at = now + sess.lifetime
         sess.alive_until = now + ALIVETIME
         sess.renew_after = 0.0     # a fresh session carries no renew deferral
         self._emit("reservation_reacquired", node_id=sess.node_id)
+
+    def _apply_too_early(
+        self, sess: ReservationSession, retry_after: int | None,
+    ) -> None:
+        """Absorb a ``425 Too Early``: keep the token, learn the Lifetime.
+
+        §Renew defines the ``Retry-After`` delay as "the number of seconds
+        remaining until half of the 'Session Lifetime' has elapsed, measured
+        from the most recent successful `Acquire` or `Renew`", and states the
+        inverse a client may use: the Session Lifetime is "twice the sum of the
+        `Retry-After` delay and the time elapsed since its most recent
+        successful `Acquire` or `Renew`".
+
+        So with ``t`` seconds elapsed and a delay of ``R``::
+
+            lifetime = 2 * (R + t)
+
+        One rejected renew is therefore enough to replace the assumed 60-minute
+        minimum with the Node's real value, after which every subsequent renew
+        is scheduled correctly and no further 425 occurs. Without it the
+        controller would keep firing speculative renews at the minimum-derived
+        threshold and collecting 425s — against a 24-hour Node that is roughly
+        450 wasted round-trips per session before one succeeds.
+
+        ``expires_at`` is rebased on the derived Lifetime rather than on
+        ``now``, because the Lifetime runs from ``renewed_at``, not from the
+        moment the Node happened to refuse us.
+
+        A missing or malformed delay falls back to a fixed retry and leaves the
+        believed Lifetime untouched: a Node that omits the header is
+        non-conformant, but the token is still valid and blind retrying still
+        converges, so there is nothing to gain by treating it as an error.
+        """
+        now = time.monotonic()
+        if retry_after is None:
+            sess.renew_after = now + RENEW_TOO_EARLY_RETRY
+            log.info(
+                "renew too early node=%s — no usable Retry-After, token "
+                "remains valid, retrying in %.0fs",
+                sess.node_id, RENEW_TOO_EARLY_RETRY,
+            )
+            self._emit(
+                "reservation_renew_too_early",
+                node_id=sess.node_id, status=HTTP_TOO_EARLY,
+                retry_in=RENEW_TOO_EARLY_RETRY,
+            )
+            return
+
+        sess.renew_after = now + retry_after
+        elapsed = max(0.0, now - sess.renewed_at)
+        derived = 2.0 * (retry_after + elapsed)
+        # Never believe a Lifetime below the specified floor. A conformant Node
+        # cannot produce one, so a lower figure means a broken Node or a clock
+        # anomaly; clamping keeps the renew schedule inside what the floor
+        # already guarantees is safe rather than accelerating it on bad data.
+        sess.lifetime = max(MIN_LIFETIME, derived)
+        sess.expires_at = sess.renewed_at + sess.lifetime
+        log.info(
+            "renew too early node=%s — token remains valid, retrying in %ds "
+            "(derived Session Lifetime %.0fs)",
+            sess.node_id, retry_after, sess.lifetime,
+        )
+        self._emit(
+            "reservation_renew_too_early",
+            node_id=sess.node_id, status=HTTP_TOO_EARLY,
+            retry_in=float(retry_after), lifetime=sess.lifetime,
+        )
 
     async def _try_renew(self, sess: ReservationSession) -> None:
         result = await self._client.renew_exclusive(
@@ -545,16 +656,7 @@ class SessionStore:
             # session then sticks in a state where the controller holds no
             # usable token, cannot release, and every reacquire is rejected,
             # while the panel still shows the reservation as held.
-            sess.renew_after = time.monotonic() + RENEW_TOO_EARLY_RETRY
-            log.info(
-                "renew too early node=%s — token remains valid, retrying in %.0fs",
-                sess.node_id, RENEW_TOO_EARLY_RETRY,
-            )
-            self._emit(
-                "reservation_renew_too_early",
-                node_id=sess.node_id, status=result.status,
-                retry_in=RENEW_TOO_EARLY_RETRY,
-            )
+            self._apply_too_early(sess, result.retry_after)
             return
         if result.status != 200 or not isinstance(result.body, str):
             log.warning(
@@ -573,7 +675,11 @@ class SessionStore:
             return
         now = time.monotonic()
         sess.token = result.body
-        sess.expires_at = now + LIFETIME
+        # A successful renew restarts the Node's Lifetime clock — §KeepAlive:
+        # "Only the Renew operation extends the 'Session Lifetime'." So this is
+        # the new origin for both the local schedule and any future derivation.
+        sess.renewed_at = now
+        sess.expires_at = now + sess.lifetime
         sess.alive_until = now + ALIVETIME
         sess.renew_after = 0.0     # the deferral, if any, has been discharged
         self._emit("reservation_renewed", node_id=sess.node_id)

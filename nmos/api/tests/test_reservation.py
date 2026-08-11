@@ -194,6 +194,120 @@ class TestRenew:
         assert resp.status == 425
 
 
+class TestRenewRetryAfter:
+    """§Renew: "A `425 Too Early` response MUST include a `Retry-After`
+    response header as defined in RFC 9110."
+
+    Exercised over real HTTP rather than at the session level because the
+    header is the deliverable — a correct delay computed inside
+    ``ExclusiveSession`` and then dropped by the handler is the failure this
+    guards against.
+    """
+
+    @pytest.mark.asyncio
+    async def test_425_carries_retry_after(
+        self, client_with_token: tuple[TestClient, str],
+    ) -> None:
+        client, token = client_with_token
+        resp = await client.post(
+            _RENEW_URL, headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status == 425
+        assert "Retry-After" in resp.headers, (
+            "425 Too Early without Retry-After: the client has no way to "
+            "schedule its next renew, nor to discover the Session Lifetime"
+        )
+
+    @pytest.mark.asyncio
+    async def test_retry_after_uses_delay_seconds_form(
+        self, client_with_token: tuple[TestClient, str],
+    ) -> None:
+        """"The `delay-seconds` form MUST be used and the `HTTP-date` form
+        MUST NOT be used, so that the delay is unaffected by any clock
+        difference between the client and the Node."
+
+        RFC 9110 §10.2.3: ``delay-seconds = 1*DIGIT`` — digits only, so an
+        HTTP-date such as "Fri, 31 Dec 1999 23:59:59 GMT" fails ``isdigit()``.
+        """
+        client, token = client_with_token
+        resp = await client.post(
+            _RENEW_URL, headers={"Authorization": f"Bearer {token}"},
+        )
+        raw = resp.headers["Retry-After"]
+        assert raw.isdigit(), f"Retry-After {raw!r} is not delay-seconds form"
+        assert int(raw) >= 1
+
+    @pytest.mark.asyncio
+    async def test_retry_after_points_at_the_half_lifetime(
+        self, client_with_token: tuple[TestClient, str],
+    ) -> None:
+        """The delay counts down to half the Lifetime, not to the 1/3 gate."""
+        client, token = client_with_token
+        node = client.app["node"]
+        lifetime = node.exclusive_session.lifetime
+        elapsed = lifetime / 4                       # inside the 1/3 gate
+        node.exclusive_session._session.creation_time = time.time() - elapsed
+
+        resp = await client.post(
+            _RENEW_URL, headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status == 425
+        delay = int(resp.headers["Retry-After"])
+        assert delay == pytest.approx(lifetime / 2 - elapsed, abs=2.0)
+
+    @pytest.mark.asyncio
+    async def test_client_derives_lifetime_and_next_renew_succeeds(
+        self, client_with_token: tuple[TestClient, str],
+    ) -> None:
+        """End-to-end of the convergence the spec is built around.
+
+        A client assumes the 60-minute minimum, renews too early, derives the
+        Node's real Lifetime as ``2 * (delay + elapsed)``, waits out the
+        advertised delay, and then renews successfully. That is one wasted
+        request per session instead of blind polling.
+        """
+        client, token = client_with_token
+        node = client.app["node"]
+        node.exclusive_session.lifetime = 86400.0    # a 24-hour Node
+        session = node.exclusive_session._session
+
+        # The client has no idea about the 24 hours; it renews at half of the
+        # 60-minute minimum it is required to assume.
+        elapsed = 1800.0
+        session.creation_time = time.time() - elapsed
+        resp = await client.post(
+            _RENEW_URL, headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status == 425
+        delay = int(resp.headers["Retry-After"])
+
+        derived = 2.0 * (delay + elapsed)
+        assert derived == pytest.approx(86400.0, abs=2.0)
+
+        # Honour the advertised delay: the session is now at the half-Lifetime
+        # point, comfortably past the 1/3 gate, so the renew must succeed.
+        session.creation_time = time.time() - (elapsed + delay)
+        resp = await client.post(
+            _RENEW_URL, headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status == 200, (
+            "renewing at the advertised Retry-After was still rejected — "
+            "the delay does not point where the spec says it does"
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_retry_after_on_401(self, client: TestClient) -> None:
+        """The header belongs to 425 alone. A 401 means the session is gone;
+        advertising a retry delay there would invite a client to sit and wait
+        instead of reacquiring.
+        """
+        resp = await client.post(
+            _RENEW_URL, headers={"Authorization": "Bearer bogus-token"},
+        )
+        assert resp.status == 401
+        assert "Retry-After" not in resp.headers
+
+
 class TestRelease:
 
     @pytest.mark.asyncio

@@ -89,6 +89,46 @@ class RemoteCallResult:
     #: its 423, and dropping it here left the controller inventing the
     #: phrase "held by another owner" rather than saying who.
     link: str = ""
+    #: ``Retry-After`` delay in whole seconds, parsed from the response.
+    #:
+    #: The Node Reservation spec §Renew requires it on ``425 Too Early`` in
+    #: RFC 9110 ``delay-seconds`` form, and it is the only way a client learns
+    #: how long a Node's Session Lifetime actually is — the acquire and renew
+    #: bodies carry nothing but a bearer token. ``None`` when the header is
+    #: absent or unparseable, which callers treat as "fall back to the
+    #: assumed minimum" rather than as an error: §Renew mandates the header on
+    #: the Node, but a client that hard-required it would break against a Node
+    #: that omits it, for no gain over simply retrying later.
+    #:
+    #: The ``HTTP-date`` form that RFC 9110 also permits is deliberately not
+    #: accepted — the spec forbids it precisely so the value cannot be skewed
+    #: by a clock difference, so a date here is a non-conformant Node and
+    #: parsing it would paper over that.
+    retry_after: int | None = None
+
+
+def _parse_retry_after(raw: str) -> int | None:
+    """Parse a ``Retry-After`` header in RFC 9110 ``delay-seconds`` form.
+
+    ``delay-seconds = 1*DIGIT`` — "A delay-seconds value is a non-negative
+    decimal integer, representing time in seconds" (RFC 9110 §10.2.3). The
+    Node Reservation spec §Renew mandates this form and forbids ``HTTP-date``,
+    so anything that is not a run of digits is rejected rather than coerced:
+    a date-formatted value means the Node is non-conformant, and silently
+    honouring it would reintroduce exactly the clock-skew dependency the spec
+    rules out.
+
+    Returns ``None`` for an absent, malformed, or negative value, which the
+    caller reads as "no advertised delay".
+    """
+    text = raw.strip()
+    if not text.isdigit():
+        return None
+    try:
+        value = int(text)
+    except ValueError:          # pragma: no cover - isdigit() already excludes
+        return None
+    return value if value >= 0 else None
 
 
 # Timeout for every outbound call to a remote Node. ``total`` bounds a
@@ -691,6 +731,9 @@ class RemoteNodeClient:
                     body=body,
                     www_authenticate=resp.headers.get("WWW-Authenticate", ""),
                     link=resp.headers.get("Link", ""),
+                    retry_after=_parse_retry_after(
+                        resp.headers.get("Retry-After", ""),
+                    ),
                 )
         except aiohttp.ClientError as exc:
             log.warning("outbound transport error: %s", exc)

@@ -11,13 +11,26 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nmos.controller.api_client import RemoteCallResult, RemoteNodeClient
+from nmos.controller.api_client import (
+    RemoteCallResult,
+    RemoteNodeClient,
+    _parse_retry_after,
+)
 from nmos.controller.auth import AdminSessionStore
 from nmos.controller.reservation import (
     ReservationError,
     ReservationLocked,
     SessionStore,
 )
+
+
+#: Session Lifetime of the hypothetical long-lived Node used by the
+#: ``Retry-After`` tests: 24 hours, the specified maximum, and the case the
+#: derivation exists for. A Node running the 60-minute default never produces
+#: a 425 against a conforming client — the client renews at 30 minutes, past
+#: the Node's 20-minute gate — so the interesting behaviour only appears once
+#: the Node is configured longer than the minimum a client must assume.
+_NODE_LIFETIME: float = 86400.0
 
 
 def _new_store() -> tuple[SessionStore, RemoteNodeClient, AdminSessionStore]:
@@ -227,7 +240,7 @@ class TestPollingTask:
         )
 
         await store.acquire(admin, "dev1", "https://n/e/", oauth2_on_remote=False)
-        fake_now = time.monotonic() + res_mod.HALF_LIFETIME + 5
+        fake_now = time.monotonic() + res_mod.MIN_LIFETIME / 2 + 5
         original = time.monotonic
         time.monotonic = lambda: fake_now  # type: ignore[assignment]
         try:
@@ -265,7 +278,7 @@ class TestPollingTask:
         stub_keepalive.return_value = RemoteCallResult(status=200, body=None)
 
         await store.acquire(admin, "dev1", "https://n/e/", oauth2_on_remote=False)
-        base = time.monotonic() + res_mod.HALF_LIFETIME + 5
+        base = time.monotonic() + res_mod.MIN_LIFETIME / 2 + 5
         original = time.monotonic
         try:
             for offset in (0.0, 1.0, 2.0):        # three consecutive ticks
@@ -309,7 +322,7 @@ class TestPollingTask:
         original = time.monotonic
         try:
             # Tick 1: renew is due, comes back 425, deferral recorded.
-            first = time.monotonic() + res_mod.HALF_LIFETIME + 5
+            first = time.monotonic() + res_mod.MIN_LIFETIME / 2 + 5
             time.monotonic = lambda: first  # type: ignore[assignment]
             await store._tick()
             # Tick 2: still inside the deferral, and now the keepalive is due.
@@ -340,7 +353,7 @@ class TestPollingTask:
         await store.acquire(admin, "dev1", "https://n/e/", oauth2_on_remote=False)
         original = time.monotonic
         try:
-            first = time.monotonic() + res_mod.HALF_LIFETIME + 5
+            first = time.monotonic() + res_mod.MIN_LIFETIME / 2 + 5
             time.monotonic = lambda: first  # type: ignore[assignment]
             await store._tick()
             sess = next(s for s in store.snapshot() if s.node_id == "dev1")
@@ -357,6 +370,263 @@ class TestPollingTask:
         assert store.current_token(admin, "dev1") == "t2"
         sess = next(s for s in store.snapshot() if s.node_id == "dev1")
         assert sess.renew_after == 0.0, "deferral survived a successful renew"
+
+    @pytest.mark.asyncio
+    async def test_retry_after_sets_the_deferral(self) -> None:
+        """§Renew: the client defers by the advertised delay, not by a guess.
+
+        Without this the controller falls back to a fixed 60 s poll, which
+        against a long-Lifetime Node means hundreds of speculative renews
+        before one lands.
+        """
+        import time
+        import nmos.controller.reservation as res_mod
+
+        store, client, admin_store = _new_store()
+        admin = admin_store.get_or_create("s")
+        stub_acquire: Any = client.acquire_exclusive
+        stub_renew: Any = client.renew_exclusive
+        stub_acquire.return_value = RemoteCallResult(status=200, body="t")
+        stub_renew.return_value = RemoteCallResult(
+            status=res_mod.HTTP_TOO_EARLY, body=None, retry_after=39600,
+        )
+
+        await store.acquire(admin, "dev1", "https://n/e/", oauth2_on_remote=False)
+        fake_now = time.monotonic() + res_mod.MIN_LIFETIME / 2 + 5
+        original = time.monotonic
+        time.monotonic = lambda: fake_now  # type: ignore[assignment]
+        try:
+            await store._tick()
+        finally:
+            time.monotonic = original  # type: ignore[assignment]
+
+        sess = next(s for s in store.snapshot() if s.node_id == "dev1")
+        assert sess.renew_after == pytest.approx(fake_now + 39600), (
+            "the advertised Retry-After was ignored in favour of the fallback"
+        )
+        assert sess.renew_after != pytest.approx(
+            fake_now + res_mod.RENEW_TOO_EARLY_RETRY,
+        )
+        assert store.current_token(admin, "dev1") == "t"
+
+    @pytest.mark.asyncio
+    async def test_retry_after_derives_the_session_lifetime(self) -> None:
+        """§Renew: the Lifetime is "twice the sum of the `Retry-After` delay
+        and the time elapsed since its most recent successful `Acquire` or
+        `Renew`".
+
+        A 24-hour Node: the controller renews at 1805 s (half the assumed
+        60-minute minimum, plus the 5 s needed to cross a strictly-greater
+        threshold), is refused with a delay of 43200 - 1805 = 41395 s, and must
+        conclude 2 * (41395 + 1805) = 86400.
+        """
+        import time
+        import nmos.controller.reservation as res_mod
+
+        store, client, admin_store = _new_store()
+        admin = admin_store.get_or_create("s")
+        stub_acquire: Any = client.acquire_exclusive
+        stub_renew: Any = client.renew_exclusive
+        stub_acquire.return_value = RemoteCallResult(status=200, body="t")
+
+        original = time.monotonic
+        acquired_at = time.monotonic()
+        try:
+            time.monotonic = lambda: acquired_at  # type: ignore[assignment]
+            await store.acquire(
+                admin, "dev1", "https://n/e/", oauth2_on_remote=False,
+            )
+            sess = next(s for s in store.snapshot() if s.node_id == "dev1")
+            assert sess.lifetime == res_mod.MIN_LIFETIME, (
+                "a client must assume the 60-minute minimum before it knows"
+            )
+
+            elapsed = res_mod.MIN_LIFETIME / 2 + 5           # 1805
+            stub_renew.return_value = RemoteCallResult(
+                status=res_mod.HTTP_TOO_EARLY, body=None,
+                retry_after=int(_NODE_LIFETIME / 2 - elapsed),
+            )
+            fake_now = acquired_at + elapsed
+            time.monotonic = lambda: fake_now  # type: ignore[assignment]
+            await store._tick()
+        finally:
+            time.monotonic = original  # type: ignore[assignment]
+
+        sess = next(s for s in store.snapshot() if s.node_id == "dev1")
+        assert sess.lifetime == pytest.approx(_NODE_LIFETIME, abs=2.0)
+        # The Lifetime runs from the last acquire/renew, not from the moment
+        # the Node happened to refuse us.
+        assert sess.expires_at == pytest.approx(
+            acquired_at + _NODE_LIFETIME, abs=2.0,
+        )
+
+    @pytest.mark.asyncio
+    async def test_derived_lifetime_stops_the_speculative_renews(self) -> None:
+        """The point of deriving it: converge after exactly one rejection.
+
+        Once the controller knows the Node runs 24 hours, the renew threshold
+        moves out to 12 hours and no further renew is attempted in between —
+        the behaviour a fixed 60 s retry could never reach.
+        """
+        import time
+        import nmos.controller.reservation as res_mod
+
+        store, client, admin_store = _new_store()
+        admin = admin_store.get_or_create("s")
+        stub_acquire: Any = client.acquire_exclusive
+        stub_renew: Any = client.renew_exclusive
+        stub_keepalive: Any = client.keepalive_exclusive
+        stub_acquire.return_value = RemoteCallResult(status=200, body="t")
+        stub_keepalive.return_value = RemoteCallResult(status=200, body=None)
+
+        original = time.monotonic
+        acquired_at = time.monotonic()
+        try:
+            time.monotonic = lambda: acquired_at  # type: ignore[assignment]
+            await store.acquire(
+                admin, "dev1", "https://n/e/", oauth2_on_remote=False,
+            )
+
+            # First renew attempt, just past half the assumed minimum → refused.
+            elapsed = res_mod.MIN_LIFETIME / 2 + 5
+            stub_renew.return_value = RemoteCallResult(
+                status=res_mod.HTTP_TOO_EARLY, body=None,
+                retry_after=int(_NODE_LIFETIME / 2 - elapsed),
+            )
+            time.monotonic = lambda: acquired_at + elapsed  # type: ignore
+            await store._tick()
+            assert stub_renew.await_count == 1
+
+            # Hours later — long past the old fixed fallback window and past
+            # the assumed-minimum threshold, but short of the derived 12-hour
+            # one — nothing further should be sent.
+            for hours in (1, 3, 6, 11):
+                at = acquired_at + hours * 3600.0
+                time.monotonic = lambda a=at: a  # type: ignore
+                await store._tick()
+        finally:
+            time.monotonic = original  # type: ignore[assignment]
+
+        assert stub_renew.await_count == 1, (
+            f"renew fired {stub_renew.await_count}x before the derived "
+            f"12-hour threshold — the derived Lifetime is not being used"
+        )
+
+    @pytest.mark.asyncio
+    async def test_missing_retry_after_falls_back(self) -> None:
+        """A Node that omits the header is non-conformant, but the token is
+        still valid and blind retrying still converges — so fall back rather
+        than treat it as a failure. The believed Lifetime must be left alone:
+        nothing was learned.
+        """
+        import time
+        import nmos.controller.reservation as res_mod
+
+        store, client, admin_store = _new_store()
+        admin = admin_store.get_or_create("s")
+        stub_acquire: Any = client.acquire_exclusive
+        stub_renew: Any = client.renew_exclusive
+        stub_acquire.return_value = RemoteCallResult(status=200, body="t")
+        stub_renew.return_value = RemoteCallResult(
+            status=res_mod.HTTP_TOO_EARLY, body=None,      # retry_after=None
+        )
+
+        await store.acquire(admin, "dev1", "https://n/e/", oauth2_on_remote=False)
+        fake_now = time.monotonic() + res_mod.MIN_LIFETIME / 2 + 5
+        original = time.monotonic
+        time.monotonic = lambda: fake_now  # type: ignore[assignment]
+        try:
+            await store._tick()
+        finally:
+            time.monotonic = original  # type: ignore[assignment]
+
+        sess = next(s for s in store.snapshot() if s.node_id == "dev1")
+        assert sess.renew_after == pytest.approx(
+            fake_now + res_mod.RENEW_TOO_EARLY_RETRY,
+        )
+        assert sess.lifetime == res_mod.MIN_LIFETIME
+        assert store.current_token(admin, "dev1") == "t"
+
+    @pytest.mark.asyncio
+    async def test_derived_lifetime_never_falls_below_the_minimum(self) -> None:
+        """A conformant Node cannot advertise a sub-minimum Lifetime, so a
+        figure below the floor means a broken Node or a clock anomaly.
+        Clamping keeps the renew schedule inside what the floor already
+        guarantees is safe instead of accelerating it on bad data.
+        """
+        import time
+        import nmos.controller.reservation as res_mod
+
+        store, client, admin_store = _new_store()
+        admin = admin_store.get_or_create("s")
+        stub_acquire: Any = client.acquire_exclusive
+        stub_renew: Any = client.renew_exclusive
+        stub_acquire.return_value = RemoteCallResult(status=200, body="t")
+        stub_renew.return_value = RemoteCallResult(
+            status=res_mod.HTTP_TOO_EARLY, body=None, retry_after=1,
+        )
+
+        await store.acquire(admin, "dev1", "https://n/e/", oauth2_on_remote=False)
+        fake_now = time.monotonic() + res_mod.MIN_LIFETIME / 2 + 5
+        original = time.monotonic
+        time.monotonic = lambda: fake_now  # type: ignore[assignment]
+        try:
+            await store._tick()
+        finally:
+            time.monotonic = original  # type: ignore[assignment]
+
+        sess = next(s for s in store.snapshot() if s.node_id == "dev1")
+        assert sess.lifetime >= res_mod.MIN_LIFETIME
+
+    @pytest.mark.asyncio
+    async def test_successful_renew_rebases_on_the_derived_lifetime(self) -> None:
+        """§KeepAlive: "Only the Renew operation extends the 'Session
+        Lifetime'." After a successful renew the schedule must restart from
+        that instant, using the Lifetime already derived rather than reverting
+        to the assumed minimum.
+        """
+        import time
+        import nmos.controller.reservation as res_mod
+
+        store, client, admin_store = _new_store()
+        admin = admin_store.get_or_create("s")
+        stub_acquire: Any = client.acquire_exclusive
+        stub_renew: Any = client.renew_exclusive
+        stub_keepalive: Any = client.keepalive_exclusive
+        stub_acquire.return_value = RemoteCallResult(status=200, body="t")
+        stub_keepalive.return_value = RemoteCallResult(status=200, body=None)
+
+        original = time.monotonic
+        acquired_at = time.monotonic()
+        try:
+            time.monotonic = lambda: acquired_at  # type: ignore[assignment]
+            await store.acquire(
+                admin, "dev1", "https://n/e/", oauth2_on_remote=False,
+            )
+
+            elapsed = res_mod.MIN_LIFETIME / 2 + 5
+            stub_renew.return_value = RemoteCallResult(
+                status=res_mod.HTTP_TOO_EARLY, body=None,
+                retry_after=int(_NODE_LIFETIME / 2 - elapsed),
+            )
+            time.monotonic = lambda: acquired_at + elapsed  # type: ignore
+            await store._tick()
+
+            # Come back just past the advertised time; this renew succeeds.
+            renewed_at = acquired_at + _NODE_LIFETIME / 2 + 5
+            stub_renew.return_value = RemoteCallResult(status=200, body="t2")
+            time.monotonic = lambda: renewed_at  # type: ignore[assignment]
+            await store._tick()
+        finally:
+            time.monotonic = original  # type: ignore[assignment]
+
+        sess = next(s for s in store.snapshot() if s.node_id == "dev1")
+        assert store.current_token(admin, "dev1") == "t2"
+        assert sess.renewed_at == pytest.approx(renewed_at)
+        assert sess.expires_at == pytest.approx(
+            renewed_at + _NODE_LIFETIME, abs=2.0,
+        ), "expiry reverted to the assumed minimum after a successful renew"
+        assert sess.renew_after == 0.0
 
     @pytest.mark.asyncio
     async def test_renew_failure_other_than_425_still_reacquires(self) -> None:
@@ -376,7 +646,7 @@ class TestPollingTask:
         stub_renew.return_value = RemoteCallResult(status=401, body=None)
 
         await store.acquire(admin, "dev1", "https://n/e/", oauth2_on_remote=False)
-        fake_now = time.monotonic() + res_mod.HALF_LIFETIME + 5
+        fake_now = time.monotonic() + res_mod.MIN_LIFETIME / 2 + 5
         original = time.monotonic
         time.monotonic = lambda: fake_now  # type: ignore[assignment]
         try:
@@ -554,7 +824,7 @@ class TestPollingTask:
         stub_keepalive.return_value = RemoteCallResult(status=200, body=None)
 
         await store.acquire(admin, "dev1", "https://n/e/", oauth2_on_remote=False)
-        base = time.monotonic() + res_mod.HALF_LIFETIME + 5
+        base = time.monotonic() + res_mod.MIN_LIFETIME / 2 + 5
         original = time.monotonic
         try:
             for offset in (0.0, 1.0, 2.0):
@@ -628,3 +898,50 @@ class TestLifecycle:
         stub_release.assert_awaited()
         # Task is re-awaitable after stop (None-ed out).
         await asyncio.sleep(0)
+
+
+class TestRetryAfterParsing:
+    """``Retry-After`` parsing, per RFC 9110 §10.2.3 as narrowed by §Renew.
+
+    ``Retry-After = HTTP-date / delay-seconds`` with
+    ``delay-seconds = 1*DIGIT``. The Node Reservation spec mandates the
+    delay-seconds form and forbids HTTP-date "so that the delay is unaffected
+    by any clock difference between the client and the Node", so this parser
+    accepts digits only. Anything else yields ``None``, which the caller reads
+    as "no advertised delay" and handles by falling back — never by failing.
+    """
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("60", 60),
+            ("0", 0),
+            ("41395", 41395),
+            ("86400", 86400),
+            ("  120  ", 120),           # surrounding whitespace tolerated
+        ],
+    )
+    def test_delay_seconds_is_parsed(self, raw: str, expected: int) -> None:
+        assert _parse_retry_after(raw) == expected
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "",                                      # header absent
+            "Fri, 31 Dec 1999 23:59:59 GMT",         # HTTP-date: forbidden here
+            "-1",                                    # not 1*DIGIT
+            "60.5",                                  # not 1*DIGIT
+            "sixty",
+            "60s",
+            "1,200",
+        ],
+    )
+    def test_non_conforming_values_yield_none(self, raw: str) -> None:
+        """An HTTP-date is the important one.
+
+        RFC 9110 permits it generally, but honouring it here would reintroduce
+        exactly the client/Node clock dependency §Renew rules out. Rejecting it
+        makes the controller fall back to a fixed retry — safe, and it keeps
+        the Node's non-conformance visible instead of papering over it.
+        """
+        assert _parse_retry_after(raw) is None

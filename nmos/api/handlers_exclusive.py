@@ -19,7 +19,8 @@ from typing import Any
 from aiohttp import web
 
 from nmos.api.response import json_response, error_response, status_response
-from nmos.errors import Busy, NotAllowed, Skip
+from nmos.crypto import TooEarly
+from nmos.errors import Busy, NotAllowed
 from nmos.json.engine import JsonEngine
 
 
@@ -105,8 +106,24 @@ async def handle_post_renew(request: web.Request) -> web.Response:
 
     try:
         new_token = node.exclusive_session.renew(token)
-    except Skip:
-        return error_response(425, "too early to renew", request=request)
+    except TooEarly as exc:
+        # Spec §Renew: "A `425 Too Early` response MUST include a `Retry-After`
+        # response header as defined in RFC 9110. The `delay-seconds` form MUST
+        # be used and the `HTTP-date` form MUST NOT be used, so that the delay
+        # is unaffected by any clock difference between the client and the
+        # Node."
+        #
+        # This is the only channel through which a client can learn a Node's
+        # configured Session Lifetime: §Renew lets it derive the Lifetime as
+        # twice the sum of this delay and its own elapsed time since the last
+        # Acquire or Renew. Omitting the header leaves a client polling blindly
+        # against the 60-minute minimum it had to assume.
+        return error_response(
+            425,
+            "too early to renew",
+            headers={"Retry-After": str(exc.retry_after)},
+            request=request,
+        )
     except NotAllowed:
         return error_response(
             401,
