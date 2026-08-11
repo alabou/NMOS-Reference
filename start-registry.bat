@@ -31,10 +31,6 @@ rem
 rem TR-10-SEC: the Registration API must never require OAuth 2.0 (:105), so
 rem --oauth2 deliberately affects the Query API only.
 rem
-rem Note the node launchers have Windows counterparts only for the bare
-rem (no-TLS) scenario, so this script is normally paired with a Linux node or
-rem used to serve a TLS registry to nodes elsewhere on the network.
-rem
 rem Set IPMX_CERT_ROOT to relocate the Certificates tree.
 rem Set NMOS_PYTHON_EXE to override Python discovery.
 
@@ -107,7 +103,7 @@ set "EXIT_CODE=64"
 goto done
 
 :options_done
-call :require_port "<registration-port>" "%REG_PORT%" 2 65531
+call :require_port "registration-port" "%REG_PORT%" 2 65531
 if errorlevel 1 (
   set "EXIT_CODE=64"
   goto done
@@ -219,7 +215,7 @@ if "%USE_OAUTH2%"=="1" (
 
 call :find_python
 if errorlevel 1 (
-  >&2 echo start-registry.bat: no Python 3.12+ interpreter found (checked NMOS_PYTHON_EXE, .venv, py -3, python.exe).
+  >&2 echo start-registry.bat: no Python 3.12+ interpreter found ^(checked NMOS_PYTHON_EXE, .venv, py -3, python.exe^).
   >&2 echo Create .venv first, or install Python and make python.exe or py.exe available.
   set "EXIT_CODE=9009"
   goto done

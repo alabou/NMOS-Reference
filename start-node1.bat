@@ -110,12 +110,12 @@ if not "%NAP%"=="2" (
   goto done
 )
 
-call :require_port "<as-port>" "%AS_PORT%" 1 65535
+call :require_port "as-port" "%AS_PORT%" 1 65535
 if errorlevel 1 (
   set "EXIT_CODE=64"
   goto done
 )
-call :require_port "<registration-port>" "%RDS_REG_PORT%" 2 65535
+call :require_port "registration-port" "%RDS_REG_PORT%" 2 65535
 if errorlevel 1 (
   set "EXIT_CODE=64"
   goto done
@@ -205,7 +205,7 @@ if "%RAP%"=="0" (
 
 call :find_python
 if errorlevel 1 (
-  >&2 echo start-node1.bat: no Python 3.12+ interpreter found (checked NMOS_PYTHON_EXE, .venv, py -3, python.exe).
+  >&2 echo start-node1.bat: no Python 3.12+ interpreter found ^(checked NMOS_PYTHON_EXE, .venv, py -3, python.exe^).
   >&2 echo Create .venv first, or install Python and make python.exe or py.exe available.
   set "EXIT_CODE=9009"
   goto done
