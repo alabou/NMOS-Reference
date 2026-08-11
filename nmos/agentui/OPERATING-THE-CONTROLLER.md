@@ -162,6 +162,7 @@ Reach for this when a step fails and the message alone is not enough.
 | Result cell reads `active`/`idle` instead of `OK (200)` | The status stream overwrote the outcome. The driver reports this as `results_overwritten_by_status_stream`; the action still happened, but this run cannot say what it returned. |
 | `BlockedControl` on the exclusivity switch or a privacy dropdown, reason *"Deactivate the selection to change…"* | Rule C. Deactivate **both** the sender and the receiver — one active resource locks all four privacy controls. |
 | `Find compatible senders` yields an empty list | The chosen receiver has no compatible sender. Not an error — take the sender-only path instead. |
+| `read_rows()` raises `GroupOnlyRendering` on the compatible-senders page | The page is in **group** mode and has collapsed its member rows, so it offers whole groups. Not an absence of senders — use `read_groups()` and `select_group()`. See §4. |
 | A native alert on submit | The page's own selection guard. The count of selected resources does not match what the next page needs. |
 | Every parameter offers exactly one value | You picked a **native** constraint set. Native sets pin one value per parameter; choose a non-native one for flexibility. |
 | A parameter widget is disabled | Normal. The device does not expose that adjustment through IS-11 — transport capabilities are commonly read-only. Check `p.editable` before insisting. |
@@ -205,6 +206,23 @@ Two behaviours to watch for, both of which the driver surfaces rather than hides
   `#sender_ids` / `#receiver_ids` / `#selection_mode`, not what you believe you
   clicked. `read_selection()` reads those as rendered, which is why it is worth
   calling before a submit that matters.
+
+  This is only true because the page keeps them current. `controller.js` used to
+  fill those fields exclusively inside `submitSelection()`, so until you pressed
+  the button they described a selection nobody had made any more: `#receiver_ids`
+  sat empty with two members ticked, and `#selection_mode` still read `single`
+  when the submit would send `group`. `initSelection` now re-syncs them on every
+  change (and once at load, for a restored selection), from the same
+  `_computeSelection` the submit path uses — one rule, so the two cannot drift.
+
+- **Selecting every member of a group is not the same as selecting its members.**
+  `_recomputeGroupRadios` turns the group radio on as soon as all of a group's
+  members are ticked and none outside it are, and the radio wins: the submit goes
+  out as `mode=group`. Groups of exactly one member therefore reach `group` mode
+  from a single click. It matters because `mode` decides how the *next* page
+  renders — in `group` mode the compatible-senders page collapses its member rows
+  and offers whole groups, which is why `read_rows()` raises `GroupOnlyRendering`
+  there rather than returning an empty list.
 
 ## 5. Green means "this is what the stream is doing now"
 

@@ -34,6 +34,7 @@ from .errors import (
     ActionFailed,
     BlockedControl,
     ControlAbsent,
+    GroupOnlyRendering,
     LiveUpdateNotObserved,
     NoSuchOption,
     SelectionGuard,
@@ -62,6 +63,68 @@ def _first_selectable(rows: Sequence[ResourceRow]) -> ResourceRow:
             "this page lists no resources, so there is nothing to demonstrate. "
             "Is the node registered with a registry and serving senders?")
     return rows[0]
+
+
+@dataclass(frozen=True)
+class _SenderChoice:
+    """One thing the compatible-senders page offers, however it renders it."""
+
+    device_serial: str
+    label: str
+    ids: tuple[str, ...]
+    #: True when this is a whole group rather than one sender.
+    grouped: bool
+    #: What to click: a member checkbox, or any member of the group's radio.
+    anchor_id: str
+
+
+def _compatible_senders(session: ControllerSession) -> tuple[_SenderChoice, ...]:
+    """Everything selectable on the compatible-senders page, in either shape.
+
+    The page has two shapes, decided by the mode of the receiver selection that
+    produced it. In ``single`` / ``subset`` mode it lists individual senders as
+    member rows. In ``group`` mode it collapses those rows
+    (``device_block.html``'s ``group_only``) and offers whole groups instead --
+    which happens whenever *every* member of the receiver's natural group was
+    ticked, including the very common case of a group with exactly one member.
+
+    Reading only the first shape is what let a scenario announce "no compatible
+    senders" while the page displayed several: ``read_rows`` had nothing to
+    match and returned empty, which is indistinguishable from a genuinely empty
+    result. It now raises :class:`GroupOnlyRendering`, so the second shape is
+    handled here instead of being mistaken for an absence.
+
+    An empty tuple therefore means what it says: the page offers nothing.
+    """
+    try:
+        rows = session.read_rows()
+    except GroupOnlyRendering:
+        return tuple(
+            _SenderChoice(device_serial=group.device_serial,
+                          label=group.label,
+                          ids=tuple(group.member_ids),
+                          grouped=True,
+                          anchor_id=group.member_ids[0])
+            for group in session.read_groups() if group.member_ids
+        )
+    return tuple(
+        _SenderChoice(device_serial=row.device_serial,
+                      label=row.label or row.resource_id,
+                      ids=(row.resource_id,),
+                      grouped=False,
+                      anchor_id=row.resource_id)
+        for row in rows
+    )
+
+
+def _choose_sender(session: ControllerSession, choice: _SenderChoice) -> None:
+    """Select one :class:`_SenderChoice` and submit it."""
+    session.clear_selection()
+    if choice.grouped:
+        session.select_group(member_id=choice.anchor_id)
+    else:
+        session.select_resource(resource_id=choice.anchor_id)
+    session.submit_selection()
 
 
 def _toggle_state(control: Control) -> bool | None:
@@ -344,14 +407,12 @@ def _blocked_controls(session: ControllerSession) -> None:
         session.note(f"Cannot reach the configure page: “{guard.alert_text}”.")
         return
 
-    sender_rows = session.read_rows()
-    if not sender_rows:
+    choices = _compatible_senders(session)
+    if not choices:
         session.note("No compatible senders, so the configure page is unreachable.")
         return
-    session.clear_selection()
-    session.select_resource(resource_id=sender_rows[0].resource_id)
     try:
-        session.submit_selection()
+        _choose_sender(session, choices[0])
         session.continue_to_configuration()
     except (SelectionGuard, ControlAbsent) as exc:
         session.note(f"Could not reach configuration: {exc}")
@@ -398,13 +459,11 @@ def _route_one_receiver(session: ControllerSession) -> None:
     session.select_resource(resource_id=target.resource_id)
     session.submit_selection()
 
-    sender_rows = session.read_rows()
-    if not sender_rows:
+    choices = _compatible_senders(session)
+    if not choices:
         session.note("No compatible senders for this receiver; stopping.")
         return
-    session.clear_selection()
-    session.select_resource(resource_id=sender_rows[0].resource_id)
-    session.submit_selection()
+    _choose_sender(session, choices[0])
 
     sets = session.read_constraint_sets()
     if sets:
@@ -495,13 +554,11 @@ def _privacy_exclusivity(session: ControllerSession) -> None:
     session.select_resource(resource_id=target.resource_id)
     session.submit_selection()
 
-    sender_rows = session.read_rows()
-    if not sender_rows:
+    choices = _compatible_senders(session)
+    if not choices:
         session.note("No compatible senders; stopping.")
         return
-    session.clear_selection()
-    session.select_resource(resource_id=sender_rows[0].resource_id)
-    session.submit_selection()
+    _choose_sender(session, choices[0])
     session.continue_to_configuration()
 
     if session.read_privacy() is None:
@@ -647,7 +704,7 @@ def _cross_node_reverse(session: ControllerSession) -> None:
     session.submit_selection()
 
     # A sender on a *different* node is what makes the route cross-node.
-    senders = session.read_rows()
+    senders = _compatible_senders(session)
     remote = [x for x in senders
               if x.device_serial and x.device_serial != receiver.device_serial]
     if not remote:
@@ -662,9 +719,7 @@ def _cross_node_reverse(session: ControllerSession) -> None:
         f"Choosing sender {sender.label!r} on {sender.device_serial} — a route "
         f"from {sender.device_serial} to {receiver.device_serial}."
     )
-    session.clear_selection()
-    session.select_resource(resource_id=sender.resource_id)
-    session.submit_selection()
+    _choose_sender(session, sender)
     session.continue_to_configuration()
 
     # Both forms of the shape-shifter are usually visible together here.
@@ -1111,7 +1166,7 @@ def _tutorial_jpegxs(session: ControllerSession) -> None:
     )
 
     session.submit_selection()
-    senders = session.read_rows()
+    senders = _compatible_senders(session)
     sender = next(s_ for s_ in senders if s_.device_serial == "SNX00001")
 
     session.teach(
@@ -1144,9 +1199,7 @@ def _tutorial_jpegxs(session: ControllerSession) -> None:
         ),
     )
 
-    session.clear_selection()
-    session.select_resource(resource_id=sender.resource_id)
-    session.submit_selection()
+    _choose_sender(session, sender)
 
     sets = session.read_constraint_sets()
     jxs = next(cs for cs in sets if cs.media_type == "video/jxsv"

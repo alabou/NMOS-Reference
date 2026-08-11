@@ -160,6 +160,32 @@ class PageModelMismatch(AgentUiError):
         self.actual = actual
 
 
+class GroupOnlyRendering(AgentUiError):
+    """The page offers whole groups, so there are no member rows to list.
+
+    Raised by ``read_rows`` when a selection page has collapsed its per-member
+    rows and renders only group radios — which
+    ``receivers_compatible_senders.html`` does whenever the receiver selection
+    was submitted in ``group`` mode.
+
+    It exists because the honest answer is neither a row list nor an empty one.
+    Returning ``()`` was indistinguishable from "this receiver has no
+    compatible sender", and the operating guide tells readers to interpret an
+    empty list exactly that way — so a page listing several compatible sender
+    groups was reported as offering none, and scenarios stopped early with a
+    confident wrong conclusion.
+
+    ``group_count`` is carried so a caller can say how many groups it saw
+    without re-reading the page, and the message names the verbs that do apply.
+    """
+
+    def __init__(self, msg: str, *, group_count: int = 0,
+                 actual: PageId = PageId.UNKNOWN) -> None:
+        super().__init__(msg)
+        self.group_count = group_count
+        self.actual = actual
+
+
 # ---------------------------------------------------------------------------
 # Locating and control-state errors
 # ---------------------------------------------------------------------------

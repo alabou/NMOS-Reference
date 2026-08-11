@@ -185,6 +185,10 @@ runs standalone — see the note under
 
 ### Required before any TLS configuration: hosts-file entries
 
+**You anti-virus may prevent you from testing NMOS-Reference with TLS** Some anti-virus software performs HTTPS scanning, in which it intercepts HTTPS communications within and outside the computer and inserts itself into the communication path and the TLS trust chain. This can prevent Nodes from communicating and authenticating themselves as expected.
+
+Under Windows, it is best to perform TLS testing under WSL. Under Linux-based operating systems, there should normally be no problem unless similar HTTPS interception is performed by installed security tools.
+
 **Every TLS configuration reaches its peers by DNS name, never by IP address.** The
 shipped certificates carry DNS SANs of the form `XYZ-SNX000nn` (plus a `.local`
 variant), and RFC 6125 hostname verification compares the name in the URL against

@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from ...attach import attach_controller
-from ...enums import SseVerdict, StepOutcome
+from ...enums import PageId, SseVerdict, StepOutcome
 from ...scenarios import SCENARIOS
 
 #: Every test in this module needs a browser and a running node. Declared at
@@ -182,6 +182,142 @@ class TestLivenessHonesty:
         # the driver was crediting server-rendered markers as live updates.
         manifest = _run("attach-and-look", artifacts_root)
         assert manifest["sse"] == SseVerdict.NOT_EXERCISED.value
+
+
+class TestCompatibleSendersShapes:
+    """The compatible-senders page must never look empty when it is not.
+
+    These are the checks that were missing. ``FakeSurface`` is a
+    ``selector -> snapshots`` map, so no unit test can tell whether a selector
+    matches the real markup; and the read-only scenarios above never visit this
+    page, because every scenario that routes is mutating and deliberately
+    excluded. Between those two facts, a verb that returned empty on a page
+    full of selectable groups was invisible to the whole suite — and the
+    scenarios then reported "no compatible senders" for a receiver that had
+    several.
+
+    Navigating here writes nothing: the page is reached with GET requests and
+    no toggle is pressed, so this belongs in the unattended run.
+    """
+
+    @staticmethod
+    def _first_receiver_of_a_sole_member_group(session: object) -> str | None:
+        """A receiver that is the only member of its natural group.
+
+        That is the case which promotes the submit to ``group`` mode -- the
+        group radio goes on as soon as *all* of a group's members are ticked --
+        and so produces the collapsed rendering.
+        """
+        for group in session.read_groups():  # type: ignore[attr-defined]
+            if len(group.member_ids) == 1:
+                return group.member_ids[0]
+        return None
+
+    def test_group_mode_is_reported_as_groups_not_as_nothing(
+        self, running_node: object, artifacts_root: Path,
+    ) -> None:
+        from ...errors import GroupOnlyRendering
+
+        with attach_controller(scenario="e2e-compatible-senders-group",
+                               artifacts_root=artifacts_root) as session:
+            session.open_receivers()
+            session.clear_selection()
+            sole = self._first_receiver_of_a_sole_member_group(session)
+            if sole is None:
+                pytest.skip("no sole-member receiver group on this rig")
+
+            session.select_resource(resource_id=sole)
+            page = session.submit_selection()
+            if "mode=group" not in page.url:
+                pytest.skip(f"selection did not promote to group mode: {page.url}")
+
+            # The regression: this used to return () and every caller read that
+            # as "no compatible sender exists".
+            try:
+                rows = session.read_rows()
+            except GroupOnlyRendering as collapsed:
+                assert collapsed.group_count > 0
+                groups = session.read_groups()
+                assert groups, (
+                    "read_rows reported a collapsed page but read_groups found "
+                    "nothing -- one of the two selectors is wrong")
+                return
+            # The other legal outcome: the page really did render member rows.
+            assert rows, (
+                "the page rendered neither member rows nor group radios, yet "
+                "reported no collapse")
+
+    def test_something_selectable_is_always_visible(
+        self, running_node: object, artifacts_root: Path,
+    ) -> None:
+        """Whatever the shape, the two readers must not BOTH come back empty.
+
+        The single cheapest guard against this class of bug: if the operator can
+        see something to pick, at least one read verb has to be able to say so.
+        """
+        from ...errors import GroupOnlyRendering
+
+        with attach_controller(scenario="e2e-compatible-senders-nonempty",
+                               artifacts_root=artifacts_root) as session:
+            session.open_receivers()
+            session.clear_selection()
+            receivers = session.read_rows()
+            if not receivers:
+                pytest.skip("no receivers on this rig")
+
+            session.select_resource(resource_id=receivers[0].resource_id)
+            page = session.submit_selection()
+            assert page.page_id is PageId.RECEIVERS_COMPATIBLE_SENDERS
+
+            try:
+                rows = session.read_rows()
+            except GroupOnlyRendering:
+                rows = ()
+            groups = session.read_groups()
+            # An empty page is legitimate (no compatible sender). What is not
+            # legitimate is the page showing groups while both readers say
+            # nothing -- so tie the assertion to what is actually rendered.
+            if "Configure capabilities" in page.text:
+                assert rows or groups, (
+                    "the page offers a submit button for a selection, yet "
+                    "neither read_rows() nor read_groups() found anything to "
+                    f"select. URL: {page.url}")
+
+
+class TestSelectionFieldsAreTruthful:
+    """``read_selection`` must describe what a submit would actually send.
+
+    OPERATING-THE-CONTROLLER.md §4 tells readers the hidden fields are the
+    truth and worth reading before a submit that matters. That only holds
+    because ``initSelection`` now re-syncs them on every change; previously
+    ``submitSelection`` was the sole writer, so before the click
+    ``#receiver_ids`` was empty and ``#selection_mode`` still said ``single``
+    while the submit went out as ``group``.
+    """
+
+    def test_hidden_fields_match_the_submitted_url(
+        self, running_node: object, artifacts_root: Path,
+    ) -> None:
+        with attach_controller(scenario="e2e-selection-truthful",
+                               artifacts_root=artifacts_root) as session:
+            session.open_receivers()
+            session.clear_selection()
+            rows = session.read_rows()
+            if not rows:
+                pytest.skip("no receivers on this rig")
+
+            session.select_resource(resource_id=rows[0].resource_id)
+            before = session.read_selection()
+            page = session.submit_selection()
+
+            # What the page said it would send, before it sent anything.
+            assert before.submitted_receiver_ids, (
+                "#receiver_ids was empty while a receiver was ticked: the "
+                "hidden fields are not being kept in sync")
+            for resource_id in before.submitted_receiver_ids:
+                assert resource_id in page.url
+            assert f"mode={before.mode}" in page.url, (
+                f"reported mode {before.mode!r} but submitted {page.url}")
 
 
 class TestEntryLatch:

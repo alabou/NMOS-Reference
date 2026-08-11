@@ -462,6 +462,30 @@ real IS-05/IS-11 calls against real devices and leave them changed. Pass
 reason verbatim — report it rather than working around it. `ControlAbsent` means
 the action does not apply here. `LiveUpdateNotObserved` means you waited and saw
 nothing: say "unconfirmed", never claim the update happened.
+`GroupOnlyRendering` means the page is offering whole groups, so `read_rows` has
+nothing to list — see the next entry.
+
+**The compatible-senders page has two shapes.** Which one you get depends on the
+mode of the receiver selection that produced it. Submit in `single` or `subset`
+mode and it lists individual senders, so `read_rows()` works. Submit in `group`
+mode — which happens as soon as *every* member of the receiver's group is ticked,
+including any group with exactly one member — and it collapses those rows to offer
+whole groups, so `read_rows()` raises `GroupOnlyRendering` and you want
+`read_groups()` + `select_group()`.
+
+Treating that as "no compatible senders" is a real mistake with a real history:
+`read_rows()` used to return an empty tuple there, indistinguishable from a
+genuinely empty result, and every routing scenario stopped early announcing that a
+receiver had no compatible sender while the page listed several. Handle both
+shapes — `scenarios.py::_compatible_senders` is the worked example:
+
+```python
+try:
+    rows = session.read_rows()          # single / subset shape
+except GroupOnlyRendering:
+    groups = session.read_groups()      # group shape
+    session.select_group(member_id=groups[0].member_ids[0])
+```
 
 **One session per snippet.** Each `attach_controller` block is a fresh browser and
 a fresh sign-in; nothing persists between snippets. Do related work in one block.

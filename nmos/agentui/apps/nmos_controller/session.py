@@ -72,6 +72,7 @@ from ...errors import (
     ControlAbsent,
     ControlHidden,
     ControllerJsNotLoaded,
+    GroupOnlyRendering,
     LiveUpdateNotObserved,
     LoginRejected,
     NoSuchOption,
@@ -587,7 +588,7 @@ class ControllerSession:
         """List the resources on a selection page, with each row's affordances."""
         with self._recorder.step("read_rows",
                                  intent="list the resources on this page") as step:
-            self._assert_on("read_rows", _SELECTION_PAGES)
+            page_id = self._assert_on("read_rows", _SELECTION_PAGES)
             rows: list[ResourceRow] = []
 
             # Which device a row sits under is on screen -- the page groups rows
@@ -643,6 +644,22 @@ class ControllerSession:
                     status=self._read_status(resource_id),
                     actions=actions,
                 ))
+
+            # No member rows, but group radios present: the page has collapsed
+            # its members and offers whole groups only. Returning () here would
+            # be read as "there is nothing to choose", which on the
+            # compatible-senders page means "no compatible sender exists" --
+            # the opposite of what the operator can see. Say which it is.
+            if not rows:
+                groups = self._surface.count(pages.GROUP_RADIOS)
+                if groups:
+                    raise GroupOnlyRendering(
+                        f"this page lists {groups} selectable group(s) and no "
+                        f"individual rows, so read_rows has nothing to return; "
+                        f"use read_groups() and select_group() here",
+                        group_count=groups,
+                        actual=page_id,
+                    )
 
             step.note("rows", [r.to_json() for r in rows])
             return tuple(rows)

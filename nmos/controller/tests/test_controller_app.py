@@ -5446,17 +5446,40 @@ class TestResourceInspector:
     ) -> None:
         # The Senders / Receivers list pages remember the last selection
         # (sessionStorage, opt-in via the ``remember`` flag).
-        stext = await (await controller_client.get(f"{PREFIX}/senders")).text()
-        assert "controller.initSelection('senders-form', { remember: true })" in stext
-        rtext = await (await controller_client.get(f"{PREFIX}/receivers")).text()
-        assert "controller.initSelection('receivers-form', { remember: true })" in rtext
+        #
+        # Each page also names the hidden fields carrying its payload, which is
+        # what lets ``initSelection`` keep them equal to the current selection.
+        # Without ``idsField`` the sync cannot run and the fields go stale
+        # between clicking and submitting -- the state OPERATING-THE-CONTROLLER
+        # §4 promises readers they can rely on. Asserted on whitespace-collapsed
+        # text so this is about the call, not how it happens to be wrapped.
+        def one_line(text: str) -> str:
+            return " ".join(text.split())
+
+        stext = one_line(await (await controller_client.get(f"{PREFIX}/senders")).text())
+        assert "controller.initSelection('senders-form', {" in stext
+        assert "remember: true" in stext
+        assert "idsField: 'sender_ids'" in stext
+
+        rtext = one_line(
+            await (await controller_client.get(f"{PREFIX}/receivers")).text())
+        assert "controller.initSelection('receivers-form', {" in rtext
+        assert "remember: true" in rtext
+        assert "idsField: 'receiver_ids'" in rtext
+        assert "modeField: 'selection_mode'" in rtext
+
         # The compatible-senders page must NOT opt in — it keeps its
-        # server-side subscribed-sender pre-select instead.
+        # server-side subscribed-sender pre-select instead. It still names its
+        # ids field, but deliberately no ``modeField``: its hidden ``mode`` is
+        # the RECEIVER selection's mode, rendered by the server, and the sync
+        # must not overwrite it with the sender selection's.
         cs = await controller_client.get(
             f"{PREFIX}/receivers/compatible-senders?receiver_ids={self._RID}&mode=single",
         )
-        cstext = await cs.text()
-        assert "controller.initSelection('compatible-senders-form')" in cstext
+        cstext = one_line(await cs.text())
+        assert "controller.initSelection('compatible-senders-form', {" in cstext
+        assert "idsField: 'sender_ids'" in cstext
+        assert "modeField" not in cstext
         assert "remember" not in cstext
 
     @pytest.mark.asyncio

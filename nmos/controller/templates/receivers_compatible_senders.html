@@ -113,7 +113,13 @@
 {% endblock %}
 {% block scripts %}
 <script>
-  controller.initSelection('compatible-senders-form');
+  {# No modeField: this page's hidden ``mode`` is the RECEIVER selection's
+     mode, rendered by the server and propagated to /receivers/caps. It is
+     not the mode of the sender selection made here, so the live sync must
+     not overwrite it. #}
+  controller.initSelection('compatible-senders-form', {
+    idsField: 'sender_ids',
+  });
   controller.initStatusStream();
 </script>
 {% endblock %}

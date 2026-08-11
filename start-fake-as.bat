@@ -13,7 +13,17 @@ rem                     [--operator=NAME] [--password=PW]
 rem
 rem   --port=P          Listen port (default 9443, same as start-keycloak.sh)
 rem   --tct=T           TLS Certificate Type: 0=RSA (default), 1=ECDSA
-rem   --serial=S        Node serial the issued tokens are scoped to
+rem   --serial=S        Node serial the issued tokens are scoped to. Repeatable:
+rem                     give it once per node the Controller should be able to
+rem                     drive, and every token carries them all in its aud. The
+rem                     FIRST one is the Controller's own host and owns the
+rem                     registered redirect URIs. A node whose serial is absent
+rem                     is discovered through the registry but refuses every
+rem                     call, which is the case worth demonstrating:
+rem
+rem                       start-fake-as.bat --serial=SNX00001 --serial=SNX00002
+rem
+rem                     leaves SNX00003 visible-but-inaccessible.
 rem                     (default SNX00001). Sets the token aud entry and the
 rem                     registered redirect URIs.
 rem   --control-port=P  Controller UI port to register redirect URIs for
@@ -43,7 +53,14 @@ pushd "%SCRIPT_DIR%" >nul || (
 
 set "AS_PORT=9443"
 set "TCT=0"
-set "NODE_SERIAL=SNX00001"
+rem --serial is repeatable, matching start-fake-as.sh. NODE_SERIAL is the FIRST
+rem one -- the Controller's own host, which owns the redirect URIs -- while
+rem AUD_ARGS accumulates one --default-aud per serial and SERIAL_COUNT decides
+rem whether the multi-audience entry point is needed.
+set "NODE_SERIAL="
+set "NODE_SERIALS="
+set "AUD_ARGS="
+set "SERIAL_COUNT=0"
 set "CONTROL_PORT=5050"
 set "CLIENT_ID=Example.Company.Device.Client.ABC.SNX00001.example.com"
 set "CLIENT_SECRET=secret"
@@ -70,7 +87,7 @@ if /i "%ARG:~0,6%"=="--tct=" (
   goto parse_options
 )
 if /i "%ARG:~0,9%"=="--serial=" (
-  set "NODE_SERIAL=%ARG:~9%"
+  call :add_serial "%ARG:~9%"
   goto parse_options
 )
 if /i "%ARG:~0,15%"=="--control-port=" (
@@ -102,6 +119,9 @@ set "EXIT_CODE=64"
 goto done
 
 :options_done
+
+rem No --serial given: scope tokens to SNX00001, as the shell launcher does.
+if %SERIAL_COUNT%==0 call :add_serial SNX00001
 
 rem Prefer the certificate subset bundled inside this repository, so a
 rem standalone clone of nmos-reference runs without the wider workspace PKI.
@@ -147,6 +167,21 @@ if not defined FAKE_AS (
   goto done
 )
 
+rem One audience is what the vendored server was built for. More than one goes
+rem through multi_aud_as.py, which rebinds mint_token so each token carries the
+rem whole list: ipmx_fake_as.py takes --default-aud as a single string, and
+rem fake-as/ stays byte-identical to the validator's copy rather than growing a
+rem local edit. Mirrors start-fake-as.sh.
+set "AS_ENTRY=%FAKE_AS%"
+if %SERIAL_COUNT% GTR 1 (
+  set "AS_ENTRY=%SCRIPT_DIR%multi_aud_as.py"
+  if not exist "%SCRIPT_DIR%multi_aud_as.py" (
+    >&2 echo start-fake-as.bat: missing "%SCRIPT_DIR%multi_aud_as.py"
+    set "EXIT_CODE=66"
+    goto done
+  )
+)
+
 rem Lowercase host: the HTTP layer normalises the Host header before the
 rem Controller reads it, and redirect-URI matching is case-sensitive even
 rem though TLS hostname matching is not (RFC 6125). Registering the uppercase
@@ -176,16 +211,16 @@ echo Authorization Server (test)   https://XYZ-SNX00000:%AS_PORT%/realms/TR-10-S
 echo   metadata   /.well-known/oauth-authorization-server/realms/TR-10-SEC
 echo   sign in as %OPERATOR% / %PASSWORD% (%OPERATOR_ACCESS%)
 echo   client     %CLIENT_ID%
-echo   tokens aud XYZ-%NODE_SERIAL%
+echo   tokens aud %NODE_SERIALS%
 echo.
 
-"%PYTHON_EXE%" %PYTHON_SELECTOR% "%FAKE_AS%" ^
+"%PYTHON_EXE%" %PYTHON_SELECTOR% "%AS_ENTRY%" ^
   --host XYZ-SNX00000 ^
   --port "%AS_PORT%" ^
   --cert "%AS_CERT%" ^
   --key "%AS_KEY%" ^
   --api-selector realms/TR-10-SEC ^
-  --default-aud "XYZ-%NODE_SERIAL%" ^
+  %AUD_ARGS% ^
   --client-id "%CLIENT_ID%" ^
   --client-secret "%CLIENT_SECRET%" ^
   %REDIRECT_ARGS% ^
@@ -194,6 +229,17 @@ echo.
   --operator-access "%OPERATOR_ACCESS%"
 set "EXIT_CODE=%ERRORLEVEL%"
 goto done
+
+rem Record one --serial. The first one becomes NODE_SERIAL, which owns the
+rem redirect URIs; every one contributes a --default-aud and a line in the
+rem banner. Called rather than inlined so the accumulation stays readable
+rem without delayed expansion.
+:add_serial
+if not defined NODE_SERIAL set "NODE_SERIAL=%~1"
+set "AUD_ARGS=%AUD_ARGS% --default-aud "XYZ-%~1""
+set "NODE_SERIALS=%NODE_SERIALS%XYZ-%~1 "
+set /a "SERIAL_COUNT+=1" >nul
+exit /b 0
 
 :find_python
 set "PYTHON_EXE="

@@ -23,7 +23,7 @@
   // while the cache-bust reached 60, so for eighteen versions anything reading
   // the reported version was told about JavaScript that had not been served in
   // months. Re-synced here; bump both together or the report is fiction.
-  const CONTROLLER_JS_VERSION = "64";
+  const CONTROLLER_JS_VERSION = "65";
 
   const controller = {};
   window.controller = controller;
@@ -293,6 +293,77 @@
   }
 
   // ------------------------------------------------------------------
+  // What would this form submit right now?
+  // ------------------------------------------------------------------
+  //
+  // The single implementation of the mode-inference rule:
+  //
+  //   group_radio on   → ``group``  (all members of one group, and no
+  //                       extras — ``_recomputeGroupRadios`` sets the
+  //                       radio exactly when that holds).
+  //   1 checkbox       → ``single``
+  //   ≥2 checkboxes    → ``subset`` (all within one group, enforced by
+  //                       ``_confineSelectionToOneGroup``; the group
+  //                       radio is off because not every member is
+  //                       ticked — otherwise we'd be in ``group``).
+  //   nothing ticked   → empty ids; the submit path turns that into the
+  //                       operator-facing alert.
+  //
+  // Cross-group selection is structurally impossible because the
+  // selection handlers auto-clear members outside the clicked group's
+  // tbody. If future changes relax that, subset mode should gain an
+  // explicit validation in ``submitSelection``.
+  function _computeSelection(form) {
+    const groupRadio = form.querySelector('input[name="_group"]:checked');
+    const checkedMembers = form.querySelectorAll("input.member-check:checked");
+
+    if (groupRadio) {
+      return {
+        ids: (groupRadio.getAttribute("data-ids") || "").trim(),
+        mode: "group",
+      };
+    }
+    if (checkedMembers.length === 1) {
+      return {
+        ids: (checkedMembers[0].getAttribute("data-ids") || "").trim(),
+        mode: "single",
+      };
+    }
+    if (checkedMembers.length >= 2) {
+      return {
+        ids: Array.from(checkedMembers)
+          .map(cb => cb.getAttribute("data-ids") || "")
+          .filter(Boolean)
+          .join(","),
+        mode: "subset",
+      };
+    }
+    return { ids: "", mode: "single" };
+  }
+
+  // Keep the hidden fields equal to ``_computeSelection`` at all times.
+  //
+  // These fields carry the whole payload of the form, and they used to be
+  // written only inside ``submitSelection`` — so between clicking and
+  // submitting they described a selection nobody had made any more:
+  // ``#receiver_ids`` sat empty while two members were ticked, and
+  // ``#selection_mode`` still read ``single`` when the submit would send
+  // ``group``. Anything reading the DOM to learn what the page would do
+  // (a driver, a test, a person in devtools) was told the wrong thing.
+  // Syncing on every change makes the markup self-describing, and leaves
+  // ``submitSelection`` a validator rather than the only writer.
+  function _syncHiddenFields(form, idsFieldId, modeFieldId) {
+    if (!idsFieldId) return;
+    const { ids, mode } = _computeSelection(form);
+    const idsField = document.getElementById(idsFieldId);
+    if (idsField) idsField.value = ids;
+    if (modeFieldId) {
+      const modeField = document.getElementById(modeFieldId);
+      if (modeField) modeField.value = mode;
+    }
+  }
+
+  // ------------------------------------------------------------------
   // Selection memory (sessionStorage)
   // ------------------------------------------------------------------
   //
@@ -367,6 +438,11 @@
       return;
     }
     const remember = !!(opts && opts.remember);
+    // Which hidden fields carry this form's payload. Named here as well as
+    // at the submit button so the live sync can keep them current; a form
+    // that passes neither simply opts out of syncing.
+    const idsFieldId = (opts && opts.idsField) || "";
+    const modeFieldId = (opts && opts.modeField) || "";
 
     const groupRadios = form.querySelectorAll('input[name="_group"]');
     const memberChecks = form.querySelectorAll("input.member-check");
@@ -399,6 +475,17 @@
       });
     });
 
+    // Keep the hidden fields describing the current selection. Registered at
+    // form level so it runs after the per-control cascades above have settled
+    // (their handlers run first, then the event bubbles here), and registered
+    // regardless of ``remember`` — a page that does not remember its selection
+    // still has to describe the one it has.
+    if (idsFieldId) {
+      form.addEventListener(
+        "change", () => _syncHiddenFields(form, idsFieldId, modeFieldId),
+      );
+    }
+
     if (remember) {
       // Persist on any user-driven selection change. The cascade helpers
       // above mutate other checkboxes programmatically (no change event),
@@ -411,6 +498,11 @@
       // it does not clobber the saved state.
       _restoreSelection(form, formId);
     }
+
+    // A restored or server-rendered selection is set programmatically, so no
+    // change event announced it. Sync once now so the fields are already
+    // truthful before the operator touches anything.
+    _syncHiddenFields(form, idsFieldId, modeFieldId);
   };
 
   // ------------------------------------------------------------------
@@ -473,42 +565,10 @@
       ? "receivers"
       : "senders";
 
-    // Mode inference (the form's ``selection_mode`` hidden field,
-    // when present, picks the server-side branch):
-    //
-    //   group_radio on   → ``group``  (all members of one group, and
-    //                       no extras — the recompute helper sets
-    //                       the radio when that's true).
-    //   1 checkbox       → ``single``
-    //   ≥2 checkboxes    → ``subset`` (all in one group, enforced by
-    //                       ``_confineSelectionToOneGroup``; the
-    //                       group radio is OFF because not every
-    //                       member of the group is ticked —
-    //                       otherwise the radio would be on and we'd
-    //                       be in the ``group`` branch above).
-    //
-    // Cross-group selection is structurally impossible because the
-    // selection handlers auto-clear members outside the clicked
-    // group's tbody. If future changes relax that, subset mode
-    // should gain an explicit validation here.
-    const groupRadio = form.querySelector('input[name="_group"]:checked');
-    const checkedMembers = form.querySelectorAll("input.member-check:checked");
-
-    let ids = "";
-    let mode = "single";
-    if (groupRadio) {
-      ids = (groupRadio.getAttribute("data-ids") || "").trim();
-      mode = "group";
-    } else if (checkedMembers.length === 1) {
-      ids = (checkedMembers[0].getAttribute("data-ids") || "").trim();
-      mode = "single";
-    } else if (checkedMembers.length >= 2) {
-      ids = Array.from(checkedMembers)
-        .map(cb => cb.getAttribute("data-ids") || "")
-        .filter(Boolean)
-        .join(",");
-      mode = "subset";
-    } else {
+    // The mode-inference rule lives in ``_computeSelection`` so this path
+    // and the live sync can never disagree about what the form submits.
+    const { ids, mode } = _computeSelection(form);
+    if (!ids) {
       alert(
         `Please select one group or one or more individual ${resourceNoun}.`,
       );
@@ -530,11 +590,10 @@
       }
     }
 
-    document.getElementById(idsFieldId).value = ids;
-    if (modeFieldId) {
-      const modeField = document.getElementById(modeFieldId);
-      if (modeField) modeField.value = mode;
-    }
+    // Idempotent: the live sync has already written these on every change.
+    // Repeating it here keeps the submit path correct on its own, so a form
+    // that was never wired through ``initSelection`` still submits properly.
+    _syncHiddenFields(form, idsFieldId, modeFieldId);
     return true;
   };
 
