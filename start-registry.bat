@@ -46,14 +46,29 @@ pushd "%SCRIPT_DIR%" >nul || (
 
 set "RAP=1"
 set "REG_PORT=8444"
-if not "%~1"=="" set "RAP=%~1"
-if not "%~2"=="" set "REG_PORT=%~2"
+rem Positionals are assigned in :parse_positionals below, which stops at the
+rem first --option. Taking them as %~1..%~4 here meant `--rap=2` with no
+rem positionals landed in AS_HOST and was then dropped from the option list:
+rem accepted in appearance, ignored in effect.
 
 rem In cmd.exe, %%1 treats an equals sign as an argument separator. Keep %%*
 rem as text and peel off tokens with FOR /F so options such as --tct=1 survive.
 set "REMAINING_ARGS=%*"
-for /f "tokens=1,*" %%A in ("%REMAINING_ARGS%") do set "REMAINING_ARGS=%%B"
-for /f "tokens=1,*" %%A in ("%REMAINING_ARGS%") do set "REMAINING_ARGS=%%B"
+set "POS_INDEX=0"
+:parse_positionals
+if not defined REMAINING_ARGS goto positionals_done
+if %POS_INDEX% GEQ 2 goto positionals_done
+for /f "tokens=1,*" %%A in ("%REMAINING_ARGS%") do (
+  set "POS_ARG=%%~A"
+  set "POS_REST=%%B"
+)
+if "%POS_ARG:~0,2%"=="--" goto positionals_done
+if %POS_INDEX%==0 set "RAP=%POS_ARG%"
+if %POS_INDEX%==1 set "REG_PORT=%POS_ARG%"
+set /a "POS_INDEX+=1" >nul
+set "REMAINING_ARGS=%POS_REST%"
+goto parse_positionals
+:positionals_done
 
 set "AS_HOST=XYZ-SNX00000"
 set "AS_PORT=9443"
@@ -92,12 +107,13 @@ set "EXIT_CODE=64"
 goto done
 
 :options_done
-set /a "QUERY_PORT=REG_PORT - 1" >nul 2>&1
+call :require_port "<registration-port>" "%REG_PORT%" 2 65531
 if errorlevel 1 (
-  >&2 echo start-registry.bat: invalid registration port "%REG_PORT%"
   set "EXIT_CODE=64"
   goto done
 )
+rem Checked above, so the arithmetic cannot fail here.
+set /a "QUERY_PORT=REG_PORT - 1" >nul
 set /a "WS_PORT=REG_PORT + 4" >nul 2>&1
 
 rem Prefer the certificate subset bundled inside this repository, so a
@@ -105,22 +121,40 @@ rem standalone clone of nmos-reference runs without the wider workspace PKI.
 rem That subset ships only the serials the quick-start and tutorials use;
 rem anything else falls back to the workspace-level Certificates\ tree.
 rem An explicit IPMX_CERT_ROOT always wins over both.
+set "CERT_PROBE=pem\ExampleDeviceServer.ABC.SNX00000.chain.pem"
 if defined IPMX_CERT_ROOT (
   set "CERT_ROOT=%IPMX_CERT_ROOT%"
 ) else if exist "%SCRIPT_DIR%Certificates\build.0\pem\ExampleDeviceServer.ABC.SNX00000.chain.pem" (
   set "CERT_ROOT=%SCRIPT_DIR%Certificates"
-) else (
+) else if exist "%SCRIPT_DIR%..\Certificates\build.0\pem\ExampleDeviceServer.ABC.SNX00000.chain.pem" (
+  rem The workspace PKI carries serials this checkout does not ship, which is
+  rem how the IPMX security test suite supplies them, so the fallback stays --
+  rem but it announces itself. The silent version hid a missing serial through
+  rem an entire bring-up.
   set "CERT_ROOT=%SCRIPT_DIR%..\Certificates"
+  >&2 echo start-registry.bat: %CERT_PROBE% is not in this checkout - using the workspace PKI.
+) else (
+  >&2 echo start-registry.bat: missing build.0\%CERT_PROBE%
+  >&2 echo   Searched "%SCRIPT_DIR%Certificates" and "%SCRIPT_DIR%..\Certificates".
+  >&2 echo   Set IPMX_CERT_ROOT to a Certificates tree that carries it.
+  set "EXIT_CODE=66"
+  goto done
 )
 set "CERTS=%CERT_ROOT%\build.0"
 
 rem One trust store carrying both the RSA and ECDSA roots, matching what the
-rem shell launchers build.
-set "CA=%TEMP%\ExampleRootCA-bundle.pem"
-copy /b "%CERTS%\ExampleRootCA.pem" + "%CERTS%\ExampleRootCA.ec.pem" "%CA%" >nul || (
-  >&2 echo start-registry.bat: cannot build CA bundle from "%CERTS%"
-  set "EXIT_CODE=1"
-  goto done
+rem shell launchers use. Prefer the copy that ships in Certificates\ and derive
+rem one only when the resolved PKI has none -- a workspace tree, or an
+rem IPMX_CERT_ROOT pointing elsewhere. Deriving unconditionally wrote a single
+rem shared %TEMP% path from every launcher, so two starting at once could have
+rem one truncate the file while the other's Python was still reading it.
+set "CA=%CERTS%\ExampleRootCA-bundle.pem"
+if not exist "%CA%" (
+  call :derive_ca
+  if errorlevel 1 (
+    set "EXIT_CODE=66"
+    goto done
+  )
 )
 
 rem SNX00000 is the reserved infrastructure serial in this PKI.
@@ -185,7 +219,7 @@ if "%USE_OAUTH2%"=="1" (
 
 call :find_python
 if errorlevel 1 (
-  >&2 echo start-registry.bat: Python 3.12 or newer was not found.
+  >&2 echo start-registry.bat: no Python 3.12+ interpreter found (checked NMOS_PYTHON_EXE, .venv, py -3, python.exe).
   >&2 echo Create .venv first, or install Python and make python.exe or py.exe available.
   set "EXIT_CODE=9009"
   goto done
@@ -208,7 +242,67 @@ echo NMOS Registry: RAP=%RAP% registration %REG_PORT%, query %QUERY_PORT%, webso
 set "EXIT_CODE=%ERRORLEVEL%"
 goto done
 
+rem Build the combined trust store from the two roots of the resolved PKI.
+rem A subroutine rather than an inline block: each line here is parsed as it
+rem runs, so the CA path set below is visible to the copy that follows. Inside
+rem a parenthesised block under DisableDelayedExpansion it would not be.
+:derive_ca
+if not exist "%CERTS%\ExampleRootCA.pem" (
+  >&2 echo start-registry.bat: missing "%CERTS%\ExampleRootCA.pem"
+  >&2 echo   Set IPMX_CERT_ROOT to a Certificates tree that carries the roots.
+  exit /b 1
+)
+if not exist "%CERTS%\ExampleRootCA.ec.pem" (
+  >&2 echo start-registry.bat: missing "%CERTS%\ExampleRootCA.ec.pem"
+  exit /b 1
+)
+rem A name of its own per run, so concurrent launchers cannot overwrite each
+rem other's bundle while it is being read.
+set "CA=%TEMP%\ExampleRootCA-bundle.%RANDOM%%RANDOM%.pem"
+copy /b "%CERTS%\ExampleRootCA.pem" + "%CERTS%\ExampleRootCA.ec.pem" "%CA%" >nul
+if errorlevel 1 (
+  >&2 echo start-registry.bat: cannot build a CA bundle from "%CERTS%"
+  exit /b 1
+)
+exit /b 0
+
+rem Validate a port that came from the command line. set /a is no defence: it
+rem evaluates a variable's VALUE as an expression, so a non-numeric port
+rem silently becomes 0 and a derived port -1, which Python's argparse accepts as
+rem a valid int. The minimum leaves room for the ports derived from this one.
+:require_port
+set "PORT_LABEL=%~1"
+set "PORT_VALUE=%~2"
+set "PORT_MIN=%~3"
+set "PORT_MAX=%~4"
+echo %PORT_VALUE%|findstr /r /c:"^[0-9][0-9]*$" >nul
+if errorlevel 1 goto require_port_bad
+rem Six characters or more cannot be a port, and dropping those here keeps the
+rem numeric comparisons below away from values they cannot represent.
+if not "%PORT_VALUE:~5,1%"=="" goto require_port_bad
+if %PORT_VALUE% LSS %PORT_MIN% goto require_port_bad
+if %PORT_VALUE% GTR %PORT_MAX% goto require_port_bad
+exit /b 0
+
+:require_port_bad
+>&2 echo start-registry.bat: %PORT_LABEL% must be a whole number between %PORT_MIN% and %PORT_MAX%, got "%PORT_VALUE%"
+exit /b 1
+
 :find_python
+rem Picking an interpreter is not the same as picking a usable one:
+rem pyproject.toml requires >=3.12, while py.exe -3 selects the newest 3.x
+rem installed and a bare python.exe is whatever came first on PATH. Both can be
+rem older, and the failure then lands inside Python as a syntax or typing error
+rem with no hint about the cause. Ask the interpreter before handing it the app.
+call :pick_python
+if errorlevel 1 exit /b 1
+rem No < or > in the probe: cmd.exe can read them as redirection, and max()
+rem expresses the same comparison without either character.
+"%PYTHON_EXE%" %PYTHON_SELECTOR% -c "import sys; v = sys.version_info[:2]; sys.exit(0 if max(v, (3, 12)) == v else 1)" >nul 2>&1
+if errorlevel 1 exit /b 2
+exit /b 0
+
+:pick_python
 set "PYTHON_EXE="
 set "PYTHON_SELECTOR="
 if defined NMOS_PYTHON_EXE (

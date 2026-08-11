@@ -311,17 +311,30 @@ retries and the Controller cannot assemble a shared two-node resource view.
 
 Each launcher prints the selected Registry address before starting.
 
-The secured rigs have Windows counterparts too. `start-node1.bat` and
-`start-node2.bat` take the same arguments and policy flags as their shell
-equivalents, and `start-fake-as.bat` runs the Authorization Server, so
-Configuration C works from Command Prompt too:
+The secured rigs have Windows counterparts too. `start-node1.bat`,
+`start-node2.bat` and `start-node3.bat` take the same arguments and policy flags
+as their shell equivalents, and `start-fake-as.bat` runs the Authorization
+Server, so Configuration C works from Command Prompt too:
 
 ```bat
 start-fake-as.bat
 start-registry.bat 2
 start-node1.bat XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2
 start-node2.bat XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2
+start-node3.bat XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2
 ```
+
+`--serial` on `start-fake-as.bat` is repeatable, exactly as in the shell
+launcher, so the three-Node rig where the Controller may configure some devices
+and not others is available here as well:
+
+```bat
+start-fake-as.bat --serial=SNX00001 --serial=SNX00002
+```
+
+Every token then names those two in its `aud`, leaving Node 3 discovered through
+the registry but inaccessible — see
+[Secured quick start](#secured-quick-start--the-fully-secured-rig-config-c-mutual-tls--oauth-20).
 
 Anything using TLS needs the hosts-file entries described in
 [Required before any TLS configuration](#required-before-any-tls-configuration-hosts-file-entries),

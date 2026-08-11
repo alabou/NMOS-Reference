@@ -26,18 +26,31 @@ set "RDS_REG_PORT=8444"
 if defined NMOS_RDS_HOST set "RDS_HOST=%NMOS_RDS_HOST%"
 if defined NMOS_RDS_REG_PORT set "RDS_REG_PORT=%NMOS_RDS_REG_PORT%"
 
-if not "%~1"=="" set "AS_HOST=%~1"
-if not "%~2"=="" set "AS_PORT=%~2"
-if not "%~3"=="" set "RDS_HOST=%~3"
-if not "%~4"=="" set "RDS_REG_PORT=%~4"
+rem Positionals are assigned in :parse_positionals below, which stops at the
+rem first --option. Taking them as %~1..%~4 here meant `--rap=2` with no
+rem positionals landed in AS_HOST and was then dropped from the option list:
+rem accepted in appearance, ignored in effect.
 
 rem In cmd.exe, %%1 treats an equals sign as an argument separator. Keep %%* as
 rem text and peel off tokens with FOR /F so options such as --rap=2 stay intact.
 set "REMAINING_ARGS=%*"
-for /f "tokens=1,*" %%A in ("%REMAINING_ARGS%") do set "REMAINING_ARGS=%%B"
-for /f "tokens=1,*" %%A in ("%REMAINING_ARGS%") do set "REMAINING_ARGS=%%B"
-for /f "tokens=1,*" %%A in ("%REMAINING_ARGS%") do set "REMAINING_ARGS=%%B"
-for /f "tokens=1,*" %%A in ("%REMAINING_ARGS%") do set "REMAINING_ARGS=%%B"
+set "POS_INDEX=0"
+:parse_positionals
+if not defined REMAINING_ARGS goto positionals_done
+if %POS_INDEX% GEQ 4 goto positionals_done
+for /f "tokens=1,*" %%A in ("%REMAINING_ARGS%") do (
+  set "POS_ARG=%%~A"
+  set "POS_REST=%%B"
+)
+if "%POS_ARG:~0,2%"=="--" goto positionals_done
+if %POS_INDEX%==0 set "AS_HOST=%POS_ARG%"
+if %POS_INDEX%==1 set "AS_PORT=%POS_ARG%"
+if %POS_INDEX%==2 set "RDS_HOST=%POS_ARG%"
+if %POS_INDEX%==3 set "RDS_REG_PORT=%POS_ARG%"
+set /a "POS_INDEX+=1" >nul
+set "REMAINING_ARGS=%POS_REST%"
+goto parse_positionals
+:positionals_done
 
 set "NAP=0"
 set "RAP=0"
@@ -76,12 +89,18 @@ set "EXIT_CODE=64"
 goto done
 
 :options_done
-set /a "RDS_QUERY_PORT=RDS_REG_PORT - 1" >nul 2>&1
+call :require_port "<as-port>" "%AS_PORT%" 1 65535
 if errorlevel 1 (
-  >&2 echo start-node1-bare.bat: invalid registry port "%RDS_REG_PORT%"
   set "EXIT_CODE=64"
   goto done
 )
+call :require_port "<registry-port>" "%RDS_REG_PORT%" 2 65535
+if errorlevel 1 (
+  set "EXIT_CODE=64"
+  goto done
+)
+rem Checked above, so the arithmetic cannot fail here.
+set /a "RDS_QUERY_PORT=RDS_REG_PORT - 1" >nul
 
 rem Prefer the certificate subset bundled inside this repository, so a
 rem standalone clone of nmos-reference runs without the wider workspace PKI.
@@ -111,7 +130,7 @@ if "%RAP%"=="0" (
 
 call :find_python
 if errorlevel 1 (
-  >&2 echo start-node1-bare.bat: Python 3.12 or newer was not found.
+  >&2 echo start-node1-bare.bat: no Python 3.12+ interpreter found (checked NMOS_PYTHON_EXE, .venv, py -3, python.exe).
   >&2 echo Create .venv first, or install Python and make python.exe or py.exe available.
   set "EXIT_CODE=9009"
   goto done
@@ -136,7 +155,43 @@ echo NMOS Registry: %RDS_HOST%:%RDS_REG_PORT% ^(query port %RDS_QUERY_PORT%^)
 set "EXIT_CODE=%ERRORLEVEL%"
 goto done
 
+rem Validate a port that came from the command line. set /a is no defence: it
+rem evaluates a variable's VALUE as an expression, so a non-numeric port
+rem silently becomes 0 and a derived port -1, which Python's argparse accepts as
+rem a valid int. The minimum leaves room for the ports derived from this one.
+:require_port
+set "PORT_LABEL=%~1"
+set "PORT_VALUE=%~2"
+set "PORT_MIN=%~3"
+set "PORT_MAX=%~4"
+echo %PORT_VALUE%|findstr /r /c:"^[0-9][0-9]*$" >nul
+if errorlevel 1 goto require_port_bad
+rem Six characters or more cannot be a port, and dropping those here keeps the
+rem numeric comparisons below away from values they cannot represent.
+if not "%PORT_VALUE:~5,1%"=="" goto require_port_bad
+if %PORT_VALUE% LSS %PORT_MIN% goto require_port_bad
+if %PORT_VALUE% GTR %PORT_MAX% goto require_port_bad
+exit /b 0
+
+:require_port_bad
+>&2 echo start-node1-bare.bat: %PORT_LABEL% must be a whole number between %PORT_MIN% and %PORT_MAX%, got "%PORT_VALUE%"
+exit /b 1
+
 :find_python
+rem Picking an interpreter is not the same as picking a usable one:
+rem pyproject.toml requires >=3.12, while py.exe -3 selects the newest 3.x
+rem installed and a bare python.exe is whatever came first on PATH. Both can be
+rem older, and the failure then lands inside Python as a syntax or typing error
+rem with no hint about the cause. Ask the interpreter before handing it the app.
+call :pick_python
+if errorlevel 1 exit /b 1
+rem No < or > in the probe: cmd.exe can read them as redirection, and max()
+rem expresses the same comparison without either character.
+"%PYTHON_EXE%" %PYTHON_SELECTOR% -c "import sys; v = sys.version_info[:2]; sys.exit(0 if max(v, (3, 12)) == v else 1)" >nul 2>&1
+if errorlevel 1 exit /b 2
+exit /b 0
+
+:pick_python
 set "PYTHON_EXE="
 set "PYTHON_SELECTOR="
 if defined NMOS_PYTHON_EXE (

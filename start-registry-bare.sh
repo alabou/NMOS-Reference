@@ -47,6 +47,27 @@ set -e
 
 REG_PORT="${1:-8444}"
 BIND_ADDR="${2:-${NMOS_REGISTRY_ADDR:-127.0.0.1}}"
+# Ports arrive on the command line, and arithmetic is no defence: $(( )) treats
+# a bare name as a variable and re-evaluates its VALUE as an expression, so a
+# non-numeric port becomes 0 and a derived port -1 -- which argparse then
+# accepts as a perfectly good int, leaving the failure to surface much later as
+# a bind error with nothing pointing back here. Check the value itself, with a
+# minimum that leaves room for the ports derived from it.
+require_port() {
+  case "$2" in
+    ''|*[!0-9]*)
+      echo "$(basename "$0"): $1 must be a whole number, got '$2'" >&2
+      exit 64 ;;
+  esac
+  if [ "$2" -lt "$3" ] || [ "$2" -gt "$4" ]; then
+    echo "$(basename "$0"): $1 must be between $3 and $4, got '$2'" >&2
+    exit 64
+  fi
+}
+
+# Query is REG-1 and the WebSocket listener REG+4, so both ends of the range
+# have to leave room: hence 2 rather than 1, and 65531 rather than 65535.
+require_port "<registration-port>" "$REG_PORT" 2 65531
 QUERY_PORT=$((REG_PORT - 1))
 WS_PORT=$((REG_PORT + 4))
 

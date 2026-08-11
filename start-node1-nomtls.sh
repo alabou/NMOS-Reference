@@ -41,12 +41,67 @@
 
 set -e
 
-AS_HOST="${1:-XYZ-SNX00000}"
-AS_PORT="${2:-9443}"
-RDS_HOST="${3:-127.0.0.1}"
-RDS_REG_PORT="${4:-8444}"
+# Positional arguments are consumed only while they do not look like an option.
+# Taking them by index instead meant `start-node3.sh --rap=2` landed in the first
+# positional and was then shifted away: the flag looked accepted and changed
+# nothing, so a rig meant to be RAP=2 ran as RAP=0 without a word.
+POSITIONAL=()
+while [ $# -gt 0 ] && [ "${#POSITIONAL[@]}" -lt 4 ]; do
+  case "$1" in
+    --*) break ;;
+    *)   POSITIONAL+=("$1"); shift ;;
+  esac
+done
+
+AS_HOST="${POSITIONAL[0]:-XYZ-SNX00000}"
+AS_PORT="${POSITIONAL[1]:-9443}"
+RDS_HOST="${POSITIONAL[2]:-127.0.0.1}"
+RDS_REG_PORT="${POSITIONAL[3]:-8444}"
+
+# Ports arrive on the command line, and arithmetic is no defence: $(( )) treats
+# a bare name as a variable and re-evaluates its VALUE as an expression, so a
+# non-numeric port becomes 0 and a derived port -1 -- which argparse then
+# accepts as a perfectly good int, leaving the failure to surface much later as
+# a bind error with nothing pointing back here. Check the value itself, with a
+# minimum that leaves room for the ports derived from it.
+require_port() {
+  case "$2" in
+    ''|*[!0-9]*)
+      echo "$(basename "$0"): $1 must be a whole number, got '$2'" >&2
+      exit 64 ;;
+  esac
+  if [ "$2" -lt "$3" ] || [ "$2" -gt "$4" ]; then
+    echo "$(basename "$0"): $1 must be between $3 and $4, got '$2'" >&2
+    exit 64
+  fi
+}
+
+# The query port is derived as RDS_REG_PORT-1 at the exec below.
+require_port "<rds-registration-port>" "$RDS_REG_PORT" 2 65535
+# Ports arrive on the command line, and arithmetic is no defence: $(( )) treats
+# a bare name as a variable and re-evaluates its VALUE as an expression, so a
+# non-numeric port becomes 0 and a derived port -1 -- which argparse then
+# accepts as a perfectly good int, leaving the failure to surface much later as
+# a bind error with nothing pointing back here. Check the value itself, with a
+# minimum that leaves room for the ports derived from it.
+require_port() {
+  case "$2" in
+    ''|*[!0-9]*)
+      echo "$(basename "$0"): $1 must be a whole number, got '$2'" >&2
+      exit 64 ;;
+  esac
+  if [ "$2" -lt "$3" ] || [ "$2" -gt "$4" ]; then
+    echo "$(basename "$0"): $1 must be between $3 and $4, got '$2'" >&2
+    exit 64
+  fi
+}
+
+if [ -n "${AS_PORT:-}" ]; then
+  require_port "<as-port>" "$AS_PORT" 1 65535
+fi
+# The query port is one below this one, so 1 would leave nothing below it.
+require_port "<rds-registration-port>" "$RDS_REG_PORT" 2 65535
 RDS_QUERY_PORT=$((RDS_REG_PORT - 1))
-shift $(( $# < 4 ? $# : 4 ))
 
 NAP=2
 RAP=0

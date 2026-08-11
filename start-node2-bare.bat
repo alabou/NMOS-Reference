@@ -16,16 +16,17 @@ set "RDS_HOST=127.0.0.1"
 set "RDS_REG_PORT=8444"
 if defined NMOS_RDS_HOST set "RDS_HOST=%NMOS_RDS_HOST%"
 if defined NMOS_RDS_REG_PORT set "RDS_REG_PORT=%NMOS_RDS_REG_PORT%"
-set /a "RDS_QUERY_PORT=RDS_REG_PORT - 1" >nul 2>&1
+call :require_port "<registry-port>" "%RDS_REG_PORT%" 2 65535
 if errorlevel 1 (
-  >&2 echo start-node2-bare.bat: invalid registry port "%RDS_REG_PORT%"
   set "EXIT_CODE=64"
   goto done
 )
+rem Checked above, so the arithmetic cannot fail here.
+set /a "RDS_QUERY_PORT=RDS_REG_PORT - 1" >nul
 
 call :find_python
 if errorlevel 1 (
-  >&2 echo start-node2-bare.bat: Python 3.12 or newer was not found.
+  >&2 echo start-node2-bare.bat: no Python 3.12+ interpreter found (checked NMOS_PYTHON_EXE, .venv, py -3, python.exe).
   >&2 echo Create .venv first, or install Python and make python.exe or py.exe available.
   set "EXIT_CODE=9009"
   goto done
@@ -47,7 +48,43 @@ echo NMOS Registry: %RDS_HOST%:%RDS_REG_PORT% ^(query port %RDS_QUERY_PORT%^)
 set "EXIT_CODE=%ERRORLEVEL%"
 goto done
 
+rem Validate a port that came from the command line. set /a is no defence: it
+rem evaluates a variable's VALUE as an expression, so a non-numeric port
+rem silently becomes 0 and a derived port -1, which Python's argparse accepts as
+rem a valid int. The minimum leaves room for the ports derived from this one.
+:require_port
+set "PORT_LABEL=%~1"
+set "PORT_VALUE=%~2"
+set "PORT_MIN=%~3"
+set "PORT_MAX=%~4"
+echo %PORT_VALUE%|findstr /r /c:"^[0-9][0-9]*$" >nul
+if errorlevel 1 goto require_port_bad
+rem Six characters or more cannot be a port, and dropping those here keeps the
+rem numeric comparisons below away from values they cannot represent.
+if not "%PORT_VALUE:~5,1%"=="" goto require_port_bad
+if %PORT_VALUE% LSS %PORT_MIN% goto require_port_bad
+if %PORT_VALUE% GTR %PORT_MAX% goto require_port_bad
+exit /b 0
+
+:require_port_bad
+>&2 echo start-node2-bare.bat: %PORT_LABEL% must be a whole number between %PORT_MIN% and %PORT_MAX%, got "%PORT_VALUE%"
+exit /b 1
+
 :find_python
+rem Picking an interpreter is not the same as picking a usable one:
+rem pyproject.toml requires >=3.12, while py.exe -3 selects the newest 3.x
+rem installed and a bare python.exe is whatever came first on PATH. Both can be
+rem older, and the failure then lands inside Python as a syntax or typing error
+rem with no hint about the cause. Ask the interpreter before handing it the app.
+call :pick_python
+if errorlevel 1 exit /b 1
+rem No < or > in the probe: cmd.exe can read them as redirection, and max()
+rem expresses the same comparison without either character.
+"%PYTHON_EXE%" %PYTHON_SELECTOR% -c "import sys; v = sys.version_info[:2]; sys.exit(0 if max(v, (3, 12)) == v else 1)" >nul 2>&1
+if errorlevel 1 exit /b 2
+exit /b 0
+
+:pick_python
 set "PYTHON_EXE="
 set "PYTHON_SELECTOR="
 if defined NMOS_PYTHON_EXE (

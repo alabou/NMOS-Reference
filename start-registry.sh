@@ -61,10 +61,42 @@
 
 set -e
 
-RAP="${1:-1}"
-REG_PORT="${2:-8444}"
-shift $(( $# < 2 ? $# : 2 ))
+# Positional arguments are consumed only while they do not look like an option.
+# Taking them by index instead meant `start-registry.sh --oauth2` landed in the first
+# positional and was then shifted away: the flag looked accepted and changed
+# nothing, so a rig meant to be RAP=2 ran as RAP=0 without a word.
+POSITIONAL=()
+while [ $# -gt 0 ] && [ "${#POSITIONAL[@]}" -lt 2 ]; do
+  case "$1" in
+    --*) break ;;
+    *)   POSITIONAL+=("$1"); shift ;;
+  esac
+done
 
+RAP="${POSITIONAL[0]:-1}"
+REG_PORT="${POSITIONAL[1]:-8444}"
+
+# Ports arrive on the command line, and arithmetic is no defence: $(( )) treats
+# a bare name as a variable and re-evaluates its VALUE as an expression, so a
+# non-numeric port becomes 0 and a derived port -1 -- which argparse then
+# accepts as a perfectly good int, leaving the failure to surface much later as
+# a bind error with nothing pointing back here. Check the value itself, with a
+# minimum that leaves room for the ports derived from it.
+require_port() {
+  case "$2" in
+    ''|*[!0-9]*)
+      echo "$(basename "$0"): $1 must be a whole number, got '$2'" >&2
+      exit 64 ;;
+  esac
+  if [ "$2" -lt "$3" ] || [ "$2" -gt "$4" ]; then
+    echo "$(basename "$0"): $1 must be between $3 and $4, got '$2'" >&2
+    exit 64
+  fi
+}
+
+# Query is REG-1 and the WebSocket listener REG+4, so both ends of the range
+# have to leave room: hence 2 rather than 1, and 65531 rather than 65535.
+require_port "<registration-port>" "$REG_PORT" 2 65531
 QUERY_PORT=$((REG_PORT - 1))
 WS_PORT=$((REG_PORT + 4))
 

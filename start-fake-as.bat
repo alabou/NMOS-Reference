@@ -23,9 +23,8 @@ rem                     call, which is the case worth demonstrating:
 rem
 rem                       start-fake-as.bat --serial=SNX00001 --serial=SNX00002
 rem
-rem                     leaves SNX00003 visible-but-inaccessible.
-rem                     (default SNX00001). Sets the token aud entry and the
-rem                     registered redirect URIs.
+rem                     leaves SNX00003 visible-but-inaccessible. With no
+rem                     --serial at all, tokens are scoped to SNX00001 alone.
 rem   --control-port=P  Controller UI port to register redirect URIs for
 rem                     (default 5050, matching start-node1.bat)
 rem   --client-id=ID    OAuth 2.0 client_id (default matches start-node1)
@@ -127,12 +126,24 @@ rem Prefer the certificate subset bundled inside this repository, so a
 rem standalone clone of nmos-reference runs without the wider workspace PKI.
 rem SNX00000 is the reserved infrastructure serial: the registry and this
 rem Authorization Server both present it. An explicit IPMX_CERT_ROOT wins.
+set "CERT_PROBE=pem\ExampleDeviceServer.ABC.SNX00000.chain.pem"
 if defined IPMX_CERT_ROOT (
   set "CERT_ROOT=%IPMX_CERT_ROOT%"
 ) else if exist "%SCRIPT_DIR%Certificates\build.0\pem\ExampleDeviceServer.ABC.SNX00000.chain.pem" (
   set "CERT_ROOT=%SCRIPT_DIR%Certificates"
-) else (
+) else if exist "%SCRIPT_DIR%..\Certificates\build.0\pem\ExampleDeviceServer.ABC.SNX00000.chain.pem" (
+  rem The workspace PKI carries serials this checkout does not ship, which is
+  rem how the IPMX security test suite supplies them, so the fallback stays --
+  rem but it announces itself. The silent version hid a missing serial through
+  rem an entire bring-up.
   set "CERT_ROOT=%SCRIPT_DIR%..\Certificates"
+  >&2 echo start-fake-as.bat: %CERT_PROBE% is not in this checkout - using the workspace PKI.
+) else (
+  >&2 echo start-fake-as.bat: missing build.0\%CERT_PROBE%
+  >&2 echo   Searched "%SCRIPT_DIR%Certificates" and "%SCRIPT_DIR%..\Certificates".
+  >&2 echo   Set IPMX_CERT_ROOT to a Certificates tree that carries it.
+  set "EXIT_CODE=66"
+  goto done
 )
 set "CERTS=%CERT_ROOT%\build.0"
 
@@ -201,7 +212,7 @@ set REDIRECT_ARGS=--redirect-uri "https://%NODE_HOST%:%CONTROL_PORT%/controller/
 
 call :find_python
 if errorlevel 1 (
-  >&2 echo start-fake-as.bat: Python 3.12 or newer was not found.
+  >&2 echo start-fake-as.bat: no Python 3.12+ interpreter found (checked NMOS_PYTHON_EXE, .venv, py -3, python.exe).
   >&2 echo Create .venv first, or install Python and make python.exe or py.exe available.
   set "EXIT_CODE=9009"
   goto done
@@ -242,6 +253,20 @@ set /a "SERIAL_COUNT+=1" >nul
 exit /b 0
 
 :find_python
+rem Picking an interpreter is not the same as picking a usable one:
+rem pyproject.toml requires >=3.12, while py.exe -3 selects the newest 3.x
+rem installed and a bare python.exe is whatever came first on PATH. Both can be
+rem older, and the failure then lands inside Python as a syntax or typing error
+rem with no hint about the cause. Ask the interpreter before handing it the app.
+call :pick_python
+if errorlevel 1 exit /b 1
+rem No < or > in the probe: cmd.exe can read them as redirection, and max()
+rem expresses the same comparison without either character.
+"%PYTHON_EXE%" %PYTHON_SELECTOR% -c "import sys; v = sys.version_info[:2]; sys.exit(0 if max(v, (3, 12)) == v else 1)" >nul 2>&1
+if errorlevel 1 exit /b 2
+exit /b 0
+
+:pick_python
 set "PYTHON_EXE="
 set "PYTHON_SELECTOR="
 if defined NMOS_PYTHON_EXE (

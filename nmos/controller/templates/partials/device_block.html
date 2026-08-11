@@ -103,11 +103,22 @@
       {% set _grp = namespace(pre=false) %}
       {% for m in group.members %}{% if m.id in _preselect %}{% set _grp.pre = true %}{% endif %}{% endfor %}
       <td rowspan="{{ span }}" class="group-select">
+        {# No radio for a group with no members: it would carry an empty
+           data-ids, and everything downstream reads the control's presence as
+           "there is something here to pick". submitSelection would alert
+           "select one group or one or more individual senders" at an operator
+           who had just selected one, and agentui's read_rows would report a
+           selectable group on a page offering nothing. The server drops empty
+           groups in single mode and cannot build one in subset or group mode,
+           so this is belt to that braces -- it keeps the invariant in the
+           markup instead of only in three server-side guards. #}
+        {% if ids %}
         <label class="m-0 w-100 h-100 d-flex align-items-center justify-content-center"
                title="Select the whole group">
           <input type="radio" name="_group"
                  data-ids="{{ ids }}"{% if group_only and _grp.pre %} checked{% endif %}>
         </label>
+        {% endif %}
       </td>
       <td colspan="{{ 9 if inspect else 8 }}" class="group-name">
         {{ group.display_name }}

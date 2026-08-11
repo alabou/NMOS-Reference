@@ -279,7 +279,15 @@ MEMBER_CHECKS = "tr.member-row input.member-check"
 GROUP_NAME = "td.group-name"
 
 #: Whole-group radio. device_block.html:99-100 -- data-ids is a CSV of members.
-GROUP_RADIOS = 'input[type="radio"][name="_group"][data-ids]'
+#:
+#: ``:not([data-ids=""])`` because attribute *presence* is not the question; the
+#: question is whether clicking this would select anything. A radio with an
+#: empty data-ids selects nothing, so counting it would make ``read_rows``
+#: announce a selectable group on a page that offers none -- the same
+#: confident-wrong-conclusion :class:`GroupOnlyRendering` exists to prevent.
+#: device_block.html now omits the radio in that case; this keeps the reader
+#: honest even against markup that does not.
+GROUP_RADIOS = 'input[type="radio"][name="_group"][data-ids]:not([data-ids=""])'
 
 
 #: Every ``tbody`` of the cross-device table, in document order.
