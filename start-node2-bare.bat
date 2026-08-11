@@ -16,7 +16,7 @@ set "RDS_HOST=127.0.0.1"
 set "RDS_REG_PORT=8444"
 if defined NMOS_RDS_HOST set "RDS_HOST=%NMOS_RDS_HOST%"
 if defined NMOS_RDS_REG_PORT set "RDS_REG_PORT=%NMOS_RDS_REG_PORT%"
-call :require_port "<registry-port>" "%RDS_REG_PORT%" 2 65535
+call :require_port "registry-port" "%RDS_REG_PORT%" 2 65535
 if errorlevel 1 (
   set "EXIT_CODE=64"
   goto done
@@ -26,7 +26,7 @@ set /a "RDS_QUERY_PORT=RDS_REG_PORT - 1" >nul
 
 call :find_python
 if errorlevel 1 (
-  >&2 echo start-node2-bare.bat: no Python 3.12+ interpreter found (checked NMOS_PYTHON_EXE, .venv, py -3, python.exe).
+  >&2 echo start-node2-bare.bat: no Python 3.12+ interpreter found ^(checked NMOS_PYTHON_EXE, .venv, py -3, python.exe^).
   >&2 echo Create .venv first, or install Python and make python.exe or py.exe available.
   set "EXIT_CODE=9009"
   goto done

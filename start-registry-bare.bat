@@ -33,7 +33,7 @@ set "REG_PORT=8444"
 if defined NMOS_RDS_REG_PORT set "REG_PORT=%NMOS_RDS_REG_PORT%"
 if not "%~1"=="" set "REG_PORT=%~1"
 
-call :require_port "<registration-port>" "%REG_PORT%" 2 65531
+call :require_port "registration-port" "%REG_PORT%" 2 65531
 if errorlevel 1 (
   set "EXIT_CODE=64"
   goto done
@@ -44,7 +44,7 @@ set /a "WS_PORT=REG_PORT + 4" >nul 2>&1
 
 call :find_python
 if errorlevel 1 (
-  >&2 echo start-registry-bare.bat: no Python 3.12+ interpreter found (checked NMOS_PYTHON_EXE, .venv, py -3, python.exe).
+  >&2 echo start-registry-bare.bat: no Python 3.12+ interpreter found ^(checked NMOS_PYTHON_EXE, .venv, py -3, python.exe^).
   >&2 echo Create .venv first, or install Python and make python.exe or py.exe available.
   set "EXIT_CODE=9009"
   goto done

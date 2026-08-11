@@ -212,7 +212,7 @@ set REDIRECT_ARGS=--redirect-uri "https://%NODE_HOST%:%CONTROL_PORT%/controller/
 
 call :find_python
 if errorlevel 1 (
-  >&2 echo start-fake-as.bat: no Python 3.12+ interpreter found (checked NMOS_PYTHON_EXE, .venv, py -3, python.exe).
+  >&2 echo start-fake-as.bat: no Python 3.12+ interpreter found ^(checked NMOS_PYTHON_EXE, .venv, py -3, python.exe^).
   >&2 echo Create .venv first, or install Python and make python.exe or py.exe available.
   set "EXIT_CODE=9009"
   goto done
