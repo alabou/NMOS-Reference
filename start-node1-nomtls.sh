@@ -70,22 +70,34 @@ if [ "$NAP" != "2" ]; then
 fi
 
 # Cert directory resolution — override IPMX_CERT_ROOT to point at a
-# different `Certificates/` layout. Default: sibling of this script's
-# parent (i.e. <workspace>/Certificates).
+# different `Certificates/` layout. Default: this repository's own
+# Certificates/ tree.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-# Prefer the certificate subset bundled inside this repository, so a
-# standalone clone of nmos-reference runs without the wider workspace PKI.
-# That subset ships only the serials the quick-start and tutorials use
-# (SNX00000 infrastructure, SNX00001, SNX00002); anything else falls back
-# to the workspace-level Certificates/ tree. An explicit IPMX_CERT_ROOT
-# always wins over both.
+# Certificates come from the subset bundled inside this repository, so a
+# standalone clone runs the whole rig with no wider workspace: SNX00000 is the
+# infrastructure serial (registry + Authorization Server) and SNX00001..
+# SNX00003 are the Nodes.
+#
+# Resolution order: IPMX_CERT_ROOT, then this checkout, then the workspace
+# tree one level up. That last step is what lets the IPMX security test suite
+# drive this launcher against a PKI carrying serials this repository does not
+# ship, so it stays -- but it announces itself, because the silent version of
+# it hid a missing serial through an entire 3-node bring-up. Matching nothing
+# anywhere is a hard error naming every directory searched.
 CERT_PROBE="pem/ExampleDeviceServer.ABC.SNX00001.chain.pem"
 if [ -n "${IPMX_CERT_ROOT:-}" ]; then
   CERT_ROOT="$IPMX_CERT_ROOT"
 elif [ -f "$SCRIPT_DIR/Certificates/build.0/$CERT_PROBE" ]; then
   CERT_ROOT="$SCRIPT_DIR/Certificates"
-else
+elif [ -f "$SCRIPT_DIR/../Certificates/build.0/$CERT_PROBE" ]; then
   CERT_ROOT="$SCRIPT_DIR/../Certificates"
+  echo "$(basename "$0"): $CERT_PROBE is not in this checkout — using the" \
+       "workspace PKI at $CERT_ROOT" >&2
+else
+  echo "$(basename "$0"): missing build.0/$CERT_PROBE" >&2
+  echo "  Searched $SCRIPT_DIR/Certificates and $SCRIPT_DIR/../Certificates." >&2
+  echo "  Set IPMX_CERT_ROOT to a Certificates/ tree that carries it." >&2
+  exit 66
 fi
 CERTS="$CERT_ROOT/build.0"
 
@@ -96,9 +108,27 @@ CERTS="$CERT_ROOT/build.0"
 # The right shape for ``--trustedRootCA`` is therefore a bundle
 # concatenating BOTH roots so chain validation succeeds whichever
 # side is being checked.
-CA_BUNDLE="/tmp/ExampleRootCA-bundle.pem"
-cat "$CERTS/ExampleRootCA.pem" "$CERTS/ExampleRootCA.ec.pem" > "$CA_BUNDLE"
-CA="$CA_BUNDLE"
+# One file holding both roots -- the RSA and the ECDSA generation of the same
+# CA -- so either certificate flavour validates against a single
+# --trustedRootCA. It ships in Certificates/ next to the two roots it is built
+# from, rather than being written to a scratch path at every start-up.
+CA="$CERTS/ExampleRootCA-bundle.pem"
+if [ ! -f "$CA" ]; then
+  # A PKI supplied from outside this checkout -- IPMX_CERT_ROOT, or the
+  # workspace tree the IPMX security test suite drives these launchers with --
+  # carries the two roots but not the combined file, so derive it from them.
+  # mktemp rather than a fixed path: /tmp/ExampleRootCA-bundle.pem used to be
+  # shared by every launcher and rewritten on each start-up.
+  for root in "$CERTS/ExampleRootCA.pem" "$CERTS/ExampleRootCA.ec.pem"; do
+    if [ ! -f "$root" ]; then
+      echo "$(basename "$0"): missing $root" >&2
+      echo "  Set IPMX_CERT_ROOT to a Certificates/ tree that carries it." >&2
+      exit 66
+    fi
+  done
+  CA="$(mktemp -t ExampleRootCA-bundle.XXXXXX)"
+  cat "$CERTS/ExampleRootCA.pem" "$CERTS/ExampleRootCA.ec.pem" > "$CA"
+fi
 
 case "$TCT" in
   0|2) NODE_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00001.chain.pem"

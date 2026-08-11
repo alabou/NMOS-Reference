@@ -115,6 +115,26 @@ Server and the registry to be up before they start.
 ./start-node2.sh XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2
 ```
 
+For a third Node, add a fifth terminal — `start-node3.sh` takes the same
+arguments and policy flags:
+
+```bash
+./start-node3.sh XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2
+```
+
+Three Nodes make the **inaccessible-device** case reachable, which two cannot.
+Start the Authorization Server scoped to a subset instead:
+
+```bash
+./start-fake-as.sh --serial=SNX00001 --serial=SNX00002
+```
+
+Every token then names those two in its `aud`, so the Controller may configure
+Nodes 1 and 2 while Node 3 — discovered through the registry all the same — is
+shown as inaccessible with its controls disabled up front rather than failing
+403 on the first click. `--serial` is repeatable; add `--serial=SNX00003` and
+the same rig becomes three configurable Nodes.
+
 The positional arguments are `<as-host> <as-port> <rds-host> <rds-port>`, so
 both Nodes are told to reach the Authorization Server at `XYZ-SNX00000:9443`
 and the registry at `XYZ-SNX00000:8444`. Give the registry its **certificate
@@ -189,8 +209,11 @@ Add these to `/etc/hosts` before running anything with TLS:
 | `XYZ-SNX00000` | NMOS Registry, and the OAuth 2.0 Authorization Server — the reserved infrastructure serial |
 | `XYZ-SNX00001` | Node 1 and its Controller UI |
 | `XYZ-SNX00002` | Node 2 |
+| `XYZ-SNX00003` | Node 3 |
 
-Further Nodes follow the same pattern (`start-node3.sh` needs `XYZ-SNX00003`).
+Certificates ship for all four serials, so nothing outside this checkout is
+needed. Further Nodes follow the same pattern, but their certificates do not
+ship — point `IPMX_CERT_ROOT` at a `Certificates/` tree that carries them.
 
 This applies to how components address **each other**, not just to your browser.
 Passing `127.0.0.1` as a launch script's registry-host argument fails under RAP=2
@@ -671,11 +694,17 @@ nmos/                   — Core NMOS implementation
 sdp/                    — SDP encoding/decoding (Matrox profile)
 caps/                   — Capability/constraint framework (Matrox CCF)
 pep/                    — Privacy Encryption Protocol (PEP) helpers
-Certificates/build.0/   — Test PKI subset (SNX00000/1/2) so TLS runs from a clone
+Certificates/build.0/   — Test PKI subset (SNX00000 infrastructure, SNX00001..3
+                          Nodes, both RSA and ECDSA, plus ExampleRootCA-bundle.pem
+                          holding both roots) so TLS and the TLS test suites run
+                          from a clone with nothing outside it
 fake-as/                — Test OAuth 2.0 Authorization Server, vendored (see below)
 
 nmos_node.py            — Node entry point; parses CLI and starts the server
 nmos_registry.py        — Registry entry point; Registration + Query + WebSocket listeners
+multi_aud_as.py         — Runs fake-as/ with a multi-Node token audience, for rigs
+                          where the Controller may configure some devices but not
+                          others (start-fake-as.sh --serial=A --serial=B)
 run_server.py           — Lightweight wrapper for embedding nmos_node from scripts
 demo_controller.py      — Standalone demo controller for manual exploration
 start-node*.sh          — Launch scripts for the three security configurations

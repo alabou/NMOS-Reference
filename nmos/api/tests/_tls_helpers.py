@@ -4,8 +4,8 @@
 """TLS test helpers — SSLContext builders + cert path resolution.
 
 The pre-generated PKI lives at ``$IPMX_CERT_ROOT/build.0/`` (default
-``<workspace>/Certificates/build.0/``, where ``<workspace>`` is the
-parent of the ``nmos-reference/`` checkout) and contains:
+``Certificates/build.0/`` inside this checkout, which ships every identity
+these tests ask for) and contains:
 
   - ``ExampleRootCA.pem`` / ``.ec.pem``               — root CA
   - ``ExampleProductCA.0.0.pem`` / ``.ec.pem``        — intermediate CA
@@ -32,12 +32,13 @@ import ssl
 from pathlib import Path
 from typing import Literal
 
-# Pre-generated PKI location. Resolve from IPMX_CERT_ROOT or fall back
-# to ``<workspace>/Certificates``. Tests skip when this directory is
-# missing (e.g. the repo is checked out without the sibling Certificates
-# workspace).
-_WORKSPACE = Path(__file__).resolve().parents[4]
-CERT_ROOT = Path(os.environ.get("IPMX_CERT_ROOT", _WORKSPACE / "Certificates"))
+# Pre-generated PKI location: this repository's own ``Certificates/`` tree,
+# which ships every identity these tests ask for, so a standalone clone runs
+# the TLS suites instead of skipping them. ``IPMX_CERT_ROOT`` overrides it for
+# a wider PKI. Nothing outside the checkout is consulted by default —
+# :data:`PKI_AVAILABLE` below still gates on the files actually being present.
+_REPO = Path(__file__).resolve().parents[3]
+CERT_ROOT = Path(os.environ.get("IPMX_CERT_ROOT", _REPO / "Certificates"))
 CERTS_DIR = CERT_ROOT / "build.0"
 
 Flavor = Literal["rsa", "ec"]
@@ -223,6 +224,7 @@ PKI_AVAILABLE: bool = (
 """True when the pre-generated PKI is available on disk.
 
 Tests use ``@pytest.mark.skipif(not PKI_AVAILABLE, reason=...)`` to stay
-green on systems that don't have the sibling ``Certificates/build.0``
-directory.
+green where the PKI is absent — which, now that ``Certificates/build.0``
+ships in the repository, means only a pruned checkout or an
+``IPMX_CERT_ROOT`` pointed somewhere incomplete.
 """

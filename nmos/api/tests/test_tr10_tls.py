@@ -34,8 +34,8 @@ from nmos.api.tr10_tls import (
     apply_tr10_tls_restrictions,
 )
 
-_WORKSPACE = Path(__file__).resolve().parents[4]
-CERT_ROOT = Path(os.environ.get("IPMX_CERT_ROOT", _WORKSPACE / "Certificates"))
+_REPO = Path(__file__).resolve().parents[3]
+CERT_ROOT = Path(os.environ.get("IPMX_CERT_ROOT", _REPO / "Certificates"))
 CERTS_DIR = CERT_ROOT / "build.0"
 
 

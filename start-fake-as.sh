@@ -10,7 +10,13 @@
 #   --tct=T           TLS Certificate Type: 0=RSA (default), 1=ECDSA
 #   --serial=S        Node serial the issued tokens are scoped to
 #                     (default: SNX00001). Sets the token 'aud' entry and
-#                     the registered redirect URIs.
+#                     the registered redirect URIs. REPEATABLE: give it once
+#                     per Node that should be reachable, and every token
+#                     carries all of them in 'aud'. Nodes left out are the
+#                     inaccessible ones -- which is how a rig where the
+#                     Controller may configure some devices but not others
+#                     gets built. The first value also drives the redirect
+#                     URIs, since the Controller UI is served by node1.
 #   --control-port=P  Controller UI port to register redirect URIs for
 #                     (default: 5050, matching start-node1.sh)
 #   --client-id=ID    OAuth 2.0 client_id (default: the value baked into
@@ -37,11 +43,18 @@
 # two servers with different layouts and having both work is precisely the
 # property that discovery buys.
 #
-# Pair with the Config C rig:
+# Pair with the Config C rig -- three Nodes, two of them accessible:
 #
-#     ./start-fake-as.sh &
+#     ./start-fake-as.sh --serial=SNX00001 --serial=SNX00002 &
 #     ./start-registry.sh 2 &
-#     ./start-node1.sh XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2
+#     ./start-node1.sh XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2 &
+#     ./start-node2.sh XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2 &
+#     ./start-node3.sh XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2
+#
+# SNX00003 is deliberately absent from the audience list, so the Controller
+# discovers it through the registry and reports it as inaccessible instead of
+# offering controls that would 403 on the first click. Drop the --serial
+# arguments entirely for the single-node tutorial.
 #
 # The implementation ships in fake-as/, a byte-identical copy of the one the
 # TR-10-SEC validator uses in a separately-released project — so
@@ -63,7 +76,7 @@ set -e
 
 AS_PORT=9443
 TCT=0
-NODE_SERIAL="SNX00001"
+NODE_SERIALS=()
 CONTROL_PORT=5050
 CLIENT_ID="Example.Company.Device.Client.ABC.SNX00001.example.com"
 CLIENT_SECRET="secret"
@@ -75,7 +88,7 @@ for arg in "$@"; do
   case "$arg" in
     --port=*)          AS_PORT="${arg#*=}" ;;
     --tct=*)           TCT="${arg#*=}" ;;
-    --serial=*)        NODE_SERIAL="${arg#*=}" ;;
+    --serial=*)        NODE_SERIALS+=("${arg#*=}") ;;
     --control-port=*)  CONTROL_PORT="${arg#*=}" ;;
     --client-id=*)     CLIENT_ID="${arg#*=}" ;;
     --client-secret=*) CLIENT_SECRET="${arg#*=}" ;;
@@ -86,19 +99,35 @@ for arg in "$@"; do
   esac
 done
 
+if [ ${#NODE_SERIALS[@]} -eq 0 ]; then
+  NODE_SERIALS=("SNX00001")
+fi
+# The first serial is the Controller's own host: it owns the redirect URIs and
+# the default client_id spelling.
+NODE_SERIAL="${NODE_SERIALS[0]}"
+
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
-# Prefer the certificate subset bundled inside this repository, so a
-# standalone clone of nmos-reference runs without the wider workspace PKI.
-# SNX00000 is the reserved infrastructure serial: the registry and this
-# Authorization Server both present it. An explicit IPMX_CERT_ROOT wins.
+# Certificates come from the subset bundled inside this repository, so a
+# standalone clone runs with no wider workspace. SNX00000 is the reserved
+# infrastructure serial: the registry and this Authorization Server both
+# present it. Resolution order is IPMX_CERT_ROOT, then this checkout, then the
+# workspace tree one level up -- the last step keeps the IPMX security test
+# suite working, and warns when it is taken.
 CERT_PROBE="pem/ExampleDeviceServer.ABC.SNX00000.chain.pem"
 if [ -n "${IPMX_CERT_ROOT:-}" ]; then
   CERT_ROOT="$IPMX_CERT_ROOT"
 elif [ -f "$SCRIPT_DIR/Certificates/build.0/$CERT_PROBE" ]; then
   CERT_ROOT="$SCRIPT_DIR/Certificates"
-else
+elif [ -f "$SCRIPT_DIR/../Certificates/build.0/$CERT_PROBE" ]; then
   CERT_ROOT="$SCRIPT_DIR/../Certificates"
+  echo "$(basename "$0"): $CERT_PROBE is not in this checkout — using the" \
+       "workspace PKI at $CERT_ROOT" >&2
+else
+  echo "$(basename "$0"): missing build.0/$CERT_PROBE" >&2
+  echo "  Searched $SCRIPT_DIR/Certificates and $SCRIPT_DIR/../Certificates." >&2
+  echo "  Set IPMX_CERT_ROOT to a Certificates/ tree that carries it." >&2
+  exit 66
 fi
 CERTS="$CERT_ROOT/build.0"
 
@@ -149,20 +178,39 @@ for host in "$NODE_HOST" "127.0.0.1" "localhost"; do
   REDIRECT_ARGS+=(--redirect-uri "https://${host}:${CONTROL_PORT}/controller/oauth2/callback")
 done
 
+AUD_ARGS=()
+for serial in "${NODE_SERIALS[@]}"; do
+  AUD_ARGS+=(--default-aud "XYZ-${serial}")
+done
+
+# One audience is what the vendored server was built for. More than one goes
+# through multi_aud_as.py, which rebinds mint_token so each token carries the
+# whole list: ipmx_fake_as.py takes --default-aud as a single string, and
+# fake-as/ stays byte-identical to the validator's copy rather than growing a
+# local edit.
+AS_ENTRY="$FAKE_AS"
+if [ ${#NODE_SERIALS[@]} -gt 1 ]; then
+  AS_ENTRY="$SCRIPT_DIR/multi_aud_as.py"
+  if [ ! -f "$AS_ENTRY" ]; then
+    echo "start-fake-as.sh: missing $AS_ENTRY" >&2
+    exit 66
+  fi
+fi
+
 echo "Authorization Server (test)   https://XYZ-SNX00000:${AS_PORT}/realms/TR-10-SEC"
 echo "  metadata   /.well-known/oauth-authorization-server/realms/TR-10-SEC"
 echo "  sign in as ${OPERATOR} / ${PASSWORD} (${OPERATOR_ACCESS})"
 echo "  client     ${CLIENT_ID}"
-echo "  tokens aud XYZ-${NODE_SERIAL}"
+echo "  tokens aud $(printf 'XYZ-%s ' "${NODE_SERIALS[@]}")"
 echo
 
-exec python3 "$FAKE_AS" \
+exec python3 "$AS_ENTRY" \
   --host XYZ-SNX00000 \
   --port "$AS_PORT" \
   --cert "$AS_CERT" \
   --key  "$AS_KEY" \
   --api-selector realms/TR-10-SEC \
-  --default-aud "XYZ-${NODE_SERIAL}" \
+  "${AUD_ARGS[@]}" \
   --client-id "$CLIENT_ID" \
   --client-secret "$CLIENT_SECRET" \
   "${REDIRECT_ARGS[@]}" \
