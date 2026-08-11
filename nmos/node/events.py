@@ -14,6 +14,8 @@ is non-blocking: if full, events are dropped.
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 from dataclasses import dataclass
 from enum import IntEnum
 
@@ -329,6 +331,174 @@ _OPERSTATE_DOWN = frozenset({"down", "lowerlayerdown", "notpresent"})
 
 _SYSFS_NET = "/sys/class/net"
 
+#: ``IF_OPER_STATUS`` from ``<ifdef.h>`` — the Windows half of the same
+#: question sysfs answers with ``carrier`` / ``operstate``. Values are MIB-II
+#: ``ifOperStatus`` (RFC 2863), which is what ``operstate`` is modelled on, so
+#: the two platforms are being asked the same thing rather than two similar
+#: things.
+_IF_OPER_STATUS_UP = 1
+_IF_OPER_STATUS_DOWN = 2
+_IF_OPER_STATUS_TESTING = 3
+_IF_OPER_STATUS_UNKNOWN = 4
+_IF_OPER_STATUS_DORMANT = 5
+_IF_OPER_STATUS_NOT_PRESENT = 6
+_IF_OPER_STATUS_LOWER_LAYER_DOWN = 7
+
+#: The statuses that mean *down*, chosen to mirror :data:`_OPERSTATE_DOWN`
+#: exactly: the same three conditions, spelled in the Windows enum. Everything
+#: else — including ``Unknown`` and ``Dormant`` — reads as up, for the reason
+#: given there: a driver that does not track operational state is not a driver
+#: reporting a dead link.
+_WINDOWS_OPER_STATUS_DOWN = frozenset({
+    _IF_OPER_STATUS_DOWN,
+    _IF_OPER_STATUS_NOT_PRESENT,
+    _IF_OPER_STATUS_LOWER_LAYER_DOWN,
+})
+
+#: ``IF_TYPE_SOFTWARE_LOOPBACK`` from ``<ipifcons.h>``.
+_IF_TYPE_SOFTWARE_LOOPBACK = 24
+
+#: ``GetAdaptersAddresses`` returned more data than the buffer held.
+_ERROR_BUFFER_OVERFLOW = 111
+
+#: Skip the per-address lists: only ``OperStatus`` and the names are wanted,
+#: and asking for the rest allocates for nothing.
+_GAA_FLAG_SKIP_EVERYTHING = 0x0010 | 0x0020 | 0x0040 | 0x0080
+
+
+def _windows_adapters() -> list[tuple[str, str, str, int, int]]:
+    """Every adapter as ``(guid, friendly_name, description, if_type, status)``.
+
+    Windows has no sysfs, so the operational state comes from
+    ``GetAdaptersAddresses`` in ``iphlpapi``. Its ``OperStatus`` field is the
+    MIB-II ``ifOperStatus`` of the interface, which already folds in both
+    halves sysfs keeps apart: Windows reports ``Down`` for an administratively
+    disabled adapter *and* for a connected one whose cable is out.
+
+    Returns an empty list on any failure — the caller turns that into ``None``
+    ("could not determine"), never into "down".
+
+    The imports and the structure are built here rather than at module scope
+    because ``ctypes.wintypes`` is unimportable on non-Windows platforms.
+    """
+    if sys.platform != "win32":
+        return []
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _IpAdapterAddresses(ctypes.Structure):
+            """``IP_ADAPTER_ADDRESSES_LH``, truncated after ``OperStatus``.
+
+            Only the leading fields are declared: the list is walked through
+            ``Next`` and read field-by-field, so the tail is never touched.
+            Field order and widths up to ``OperStatus`` must match the SDK
+            exactly, because that is what fixes the offsets.
+            """
+
+        _IpAdapterAddresses._fields_ = [
+            ("Length", wintypes.ULONG),
+            ("IfIndex", wintypes.DWORD),
+            ("Next", ctypes.POINTER(_IpAdapterAddresses)),
+            ("AdapterName", ctypes.c_char_p),
+            ("FirstUnicastAddress", ctypes.c_void_p),
+            ("FirstAnycastAddress", ctypes.c_void_p),
+            ("FirstMulticastAddress", ctypes.c_void_p),
+            ("FirstDnsServerAddress", ctypes.c_void_p),
+            ("DnsSuffix", ctypes.c_wchar_p),
+            ("Description", ctypes.c_wchar_p),
+            ("FriendlyName", ctypes.c_wchar_p),
+            ("PhysicalAddress", ctypes.c_ubyte * 8),
+            ("PhysicalAddressLength", wintypes.ULONG),
+            ("Flags", wintypes.ULONG),
+            ("Mtu", wintypes.ULONG),
+            ("IfType", wintypes.ULONG),
+            ("OperStatus", ctypes.c_int),
+        ]
+
+        iphlpapi = ctypes.WinDLL("iphlpapi")
+        size = wintypes.ULONG(0)
+        # First call sizes the buffer; the adapter list can change between the
+        # two calls, so a grown buffer is retried rather than treated as fatal.
+        for _ in range(3):
+            buffer = ctypes.create_string_buffer(size.value)
+            table = ctypes.cast(buffer, ctypes.POINTER(_IpAdapterAddresses))
+            result = iphlpapi.GetAdaptersAddresses(
+                0, _GAA_FLAG_SKIP_EVERYTHING, None,
+                table if size.value else None, ctypes.byref(size))
+            if result == 0:
+                break
+            if result != _ERROR_BUFFER_OVERFLOW:
+                return []
+        else:
+            return []
+
+        adapters: list[tuple[str, str, str, int, int]] = []
+        node = table
+        while node:
+            entry = node.contents
+            guid = entry.AdapterName.decode() if entry.AdapterName else ""
+            adapters.append((
+                guid,
+                entry.FriendlyName or "",
+                entry.Description or "",
+                int(entry.IfType),
+                int(entry.OperStatus),
+            ))
+            node = entry.Next
+        return adapters
+    except (OSError, AttributeError, ValueError):
+        # No iphlpapi, or a layout the platform did not recognise. Both mean
+        # "cannot look", which must not be reported as a link failure.
+        return []
+
+
+def _windows_oper_status(interface_name: str) -> int | None:
+    """``OperStatus`` for ``interface_name``, or ``None`` if it is unknown here.
+
+    Matched against all three names an adapter answers to. The GUID is the one
+    that matters in practice — it is what ``netifaces`` calls a Windows
+    interface, so it is what reaches this module through
+    ``find_interface_name_for_address`` — but an operator naming an interface
+    by hand will write what the Network Connections panel shows, so the
+    friendly name and description are accepted too.
+    """
+    for guid, friendly, description, _if_type, status in _windows_adapters():
+        if interface_name in (guid, friendly, description):
+            return status
+    return None
+
+
+def interface_names() -> tuple[str, ...]:
+    """Every network interface the OS reports, named in its own vocabulary.
+
+    ``lo``/``eth0`` style names from sysfs; adapter GUIDs on Windows, which is
+    what ``netifaces`` yields there and therefore what :func:`is_link_down`
+    expects. Empty when the interfaces cannot be listed at all.
+    """
+    if sys.platform == "win32":
+        return tuple(guid for guid, *_rest in _windows_adapters() if guid)
+    try:
+        return tuple(sorted(os.listdir(_SYSFS_NET)))
+    except OSError:
+        return ()
+
+
+def loopback_interface_name() -> str | None:
+    """The operating system's own name for the loopback interface.
+
+    ``lo`` everywhere sysfs exists; on Windows the loopback is a pseudo-adapter
+    identified by its type rather than a fixed name, and it answers to a GUID.
+    Callers that want to reason about loopback without hard-coding a Linux name
+    need this.
+    """
+    if sys.platform != "win32":
+        return "lo"
+    for guid, _friendly, _description, if_type, _status in _windows_adapters():
+        if if_type == _IF_TYPE_SOFTWARE_LOOPBACK:
+            return guid
+    return None
+
 
 def is_link_down(interface_name: str) -> bool | None:
     """Whether the named network interface is down.
@@ -357,7 +527,23 @@ def is_link_down(interface_name: str) -> bool | None:
     or a name that does not exist. Callers must not treat that as "down":
     claiming AllDown because we could not look is the same false alarm as
     claiming it because a peer hung up.
+
+    **Windows** has no sysfs, so the same question goes to
+    ``GetAdaptersAddresses``. Its ``OperStatus`` is MIB-II ``ifOperStatus``,
+    which is the model ``operstate`` follows, and it already combines the two
+    conditions sysfs splits: an administratively disabled adapter and a
+    connected one with the cable out both report ``Down``. The three statuses
+    treated as down are the same three named in :data:`_OPERSTATE_DOWN`.
+    Without this branch every interface on Windows answered ``None``, so a
+    genuinely dead link was indistinguishable from one that could not be
+    inspected and BCP-008-01 ``linkStatus`` could never leave ``AllUp``.
     """
+    if sys.platform == "win32":
+        status = _windows_oper_status(interface_name)
+        if status is None:
+            return None
+        return status in _WINDOWS_OPER_STATUS_DOWN
+
     try:
         with open(f"{_SYSFS_NET}/{interface_name}/flags") as handle:
             flags = int(handle.read().strip(), 16)
