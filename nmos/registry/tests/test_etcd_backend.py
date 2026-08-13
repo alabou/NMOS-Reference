@@ -37,7 +37,7 @@ from nmos.registry.tests._fixtures import (
     make_node,
     make_sender,
 )
-from nmos.registry.types import ResourceType, TaiCursor
+from nmos.registry.types import Body, ResourceType, TaiCursor
 
 pytestmark = pytest.mark.e2e
 
@@ -116,7 +116,7 @@ def _envelope(resource_type: ResourceType, raw: dict) -> bytes:
     return Envelope(
         version=ENVELOPE_VERSION,
         resource_type=resource_type,
-        raw=raw,
+        body=Body.from_data(raw),
         created=TaiCursor(1000, 1),
         updated=TaiCursor(1000, 1),
         health=1000,

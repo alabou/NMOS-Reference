@@ -29,7 +29,7 @@ from nmos.registry.tests._fixtures import (
     make_source,
     make_flow,
 )
-from nmos.registry.types import ResourceType
+from nmos.registry.types import Body, ResourceType
 
 
 class FakeDispatchGroup:
@@ -65,7 +65,7 @@ def seed_tree(registry: Registry) -> None:
         (ResourceType.SENDER, make_sender()),
     ):
         typed = decode_resource(resource_type, raw)
-        assert registry.register(resource_type, dict(raw)).ok
+        assert registry.register(resource_type, Body.from_data(raw)).ok
 
 
 def age_everything(registry: Registry, seconds: int) -> None:

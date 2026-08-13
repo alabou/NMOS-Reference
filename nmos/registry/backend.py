@@ -43,7 +43,7 @@ from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
 from nmos.registry.registry import Registry
-from nmos.registry.types import RegistrationResult, ResourceType
+from nmos.registry.types import Body, RegistrationResult, ResourceType
 
 
 class MutationUnavailable(Exception):
@@ -109,7 +109,7 @@ class RegistryBackend(Protocol):
         ...
 
     async def register(
-        self, resource_type: ResourceType, raw: dict[str, Any],
+        self, resource_type: ResourceType, body: Body,
     ) -> RegistrationResult: ...
 
     async def unregister(
@@ -158,9 +158,9 @@ class StandaloneRegistryBackend:
         self._state = BackendState.READY
 
     async def register(
-        self, resource_type: ResourceType, raw: dict[str, Any],
+        self, resource_type: ResourceType, body: Body,
     ) -> RegistrationResult:
-        return self._registry.register(resource_type, raw)
+        return self._registry.register(resource_type, body)
 
     async def unregister(
         self, resource_type: ResourceType, resource_id: str,

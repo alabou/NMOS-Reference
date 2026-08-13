@@ -32,6 +32,7 @@ from nmos.registry.tests._fixtures import (
     tai_version,
 )
 from nmos.registry.types import (
+    Body,
     EventKind,
     RegistrationError,
     RegistrationResult,
@@ -47,7 +48,7 @@ def register(store: RegistryStore, resource_type: ResourceType, raw: dict[str, o
     as ``decode_post_envelope`` does; its result is not stored.
     """
     decode_resource(resource_type, raw)
-    return store.insert_or_update(resource_type, dict(raw))
+    return store.insert_or_update(resource_type, Body.from_data(raw))
 
 
 def register_tree(store: RegistryStore) -> None:
@@ -103,11 +104,11 @@ class TestRegistration:
         )
         event = result.events[0]
         assert event.pre is not None and event.post is not None
-        assert event.pre["label"] == "before"
-        assert event.post["label"] == "after"
+        assert event.pre.data["label"] == "before"
+        assert event.post.data["label"] == "after"
         # "All attributes of the resource MUST be specified".
-        assert set(event.pre) == set(event.post)
-        assert "interfaces" in event.post
+        assert set(event.pre.data) == set(event.post.data)
+        assert "interfaces" in event.post.data
 
     def test_raw_json_is_served_verbatim(self, store: RegistryStore) -> None:
         """Vendor extensions and unmodelled attributes must survive.
@@ -737,7 +738,7 @@ class TestCursorOrderedIndexes:
             prepared = store.prepare(ResourceType.DEVICE, raw)
             assert not isinstance(prepared, RegistrationResult)
             store.apply_committed(
-                prepared, dict(raw),
+                prepared, Body.from_data(raw),
                 created=TaiCursor(seconds, 0), updated=TaiCursor(seconds, 0),
                 health=health_now(),
             )
@@ -764,7 +765,7 @@ class TestCursorOrderedIndexes:
             prepared = store.prepare(ResourceType.DEVICE, raw)
             assert not isinstance(prepared, RegistrationResult)
             store.apply_committed(
-                prepared, dict(raw),
+                prepared, Body.from_data(raw),
                 created=TaiCursor(7000, 0), updated=TaiCursor(7000, 0),
                 health=health_now(),
             )
@@ -790,7 +791,7 @@ class TestCursorOrderedIndexes:
             prepared = store.prepare(ResourceType.DEVICE, raw)
             assert not isinstance(prepared, RegistrationResult)
             store.apply_committed(
-                prepared, dict(raw),
+                prepared, Body.from_data(raw),
                 created=TaiCursor(seconds, 0), updated=TaiCursor(seconds, 0),
                 health=health_now(),
             )

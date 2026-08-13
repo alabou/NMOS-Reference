@@ -25,7 +25,12 @@ from nmos.registry.paging import (
     paging_headers,
     parse_paging,
 )
-from nmos.registry.types import RegisteredResource, ResourceType, TaiCursor
+from nmos.registry.types import (
+    Body,
+    RegisteredResource,
+    ResourceType,
+    TaiCursor,
+)
 
 # The examples use a server whose default paging limit is 10 (``:52``).
 DEFAULT_LIMIT = 10
@@ -40,7 +45,7 @@ def resource(nanoseconds: int) -> RegisteredResource:
     return RegisteredResource(
         resource_type=ResourceType.NODE,
         id=f"00000000-0000-1000-8000-{nanoseconds:012d}",
-        raw={"id": f"node-{nanoseconds}"},
+        body=Body.from_data({"id": f"node-{nanoseconds}"}),
         version=str(cursor),
         created=cursor,
         updated=cursor,

@@ -60,6 +60,7 @@ from nmos.registry.metrics import Event, RegistryMetrics
 from nmos.registry.registry import Registry
 from nmos.registry.store import RegistryStore, health_now
 from nmos.registry.types import (
+    Body,
     RegistrationError,
     RegistrationResult,
     ResourceEvent,
@@ -459,7 +460,7 @@ class EtcdRegistryBackend:
             )
         result = store.apply_committed(
             prepared,
-            envelope.raw,
+            envelope.body,
             created=envelope.created,
             updated=envelope.updated,
             health=envelope.health,
@@ -758,7 +759,7 @@ class EtcdRegistryBackend:
             raise MutationTimeout(f"{what}: {exc}") from exc
 
     async def register(
-        self, resource_type: ResourceType, raw: dict[str, Any],
+        self, resource_type: ResourceType, body: Body,
     ) -> RegistrationResult:
         """Register or update one resource.
 
@@ -776,7 +777,7 @@ class EtcdRegistryBackend:
         without first fencing and re-validating against current state.
         """
         deadline = asyncio.get_running_loop().time() + self._config.mutation_timeout
-        placement = self._placement(resource_type, raw)
+        placement = self._placement(resource_type, body.data)
         if isinstance(placement, RegistrationResult):
             return placement
 
@@ -792,12 +793,12 @@ class EtcdRegistryBackend:
         async def run() -> RegistrationResult:
             if self._fast_path:
                 fast = await self._try_fast_path(
-                    resource_type, raw, placement,
+                    resource_type, body, placement,
                 )
                 if fast is not None:
                     return fast
             return await self._fenced_register(
-                resource_type, raw, placement, deadline,
+                resource_type, body, placement, deadline,
             )
 
         result: RegistrationResult = await self._guarded(
@@ -808,7 +809,7 @@ class EtcdRegistryBackend:
     async def _try_fast_path(
         self,
         resource_type: ResourceType,
-        raw: dict[str, Any],
+        body: Body,
         placement: _Placement,
     ) -> RegistrationResult | None:
         """One speculative CAS from believed revisions. None means "fall back".
@@ -818,7 +819,7 @@ class EtcdRegistryBackend:
         compare and returns here as None.
         """
         store = self._registry.store
-        prepared = store.prepare(resource_type, raw)
+        prepared = store.prepare(resource_type, body.data)
         if isinstance(prepared, RegistrationResult):
             # Might be a genuine 400, might be staleness. Not ours to answer.
             self._metrics.record(
@@ -832,7 +833,7 @@ class EtcdRegistryBackend:
         with self._metrics.timer(Event.CAS, path="fast") as timer:
             result = await self.kv.txn(
                 compare=compares,
-                success=self._write_ops(placement, raw, resource_type),
+                success=self._write_ops(placement, body, resource_type),
                 failure=(),
             )
             timer.note(succeeded=result.succeeded, revision=result.revision)
@@ -852,7 +853,7 @@ class EtcdRegistryBackend:
     async def _fenced_register(
         self,
         resource_type: ResourceType,
-        raw: dict[str, Any],
+        body: Body,
         placement: _Placement,
         deadline: float,
     ) -> RegistrationResult:
@@ -870,7 +871,7 @@ class EtcdRegistryBackend:
 
             # Now validating against a store known to include everything up to
             # `revision`, so a rejection here is authoritative and returnable.
-            prepared = self._registry.store.prepare(resource_type, raw)
+            prepared = self._registry.store.prepare(resource_type, body.data)
             if isinstance(prepared, RegistrationResult):
                 return prepared
 
@@ -879,7 +880,7 @@ class EtcdRegistryBackend:
             ) as timer:
                 result = await self.kv.txn(
                     compare=self._compare_set(placement, speculative=False),
-                    success=self._write_ops(placement, raw, resource_type),
+                    success=self._write_ops(placement, body, resource_type),
                     failure=(),
                 )
                 timer.note(succeeded=result.succeeded, revision=result.revision)
@@ -962,7 +963,7 @@ class EtcdRegistryBackend:
     def _write_ops(
         self,
         placement: _Placement,
-        raw: dict[str, Any],
+        body: Body,
         resource_type: ResourceType,
     ) -> list[Any]:
         """The resource and its id claim, both on the Node's lease.
@@ -977,7 +978,7 @@ class EtcdRegistryBackend:
         envelope = Envelope(
             version=ENVELOPE_VERSION,
             resource_type=resource_type,
-            raw=raw,
+            body=body,
             created=cursors[0],
             updated=cursors[1],
             health=health_now(),
@@ -1301,7 +1302,7 @@ def _diff_stores(
             if was is None:
                 events.append(ResourceEvent.added(resource))
             elif was.raw != resource.raw:
-                events.append(ResourceEvent.modified(was.raw, resource))
+                events.append(ResourceEvent.modified(was.body, resource))
 
         for resource_id, resource in before.items():
             if resource_id not in after:

@@ -1283,6 +1283,29 @@ class NTags:
 # NGeneric -- wraps Any (generic JSON value)
 # ---------------------------------------------------------------------------
 
+class RawJson(str):
+    """JSON source text to be emitted verbatim rather than re-encoded.
+
+    A ``str`` subclass so it can be carried anywhere a value is expected, but
+    ``NGeneric.encode`` tests for it *before* the ``str`` branch and writes it
+    through ``JsonEngine.write_raw`` -- so it lands as the JSON value it already
+    is, not as a quoted string containing JSON.
+
+    This is what lets a resource body reach the WebSocket grain with the exact
+    spelling it arrived with. Without it the HTTP view (which serves the stored
+    text) and the WebSocket view (which would re-encode a parsed dict) would
+    disagree byte-for-byte on the same resource -- the very property the
+    registry promises.
+
+    The contents are trusted to be well-formed JSON: they are written into the
+    output stream unexamined. Only construct this from text that has already
+    parsed successfully -- in this project, from ``nmos.json.spans.member_text``
+    over a document the decoder accepted.
+    """
+
+    __slots__ = ()
+
+
 class NGeneric:
     """Optional generic JSON value."""
 
@@ -1330,6 +1353,10 @@ class NGeneric:
             return
         if self._inner is None:
             engine.write_null(name)
+        elif isinstance(self._inner, RawJson):
+            # Tested before the ``str`` branch below: RawJson IS a str, and
+            # quoting it would turn a JSON object into a string containing one.
+            engine.write_raw(name, self._inner)
         elif isinstance(self._inner, bool):
             engine.write_bool(name, self._inner)
         elif isinstance(self._inner, int):

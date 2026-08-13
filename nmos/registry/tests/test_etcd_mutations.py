@@ -28,14 +28,14 @@ from nmos.registry.tests.test_etcd_backend import (
     _eventually,
     _start_backend,
 )
-from nmos.registry.types import ResourceType
+from nmos.registry.types import Body, ResourceType
 
 pytestmark = pytest.mark.e2e
 
 
 async def _register(backend, resource_type: ResourceType, raw: dict):
     typed = decode_resource(resource_type, raw)
-    return await backend.register(resource_type, dict(raw))
+    return await backend.register(resource_type, Body.from_data(raw))
 
 
 async def _register_tree(backend) -> tuple[dict, dict, dict]:

@@ -44,6 +44,7 @@ from nmos.node.types import utc_to_tai
 from nmos.registry.paging import ORDER_CREATE, ORDER_UPDATE
 from nmos.registry.types import (
     PARENT_KEY,
+    Body,
     PARENT_TYPE,
     PreparedRegistration,
     RegisteredResource,
@@ -390,7 +391,7 @@ class RegistryStore:
     def apply_committed(
         self,
         prepared: PreparedRegistration,
-        raw: dict[str, Any],
+        body: Body,
         *,
         created: TaiCursor | None = None,
         updated: TaiCursor | None = None,
@@ -429,8 +430,8 @@ class RegistryStore:
         pre_parent = previous.parent_id if previous is not None else None
 
         if previous is not None and not prepared.reviving:
-            pre_raw = previous.raw
-            previous.raw = raw
+            pre_body = previous.body
+            previous.body = body
             previous.version = prepared.version
             previous.updated = cursor
             previous.parent_id = prepared.parent_id
@@ -443,13 +444,13 @@ class RegistryStore:
             self._touch_order(resource_type, ORDER_UPDATE, resource_id, cursor)
             return RegistrationResult(
                 created=False,
-                events=[ResourceEvent.modified(pre_raw, previous)],
+                events=[ResourceEvent.modified(pre_body, previous)],
             )
 
         resource = RegisteredResource(
             resource_type=resource_type,
             id=resource_id,
-            raw=raw,
+            body=body,
             version=prepared.version,
             created=created if created is not None else cursor,
             updated=cursor,
@@ -487,7 +488,7 @@ class RegistryStore:
     def insert_or_update(
         self,
         resource_type: ResourceType,
-        raw: dict[str, Any],
+        body: Body,
     ) -> RegistrationResult:
         """Apply a ``POST /resource`` for an already-validated resource.
 
@@ -500,18 +501,18 @@ class RegistryStore:
 
         Args:
             resource_type: Type named by the POST envelope's ``type`` field.
-            raw: The resource JSON exactly as received. Stored verbatim and
-                served back by the Query API — see ``RegisteredResource.raw``.
+            body: The resource body. Its ``text`` is stored verbatim and
+                served back by the Query API — see ``Body``.
 
         Returns:
             A ``RegistrationResult``: on success ``created`` distinguishes 201
             from 200 and ``events`` carries the grain events to publish; on
             failure ``error`` names the condition and ``detail`` explains it.
         """
-        prepared = self.prepare(resource_type, raw)
+        prepared = self.prepare(resource_type, body.data)
         if isinstance(prepared, RegistrationResult):
             return prepared
-        return self.apply_committed(prepared, raw)
+        return self.apply_committed(prepared, body)
 
     def _parent_id_of(
         self, resource_type: ResourceType, raw: dict[str, Any],

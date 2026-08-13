@@ -25,7 +25,8 @@ from typing import Any, Callable, NoReturn
 
 from nmos.errors import NmosError
 from nmos.json.engine import JsonEngine
-from nmos.registry.types import ResourceType
+from nmos.json.spans import JsonSpanError, member_spans
+from nmos.registry.types import Body, ResourceType
 
 
 class DecodeFailure(Exception):
@@ -107,11 +108,16 @@ def decode_resource(resource_type: ResourceType, raw: Any) -> Any:
     return value
 
 
-def decode_post_envelope(body: Any) -> tuple[ResourceType, dict[str, Any]]:
-    """Validate a ``POST /resource`` body and return what the registry keeps.
+def decode_post_envelope(source: str) -> tuple[ResourceType, Body]:
+    """Validate a ``POST /resource`` request and return what the registry keeps.
 
-    The body is the ``{"type": <singular>, "data": {...}}`` envelope of
+    The request is the ``{"type": <singular>, "data": {...}}`` envelope of
     ``registrationapi-resource-post-request.json``.
+
+    Takes the request **text**, not a parsed object, because the ``data`` value
+    has to be sliced out of it verbatim: parsing normalises number spelling and
+    string escaping irreversibly, and the registry promises to serve back what
+    the Node registered rather than a re-rendering of it.
 
     This is the **only** place a resource is decoded against its generated
     type, and that decode is the ``APIs.md:22`` schema validation. The decoded
@@ -120,17 +126,31 @@ def decode_post_envelope(body: Any) -> tuple[ResourceType, dict[str, Any]]:
     ``RegisteredResource.raw``.
 
     Returns:
-        ``(resource_type, raw_data)`` — the type named by the envelope and the
-        untouched ``data`` object to be stored and served.
+        ``(resource_type, body)`` — the type named by the envelope, and the
+        body carrying both the untouched source text and its parsed form.
 
     Raises:
         DecodeFailure: The envelope is malformed, names an unknown type, or
             its ``data`` does not validate.
     """
-    if not isinstance(body, dict):
+    # One pass, not two. ``raw_decode`` builds each member's value in order to
+    # find where it ends, so the scan hands back the decoded values *and* the
+    # spans together; parsing with ``json.loads`` and then locating the span
+    # separately would parse every resource body twice.
+    try:
+        members = member_spans(source)
+    except JsonSpanError as exc:
+        # Distinguish "not JSON at all" from "valid JSON, wrong shape", so the
+        # 400 says which. Failure path only, so the extra parse costs nothing
+        # on any request that succeeds.
+        try:
+            JsonEngine.parse_any(source)
+        except (ValueError, TypeError):
+            _fail(f"invalid JSON body: {exc}")
         _fail("expected a JSON object")
 
-    type_name = body.get("type")
+    type_entry = members.get("type")
+    type_name = type_entry[1] if type_entry is not None else None
     if not isinstance(type_name, str):
         _fail("missing or non-string 'type' in registration envelope")
 
@@ -139,16 +159,20 @@ def decode_post_envelope(body: Any) -> tuple[ResourceType, dict[str, Any]]:
         permitted = ", ".join(rt.value for rt in ResourceType)
         _fail(f"unknown resource type {type_name!r}; expected one of: {permitted}")
 
-    data = body.get("data")
-    if not isinstance(data, dict):
+    data_entry = members.get("data")
+    if data_entry is None or not isinstance(data_entry[1], dict):
         _fail("missing or non-object 'data' in registration envelope")
+    data_text, data = data_entry
 
     # Called purely for its validation side effect. The decoded object is
     # discarded: nothing downstream of the Registration API reads it, and
     # retaining it cost roughly 3x the memory of the resource itself. This
     # call IS the ``APIs.md:22`` schema check, so it must stay.
     decode_resource(resource_type, data)
-    return resource_type, data
+
+    # The span, not a re-encoding -- and it came from the same pass that
+    # produced ``data``, so no second parse was needed to obtain it.
+    return resource_type, Body(data_text, data)
 
 
 def _fail(reason: str) -> NoReturn:

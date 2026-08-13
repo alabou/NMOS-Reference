@@ -45,10 +45,11 @@ members. Storing them makes the value the single source of truth for ordering.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from nmos.json.engine import JsonEngine
-from nmos.registry.types import ResourceType, TaiCursor
+from nmos.json.spans import JsonSpanError, member_spans
+from nmos.registry.types import Body, ResourceType, TaiCursor
 
 # Bumped only for a change that a previous version could not read. The preload
 # refuses an envelope from the future rather than guessing, because a registry
@@ -243,27 +244,40 @@ class Envelope:
 
     version: int
     resource_type: ResourceType
-    raw: dict[str, Any]
+    body: Body
     created: TaiCursor
     updated: TaiCursor
     health: int
 
+    @property
+    def raw(self) -> dict[str, Any]:
+        """The body's parsed form, for the checks that need field access."""
+        return self.body.data
+
     def encode(self) -> bytes:
         """Serialise for etcd.
 
-        Uses the project's JSON engine rather than ``json.dumps`` directly, so
-        the resource body is written exactly as every other dynamic NMOS payload
-        is.
+        The metadata is encoded normally; the body is **spliced in as text**.
+        Re-encoding it here would normalise the Node's spelling -- ``1e3`` to
+        ``1000.0``, ``\\u00e9`` to ``é`` -- and then the member that accepted the
+        registration would serve different bytes from every member that
+        materialised it from storage. Splicing keeps all members byte-identical
+        and costs nothing, since the text is what we already hold.
+
+        Safe because ``Body.text`` is always a value some JSON parser has
+        already accepted, so the result is well-formed by construction.
         """
-        document = {
+        head = {
             "v": self.version,
             "type": self.resource_type.value,
             "created": str(self.created),
             "updated": str(self.updated),
             "health": self.health,
-            "data": self.raw,
         }
-        return JsonEngine.dump_any(document).encode("utf-8")
+        prefix = JsonEngine.dump_any(head)
+        assert prefix.endswith("}")
+        spliced: str = prefix[:-1] + ', "data": ' + self.body.text + "}"
+        return spliced.encode("utf-8")
 
     @classmethod
     def decode(cls, value: bytes) -> Envelope:
@@ -274,13 +288,25 @@ class Envelope:
         cannot agree on, and continuing would mean serving a view that
         silently differs from its peers'.
         """
+        # One pass yields both the decoded metadata and the body's exact span;
+        # parsing and then locating the span separately would parse every
+        # resource body twice on the watch path.
         try:
-            document = JsonEngine.parse_any(value.decode("utf-8"))
-        except (ValueError, TypeError, UnicodeDecodeError) as exc:
+            text = value.decode("utf-8")
+            members = member_spans(text)
+        except UnicodeDecodeError as exc:
             raise KeyError_(f"envelope is not valid JSON: {exc}") from exc
+        except JsonSpanError as exc:
+            # Distinguish "not JSON at all" from "valid JSON, wrong shape".
+            # Only reachable on the failure path, so the extra parse is free
+            # in every case that matters.
+            try:
+                JsonEngine.parse_any(text)
+            except (ValueError, TypeError):
+                raise KeyError_(f"envelope is not valid JSON: {exc}") from exc
+            raise KeyError_("envelope is not a JSON object") from exc
 
-        if not isinstance(document, dict):
-            raise KeyError_("envelope is not a JSON object")
+        document = {name: parsed for name, (_span, parsed) in members.items()}
 
         version = document.get("v")
         if not isinstance(version, int):
@@ -300,9 +326,12 @@ class Envelope:
         if resource_type is None:
             raise KeyError_(f"envelope has unknown type {type_name!r}")
 
-        raw = document.get("data")
-        if not isinstance(raw, dict):
+        data_entry = members.get("data")
+        if data_entry is None or not isinstance(data_entry[1], dict):
             raise KeyError_("envelope has no 'data' object")
+        # The TEXT the writer stored, not a re-encoding, so this member serves
+        # the same bytes as the one that accepted the registration.
+        body = Body(data_entry[0], cast("dict[str, Any]", data_entry[1]))
 
         created = _cursor(document, "created")
         updated = _cursor(document, "updated")
@@ -314,7 +343,7 @@ class Envelope:
         return cls(
             version=version,
             resource_type=resource_type,
-            raw=raw,
+            body=body,
             created=created,
             updated=updated,
             health=health,

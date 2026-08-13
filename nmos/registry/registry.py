@@ -41,6 +41,7 @@ from nmos.node.security_tags import RAP
 from nmos.registry.metrics import Event, RegistryMetrics
 from nmos.registry.store import RegistryStore
 from nmos.registry.types import (
+    Body,
     RegistrationResult,
     ResourceEvent,
     ResourceType,
@@ -209,15 +210,15 @@ class Registry:
     # -----------------------------------------------------------------------
 
     def register(
-        self, resource_type: ResourceType, raw: dict[str, Any],
+        self, resource_type: ResourceType, body: Body,
     ) -> RegistrationResult:
         """Apply a registration and publish the resulting events.
 
-        ``raw`` has already been schema-validated by the Registration API
+        ``body`` has already been schema-validated by the Registration API
         handler; the decoded object is not carried here because nothing below
-        this point reads it.
+        this point reads it, and ``body.text`` is what gets served back.
         """
-        result = self.store.insert_or_update(resource_type, raw)
+        result = self.store.insert_or_update(resource_type, body)
         if result.ok:
             self._publish(result.events)
         return result

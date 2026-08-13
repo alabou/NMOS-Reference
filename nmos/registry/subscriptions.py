@@ -59,7 +59,9 @@ from typing import TYPE_CHECKING, Any, Iterable, Mapping
 from nmos.json.engine import JsonEngine
 from nmos.json.types import NTime
 from nmos.registry.query_filter import matches
+from nmos.json.types import RawJson
 from nmos.registry.types import (
+    Body,
     EventKind,
     RegisteredResource,
     ResourceEvent,
@@ -150,8 +152,8 @@ class _PendingEvent:
     """
 
     path: str
-    pre: dict[str, Any] | None
-    post: dict[str, Any] | None
+    pre: Body | None
+    post: Body | None
 
     def merge(self, newer: _PendingEvent) -> None:
         # `pre` is the state before the FIRST change in this window, so it is
@@ -356,7 +358,7 @@ class SubscriptionManager:
         self._connections.setdefault(subscription.id, []).append(connection)
 
         sync = [
-            _PendingEvent(path=resource.id, pre=resource.raw, post=resource.raw)
+            _PendingEvent(path=resource.id, pre=resource.body, post=resource.body)
             for resource in self._matching_resources(subscription)
         ]
         if sync:
@@ -427,8 +429,14 @@ class SubscriptionManager:
         matching has ``pre`` matching and ``post`` not, which is exactly the
         removed row.
         """
-        pre_matches = subscription.matches(event.pre)
-        post_matches = subscription.matches(event.post)
+        # ``.data`` parses on first use; an unfiltered subscription never
+        # reaches here, so it never pays for a parse at all.
+        pre_matches = subscription.matches(
+            event.pre.data if event.pre is not None else None,
+        )
+        post_matches = subscription.matches(
+            event.post.data if event.post is not None else None,
+        )
 
         if post_matches and pre_matches:
             return _PendingEvent(event.resource_id, event.pre, event.post)
@@ -480,10 +488,14 @@ class SubscriptionManager:
             # Only the members that apply are set: an undefined member is
             # omitted from the encoding entirely, which is how the presence
             # or absence of pre/post carries the event type.
+            # RawJson, so the engine splices the stored text instead of
+            # re-encoding a parsed dict. Without this the WebSocket view would
+            # normalise spelling the HTTP view preserves, and the two would
+            # describe the same resource with different bytes.
             if event.pre is not None:
-                entry.value.Pre.value = event.pre
+                entry.value.Pre.value = RawJson(event.pre.text)
             if event.post is not None:
-                entry.value.Post.value = event.post
+                entry.value.Post.value = RawJson(event.post.text)
             entries.append(entry)
 
         data = NArrayOfQueryWebSocketGrainDataGenericValue()

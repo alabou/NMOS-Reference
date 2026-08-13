@@ -52,7 +52,12 @@ from typing import Any
 
 from aiohttp import web
 
-from nmos.api.response import error_response, json_response, status_response
+from nmos.api.response import (
+    error_response,
+    json_body_response,
+    json_response,
+    status_response,
+)
 from nmos.json.engine import JsonEngine
 from nmos.registry import handlers_query as query_h
 from nmos.registry.decode import DecodeFailure, decode_post_envelope
@@ -143,12 +148,10 @@ async def handle_post_resource(request: web.Request) -> web.Response:
     registry = _registry(request)
 
     try:
-        body = JsonEngine.parse_any(await request.text())
-    except (ValueError, TypeError) as exc:
-        return error_response(400, f"invalid JSON body: {exc}", request=request)
-
-    try:
-        resource_type, raw = decode_post_envelope(body)
+        # The TEXT, not a parsed object: ``decode_post_envelope`` slices the
+        # resource body out of it verbatim so the bytes a Node registers are
+        # the bytes a Controller reads back.
+        resource_type, body = decode_post_envelope(await request.text())
     except DecodeFailure as exc:
         # :100 -- "The request body does not meet the JSON schema for that
         # resource type". Decoding into the generated type IS that check.
@@ -159,7 +162,7 @@ async def handle_post_resource(request: web.Request) -> web.Response:
         return _unavailable(request, backend.state)
 
     try:
-        result = await backend.register(resource_type, raw)
+        result = await backend.register(resource_type, body)
     except MutationUnavailable as exc:
         # The cluster could not commit within the deadline, or lost quorum
         # mid-request. Not a client error: the body was fine and the Node
@@ -195,8 +198,8 @@ async def handle_post_resource(request: web.Request) -> web.Response:
     # :25 -- 201 for a create, 200 for an update, Location on both. The body
     # is the registered resource (registrationapi-resource-response.json), and
     # it is the stored raw form so a client sees exactly what was registered.
-    response = json_response(
-        raw,
+    response = json_body_response(
+        body.text,
         status=201 if result.created else 200,
         request=request,
     )
@@ -204,7 +207,7 @@ async def handle_post_resource(request: web.Request) -> web.Response:
     # headers argument. Extending that signature for one caller would change
     # a helper the whole Node API depends on.
     response.headers["Location"] = _resource_location(
-        resource_type, raw["id"],
+        resource_type, body.data["id"],
     )
     return response
 
@@ -291,8 +294,8 @@ async def handle_get_resource(request: web.Request) -> web.Response:
     # Cross-references resolve into the Query API: the Registration API has
     # no collections to browse (it is write-only apart from these debug
     # reads), so linking within it would only produce dead ends.
-    return json_response(
-        resource.raw,
+    return json_body_response(
+        resource.body.text,
         request=request,
         link_resolver=make_link_resolver(
             str(request.path), query_h.BASE_PATH,

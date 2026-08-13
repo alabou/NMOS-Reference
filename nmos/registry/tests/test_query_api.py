@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from aiohttp import web
 
@@ -30,7 +32,7 @@ from nmos.registry.tests._fixtures import (
     make_sender,
     make_source,
 )
-from nmos.registry.types import ResourceType
+from nmos.registry.types import Body, ResourceType
 
 SUBSCRIPTIONS = f"{BASE_PATH}/subscriptions"
 
@@ -45,7 +47,7 @@ def build_registry() -> Registry:
 
 def seed(registry: Registry, resource_type: ResourceType, raw: dict) -> None:
     typed = decode_resource(resource_type, raw)
-    result = registry.register(resource_type, dict(raw))
+    result = registry.register(resource_type, Body.from_data(raw))
     assert result.ok, result.detail
 
 
@@ -524,3 +526,110 @@ class TestSharedStore:
             f"/x-nmos/registration/v1.3/resource/nodes/{NODE_ID}",
         )
         assert await (await query_client.get(f"{BASE_PATH}/nodes")).json() == []
+
+
+# ---------------------------------------------------------------------------
+# Byte fidelity between the two interfaces
+# ---------------------------------------------------------------------------
+
+class TestRegistrationBytesSurviveToQuery:
+    """What a Node POSTs is what a Controller reads back, byte for byte.
+
+    ``RegisteredResource`` exists precisely so the registry never rewrites a
+    Node's registration: the generated types do not model every attribute of
+    every resource, so the stored form is the JSON as received rather than a
+    re-rendering of a parsed view. These tests hold that promise to its
+    strongest reading — not merely "the same keys and values survive", but
+    "the same bytes come back".
+
+    The registry keeps the received bytes rather than re-encoding a parsed
+    view, so the original spelling of every value survives: ``1e3`` does not
+    become ``1000.0``, ``"caf\\u00e9"`` does not become ``"café"``, ``"a\\/b"``
+    does not become ``"a/b"``. A Node using a JSON library that escapes
+    non-ASCII by default — Python's own ``json.dumps`` does — would otherwise
+    see every accented label rewritten on the way back out.
+    """
+
+    @staticmethod
+    def _body() -> str:
+        """A Node registration whose label is spelled with a Unicode escape.
+
+        ``\\u00e9`` rather than a literal ``é`` because that is what a Node
+        using a JSON library that escapes non-ASCII by default emits — Python's
+        own ``json.dumps`` does exactly this — so it is the ordinary case, not a
+        contrived one. Accented labels are unremarkable in broadcast plant.
+        """
+        text = json.dumps(make_node())
+        return text.replace('"label": "test-node"', '"label": "caf\\u00e9"')
+
+    async def test_posted_bytes_are_returned_verbatim(
+        self, aiohttp_client,
+    ) -> None:  # type: ignore[no-untyped-def]
+        registry = build_registry()
+        security = InterfaceSecurity()
+        reg_client = await aiohttp_client(
+            create_registration_app(registry, security),
+        )
+        query_client = await aiohttp_client(
+            create_query_app(registry, security, ws_port=8448),
+        )
+
+        data_text = self._body()
+        envelope = '{"type": "node", "data": ' + data_text + "}"
+
+        posted = await reg_client.post(
+            "/x-nmos/registration/v1.3/resource",
+            data=envelope.encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        assert posted.status == 201, await posted.text()
+
+        got = await query_client.get(f"{BASE_PATH}/nodes/{NODE_ID}")
+        assert got.status == 200
+        served = await got.text()
+
+        assert served == data_text, (
+            "Query returned a re-encoding, not the bytes that were registered.\n"
+            f"  registered: {data_text}\n"
+            f"  served    : {served}"
+        )
+
+    async def test_every_key_and_value_survives_unchanged(
+        self, aiohttp_client,
+    ) -> None:  # type: ignore[no-untyped-def]
+        """The weaker guarantee the registry *does* make today.
+
+        Content equality, including keys the generated types do not model.
+        This is what actually protects a Node's registration from being
+        silently rewritten, and it must hold whether or not the byte-exact
+        test above ever passes.
+        """
+        registry = build_registry()
+        security = InterfaceSecurity()
+        reg_client = await aiohttp_client(
+            create_registration_app(registry, security),
+        )
+        query_client = await aiohttp_client(
+            create_query_app(registry, security, ws_port=8448),
+        )
+
+        node = make_node()
+        # An undeclared vendor extension and the deprecated `hostname` of
+        # node.json: neither is modelled by NNode, both must come back.
+        node["hostname"] = "example-host"
+        node["x-vendor-extension"] = {"nested": [1, 2, {"deep": True}]}
+
+        posted = await reg_client.post(
+            "/x-nmos/registration/v1.3/resource",
+            json={"type": "node", "data": node},
+        )
+        assert posted.status == 201, await posted.text()
+
+        got = await query_client.get(f"{BASE_PATH}/nodes/{NODE_ID}")
+        assert got.status == 200
+        assert await got.json() == node
+
+        # Key order is part of "not rewritten" too: a client diffing two
+        # responses should not see spurious reordering.
+        served_keys = list((await got.json()).keys())
+        assert served_keys == list(node.keys())

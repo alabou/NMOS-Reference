@@ -18,7 +18,7 @@ from nmos.registry.keys import (
 )
 from nmos.registry.metrics import Event, RegistryMetrics
 from nmos.registry.tests._fixtures import make_node
-from nmos.registry.types import ResourceType, TaiCursor
+from nmos.registry.types import Body, ResourceType, TaiCursor
 
 NS = Namespace("/nmos-reference/registry/v1")
 NODE = "11111111-1111-1111-8111-111111111111"
@@ -239,7 +239,7 @@ def test_envelope_round_trips_the_resource_verbatim() -> None:
     envelope = Envelope(
         version=ENVELOPE_VERSION,
         resource_type=ResourceType.NODE,
-        raw=raw,
+        body=Body.from_data(raw),
         created=TaiCursor(100, 5),
         updated=TaiCursor(200, 7),
         health=1234,
@@ -259,7 +259,7 @@ def test_envelope_from_a_newer_schema_is_refused() -> None:
     envelope = Envelope(
         version=ENVELOPE_VERSION + 1,
         resource_type=ResourceType.NODE,
-        raw=make_node(),
+        body=Body.from_data(make_node()),
         created=TaiCursor(1, 0),
         updated=TaiCursor(1, 0),
         health=1,

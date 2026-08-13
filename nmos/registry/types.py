@@ -33,11 +33,13 @@ monotonic across a delete.
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Iterator
+from typing import Any, Iterator, cast
 
+from nmos.json.engine import JsonEngine
 from nmos.node.types import utc_to_tai
 
 
@@ -208,6 +210,62 @@ class TaiCursor:
 # Stored resources
 # ---------------------------------------------------------------------------
 
+class Body:
+    """A resource body: the source text, and its parsed form on demand.
+
+    Two views of one thing, which is the point -- keeping them as separate
+    fields would let them drift, and a resource whose text and dict disagree is
+    a resource the HTTP and WebSocket views would describe differently.
+
+    ``text`` is authoritative. It is the JSON exactly as the Node wrote it,
+    sliced out of the registration request by ``member_text`` and carried
+    unchanged through storage, so what a Controller reads back is byte-for-byte
+    what was registered -- ``1e3`` stays ``1e3``, ``"caf\u00e9"`` stays
+    escaped. A parse would normalise all of that irreversibly.
+
+    ``data`` is derived, parsed once on first use and cached. Basic-query
+    filters and the store's own structural checks need field access; everything
+    else -- Query responses, grains, the storage envelope -- uses ``text`` and
+    never pays for a parse at all.
+    """
+
+    __slots__ = ("text", "_data")
+
+    def __init__(self, text: str, data: dict[str, Any] | None = None) -> None:
+        self.text = text
+        self._data = data
+
+    @property
+    def data(self) -> dict[str, Any]:
+        if self._data is None:
+            self._data = cast("dict[str, Any]", json.loads(self.text))
+        return self._data
+
+    @classmethod
+    def from_data(cls, data: dict[str, Any]) -> Body:
+        """Build from a dict when no source text exists.
+
+        Only for callers that genuinely have no original -- tests, and internal
+        resources the registry itself synthesises. Anything arriving over the
+        wire must come from ``member_text`` instead, or the fidelity guarantee
+        is lost at that point in the chain.
+        """
+        return cls(
+            JsonEngine.dump_any(data, ensure_ascii=False, default=str), data,
+        )
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Body) and other.text == self.text
+
+    def __hash__(self) -> int:
+        return hash(self.text)
+
+    def __repr__(self) -> str:
+        return f"Body({self.text[:60]!r}...)" if len(self.text) > 60 else (
+            f"Body({self.text!r})"
+        )
+
+
 @dataclass
 class RegisteredResource:
     """One resource held by the registry.
@@ -236,7 +294,7 @@ class RegisteredResource:
 
     resource_type: ResourceType
     id: str
-    raw: dict[str, Any]
+    body: Body
     version: str
     """The resource's own ``version`` attribute, ``"<sec>:<nsec>"``.
 
@@ -277,6 +335,17 @@ class RegisteredResource:
     sub-resource would expire on its own after one interval and the Node
     would be left childless while still alive.
     """
+
+    @property
+    def raw(self) -> dict[str, Any]:
+        """The body's parsed form.
+
+        A property over ``body`` rather than a stored dict, so the text and the
+        parsed view can never disagree. Field access (filters, structural
+        checks) reads this; anything that serialises should reach for
+        ``body.text`` and skip the parse entirely.
+        """
+        return self.body.data
 
     def version_cursor(self) -> TaiCursor | None:
         """Parse ``version`` into a comparable cursor, or None if malformed."""
@@ -320,30 +389,31 @@ class EventKind(Enum):
 class ResourceEvent:
     """A single change to a single resource, ready to become grain data.
 
-    ``pre`` and ``post`` are raw JSON objects (or None), taken straight from
-    ``RegisteredResource.raw`` — see that field's note for why the raw form
-    is what gets published.
+    ``pre`` and ``post`` are resource bodies (or None), taken straight from
+    ``RegisteredResource.body`` — carrying the ``Body`` rather than its parsed
+    dict is what lets the grain emit the same bytes the Query API serves, while
+    still giving a filtered subscription the field access it needs.
     """
 
     kind: EventKind
     resource_type: ResourceType
     resource_id: str
-    pre: dict[str, Any] | None
-    post: dict[str, Any] | None
+    pre: Body | None
+    post: Body | None
 
     @classmethod
     def added(cls, res: RegisteredResource) -> ResourceEvent:
-        return cls(EventKind.ADDED, res.resource_type, res.id, None, res.raw)
+        return cls(EventKind.ADDED, res.resource_type, res.id, None, res.body)
 
     @classmethod
     def removed(cls, res: RegisteredResource) -> ResourceEvent:
-        return cls(EventKind.REMOVED, res.resource_type, res.id, res.raw, None)
+        return cls(EventKind.REMOVED, res.resource_type, res.id, res.body, None)
 
     @classmethod
     def modified(
-        cls, pre: dict[str, Any], res: RegisteredResource,
+        cls, pre: Body, res: RegisteredResource,
     ) -> ResourceEvent:
-        return cls(EventKind.MODIFIED, res.resource_type, res.id, pre, res.raw)
+        return cls(EventKind.MODIFIED, res.resource_type, res.id, pre, res.body)
 
     @classmethod
     def sync(cls, res: RegisteredResource) -> ResourceEvent:
@@ -352,7 +422,7 @@ class ResourceEvent:
         ``Behaviour - Querying.md:166`` — used for the initial burst that
         tells a newly connected client the current state of the topic.
         """
-        return cls(EventKind.SYNC, res.resource_type, res.id, res.raw, res.raw)
+        return cls(EventKind.SYNC, res.resource_type, res.id, res.body, res.body)
 
 
 # ---------------------------------------------------------------------------

@@ -59,7 +59,7 @@ from nmos.registry.tests._fixtures import (
     make_node,
     tai_version,
 )
-from nmos.registry.types import ResourceType
+from nmos.registry.types import Body, ResourceType
 
 pytestmark = pytest.mark.skipif(
     not PKI_AVAILABLE,
@@ -182,7 +182,7 @@ async def read_grain(socket: aiohttp.ClientWebSocketResponse) -> dict[str, Any]:
 def register_node(registry: Registry, **kwargs: Any) -> None:
     raw = make_node(**kwargs)
     typed = decode_resource(ResourceType.NODE, raw)
-    assert registry.register(ResourceType.NODE, dict(raw)).ok
+    assert registry.register(ResourceType.NODE, Body.from_data(raw)).ok
 
 
 # ---------------------------------------------------------------------------

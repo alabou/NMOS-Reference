@@ -72,6 +72,8 @@ QUERY_WS_PATH = "/x-nmos/query/v1.3/subscriptions"
 AMWA_RESOURCES_PER_NODE = 6
 AMWA_REFERENCE_NODES = 2500
 AMWA_REFERENCE_SECONDS = 222.0  # 3m42s
+_NO_MATCH_UUID = "00000000-dead-4000-8000-000000000000"
+
 QUERY_PATH = "/x-nmos/query/v1.3"
 
 
@@ -478,6 +480,45 @@ async def phase_query(
     return samples
 
 
+async def phase_query_filtered(
+    driver: Driver, iterations: int, concurrency: int, paging_limit: int,
+) -> Samples:
+    """Collection reads with a basic query that must be evaluated per resource.
+
+    Deliberately NOT ``device_id``. That is the parent reference
+    (``PARENT_KEY``) -- it is in the etcd key path and in the store's
+    ``_children`` index, so a registry can answer it structurally without ever
+    looking at a resource body, and measuring it would say nothing about the
+    cost of filtering.
+
+    ``subscription.sender_id`` is the opposite case and a real controller
+    question -- "which receiver is consuming this sender?". It lives inside a
+    nested object (``APIs - Query Parameters.md:446``), appears in no key, and
+    is reachable only by inspecting each candidate. Its value is chosen not to
+    match anything, so the filter runs over the whole collection rather than
+    short-circuiting on an early hit -- the worst case, which is what a
+    scalability number should report.
+    """
+    samples = Samples("query receivers (filtered)")
+    samples.started = time.perf_counter()
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def issue() -> None:
+        async with semaphore:
+            elapsed, status = await driver.query(
+                "receivers",
+                {
+                    "paging.limit": str(paging_limit),
+                    "subscription.sender_id": _NO_MATCH_UUID,
+                },
+            )
+            samples.record(elapsed, status)
+
+    await asyncio.gather(*[issue() for _ in range(iterations)])
+    samples.finished = time.perf_counter()
+    return samples
+
+
 async def phase_amwa_scale(
     driver: Driver, nodes: int, concurrency: int,
 ) -> tuple[Samples, dict[str, Any]]:
@@ -757,6 +798,9 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             driver, args.nodes, args.rounds, args.concurrency,
         )
         results["query"] = await phase_query(
+            driver, args.query_iterations, args.concurrency, args.paging_limit,
+        )
+        results["query_filtered"] = await phase_query_filtered(
             driver, args.query_iterations, args.concurrency, args.paging_limit,
         )
         # Fan-out BEFORE the delete phase: it updates an existing sender, and

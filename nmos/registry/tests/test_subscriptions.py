@@ -39,7 +39,7 @@ from nmos.registry.tests._fixtures import (
     make_source,
     tai_version,
 )
-from nmos.registry.types import ResourceType
+from nmos.registry.types import Body, ResourceType
 
 SUBSCRIPTIONS = f"{BASE_PATH}/subscriptions"
 
@@ -70,7 +70,7 @@ async def clients(aiohttp_client, registry: Registry):  # type: ignore[no-untype
 
 def seed(registry: Registry, resource_type: ResourceType, raw: dict) -> None:
     typed = decode_resource(resource_type, raw)
-    result = registry.register(resource_type, dict(raw))
+    result = registry.register(resource_type, Body.from_data(raw))
     assert result.ok, result.detail
 
 
@@ -534,3 +534,70 @@ class TestLifecycle:
                 seed(registry, ResourceType.DEVICE, make_device())
                 grain = await read_grain(device_socket)
                 assert entries(grain)[0]["path"] == DEVICE_ID
+
+
+class TestGrainBytesMatchTheQueryApi:
+    """The WebSocket and HTTP views must describe a resource identically.
+
+    Not merely "same keys and values" — the same bytes. A Controller that
+    fetches a resource over HTTP and then tracks it over the WebSocket is
+    looking at one thing, and a spelling that changes between the two views
+    would show up as a spurious difference in any byte-level comparison.
+
+    This is what the grain's ``RawJson`` splice is for: without it the HTTP
+    side would serve the stored text while the WebSocket side re-encoded a
+    parsed dict, and the two would disagree on exactly the values a parse
+    normalises.
+    """
+
+    async def test_grain_carries_the_registered_bytes(
+        self, clients, registry: Registry,
+    ) -> None:  # type: ignore[no-untyped-def]
+        http, ws_client = clients
+
+        # Spelled the way a JSON library that escapes non-ASCII would emit it.
+        node = make_node()
+        node["label"] = "café"
+        text = json.dumps(node, ensure_ascii=True).replace(", ", ",")
+        body = Body(text)
+
+        subscription = await subscribe(http, resource_path="/nodes")
+        async with ws_client.ws_connect(ws_path(subscription)) as socket:
+            assert registry.register(ResourceType.NODE, body).ok
+            grain = await read_grain(socket)
+
+        # Parsed equality first: the grain must still describe the resource
+        # correctly, splice or no splice.
+        entry = entries(grain)[0]
+        assert entry["post"] == node
+
+        # And the stored text is the registered text, which is what the grain
+        # splices — asserted directly on the wire by the next test.
+        assert registry.store.get(
+            ResourceType.NODE, node["id"],
+        ).body.text == body.text
+
+    async def test_websocket_and_http_agree_byte_for_byte(
+        self, clients, registry: Registry,
+    ) -> None:  # type: ignore[no-untyped-def]
+        """The guarantee stated on ``RegisteredResource``, end to end."""
+        http, ws_client = clients
+
+        node = make_node()
+        node["label"] = "café"
+        text = json.dumps(node, ensure_ascii=True)
+
+        subscription = await subscribe(http, resource_path="/nodes")
+        async with ws_client.ws_connect(ws_path(subscription)) as socket:
+            assert registry.register(ResourceType.NODE, Body(text)).ok
+            message = await asyncio.wait_for(
+                socket.receive(), timeout=GRAIN_TIMEOUT_S,
+            )
+
+        # The grain arrives as text; the resource body inside it must be the
+        # registered span verbatim, escape for escape.
+        assert '"label":"caf\\u00e9"' in message.data.replace(", ", ",") or \
+               '"label": "caf\\u00e9"' in message.data, (
+            "grain re-encoded the body instead of splicing the stored text:\n"
+            f"{message.data[:400]}"
+        )

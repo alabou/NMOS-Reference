@@ -43,7 +43,12 @@ from typing import Any
 
 from aiohttp import web
 
-from nmos.api.response import error_response, json_response, status_response
+from nmos.api.response import (
+    error_response,
+    json_body_response,
+    json_response,
+    status_response,
+)
 from nmos.json.engine import JsonEngine
 from nmos.registry import query_filter
 from nmos.registry.links import make_link_resolver
@@ -156,8 +161,8 @@ async def handle_get_collection(request: web.Request) -> web.Response:
         filters=len(filters),
     )
 
-    response = json_response(
-        [r.raw for r in page.resources],
+    response = json_body_response(
+        [r.body.text for r in page.resources],
         request=request,
         link_resolver=make_link_resolver(str(request.path), BASE_PATH),
     )
@@ -201,8 +206,8 @@ async def handle_get_resource(request: web.Request) -> web.Response:
             f"{resource_type.value} {resource_id} was not found",
             request=request,
         )
-    return json_response(
-        resource.raw,
+    return json_body_response(
+        resource.body.text,
         request=request,
         link_resolver=make_link_resolver(str(request.path), BASE_PATH),
     )

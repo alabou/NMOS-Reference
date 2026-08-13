@@ -34,7 +34,7 @@ from nmos.registry.decode import decode_resource
 from nmos.registry.etcd_backend import EtcdRegistryBackend
 from nmos.registry.tests._fixtures import make_device, make_node, make_sender
 from nmos.registry.tests.test_etcd_backend import _config, _eventually, build_registry
-from nmos.registry.types import ResourceType
+from nmos.registry.types import Body, ResourceType
 
 pytestmark = pytest.mark.e2e
 
@@ -158,7 +158,7 @@ async def outage_backend(
 
 async def _register(backend: EtcdRegistryBackend, rt: ResourceType, raw: dict):
     decode_resource(rt, raw)
-    return await backend.register(rt, dict(raw))
+    return await backend.register(rt, Body.from_data(raw))
 
 
 # ---------------------------------------------------------------------------

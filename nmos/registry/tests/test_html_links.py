@@ -45,7 +45,7 @@ from nmos.registry.tests._fixtures import (
     make_sender,
     make_source,
 )
-from nmos.registry.types import ResourceType
+from nmos.registry.types import Body, ResourceType
 
 HTML = {"Accept": "text/html"}
 
@@ -68,7 +68,7 @@ def seed_tree(registry: Registry) -> None:
         (ResourceType.RECEIVER, make_receiver()),
     ):
         typed = decode_resource(resource_type, raw)
-        assert registry.register(resource_type, dict(raw)).ok
+        assert registry.register(resource_type, Body.from_data(raw)).ok
 
 
 @pytest.fixture
@@ -221,7 +221,11 @@ class TestCrossReferences:
         )
         registry.register(
             ResourceType.RECEIVER,
-            make_receiver(subscription={"sender_id": SENDER_ID, "active": True}),
+            Body.from_data(
+                make_receiver(
+                    subscription={"sender_id": SENDER_ID, "active": True},
+                ),
+            ),
         )
 
         response = await query.get(f"{QUERY_BASE}/receivers", headers=HTML)
@@ -243,7 +247,7 @@ class TestCrossReferences:
         )
         registry.register(
             ResourceType.DEVICE,
-            make_device(senders=[SENDER_ID], receivers=[]),
+            Body.from_data(make_device(senders=[SENDER_ID], receivers=[])),
         )
 
         response = await query.get(f"{QUERY_BASE}/devices/{DEVICE_ID}", headers=HTML)
