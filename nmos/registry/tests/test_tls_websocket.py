@@ -182,7 +182,7 @@ async def read_grain(socket: aiohttp.ClientWebSocketResponse) -> dict[str, Any]:
 def register_node(registry: Registry, **kwargs: Any) -> None:
     raw = make_node(**kwargs)
     typed = decode_resource(ResourceType.NODE, raw)
-    assert registry.register(ResourceType.NODE, dict(raw), typed).ok
+    assert registry.register(ResourceType.NODE, dict(raw)).ok
 
 
 # ---------------------------------------------------------------------------

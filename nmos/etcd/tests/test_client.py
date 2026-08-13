@@ -364,16 +364,20 @@ async def test_watch_groups_a_transaction_into_one_revision(
 async def test_watch_delete_carries_previous_value(
     pool: EtcdChannelPool, kv: EtcdKV,
 ) -> None:
-    """Removal grains must carry the resource's final content.
+    """``prev_kv=True`` is what carries a deleted key's final content.
 
-    A DELETE event has no value of its own; only prev_kv has it. Without this
-    the registry could not publish what was removed -- and the legacy dRDS's
-    origin-index byte, read from that empty value, was always zero.
+    A DELETE event has no value of its own; only prev_kv has it -- and the
+    legacy dRDS's origin-index byte, read from that empty value, was always
+    zero. The registry does NOT enable this: it builds removal grains from its
+    own copy of the resource. This pins the client capability, which stays
+    available to any caller that does need it.
     """
     await kv.txn(success=[put_op(b"/w2/a", b"body")])
     head = await kv.range_at(b"/w2/a")
 
-    stream = EtcdWatch(pool).open(b"/w2/", start_revision=head.revision + 1)
+    stream = EtcdWatch(pool).open(
+        b"/w2/", start_revision=head.revision + 1, prev_kv=True,
+    )
     async with stream:
         await kv.txn(success=[delete_prefix_op(b"/w2/")])
         batches = await _collect(stream, 1)

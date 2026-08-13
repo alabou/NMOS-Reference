@@ -68,7 +68,7 @@ def seed_tree(registry: Registry) -> None:
         (ResourceType.RECEIVER, make_receiver()),
     ):
         typed = decode_resource(resource_type, raw)
-        assert registry.register(resource_type, dict(raw), typed).ok
+        assert registry.register(resource_type, dict(raw)).ok
 
 
 @pytest.fixture
@@ -222,7 +222,6 @@ class TestCrossReferences:
         registry.register(
             ResourceType.RECEIVER,
             make_receiver(subscription={"sender_id": SENDER_ID, "active": True}),
-            typed,
         )
 
         response = await query.get(f"{QUERY_BASE}/receivers", headers=HTML)
@@ -245,7 +244,6 @@ class TestCrossReferences:
         registry.register(
             ResourceType.DEVICE,
             make_device(senders=[SENDER_ID], receivers=[]),
-            typed,
         )
 
         response = await query.get(f"{QUERY_BASE}/devices/{DEVICE_ID}", headers=HTML)

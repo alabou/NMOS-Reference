@@ -435,10 +435,22 @@ class EtcdRegistryBackend:
     def _apply_envelope(
         self, store: RegistryStore, parsed: ParsedKey, envelope: Envelope,
     ) -> list[ResourceEvent]:
-        """Decode and insert one resource, carrying etcd's authoritative cursors."""
-        from nmos.registry.decode import decode_resource
+        """Insert one resource, carrying etcd's authoritative cursors.
 
-        typed = decode_resource(envelope.resource_type, envelope.raw)
+        Deliberately does **not** re-decode the body against its generated
+        type. Every resource in the namespace was schema-validated at the
+        Registration API of whichever member accepted it, so a decode here
+        would be re-validating our own storage -- work that was measured at a
+        full second decode per write, produced an object nothing reads, and
+        could only ever report a failure the registry has no way to repair.
+        What keeps the namespace trustworthy is the restriction on who may
+        write to it at all (mTLS plus etcd's allowed-hostname check), not a
+        parse after the fact.
+
+        The structural checks that *are* state-dependent -- parent exists, id
+        not claimed by another type, version monotonic -- still run, via
+        ``prepare`` below.
+        """
         prepared = store.prepare(envelope.resource_type, envelope.raw)
         if isinstance(prepared, RegistrationResult):
             raise KeyError_(
@@ -448,7 +460,6 @@ class EtcdRegistryBackend:
         result = store.apply_committed(
             prepared,
             envelope.raw,
-            typed,
             created=envelope.created,
             updated=envelope.updated,
             health=envelope.health,
@@ -647,6 +658,13 @@ class EtcdRegistryBackend:
         self._metrics.record(
             Event.WATCH_BATCH, None,
             revision=batch.revision,
+            # ``events`` is every KV event etcd delivered for this revision;
+            # ``added``/``removed`` are the ones that turned into store
+            # mutations. The gap between them is the bookkeeping traffic --
+            # /ids claims and /meta -- that the watch carries but never
+            # materialises, and it is the input that says whether the watch is
+            # doing more work than the registry needs.
+            kv_events=len(batch.events),
             added=len(additions),
             removed=len(removals),
             grains=len(events),
@@ -740,7 +758,7 @@ class EtcdRegistryBackend:
             raise MutationTimeout(f"{what}: {exc}") from exc
 
     async def register(
-        self, resource_type: ResourceType, raw: dict[str, Any], typed: Any,
+        self, resource_type: ResourceType, raw: dict[str, Any],
     ) -> RegistrationResult:
         """Register or update one resource.
 
@@ -774,12 +792,12 @@ class EtcdRegistryBackend:
         async def run() -> RegistrationResult:
             if self._fast_path:
                 fast = await self._try_fast_path(
-                    resource_type, raw, typed, placement,
+                    resource_type, raw, placement,
                 )
                 if fast is not None:
                     return fast
             return await self._fenced_register(
-                resource_type, raw, typed, placement, deadline,
+                resource_type, raw, placement, deadline,
             )
 
         result: RegistrationResult = await self._guarded(
@@ -791,7 +809,6 @@ class EtcdRegistryBackend:
         self,
         resource_type: ResourceType,
         raw: dict[str, Any],
-        typed: Any,
         placement: _Placement,
     ) -> RegistrationResult | None:
         """One speculative CAS from believed revisions. None means "fall back".
@@ -836,7 +853,6 @@ class EtcdRegistryBackend:
         self,
         resource_type: ResourceType,
         raw: dict[str, Any],
-        typed: Any,
         placement: _Placement,
         deadline: float,
     ) -> RegistrationResult:

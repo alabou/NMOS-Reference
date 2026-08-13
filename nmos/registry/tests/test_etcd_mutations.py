@@ -35,7 +35,7 @@ pytestmark = pytest.mark.e2e
 
 async def _register(backend, resource_type: ResourceType, raw: dict):
     typed = decode_resource(resource_type, raw)
-    return await backend.register(resource_type, dict(raw), typed)
+    return await backend.register(resource_type, dict(raw))
 
 
 async def _register_tree(backend) -> tuple[dict, dict, dict]:

@@ -234,7 +234,8 @@ def _config_for(cluster: Cluster, namespace: str, local_index: int) -> Any:
 
 
 async def _register(backend: EtcdRegistryBackend, rt: ResourceType, raw: dict):
-    return await backend.register(rt, dict(raw), decode_resource(rt, raw))
+    decode_resource(rt, raw)
+    return await backend.register(rt, dict(raw))
 
 
 # ---------------------------------------------------------------------------

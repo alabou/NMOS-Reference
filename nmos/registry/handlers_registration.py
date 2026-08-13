@@ -148,7 +148,7 @@ async def handle_post_resource(request: web.Request) -> web.Response:
         return error_response(400, f"invalid JSON body: {exc}", request=request)
 
     try:
-        resource_type, raw, typed = decode_post_envelope(body)
+        resource_type, raw = decode_post_envelope(body)
     except DecodeFailure as exc:
         # :100 -- "The request body does not meet the JSON schema for that
         # resource type". Decoding into the generated type IS that check.
@@ -159,7 +159,7 @@ async def handle_post_resource(request: web.Request) -> web.Response:
         return _unavailable(request, backend.state)
 
     try:
-        result = await backend.register(resource_type, raw, typed)
+        result = await backend.register(resource_type, raw)
     except MutationUnavailable as exc:
         # The cluster could not commit within the deadline, or lost quorum
         # mid-request. Not a client error: the body was fine and the Node

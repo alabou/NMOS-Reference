@@ -209,10 +209,15 @@ class Registry:
     # -----------------------------------------------------------------------
 
     def register(
-        self, resource_type: ResourceType, raw: dict[str, Any], typed: Any,
+        self, resource_type: ResourceType, raw: dict[str, Any],
     ) -> RegistrationResult:
-        """Apply a registration and publish the resulting events."""
-        result = self.store.insert_or_update(resource_type, raw, typed)
+        """Apply a registration and publish the resulting events.
+
+        ``raw`` has already been schema-validated by the Registration API
+        handler; the decoded object is not carried here because nothing below
+        this point reads it.
+        """
+        result = self.store.insert_or_update(resource_type, raw)
         if result.ok:
             self._publish(result.events)
         return result

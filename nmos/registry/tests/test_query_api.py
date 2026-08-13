@@ -45,7 +45,7 @@ def build_registry() -> Registry:
 
 def seed(registry: Registry, resource_type: ResourceType, raw: dict) -> None:
     typed = decode_resource(resource_type, raw)
-    result = registry.register(resource_type, dict(raw), typed)
+    result = registry.register(resource_type, dict(raw))
     assert result.ok, result.detail
 
 

@@ -109,7 +109,7 @@ class RegistryBackend(Protocol):
         ...
 
     async def register(
-        self, resource_type: ResourceType, raw: dict[str, Any], typed: Any,
+        self, resource_type: ResourceType, raw: dict[str, Any],
     ) -> RegistrationResult: ...
 
     async def unregister(
@@ -158,9 +158,9 @@ class StandaloneRegistryBackend:
         self._state = BackendState.READY
 
     async def register(
-        self, resource_type: ResourceType, raw: dict[str, Any], typed: Any,
+        self, resource_type: ResourceType, raw: dict[str, Any],
     ) -> RegistrationResult:
-        return self._registry.register(resource_type, raw, typed)
+        return self._registry.register(resource_type, raw)
 
     async def unregister(
         self, resource_type: ResourceType, resource_id: str,

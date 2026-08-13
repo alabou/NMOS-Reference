@@ -65,7 +65,7 @@ def seed_tree(registry: Registry) -> None:
         (ResourceType.SENDER, make_sender()),
     ):
         typed = decode_resource(resource_type, raw)
-        assert registry.register(resource_type, dict(raw), typed).ok
+        assert registry.register(resource_type, dict(raw)).ok
 
 
 def age_everything(registry: Registry, seconds: int) -> None:

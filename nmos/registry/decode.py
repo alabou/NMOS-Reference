@@ -107,16 +107,21 @@ def decode_resource(resource_type: ResourceType, raw: Any) -> Any:
     return value
 
 
-def decode_post_envelope(body: Any) -> tuple[ResourceType, dict[str, Any], Any]:
-    """Decode a ``POST /resource`` body.
+def decode_post_envelope(body: Any) -> tuple[ResourceType, dict[str, Any]]:
+    """Validate a ``POST /resource`` body and return what the registry keeps.
 
     The body is the ``{"type": <singular>, "data": {...}}`` envelope of
     ``registrationapi-resource-post-request.json``.
 
+    This is the **only** place a resource is decoded against its generated
+    type, and that decode is the ``APIs.md:22`` schema validation. The decoded
+    object is not returned, because nothing downstream reads it — the Query
+    API, the basic-query filters and the WebSocket grains all serve
+    ``RegisteredResource.raw``.
+
     Returns:
-        ``(resource_type, raw_data, typed_value)`` — the type named by the
-        envelope, the untouched ``data`` object to be stored and served, and
-        the decoded value object that proves it is valid.
+        ``(resource_type, raw_data)`` — the type named by the envelope and the
+        untouched ``data`` object to be stored and served.
 
     Raises:
         DecodeFailure: The envelope is malformed, names an unknown type, or
@@ -138,8 +143,12 @@ def decode_post_envelope(body: Any) -> tuple[ResourceType, dict[str, Any], Any]:
     if not isinstance(data, dict):
         _fail("missing or non-object 'data' in registration envelope")
 
-    typed = decode_resource(resource_type, data)
-    return resource_type, data, typed
+    # Called purely for its validation side effect. The decoded object is
+    # discarded: nothing downstream of the Registration API reads it, and
+    # retaining it cost roughly 3x the memory of the resource itself. This
+    # call IS the ``APIs.md:22`` schema check, so it must stay.
+    decode_resource(resource_type, data)
+    return resource_type, data
 
 
 def _fail(reason: str) -> NoReturn:

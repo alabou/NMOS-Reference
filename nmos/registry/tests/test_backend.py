@@ -76,7 +76,7 @@ async def test_standalone_backend_delegates_to_the_registry() -> None:
     raw = make_node()
     typed = decode_resource(ResourceType.NODE, raw)
 
-    result = await backend.register(ResourceType.NODE, dict(raw), typed)
+    result = await backend.register(ResourceType.NODE, dict(raw))
     assert isinstance(result, RegistrationResult)
     assert result.ok and result.created
     assert registry.store.count_extant(ResourceType.NODE) == 1

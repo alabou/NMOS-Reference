@@ -117,7 +117,10 @@ class WatchStream:
                 apply(batch)
     """
 
-    __slots__ = ("_call", "_prefix", "_start_revision", "_watch_id", "_closed")
+    __slots__ = (
+        "_call", "_prefix", "_start_revision", "_prev_kv", "_watch_id",
+        "_closed",
+    )
 
     def __init__(
         self,
@@ -125,10 +128,12 @@ class WatchStream:
         *,
         prefix: bytes,
         start_revision: int,
+        prev_kv: bool = False,
     ) -> None:
         self._call = call
         self._prefix = prefix
         self._start_revision = start_revision
+        self._prev_kv = prev_kv
         self._watch_id: int | None = None
         self._closed = False
 
@@ -154,11 +159,23 @@ class WatchStream:
             key=self._prefix,
             range_end=prefix_range_end(self._prefix),
             start_revision=self._start_revision,
-            # Needed for removal grains: a DELETE event carries no value, so
-            # without prev_kv the registry could not publish what was removed,
-            # and Behaviour - Querying.md requires the removal event to carry
-            # the resource's final content.
-            prev_kv=True,
+            # Off by default, and the registry leaves it off.
+            #
+            # It looks as though removal grains need it -- a DELETE event
+            # carries no value, and Behaviour - Querying.md requires the
+            # removal event to carry the resource's final content. They do not:
+            # the registry builds that grain from its OWN copy, via
+            # ``store.remove_one`` -> ``ResourceEvent.removed(resource)``,
+            # which it must have, because a resource it never materialised has
+            # nothing to remove and emits no grain either way.
+            #
+            # Requesting it anyway made etcd fetch and transmit the previous
+            # value of every key on every event, for a field no production code
+            # path reads. On the BCP-008 update-churn path that is a second
+            # full resource body per update. Exposed as a parameter rather than
+            # deleted because it is a real etcd feature this client should be
+            # able to offer.
+            prev_kv=self._prev_kv,
             # etcd splits oversized responses instead of failing them. A Node
             # delete cascades to every descendant in ONE revision, each event
             # carrying a full resource body in prev_kv, so the response can be
@@ -332,6 +349,7 @@ class EtcdWatch:
         *,
         start_revision: int,
         endpoint: Endpoint | None = None,
+        prev_kv: bool = False,
     ) -> WatchStream:
         """Create a watch over ``prefix`` starting at ``start_revision``.
 
@@ -343,10 +361,14 @@ class EtcdWatch:
                 member when one is configured -- because a watch is a long-lived
                 stream and keeping it on the co-located member avoids a network
                 hop for every change in the cluster.
+            prev_kv: Ask etcd to attach each key's previous value to its event.
+                Off by default because it doubles the payload of every update
+                and delete; see the note at the create request.
         """
         target = endpoint or self._pool.endpoints[0]
         return WatchStream(
             self._pool.open_stream(_WATCH, target),
             prefix=prefix,
             start_revision=start_revision,
+            prev_kv=prev_kv,
         )

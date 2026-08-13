@@ -212,27 +212,30 @@ class TaiCursor:
 class RegisteredResource:
     """One resource held by the registry.
 
-    Two representations are kept deliberately:
+    Only ``raw`` is kept: the JSON object exactly as the Node sent it. It is
+    what the Query API, the basic-query filters and the WebSocket grains all
+    serve, and serving it means the registry never silently rewrites a Node's
+    registration — the generated types do not model every attribute of every
+    resource (``node.json`` declares an optional, deprecated ``hostname`` that
+    ``NNode`` has no member for, and a third-party Node may legitimately carry
+    vendor extensions), so the HTTP and WebSocket views agree byte-for-byte.
 
-    ``typed`` is the decoded generated type (``NNodeValue``, ``NSenderValue``,
-    …). Producing it *is* the schema validation required by ``APIs.md:22`` —
-    a resource that will not decode, or that fails ``assert_valid()``, is
-    rejected with a 400. It is also what gives the rest of the code a checked
-    view of the resource.
+    The decoded generated type is deliberately **not** retained. Producing it
+    is the schema validation required by ``APIs.md:22`` and that still happens
+    on every registration — but at the Registration API boundary only, and the
+    object is discarded once it has served as the validator. Nothing downstream
+    ever read it, and keeping it cost roughly 3x the memory of the resource it
+    described.
 
-    ``raw`` is the JSON object exactly as the Node sent it, and is what both
-    the Query API and the WebSocket grains actually serve. This matters
-    because the generated types do not model every attribute of every
-    resource — ``node.json`` declares an optional, deprecated ``hostname``
-    that ``NNode`` has no member for, and a third-party Node may legitimately
-    carry vendor extensions. Serving ``raw`` means the registry never
-    silently rewrites a Node's registration, and guarantees the HTTP and
-    WebSocket views agree byte-for-byte.
+    Data arriving from the store's own backend is *not* re-validated. The
+    controls that keep it trustworthy are the ones on who may write it at all
+    (mTLS plus etcd's allowed-hostname restriction), not a decode after the
+    fact: storage that returns corrupted bytes is a failure no amount of
+    re-parsing in the registry can repair.
     """
 
     resource_type: ResourceType
     id: str
-    typed: Any
     raw: dict[str, Any]
     version: str
     """The resource's own ``version`` attribute, ``"<sec>:<nsec>"``.

@@ -41,9 +41,13 @@ from nmos.registry.types import (
 
 
 def register(store: RegistryStore, resource_type: ResourceType, raw: dict[str, object]):
-    """Decode then insert, the way the Registration API handler does."""
-    typed = decode_resource(resource_type, raw)
-    return store.insert_or_update(resource_type, dict(raw), typed)
+    """Validate then insert, the way the Registration API handler does.
+
+    ``decode_resource`` is called for its validation side effect only, exactly
+    as ``decode_post_envelope`` does; its result is not stored.
+    """
+    decode_resource(resource_type, raw)
+    return store.insert_or_update(resource_type, dict(raw))
 
 
 def register_tree(store: RegistryStore) -> None:
@@ -733,7 +737,7 @@ class TestCursorOrderedIndexes:
             prepared = store.prepare(ResourceType.DEVICE, raw)
             assert not isinstance(prepared, RegistrationResult)
             store.apply_committed(
-                prepared, dict(raw), decode_resource(ResourceType.DEVICE, raw),
+                prepared, dict(raw),
                 created=TaiCursor(seconds, 0), updated=TaiCursor(seconds, 0),
                 health=health_now(),
             )
@@ -760,7 +764,7 @@ class TestCursorOrderedIndexes:
             prepared = store.prepare(ResourceType.DEVICE, raw)
             assert not isinstance(prepared, RegistrationResult)
             store.apply_committed(
-                prepared, dict(raw), decode_resource(ResourceType.DEVICE, raw),
+                prepared, dict(raw),
                 created=TaiCursor(7000, 0), updated=TaiCursor(7000, 0),
                 health=health_now(),
             )
@@ -786,7 +790,7 @@ class TestCursorOrderedIndexes:
             prepared = store.prepare(ResourceType.DEVICE, raw)
             assert not isinstance(prepared, RegistrationResult)
             store.apply_committed(
-                prepared, dict(raw), decode_resource(ResourceType.DEVICE, raw),
+                prepared, dict(raw),
                 created=TaiCursor(seconds, 0), updated=TaiCursor(seconds, 0),
                 health=health_now(),
             )

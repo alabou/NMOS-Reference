@@ -391,7 +391,6 @@ class RegistryStore:
         self,
         prepared: PreparedRegistration,
         raw: dict[str, Any],
-        typed: Any,
         *,
         created: TaiCursor | None = None,
         updated: TaiCursor | None = None,
@@ -431,7 +430,6 @@ class RegistryStore:
 
         if previous is not None and not prepared.reviving:
             pre_raw = previous.raw
-            previous.typed = typed
             previous.raw = raw
             previous.version = prepared.version
             previous.updated = cursor
@@ -451,7 +449,6 @@ class RegistryStore:
         resource = RegisteredResource(
             resource_type=resource_type,
             id=resource_id,
-            typed=typed,
             raw=raw,
             version=prepared.version,
             created=created if created is not None else cursor,
@@ -491,21 +488,20 @@ class RegistryStore:
         self,
         resource_type: ResourceType,
         raw: dict[str, Any],
-        typed: Any,
     ) -> RegistrationResult:
-        """Apply a ``POST /resource`` for an already-decoded resource.
+        """Apply a ``POST /resource`` for an already-validated resource.
 
-        The caller has already decoded ``raw`` into ``typed`` using the
-        generated type for ``resource_type``; that decode is the schema
-        validation of ``Behaviour - Registration.md:100`` and any failure has
-        already become a ``RegistrationError.SCHEMA`` upstream. What is left
-        are the four conditions that need registry state to decide.
+        The caller has already decoded ``raw`` against the generated type for
+        ``resource_type``; that decode is the schema validation of
+        ``Behaviour - Registration.md:100`` and any failure has already become
+        a ``RegistrationError.SCHEMA`` upstream. The decoded object itself is
+        not passed on — nothing downstream reads it. What is left are the four
+        conditions that need registry state to decide.
 
         Args:
             resource_type: Type named by the POST envelope's ``type`` field.
             raw: The resource JSON exactly as received. Stored verbatim and
                 served back by the Query API — see ``RegisteredResource.raw``.
-            typed: The decoded generated value object.
 
         Returns:
             A ``RegistrationResult``: on success ``created`` distinguishes 201
@@ -515,7 +511,7 @@ class RegistryStore:
         prepared = self.prepare(resource_type, raw)
         if isinstance(prepared, RegistrationResult):
             return prepared
-        return self.apply_committed(prepared, raw, typed)
+        return self.apply_committed(prepared, raw)
 
     def _parent_id_of(
         self, resource_type: ResourceType, raw: dict[str, Any],

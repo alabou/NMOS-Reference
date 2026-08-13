@@ -40,7 +40,6 @@ def resource(nanoseconds: int) -> RegisteredResource:
     return RegisteredResource(
         resource_type=ResourceType.NODE,
         id=f"00000000-0000-1000-8000-{nanoseconds:012d}",
-        typed=None,
         raw={"id": f"node-{nanoseconds}"},
         version=str(cursor),
         created=cursor,
