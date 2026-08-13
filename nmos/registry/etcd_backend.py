@@ -125,7 +125,12 @@ class EtcdRegistryBackend:
     ) -> None:
         self._registry = registry
         self._config = config
-        self._metrics = metrics or RegistryMetrics()
+        # Defaults to the registry's own buffer rather than a private one, so
+        # a single dump interleaves the etcd-side samples (CAS, fence wait,
+        # commit-to-watch) with the local ones (query, fan-out). Splitting
+        # them across two buffers would make "is this cost ours or etcd's?"
+        # unanswerable from either.
+        self._metrics = metrics if metrics is not None else registry.metrics
         self._namespace = Namespace(config.namespace)
 
         self._state = BackendState.STARTING

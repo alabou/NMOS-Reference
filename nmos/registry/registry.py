@@ -33,10 +33,12 @@ That is the failure mode worth avoiding here.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from nmos.node.security_tags import RAP
+from nmos.registry.metrics import Event, RegistryMetrics
 from nmos.registry.store import RegistryStore
 from nmos.registry.types import (
     RegistrationResult,
@@ -125,12 +127,28 @@ class Registry:
             instance".
     """
 
-    __slots__ = ("_store", "query_id", "_subscriptions")
+    __slots__ = ("_store", "query_id", "_subscriptions", "_metrics")
 
-    def __init__(self, store: RegistryStore, *, query_id: str) -> None:
+    def __init__(
+        self,
+        store: RegistryStore,
+        *,
+        query_id: str,
+        metrics: RegistryMetrics | None = None,
+    ) -> None:
         self._store = store
         self.query_id = query_id
         self._subscriptions: SubscriptionManager | None = None
+        # Always on, standalone included. The Query and subscription paths are
+        # the two the distributed backend never sees, so if their samples only
+        # existed in distributed mode the buffer could never answer "is this
+        # cost ours or etcd's?" -- which is the question it exists for.
+        self._metrics = metrics if metrics is not None else RegistryMetrics()
+
+    @property
+    def metrics(self) -> RegistryMetrics:
+        """The trace buffer shared by the Query, subscription and etcd paths."""
+        return self._metrics
 
     # -----------------------------------------------------------------------
     # The store
@@ -242,7 +260,18 @@ class Registry:
         """
         if self._subscriptions is None or not events:
             return
+        started = time.monotonic()
         self._subscriptions.publish(events)
+        # The queueing is what this class controls, so that is what is timed.
+        # ``subscriptions`` is the input that drives the cost: one change
+        # fanning out to fifty subscribers is a different event from one
+        # fanning out to none, and only the count distinguishes them.
+        self._metrics.record(
+            Event.SUBSCRIPTION_FANOUT,
+            time.monotonic() - started,
+            events=len(events),
+            subscriptions=self._subscriptions.count(),
+        )
 
     # -----------------------------------------------------------------------
     # Statistics

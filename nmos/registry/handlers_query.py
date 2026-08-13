@@ -38,6 +38,7 @@ a client an unfiltered set that it would treat as filtered.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from aiohttp import web
@@ -46,6 +47,7 @@ from nmos.api.response import error_response, json_response, status_response
 from nmos.json.engine import JsonEngine
 from nmos.registry import query_filter
 from nmos.registry.links import make_link_resolver
+from nmos.registry.metrics import Event
 from nmos.registry.paging import (
     PagingError,
     apply_paging,
@@ -92,6 +94,7 @@ async def handle_get_collection(request: web.Request) -> web.Response:
     Order of operations is fixed by the specification: reject unsupported
     query features, validate downgrade, filter, then page.
     """
+    started = time.monotonic()
     resource_type = ResourceType.from_plural(request.match_info["collection"])
     if resource_type is None:
         # Not reachable through the registered routes, which enumerate the six
@@ -122,7 +125,8 @@ async def handle_get_collection(request: web.Request) -> web.Response:
     except PagingError as exc:
         return error_response(400, str(exc), request=request)
 
-    store = _registry(request).store
+    registry = _registry(request)
+    store = registry.store
     # Read in the order this request pages by, so nothing downstream has to
     # sort. The store maintains both orders incrementally, and a filtered
     # subsequence of a sorted sequence is still sorted, so ``matched`` below
@@ -139,6 +143,18 @@ async def handle_get_collection(request: web.Request) -> web.Response:
     )
 
     page = apply_paging(matched, collection, paging, presorted=True)
+    # Recorded with the inputs that drive the cost -- collection size, how many
+    # survived the filter, and the page size -- because "query took 8 ms" is
+    # not diagnosable while "8 ms over 20,000 resources, 3 matched" is.
+    registry.metrics.record(
+        Event.QUERY,
+        time.monotonic() - started,
+        resource_type=resource_type.value,
+        collection=len(collection),
+        matched=len(matched),
+        returned=len(page.resources),
+        filters=len(filters),
+    )
 
     response = json_response(
         [r.raw for r in page.resources],
