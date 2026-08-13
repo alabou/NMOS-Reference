@@ -34,6 +34,7 @@ from nmos.registry.tests._fixtures import (
 from nmos.registry.types import (
     EventKind,
     RegistrationError,
+    RegistrationResult,
     ResourceType,
     TaiCursor,
 )
@@ -611,3 +612,194 @@ class TestResourceType:
             ResourceType.SENDER,
             ResourceType.RECEIVER,
         ]
+
+
+class TestCursorOrderedIndexes:
+    """The indexes that let a Query page without sorting.
+
+    ``iter_ordered`` is a performance optimisation with a correctness
+    obligation: it must return exactly what ``sorted(iter_extant(), key=...)``
+    would, or paged Query answers change. Every test here is that equivalence
+    under a different mutation shape.
+    """
+
+    @staticmethod
+    def _ids(store: RegistryStore, resource_type: ResourceType, order: str):
+        return [r.id for r in store.iter_ordered(resource_type, order)]
+
+    @staticmethod
+    def _expected(store: RegistryStore, resource_type: ResourceType, order: str):
+        key = (lambda r: r.created) if order == "create" else (lambda r: r.updated)
+        return [
+            r.id for r in
+            sorted(store.iter_extant(resource_type), key=lambda r: (key(r), r.id))
+        ]
+
+    def _assert_matches_sort(self, store: RegistryStore) -> None:
+        for resource_type in ResourceType:
+            for order in ("create", "update"):
+                assert self._ids(store, resource_type, order) == self._expected(
+                    store, resource_type, order,
+                ), f"{resource_type} by {order}"
+
+    def test_registration_order_is_ascending_in_both_indexes(self) -> None:
+        store = RegistryStore()
+        register_tree(store)
+        register(store, ResourceType.DEVICE, make_device(DEVICE_ID_2))
+        self._assert_matches_sort(store)
+
+    def test_an_update_moves_only_the_update_index(self) -> None:
+        """``created`` does not move on an update, so the create index must not.
+
+        This is the whole reason the two indexes are maintained separately
+        rather than one being derived from the other.
+        """
+        store = RegistryStore()
+        register_tree(store)
+        register(store, ResourceType.DEVICE, make_device(DEVICE_ID_2))
+
+        create_before = self._ids(store, ResourceType.DEVICE, "create")
+        assert self._ids(store, ResourceType.DEVICE, "update") == [
+            DEVICE_ID, DEVICE_ID_2,
+        ]
+
+        register(store, ResourceType.DEVICE, make_device(version=tai_version()))
+
+        assert self._ids(store, ResourceType.DEVICE, "create") == create_before
+        assert self._ids(store, ResourceType.DEVICE, "update") == [
+            DEVICE_ID_2, DEVICE_ID,
+        ]
+        self._assert_matches_sort(store)
+
+    def test_a_revive_moves_both_indexes(self) -> None:
+        """A revive assigns a fresh ``created``, so the create index reorders.
+
+        The record is replaced in place, so the underlying dict keeps its old
+        position — which is exactly the case a naive "insertion order is create
+        order" index gets wrong.
+        """
+        store = RegistryStore()
+        register_tree(store)
+        register(store, ResourceType.DEVICE, make_device(DEVICE_ID_2))
+
+        store.delete(ResourceType.DEVICE, DEVICE_ID)
+        register(store, ResourceType.DEVICE, make_device(version=tai_version()))
+
+        assert self._ids(store, ResourceType.DEVICE, "create") == [
+            DEVICE_ID_2, DEVICE_ID,
+        ]
+        self._assert_matches_sort(store)
+
+    def test_non_extant_resources_are_skipped(self) -> None:
+        store = RegistryStore()
+        register_tree(store)
+        register(store, ResourceType.DEVICE, make_device(DEVICE_ID_2))
+
+        store.delete(ResourceType.DEVICE, DEVICE_ID_2)
+
+        assert DEVICE_ID_2 not in self._ids(store, ResourceType.DEVICE, "update")
+        self._assert_matches_sort(store)
+
+    def test_forgetting_drops_from_both_indexes(self) -> None:
+        # A negative forget interval makes stage two of the deletion
+        # lifecycle fire on the next pass instead of a minute later.
+        store = RegistryStore(forget_interval=-1.0)
+        register_tree(store)
+        store.delete(ResourceType.NODE, NODE_ID)
+        store.collect_garbage()
+
+        for resource_type in ResourceType:
+            for order in ("create", "update"):
+                assert self._ids(store, resource_type, order) == []
+        # The index must be emptied, not merely filtered on read: a leaked
+        # entry would keep the forgotten resource's id alive forever.
+        assert all(not index for index in store._order.values())
+
+    def test_out_of_order_cursors_are_re_sorted_lazily(self) -> None:
+        """The preload shape: cursors supplied by etcd, applied in key order.
+
+        ``apply_committed`` accepts the authoritative cursor, so the store does
+        not choose it and cannot assume it increases. Appending blindly would
+        corrupt the order silently; the dirty flag turns it into one re-sort.
+        """
+        store = RegistryStore()
+        register(store, ResourceType.NODE, make_node())
+
+        # Applied newest-first, which is what a key-ordered preload can produce.
+        for device_id, seconds in (
+            (DEVICE_ID_2, 5000), (DEVICE_ID, 1000),
+        ):
+            raw = make_device(device_id)
+            prepared = store.prepare(ResourceType.DEVICE, raw)
+            assert not isinstance(prepared, RegistrationResult)
+            store.apply_committed(
+                prepared, dict(raw), decode_resource(ResourceType.DEVICE, raw),
+                created=TaiCursor(seconds, 0), updated=TaiCursor(seconds, 0),
+                health=health_now(),
+            )
+
+        assert store._order_dirty[(ResourceType.DEVICE, "update")] is True
+        assert self._ids(store, ResourceType.DEVICE, "update") == [
+            DEVICE_ID, DEVICE_ID_2,
+        ]
+        # Re-sorted once, then clean: the cost is per-preload, not per-query.
+        assert store._order_dirty[(ResourceType.DEVICE, "update")] is False
+        self._assert_matches_sort(store)
+
+    def test_colliding_cursors_break_the_tie_on_id(self) -> None:
+        """Two resources on one cursor must order identically on every member.
+
+        The cluster-determinism guarantee: without the id tie-break the order
+        is whatever the local dict happened to be.
+        """
+        store = RegistryStore()
+        register(store, ResourceType.NODE, make_node())
+
+        for device_id in (DEVICE_ID_2, DEVICE_ID):
+            raw = make_device(device_id)
+            prepared = store.prepare(ResourceType.DEVICE, raw)
+            assert not isinstance(prepared, RegistrationResult)
+            store.apply_committed(
+                prepared, dict(raw), decode_resource(ResourceType.DEVICE, raw),
+                created=TaiCursor(7000, 0), updated=TaiCursor(7000, 0),
+                health=health_now(),
+            )
+
+        assert self._ids(store, ResourceType.DEVICE, "update") == sorted(
+            [DEVICE_ID, DEVICE_ID_2],
+        )
+
+    def test_the_tail_moving_backwards_marks_the_index_dirty(self) -> None:
+        """The tail is not exempt from the ordering check.
+
+        A revive re-applies the *same* id, so it is frequently already at the
+        end of the index. If its new cursor is lower than the one it replaces
+        -- which only etcd-supplied cursors can produce -- it has to move
+        earlier. Comparing the tail against itself would compare the new cursor
+        with the new cursor, always look ordered, and leave it at the end.
+        """
+        store = RegistryStore()
+        register(store, ResourceType.NODE, make_node())
+
+        def apply(device_id: str, seconds: int) -> None:
+            raw = make_device(device_id, version=tai_version())
+            prepared = store.prepare(ResourceType.DEVICE, raw)
+            assert not isinstance(prepared, RegistrationResult)
+            store.apply_committed(
+                prepared, dict(raw), decode_resource(ResourceType.DEVICE, raw),
+                created=TaiCursor(seconds, 0), updated=TaiCursor(seconds, 0),
+                health=health_now(),
+            )
+
+        apply(DEVICE_ID_2, 1000)
+        apply(DEVICE_ID, 5000)          # DEVICE_ID is now the tail
+        assert self._ids(store, ResourceType.DEVICE, "update") == [
+            DEVICE_ID_2, DEVICE_ID,
+        ]
+
+        apply(DEVICE_ID, 500)           # the tail moves BELOW the other record
+
+        assert self._ids(store, ResourceType.DEVICE, "update") == [
+            DEVICE_ID, DEVICE_ID_2,
+        ]
+        self._assert_matches_sort(store)

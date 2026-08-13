@@ -41,6 +41,7 @@ import time
 from typing import Any, Iterator
 
 from nmos.node.types import utc_to_tai
+from nmos.registry.paging import ORDER_CREATE, ORDER_UPDATE
 from nmos.registry.types import (
     PARENT_KEY,
     PARENT_TYPE,
@@ -88,6 +89,8 @@ class RegistryStore:
         "_last_cursor",
         "_gc_interval",
         "_forget_interval",
+        "_order",
+        "_order_dirty",
     )
 
     def __init__(
@@ -113,8 +116,119 @@ class RegistryStore:
         # creation/update timestamps within a type" rule of
         # ``APIs - Query Parameters.md:17``.
         self._last_cursor: dict[ResourceType, TaiCursor] = {}
+        # Resource ids per (type, order), held in ascending cursor order.
+        #
+        # Python dicts preserve insertion order, and cursors are allocated
+        # strictly increasing per type, so "append on create, move to end on
+        # update" keeps these sorted for O(1) per mutation -- which is what
+        # lets a Query page without sorting the whole collection first.
+        self._order: dict[
+            tuple[ResourceType, str], dict[str, None]
+        ] = {}
+        # Set when a cursor arrives OUT of order, which happens whenever the
+        # cursors are not ours to choose: the distributed backend applies a
+        # preload in key order, not cursor order. Rather than sort on every
+        # mutation, the index is re-sorted lazily on the next read and the flag
+        # cleared -- so a preload costs one sort in total, not one per resource.
+        self._order_dirty: dict[tuple[ResourceType, str], bool] = {}
         self._gc_interval = gc_interval
         self._forget_interval = forget_interval
+
+    # -----------------------------------------------------------------------
+    # Cursor-ordered indexes
+    # -----------------------------------------------------------------------
+
+    def _index(self, resource_type: ResourceType, order: str) -> dict[str, None]:
+        return self._order.setdefault((resource_type, order), {})
+
+    def _touch_order(
+        self,
+        resource_type: ResourceType,
+        order: str,
+        resource_id: str,
+        cursor: TaiCursor,
+    ) -> None:
+        """Move a resource to the end of one index, or mark the index dirty.
+
+        The end is the correct place only while the total order keeps
+        increasing. Two things can break that, and both must be caught here or
+        the index silently disagrees with the sort it stands in for:
+
+        * a cursor arriving *lower* than the tail's -- a preload applying
+          resources in key order rather than cursor order, since there the
+          cursors come from etcd and are not ours to choose;
+        * a cursor arriving *equal* to the tail's. The order is ``(cursor,
+          id)``, not the cursor alone, precisely so that colliding cursors
+          order identically on every cluster member; appending on a tie would
+          reintroduce the local-insertion-order dependency that tie-break
+          exists to remove.
+
+        Either way the index is flagged for a single lazy re-sort rather than
+        sorted on the spot.
+        """
+        index = self._index(resource_type, order)
+        key = (resource_type, order)
+
+        # Removed BEFORE the tail is inspected, not after. If this resource is
+        # already the tail, comparing it against itself would compare the new
+        # cursor with the new cursor and always look ordered -- so a cursor
+        # that moved *backwards* on the tail element (a revive with an
+        # etcd-supplied cursor lower than the one it replaces) would be
+        # appended right back where it was and silently mis-order the index.
+        index.pop(resource_id, None)
+
+        if not self._order_dirty.get(key, False) and index:
+            last_id = next(reversed(index))
+            last = self._by_type[resource_type].get(last_id)
+            if last is not None and (cursor, resource_id) < (
+                self._cursor_of(last, order), last_id,
+            ):
+                self._order_dirty[key] = True
+
+        index[resource_id] = None
+
+    @staticmethod
+    def _cursor_of(resource: RegisteredResource, order: str) -> TaiCursor:
+        return resource.created if order == ORDER_CREATE else resource.updated
+
+    def _drop_from_order(
+        self, resource_type: ResourceType, resource_id: str,
+    ) -> None:
+        for order in (ORDER_CREATE, ORDER_UPDATE):
+            self._order.get((resource_type, order), {}).pop(resource_id, None)
+
+    def iter_ordered(
+        self, resource_type: ResourceType, order: str,
+    ) -> Iterator[RegisteredResource]:
+        """Extant resources of one type, ascending by the ``order`` cursor.
+
+        This is what makes a Query page without sorting: the caller filters
+        this stream, and a filtered subsequence of a sorted sequence is still
+        sorted. Ties break on resource id, exactly as an explicit sort would,
+        so two registries that received the same resources in different orders
+        still page identically.
+
+        Like ``iter_extant``, this iterates live state -- a caller that mutates
+        the store mid-iteration must wrap it in ``list()`` first.
+        """
+        key = (resource_type, order)
+        index = self._index(resource_type, order)
+
+        if self._order_dirty.get(key, False):
+            bucket = self._by_type[resource_type]
+            ordered = sorted(
+                (rid for rid in index if rid in bucket),
+                key=lambda rid: (self._cursor_of(bucket[rid], order), rid),
+            )
+            self._order[key] = {rid: None for rid in ordered}
+            self._order_dirty[key] = False
+            index = self._order[key]
+
+        bucket = self._by_type[resource_type]
+        for resource_id in index:
+            resource = bucket.get(resource_id)
+            if resource is not None and resource.extant:
+                yield resource
 
     @property
     def gc_interval(self) -> float:
@@ -327,6 +441,8 @@ class RegistryStore:
                 resource_id, pre_parent=pre_parent,
                 new_parent=prepared.parent_id,
             )
+            # ``created`` did not move, so only the update index reorders.
+            self._touch_order(resource_type, ORDER_UPDATE, resource_id, cursor)
             return RegistrationResult(
                 created=False,
                 events=[ResourceEvent.modified(pre_raw, previous)],
@@ -356,6 +472,16 @@ class RegistryStore:
         # already told were gone.
         if prepared.reviving:
             self._children.pop(resource_id, None)
+
+        # A create — or a revive, which assigns a fresh ``created`` — moves the
+        # resource to the end of BOTH indexes. A revive is exactly why the
+        # create index cannot simply be "insertion order into the dict": the
+        # record is replaced in place, so the dict keeps the old position while
+        # the cursor has moved to the front of the queue.
+        self._touch_order(
+            resource_type, ORDER_CREATE, resource_id, resource.created,
+        )
+        self._touch_order(resource_type, ORDER_UPDATE, resource_id, cursor)
 
         return RegistrationResult(
             created=True, events=[ResourceEvent.added(resource)],
@@ -564,6 +690,7 @@ class RegistryStore:
         from the statistics.
         """
         self._by_type[resource.resource_type].pop(resource.id, None)
+        self._drop_from_order(resource.resource_type, resource.id)
         if self._type_of.get(resource.id) is resource.resource_type:
             del self._type_of[resource.id]
         self._children.pop(resource.id, None)

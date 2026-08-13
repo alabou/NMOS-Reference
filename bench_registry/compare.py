@@ -221,7 +221,26 @@ def start_python(
     if members:
         cluster_ports = [(_free_port(), _free_port()) for _ in range(members)]
         endpoints = ",".join(f"127.0.0.1:{c}" for c, _ in cluster_ports)
-        data_root = WORK / f"{name}-etcd"
+        # Durability knobs, env-only because they exist to answer one
+        # question -- "how much of the etcd tax is the disk?" -- and must
+        # never be reachable from a normal run.
+        #
+        #   NMOS_BENCH_ETCD_DATA_ROOT=/dev/shm/...  put the data dir on tmpfs,
+        #       so the WAL and bbolt file never reach a block device. This is
+        #       the closest thing etcd has to "memory only": there is no
+        #       in-memory backend, the storage engine is always bbolt + WAL.
+        #   NMOS_BENCH_ETCD_NO_FSYNC=1              pass --unsafe-no-fsync,
+        #       which etcd documents as "unsafe, will cause data loss". It
+        #       isolates the fsync SYSCALL from the write itself.
+        #
+        # Neither is a supported deployment option. A registry whose etcd
+        # loses its WAL on power failure has no authoritative state to recover
+        # from, which is the one thing adopting etcd was meant to provide.
+        data_override = os.environ.get("NMOS_BENCH_ETCD_DATA_ROOT")
+        data_root = (
+            Path(data_override) / f"{name}-etcd" if data_override
+            else WORK / f"{name}-etcd"
+        )
         if data_root.exists():
             shutil.rmtree(data_root)
         data_root.mkdir(parents=True)
@@ -247,7 +266,10 @@ def start_python(
                     "--initial-cluster-state", "new",
                     "--initial-cluster-token", f"bench-{name}",
                     "--log-level", "error",
-                ],
+                ] + (
+                    ["--unsafe-no-fsync"]
+                    if os.environ.get("NMOS_BENCH_ETCD_NO_FSYNC") == "1" else []
+                ),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             ))

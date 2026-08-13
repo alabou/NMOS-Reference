@@ -123,15 +123,22 @@ async def handle_get_collection(request: web.Request) -> web.Response:
         return error_response(400, str(exc), request=request)
 
     store = _registry(request).store
-    collection = list(store.iter_extant(resource_type))
+    # Read in the order this request pages by, so nothing downstream has to
+    # sort. The store maintains both orders incrementally, and a filtered
+    # subsequence of a sorted sequence is still sorted, so ``matched`` below
+    # inherits the ordering for free -- which is what ``presorted`` asserts.
+    collection = list(store.iter_ordered(resource_type, paging.order))
 
     filters = query_filter.filter_params(params)
-    matched = [
-        resource for resource in collection
-        if query_filter.matches(resource.raw, filters)
-    ]
+    matched = (
+        collection if not filters
+        else [
+            resource for resource in collection
+            if query_filter.matches(resource.raw, filters)
+        ]
+    )
 
-    page = apply_paging(matched, collection, paging)
+    page = apply_paging(matched, collection, paging, presorted=True)
 
     response = json_response(
         [r.raw for r in page.resources],
