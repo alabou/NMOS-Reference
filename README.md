@@ -410,6 +410,233 @@ node launchers already pass.
 The registry reports its effective Registry Access Policy in the startup
 banner, so the running compliance mode is visible rather than inferred.
 
+### Distributed registry (`--distributed`)
+
+One registry is a single point of failure. `--distributed` runs 1, 3 or 5
+registries over a shared etcd cluster: any of them serves any request, and the
+cluster keeps working while members fail.
+
+| Registry/etcd pairs | Failures tolerated |
+|---:|---:|
+| 1 | 0 |
+| 3 | 1 |
+| 5 | 2 |
+
+etcd is authoritative for resource content, mutation ordering and Node
+liveness. Each registry keeps a complete local view and serves **Query entirely
+from memory** — the read path never touches etcd, which is why Query is exactly
+as fast distributed as standalone. That view is fed by one thing only: the etcd
+watch. A registry's own writes come back to it the same way a peer's do, so
+there is nothing to deduplicate and no way for two members to diverge.
+
+#### Try it
+
+Two steps:
+
+```bash
+pip install -r requirements-etcd.txt   # grpcio, protobuf
+./install-etcd.sh                      # etcd v3.6.14 -> ./.etcd/ (checksum verified)
+```
+
+The protobuf stubs are **committed**, exactly as `nmos/types/generated/` is, so
+there is no codegen step. `python -m nmos.etcd.generate` is only needed after
+changing the vendored protos in `nmos/etcd/proto/`, and the registry refuses to
+start with a clear message if the stubs no longer match them.
+
+Then, one terminal each:
+
+```bash
+./start-etcd-cluster.sh 3        # the etcd cluster
+./start-registry-dist.sh 0 3     # registry member 0
+./start-registry-dist.sh 1 3     # registry member 1
+./start-registry-dist.sh 2 3     # registry member 2
+```
+
+Register against member 0 and read it back from member 1 — the resource, its
+paging cursors and its subscription events are identical on both.
+
+Member *n* uses one port block of 10: registration `8444 + 10n`, query
+`8443 + 10n`, WebSocket `8448 + 10n`.
+
+#### Managing etcd
+
+A registry supervises **exactly one** etcd process — its own local member. It
+never starts, stops or reconfigures another member's, and it never changes
+cluster membership. The rule is **stop what you started, never stop what you
+adopted**:
+
+| Situation | Starts it? | Stops it on exit? |
+|---|---|---|
+| Nothing on the configured port | yes | yes |
+| etcd already running, identity matches | no, adopts | **no** |
+| etcd already running, identity differs | refuses | n/a |
+| `--etcdExternal` | no | no |
+
+For production the recommended shape is etcd under systemd with the registry
+adopting it: a registry restart then costs one reconnect and a preload instead
+of a member leave/rejoin with the leader election that implies.
+
+Bootstrap and resizing stay explicit. `--etcdBootstrap` is a one-time flag,
+refused if the data directory is non-empty, and **an empty data directory is
+never** taken to mean "make a new cluster" — that is how recovering one dead
+member turns into two clusters. Growing 1→3 or 3→5 is a membership change made
+against the healthy cluster with `etcdctl`, one member at a time.
+
+#### Registries never talk to each other
+
+There is no peer channel, no election among registries, no gossip. Every member
+is handed the same list and derives member names, the cluster token, and every
+URL from it independently — identical input, identical output. All coordination
+between registries goes through etcd; the member set is checked against etcd's
+own `MemberList` at startup, and a registry that finds a cluster it was not
+configured for refuses to serve rather than joining a split view.
+
+#### Platform support
+
+etcd rates its own platforms: Linux amd64/arm64 are **Tier 1** ("guaranteed to
+pass all tests including functional and robustness tests"), while windows/amd64
+is **Tier 3** ("considered unstable"), unmaintained and *not* covered by the
+suites that verify Raft/WAL/fsync durability — the exact guarantees that justify
+putting the registry's state in etcd.
+
+So **no etcd member ever runs on native Windows.** There, `--distributed`
+implies `--etcdExternal`: the registry is a client of a cluster managed
+elsewhere, and `--etcdBinary`/`--etcdDataDir`/`--etcdBootstrap` are rejected
+rather than ignored. Run the cluster under WSL with `start-etcd-cluster.bat` and
+point the registry at it with `start-registry-dist.bat`. Nothing needs
+installing on the Windows side — `etcd_cluster.py status` and `endpoints` are
+pure client calls and work from Windows against the WSL cluster.
+
+WSL itself is not a special case and gets no detection: inside WSL
+`sys.platform` is `"linux"`, so a registry there is an ordinary POSIX member
+with the full supervisor and a Tier 1 etcd.
+
+#### Security
+
+One certificate per registry/etcd pair covers all four etcd roles — client
+listener, peer listener, outbound peer, and the registry's own client
+connection — which is what its dual `serverAuth, clientAuth` EKU is for.
+Generate them with `Certificates/genEtcdCerts.sh`.
+
+```bash
+./start-registry.sh 2 8444 \
+  --distributed \
+  --registryAdvertisedHost XYZ-SNX10000 \
+  --registryNeighbour XYZ-SNX10001 --registryNeighbour XYZ-SNX10002 \
+  --etcdCertificate  Certificates/build.0.etcd/pem/ExampleDeviceServer.ABC.SNX10000.etcd.ec.chain.pem \
+  --etcdKey          Certificates/build.0.etcd/key/ExampleDeviceServer.ABC.SNX10000.etcd.ec.key \
+  --etcdTrustedRootCA Certificates/build.0/ExampleRootCA.ec.pem
+```
+
+`--etcdCertificateName` (default
+`Example.Company.Device.Etcd.ABC.example.com`) is both the gRPC target-name
+override and etcd's `--client-cert-allowed-hostname` / `--peer-cert-allowed-hostname`.
+That restriction is a control, not hardening: the Product CA also signs ordinary
+device certificates, and without it any of them would be accepted as an etcd
+client and could write to the registry database.
+
+`--gcrl` is unchanged and continues to apply to the Registration and Query
+listeners. etcd's own CRLs are separate, via `--etcdClientCrlFile` and
+`--etcdPeerCrlFile`.
+
+#### Measured performance
+
+`bench_registry/compare.py` runs an identical workload against nmos-cpp, this registry
+standalone, and distributed at 1/3/5 members, then separates the three costs a
+single side-by-side number would conflate. Both sides are held to **matched
+logging** first — nmos-cpp's `logging_level` runs 40 (least verbose) to −40
+(most), and every config bundled under `nmos-registry/` is pinned at −40, so an
+unmatched run measures logging rather than registries. The harness counts bytes
+written by each target and reports the run as not comparable if they diverge.
+
+```bash
+python3 bench_registry/compare.py --targets cpp,standalone,dist1,dist3,dist5
+```
+
+p50 latency, 8 nodes × 2 devices × 3 sender/receiver pairs, matched quiet
+logging, single machine.
+
+The nmos-cpp baseline is a **`RelWithDebInfo` build** — verified from the binary
+rather than assumed: its generated code tail-calls and keeps no frame pointers
+(so `-O2`, not `-O0`), and it contains no glibc assertion strings (so `NDEBUG`
+was defined). It was built with GCC 7.5 in early 2023, so a current compiler and
+a current nmos-cpp would both close some of the gap — but not, on this evidence,
+a factor of two. Note also that nmos-cpp *wins* on Query below, which an
+unoptimised build could not do against CPython.
+
+| phase | nmos-cpp | standalone | dist 1 | dist 3 | dist 5 |
+|---|---:|---:|---:|---:|---:|
+| node online (full ordered chain) | 47.3 ms | **22.2 ms** | 102.5 ms | 118.2 ms | 162.6 ms |
+| cold-burst sender | 11.5 ms | **8.9 ms** | 26.4 ms | 28.4 ms | 32.0 ms |
+| update churn (BCP-008 path) | 10.3 ms | 10.4 ms | 26.2 ms | 28.6 ms | 29.0 ms |
+| heartbeat | 2.4 ms | **1.5 ms** | 6.8 ms | 6.1 ms | 6.4 ms |
+| query (paged) | **8.6 ms** | 11.0 ms | 11.1 ms | 11.2 ms | 10.2 ms |
+
+### Scale, AMWA shape — and a correction
+
+The table above is a **low-concurrency, latency-bound** workload: a handful of
+nodes, one client, chains issued serially. Read on its own it says this registry
+beats nmos-cpp at registration. **Run at scale, that reverses.**
+
+The AMWA/Sony scalability study (Rob Porter, IBC 2018 / SMPTE 2018) gives each
+Node exactly six resources — Node, Device, Sender, Receiver, Source, Flow — and
+reports 2,500 Nodes (15,000 resources) registering in 3m42s. `--amwa-nodes`
+reproduces that shape, registering serially *within* a Node (as IS-04 requires)
+and concurrently *across* Nodes (as a facility powering up actually does).
+
+500 nodes × 6 = **3,000 resources**:
+
+| | total | throughput | p50 | p95 |
+|---|---:|---:|---:|---:|
+| nmos-cpp | **2.0 s** | **1518 res/s** | 9.9 ms | 16.9 ms |
+| standalone | 4.9 s | 613 res/s | 23.8 ms | 46.9 ms |
+| distributed ×3 | 9.8 s | 305 res/s | 48.1 ms | 83.4 ms |
+
+**nmos-cpp is ~2.5× faster than this registry once requests are concurrent.**
+That is the opposite of what the small-scale table suggests, and it is the
+figure to trust for a real deployment. The earlier result was measuring
+round-trip latency on a serial chain — a regime where per-request overhead
+dominates and the server is mostly idle — not server throughput.
+
+So the "Python tax" is real after all, it is roughly **2.5×**, and it only
+appears under concurrency. That restores the case for the eventual Rust port,
+which the small-scale numbers had appeared to undermine.
+
+Do not compare these against the study's 3m42s directly: it ran 2,500 separate
+Node processes over emulated network links (Mininet, 40 GB / 12 CPU), so its
+figure includes network and per-process costs this loopback harness does not
+have. The *shape* is what is borrowed, not the absolute number.
+
+### Status fan-out, over the Query WebSocket
+
+BCP-008 status reaches a Controller as a **grain on its subscription**, so
+measuring the POST alone measures half the path. `--subscribers` attaches N
+WebSocket clients, then times POST → that resource's grain arriving at the
+slowest subscriber.
+
+5 subscribers, p50: **nmos-cpp 3.8 ms · standalone 4.4 ms · distributed ×3
+12.2 ms**. Delivery is close to parity standalone, and distribution costs about
+3× — the commit, watch application and grain construction that the local case
+does not pay.
+
+### Sustained heartbeats
+
+500 nodes beating every 5 s for 30 s. **All three held the cadence exactly**
+(100 beats/s, zero errors), which is the result that matters: the registry keeps
+up with the specified rate. Per-beat p50 under the burst is nmos-cpp 117 ms,
+standalone 102 ms, distributed ×3 295 ms — high because all 500 beats are fired
+at once each round, so these are queueing times, not service times.
+
+Two design claims are measured rather than asserted:
+
+* **Heartbeats write nothing.** A beat is a lease renewal, so etcd's write rate
+  is flat in Node count. `test_heartbeat_writes_nothing_to_the_keyspace` asserts
+  the store revision does not move across five beats.
+* **The speculative CAS fast path** (skipping the read fence when the local
+  view is already current) is worth **~1.3×** on registration latency and ~32%
+  on burst throughput — real, but less than the ~2× predicted. Measure it
+  yourself with `--no-fast-path`.
+
 ### Implemented behaviour
 
 - Registration: 201/200 with `Location`, cascade delete of child resources,

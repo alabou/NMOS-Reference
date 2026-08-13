@@ -44,6 +44,7 @@ from nmos.node.types import utc_to_tai
 from nmos.registry.types import (
     PARENT_KEY,
     PARENT_TYPE,
+    PreparedRegistration,
     RegisteredResource,
     RegistrationError,
     RegistrationResult,
@@ -115,6 +116,16 @@ class RegistryStore:
         self._gc_interval = gc_interval
         self._forget_interval = forget_interval
 
+    @property
+    def gc_interval(self) -> float:
+        """Seconds of silence after which a Node is collected."""
+        return self._gc_interval
+
+    @property
+    def forget_interval(self) -> float:
+        """Seconds a non-extant resource is retained before being dropped."""
+        return self._forget_interval
+
     # -----------------------------------------------------------------------
     # Cursor allocation
     # -----------------------------------------------------------------------
@@ -135,6 +146,17 @@ class RegistryStore:
             cursor = previous.next()
         self._last_cursor[resource_type] = cursor
         return cursor
+
+    def next_cursor(self, resource_type: ResourceType) -> TaiCursor:
+        """Allocate a cursor without applying anything.
+
+        The distributed backend needs the cursor *before* the write, because it
+        goes into the envelope that etcd stores -- the value has to be
+        authoritative, so it cannot be chosen after the fact. Uniqueness within
+        a type still comes from the same allocator, which is what keeps paging
+        from skipping a record.
+        """
+        return self._next_cursor(resource_type)
 
     # -----------------------------------------------------------------------
     # Lookup
@@ -182,30 +204,25 @@ class RegistryStore:
     # Registration
     # -----------------------------------------------------------------------
 
-    def insert_or_update(
+    def prepare(
         self,
         resource_type: ResourceType,
         raw: dict[str, Any],
-        typed: Any,
-    ) -> RegistrationResult:
-        """Apply a ``POST /resource`` for an already-decoded resource.
+    ) -> PreparedRegistration | RegistrationResult:
+        """Validate a registration against current state without mutating.
 
-        The caller has already decoded ``raw`` into ``typed`` using the
-        generated type for ``resource_type``; that decode is the schema
-        validation of ``Behaviour - Registration.md:100`` and any failure has
-        already become a ``RegistrationError.SCHEMA`` upstream. What is left
-        are the four conditions that need registry state to decide.
-
-        Args:
-            resource_type: Type named by the POST envelope's ``type`` field.
-            raw: The resource JSON exactly as received. Stored verbatim and
-                served back by the Query API — see ``RegisteredResource.raw``.
-            typed: The decoded generated value object.
+        Splitting validation from application is what lets the distributed
+        backend do them at different times and against different authorities:
+        it validates here, commits to etcd, and only applies once the change
+        comes back through the watch. Standalone runs both immediately, which
+        is why ``insert_or_update`` is now a thin wrapper over this plus
+        ``apply_committed``.
 
         Returns:
-            A ``RegistrationResult``: on success ``created`` distinguishes 201
-            from 200 and ``events`` carries the grain events to publish; on
-            failure ``error`` names the condition and ``detail`` explains it.
+            ``PreparedRegistration`` describing what *would* happen, or a
+            ``RegistrationResult`` carrying the failure. The union return is
+            deliberate: every caller has to handle the failure anyway, and an
+            exception would make the ordinary 400 path exceptional.
         """
         resource_id = raw.get("id")
         if not isinstance(resource_id, str) or not resource_id:
@@ -247,27 +264,68 @@ class RegistryStore:
             if failure is not None:
                 return failure
 
-        now_health = health_now()
-        cursor = self._next_cursor(resource_type)
+        return PreparedRegistration(
+            resource_type=resource_type,
+            resource_id=resource_id,
+            version=version,
+            parent_id=parent_id,
+            creates=previous is None or reviving,
+            reviving=reviving,
+        )
 
-        # The parent link must be re-indexed against whatever it was BEFORE
-        # this POST. On the update path ``_check_update`` has already refused
-        # any change, so this is a no-op; on the revive path a re-registered
-        # id may legitimately land under a different parent, and forgetting
-        # to unlink it from the old one would leave a stale child entry that
-        # a later cascade delete would follow into the wrong subtree.
+    def apply_committed(
+        self,
+        prepared: PreparedRegistration,
+        raw: dict[str, Any],
+        typed: Any,
+        *,
+        created: TaiCursor | None = None,
+        updated: TaiCursor | None = None,
+        health: int | None = None,
+    ) -> RegistrationResult:
+        """Apply a registration that has already been validated and committed.
+
+        Args:
+            created / updated: Authoritative paging cursors. Standalone leaves
+                them None and cursors are allocated locally; the distributed
+                backend supplies the values stored in etcd, so every registry
+                pages identically. See ``_next_cursor`` for why they must be
+                unique within a type.
+            health: Authoritative health, or None to stamp the local clock.
+
+        Completes without awaiting, like every other public method here. The
+        distributed backend calls it from inside its watch-application step,
+        where the whole revision must be applied and its grains queued in one
+        uninterrupted block.
+        """
+        resource_id = prepared.resource_id
+        resource_type = prepared.resource_type
+
+        now_health = health_now() if health is None else health
+        cursor = updated if updated is not None else self._next_cursor(
+            resource_type,
+        )
+        # Keep the per-type high-water mark ahead of any authoritative cursor
+        # we are handed, so a later locally allocated cursor cannot collide
+        # with one that already came from etcd.
+        previous_cursor = self._last_cursor.get(resource_type)
+        if previous_cursor is None or cursor > previous_cursor:
+            self._last_cursor[resource_type] = cursor
+
+        previous = self._by_type[resource_type].get(resource_id)
         pre_parent = previous.parent_id if previous is not None else None
 
-        if previous is not None and not reviving:
+        if previous is not None and not prepared.reviving:
             pre_raw = previous.raw
             previous.typed = typed
             previous.raw = raw
-            previous.version = version
+            previous.version = prepared.version
             previous.updated = cursor
-            previous.parent_id = parent_id
+            previous.parent_id = prepared.parent_id
             previous.health = now_health
             self._reparent(
-                resource_id, pre_parent=pre_parent, new_parent=parent_id,
+                resource_id, pre_parent=pre_parent,
+                new_parent=prepared.parent_id,
             )
             return RegistrationResult(
                 created=False,
@@ -279,29 +337,59 @@ class RegistryStore:
             id=resource_id,
             typed=typed,
             raw=raw,
-            version=version,
-            created=cursor,
+            version=prepared.version,
+            created=created if created is not None else cursor,
             updated=cursor,
-            parent_id=parent_id,
+            parent_id=prepared.parent_id,
             extant=True,
             health=now_health,
         )
         self._by_type[resource_type][resource_id] = resource
         self._type_of[resource_id] = resource_type
         self._reparent(
-            resource_id, pre_parent=pre_parent, new_parent=parent_id,
+            resource_id, pre_parent=pre_parent, new_parent=prepared.parent_id,
         )
         # A revived id may still be listed as a parent of resources that were
         # erased alongside it. Those children are non-extant and on their own
         # forget timer; the fresh record must not adopt them, or a later
         # cascade delete would resurrect-then-re-erase records the client was
         # already told were gone.
-        if reviving:
+        if prepared.reviving:
             self._children.pop(resource_id, None)
 
         return RegistrationResult(
             created=True, events=[ResourceEvent.added(resource)],
         )
+
+    def insert_or_update(
+        self,
+        resource_type: ResourceType,
+        raw: dict[str, Any],
+        typed: Any,
+    ) -> RegistrationResult:
+        """Apply a ``POST /resource`` for an already-decoded resource.
+
+        The caller has already decoded ``raw`` into ``typed`` using the
+        generated type for ``resource_type``; that decode is the schema
+        validation of ``Behaviour - Registration.md:100`` and any failure has
+        already become a ``RegistrationError.SCHEMA`` upstream. What is left
+        are the four conditions that need registry state to decide.
+
+        Args:
+            resource_type: Type named by the POST envelope's ``type`` field.
+            raw: The resource JSON exactly as received. Stored verbatim and
+                served back by the Query API — see ``RegisteredResource.raw``.
+            typed: The decoded generated value object.
+
+        Returns:
+            A ``RegistrationResult``: on success ``created`` distinguishes 201
+            from 200 and ``events`` carries the grain events to publish; on
+            failure ``error`` names the condition and ``detail`` explains it.
+        """
+        prepared = self.prepare(resource_type, raw)
+        if isinstance(prepared, RegistrationResult):
+            return prepared
+        return self.apply_committed(prepared, raw, typed)
 
     def _parent_id_of(
         self, resource_type: ResourceType, raw: dict[str, Any],
@@ -441,6 +529,32 @@ class RegistryStore:
         resource.extant = False
         resource.health = health_now()
         return events
+
+    def remove_one(
+        self, resource_type: ResourceType, resource_id: str,
+    ) -> ResourceEvent | None:
+        """Mark a single resource non-extant, WITHOUT cascading to children.
+
+        The distributed counterpart of ``delete``. There, the cascade has
+        already happened in etcd -- deleting a Node ranges over its whole
+        subtree -- and the watch delivers a separate event for every key that
+        went, all within one revision. Cascading again locally would erase
+        descendants a second time and emit duplicate removal grains for them.
+
+        The caller is responsible for applying a revision's removals
+        descendants-first, so a subscriber never sees a parent disappear while
+        its children are still present.
+
+        Returns None if the resource is already absent or already non-extant,
+        which is normal on a watch replay after reconnection.
+        """
+        resource = self._by_type[resource_type].get(resource_id)
+        if resource is None or not resource.extant:
+            return None
+        event = ResourceEvent.removed(resource)
+        resource.extant = False
+        resource.health = health_now()
+        return event
 
     def _forget(self, resource: RegisteredResource) -> None:
         """Drop a non-extant resource entirely.

@@ -385,15 +385,29 @@ def json_response(
         link_resolver: Optional per-field link mapping used only for the HTML
             rendering; see ``_json_to_html``. Ignored for JSON responses.
     """
-    json_str = JsonEngine.dump_any(data, indent=2, ensure_ascii=False, default=str)
-
+    # Indentation is decided by WHO is asking, because it is not free.
+    #
+    # `indent` disables CPython's C encoder outright -- json/encoder.py only
+    # selects `c_make_encoder` when `self.indent is None` -- so a pretty-printed
+    # response is built by the pure-Python encoder instead. Measured on a Node
+    # resource: 50.4 us pretty vs 14.7 us compact, a 3.4x cost on every single
+    # response, plus 25% more bytes on the wire.
+    #
+    # A browser asking for text/html is a human reading the page, and the HTML
+    # renderer needs the indented string anyway. Everything else is a machine,
+    # for which indentation is pure overhead in both CPU and bandwidth.
     if request is not None and _wants_html(request):
+        json_str = JsonEngine.dump_any(
+            data, indent=2, ensure_ascii=False, default=str,
+        )
         html_body = _json_to_html(json_str, str(request.path), link_resolver)
         headers = _add_cors({})
         if no_store:
             headers["Cache-Control"] = "public, no-store"
         return web.Response(text=html_body, status=status, headers=headers,
                             content_type="text/html", charset="utf-8")
+
+    json_str = JsonEngine.dump_any(data, ensure_ascii=False, default=str)
 
     headers = _add_cors({})
     if no_store:

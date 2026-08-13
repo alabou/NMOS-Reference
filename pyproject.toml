@@ -37,11 +37,25 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-asyncio", "pytest-aiohttp", "mypy"]
+# ``types-psutil`` supplies stubs for the one optional soft dependency the node
+# imports without declaring: ``Node._resolve_interface_name`` falls back to
+# ``psutil.net_if_addrs()`` between ``netifaces_compat`` and the "eth0" default,
+# guarded by try/except ImportError. Without the stubs mypy types that call as
+# Any, which makes the ``return iface`` on the next line an error under --strict
+# even though psutil itself need never be installed. The stubs alone fix it and
+# type-check the call properly, which an ``ignore_missing_imports`` override
+# would not -- it silences the import but leaves ``iface`` untyped.
+dev = ["pytest", "pytest-asyncio", "pytest-aiohttp", "mypy", "types-psutil"]
 # Agent-driven UI driver (nmos/agentui/). Optional: the node runtime never
 # imports it. Installing the package is only half the setup -- pip cannot
 # install a browser, so see requirements-agentui.txt for the second command.
 agentui = ["playwright>=1.62"]
+# Distributed registry backend (nmos/etcd/). Optional: only
+# `nmos_registry.py --distributed` imports it, and it does so lazily so a
+# checkout without the extra runs standalone unchanged. Installing the packages
+# is only a third of the setup -- pip can neither generate the protobuf stubs
+# nor install a Go binary, so see requirements-etcd.txt for the other two steps.
+etcd = ["grpcio>=1.83", "grpcio-tools>=1.83", "protobuf>=7.35"]
 
 [project.urls]
 Homepage = "https://github.com/alabou/NMOS-Reference"
@@ -65,7 +79,11 @@ python_version = "3.12"
 # validator ships in a separate project (see start-fake-as.sh). Any fix mypy
 # prompts here MUST be mirrored there by hand — that identity is maintained by
 # discipline, not by tooling.
-files = ["nmos", "fake-as"]
+# ``bench_registry`` is included because its numbers are cited in the
+# README: a
+# performance claim nobody can re-run is not a claim, so the harness is
+# committed and held to the same standard as everything else here.
+files = ["nmos", "fake-as", "bench_registry"]
 mypy_path = "fake-as"
 exclude = '''(?x)(
     ^nmos/.*/tests/
@@ -91,6 +109,46 @@ ignore_missing_imports = true
 # returns only project types across its boundary.
 [[tool.mypy.overrides]]
 module = ["playwright.*"]
+ignore_missing_imports = true
+
+# Optional distributed-registry dependency. grpcio and protobuf both ship
+# py.typed, so when the extra IS installed mypy checks nmos/etcd/ against real
+# stubs -- which is the state that matters, and the reason channel.py builds its
+# RPCs from grpc's typed unary_unary/stream_stream API rather than from an
+# untyped protoc-generated _pb2_grpc module. This override only covers a
+# checkout WITHOUT the extra, where the imports would otherwise be errors.
+#
+# WITH the extra installed, mypy reports `unused section(s)` for this override,
+# because the imports resolve and the override is never exercised. That note is
+# expected and unavoidable -- one override cannot be both used and unused -- and
+# it is a note, not an error, so the run still reports Success. Do NOT "fix" it
+# by deleting this section: that breaks the checkout-without-the-extra state,
+# which is the one every non-distributed user is in.
+#
+# `grpc_tools` is deliberately NOT listed: generate.py runs it as a subprocess
+# (`sys.executable -m grpc_tools.protoc`) and never imports it, so an override
+# for it would itself be reported unused.
+[[tool.mypy.overrides]]
+module = ["grpc.*", "google.protobuf.*"]
+ignore_missing_imports = true
+
+# protoc's own --pyi_out output, which this project does not control: it emits
+# bare `_Mapping` without type arguments in every message __init__, which is a
+# [type-arg] error under --strict. Same treatment, and same reasoning, as the
+# caps.*/sdp.* override above -- suppress reporting INSIDE the generated
+# package.
+#
+# Deliberately NOT `follow_imports = "skip"`: that would make every message
+# class Any, and the wrappers in nmos/etcd/ would then be returning Any from
+# annotated functions. The types must stay real for the hand-written layer to be
+# genuinely checked, which is the whole point of generating .pyi files at all.
+#
+# `ignore_missing_imports` covers the OTHER state: in a checkout that has never
+# run `python -m nmos.etcd.generate`, the package does not exist at all, and
+# the four modules that import it would each be an [import-not-found].
+[[tool.mypy.overrides]]
+module = ["nmos.etcd.generated.*"]
+ignore_errors = true
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

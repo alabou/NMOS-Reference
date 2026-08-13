@@ -14,6 +14,7 @@ import asyncio
 import logging
 from typing import Any
 
+from nmos.registry.backend import RegistryBackend, StandaloneRegistryBackend
 from nmos.registry.registry import Registry
 
 log = logging.getLogger(__name__)
@@ -26,7 +27,9 @@ log = logging.getLogger(__name__)
 GC_TICK_S = 1.0
 
 
-async def run_garbage_collection(dg: Any, registry: Registry) -> None:
+async def run_garbage_collection(
+    dg: Any, registry: Registry, backend: RegistryBackend | None = None,
+) -> None:
     """Expire Nodes that have stopped heartbeating.
 
     ``Behaviour - Registration.md:47`` sets the default collection interval at
@@ -42,7 +45,16 @@ async def run_garbage_collection(dg: Any, registry: Registry) -> None:
 
     The AMWA test-suite mock records heartbeat times but never expires
     anything, so a Node that is unplugged stays in its registry forever.
+
+    Args:
+        backend: Where collection actually happens. Defaults to the standalone
+            backend, which is the behaviour this task has always had. The
+            distributed backend suppresses local expiry entirely and returns
+            zero: there, a Node's liveness is an etcd lease, and every member
+            running its own health-based expiry would let them disagree about
+            which Nodes are alive.
     """
+    collector = backend or StandaloneRegistryBackend(registry)
     log.info("registry: garbage collection running every %.1fs", GC_TICK_S)
     while not dg.is_done:
         try:
@@ -51,7 +63,7 @@ async def run_garbage_collection(dg: Any, registry: Registry) -> None:
             return
 
         try:
-            collected = registry.collect_garbage()
+            collected = await collector.collect_garbage()
         except asyncio.CancelledError:
             return
         except Exception as exc:

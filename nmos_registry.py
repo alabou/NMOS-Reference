@@ -48,6 +48,7 @@ from logging.handlers import RotatingFileHandler
 from typing import Any
 
 from aiohttp import web
+from aiohttp.log import access_logger as aiohttp_access_logger
 
 from nmos.api.tr10_tls import apply_tr10_tls_restrictions
 from nmos.node.security_tags import NAP, RAAM, RAP
@@ -153,6 +154,81 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="Seconds between registry status log lines "
                         "(0 disables)")
 
+    # --- Distributed registry (etcd) ---
+    # Optional. Without --distributed nothing below is read, no etcd module is
+    # imported, and the registry behaves exactly as it always has.
+    g = p.add_argument_group("Distributed Registry (etcd)")
+    g.add_argument("--distributed", action="store_true",
+                   help="Share state with 1, 3 or 5 peer registries through a "
+                        "managed etcd cluster. Requires the optional etcd "
+                        "extra (see requirements-etcd.txt).")
+    g.add_argument("--registryAdvertisedHost", type=_host_arg, default="",
+                   help="This member's advertised hostname. MUST be a SAN of "
+                        "its etcd certificate — every peer and every registry "
+                        "client verifies it against that name.")
+    g.add_argument("--registryNeighbour", action="append", default=None,
+                   help="A peer registry's advertised host (repeat once per "
+                        "peer). This host plus its neighbours must total 1, 3 "
+                        "or 5 and be the SAME set on every member.")
+    g.add_argument("--etcdEndpoints", default="",
+                   help="Comma-separated etcd client endpoints. Normally "
+                        "derived from the member list; required with "
+                        "--etcdExternal.")
+    g.add_argument("--etcdExternal", action="store_true",
+                   help="Do not manage an etcd process; connect to one "
+                        "managed elsewhere. Implied, and required, on native "
+                        "Windows.")
+    g.add_argument("--etcdBinary", default="",
+                   help="etcd executable (POSIX only). Defaults to the "
+                        "repo-local .etcd/etcd from ./install-etcd.sh, else "
+                        "'etcd' on PATH.")
+    g.add_argument("--etcdDataDir", default="/var/lib/nmos-registry/etcd",
+                   help="Persistent etcd data directory (POSIX only). Never "
+                        "deleted by the registry.")
+    g.add_argument("--etcdBootstrap", action="store_true",
+                   help="ONE-TIME cluster initialization (POSIX only). "
+                        "Refused if the data directory is non-empty. Remove "
+                        "the flag after the cluster is formed.")
+    g.add_argument("--etcdNamespace", default="/nmos-reference/registry/v1",
+                   help="etcd key namespace. Part of the cluster token, so "
+                        "two deployments on the same hosts cannot merge.")
+    g.add_argument("--etcdClientPort", type=int, default=2381,
+                   help="etcd client port (clear of etcd's own 2379 default)")
+    g.add_argument("--etcdPeerPort", type=int, default=2382,
+                   help="etcd peer port (clear of etcd's own 2380 default)")
+    g.add_argument("--etcdCertificate", default="",
+                   help="Shared etcd certificate (*.etcd.chain.pem). One "
+                        "certificate serves all four roles — client listener, "
+                        "peer listener, outbound peer, and this registry's "
+                        "client connection — which is what its dual "
+                        "serverAuth+clientAuth EKU is for.")
+    g.add_argument("--etcdKey", default="",
+                   help="Private key for --etcdCertificate")
+    g.add_argument("--etcdTrustedRootCA", action="append", default=None,
+                   help="Trusted root CA for etcd client and peer "
+                        "verification (PEM path; may be repeated)")
+    g.add_argument("--etcdCertificateName",
+                   default="Example.Company.Device.Etcd.ABC.example.com",
+                   help="Shared SAN every member is verified against. Used as "
+                        "the gRPC target-name override AND as etcd's "
+                        "--client/peer-cert-allowed-hostname, which is what "
+                        "stops an ordinary device certificate from the same "
+                        "Product CA writing to the registry database.")
+    g.add_argument("--etcdClientCrlFile", default="",
+                   help="CRL for etcd client certificates. Independent of "
+                        "--gcrl, which covers the Registration and Query "
+                        "listeners.")
+    g.add_argument("--etcdPeerCrlFile", default="",
+                   help="CRL for etcd peer certificates")
+    g.add_argument("--etcdDisableTLS", action="store_true",
+                   help="Disable TLS to and between etcd members. TESTING "
+                        "ONLY — the etcd database holds every registration.")
+    g.add_argument("--etcdRpcTimeout", type=float, default=2.0,
+                   help="Per-RPC deadline in seconds")
+    g.add_argument("--etcdMutationTimeout", type=float, default=7.0,
+                   help="Overall fence-and-retry deadline for one "
+                        "Registration mutation; past it the answer is 503.")
+
     # --- OAuth2 (Query API only) ---
     # Flag names are identical to the Node's so the same launch scripts, CA
     # files and authorization server configuration apply unchanged.
@@ -206,6 +282,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "queryTrustedRootCA",
         "oauth2TrustedRootCA",
         "trustedRootCA",
+        "etcdTrustedRootCA",
+        "registryNeighbour",
     ):
         if getattr(ns, attr) is None:
             setattr(ns, attr, [])
@@ -217,13 +295,42 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 # Logging setup
 # ---------------------------------------------------------------------------
 
+def console_log_level() -> int:
+    """Console verbosity, from ``NMOS_LOG_LEVEL``. Defaults to INFO.
+
+    An environment variable rather than a flag, so the launch scripts and the
+    benchmark harness can quieten the registry without every deployment growing
+    another option to get wrong.
+
+    It exists because ``--logFile ""`` silences the *file* handler only: the
+    console handler and aiohttp's per-request access log keep writing to stdout
+    regardless. Comparing this registry against nmos-cpp at its least-verbose
+    setting is not a fair comparison unless both are actually quiet, and
+    per-request logging is not a rounding error on the registration path.
+    """
+    import os
+
+    name = os.environ.get("NMOS_LOG_LEVEL", "").strip().upper()
+    if not name:
+        return logging.INFO
+    resolved = logging.getLevelNamesMapping().get(name)
+    if resolved is None:
+        print(
+            f"Warning: NMOS_LOG_LEVEL={name!r} is not a level name; "
+            f"using INFO",
+            file=sys.stderr,
+        )
+        return logging.INFO
+    return resolved
+
+
 def setup_logging(args: argparse.Namespace) -> None:
     """Configure logging with an optional rotating file handler."""
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
 
     console = logging.StreamHandler(sys.stdout)
-    console.setLevel(logging.INFO)
+    console.setLevel(console_log_level())
     console.setFormatter(logging.Formatter("%(message)s"))
     root.addHandler(console)
 
@@ -338,20 +445,32 @@ async def go_registry_servers(
     registration_ssl = build_registration_ssl_context(args)
     query_ssl = build_query_ssl_context(args)
 
+    # aiohttp logs one line per request. Above INFO that is both unwanted and,
+    # on a registration storm, a measurable cost of its own -- so the access log
+    # follows the same switch as the console handler rather than being a
+    # separate thing to remember.
+    access_log = (
+        None if console_log_level() > logging.INFO else aiohttp_access_logger
+    )
+
     runners = [
         web.AppRunner(
             registration_app, shutdown_timeout=2.0,
+            access_log=access_log,
             access_log_format=_ACCESS_LOG_FORMAT,
         ),
         web.AppRunner(
             query_app, shutdown_timeout=2.0,
+            access_log=access_log,
             access_log_format=_ACCESS_LOG_FORMAT,
         ),
         # The WebSocket runner gets a longer shutdown grace than the HTTP
         # ones: its connections are long-lived by design, and cutting them at
         # the same 2 s as an idle REST socket would routinely truncate a grain
         # mid-write on shutdown.
-        web.AppRunner(query_ws_app, shutdown_timeout=5.0),
+        web.AppRunner(
+            query_ws_app, shutdown_timeout=5.0, access_log=access_log,
+        ),
     ]
     for runner in runners:
         await runner.setup()
@@ -539,6 +658,8 @@ def _print_banner(
             "Restricted Read Write.",
         )
 
+    _print_distributed_banner(args)
+
     print(
         f"\n  Point a Node at it with: --rdsHost {display_host} "
         f"--rdsRegistrationPort {args.registrationPort} "
@@ -546,6 +667,52 @@ def _print_banner(
         + ("  --rdsDisableTLS" if registration_ssl is None else ""),
     )
     print()
+
+
+def _print_distributed_banner(args: argparse.Namespace) -> None:
+    """Report the cluster this registry is part of, or say it is standalone.
+
+    The failure tolerance is spelled out rather than left to be inferred from
+    the member count, because "how many members can I lose" is the one thing an
+    operator actually needs from this line, and getting it wrong by one is the
+    difference between a maintenance window and an outage.
+    """
+    config = getattr(args, "distributed_config", None)
+    if config is None:
+        return
+
+    layout = config.layout
+    print(
+        f"\n  Distributed:  {layout.size} member(s), "
+        f"tolerates {layout.failures_tolerated} failure(s), "
+        f"quorum {layout.quorum}",
+    )
+    print(f"                  this member: {layout.local.name}")
+    print(f"                  namespace:   {layout.namespace}")
+    print(f"                  endpoints:   {', '.join(config.endpoints)}")
+    print(
+        f"                  etcd:        "
+        + (
+            "external (not managed by this registry)"
+            if config.external
+            else f"managed child, data-dir {config.data_dir}"
+        ),
+    )
+
+    if not config.tls:
+        print(
+            "\n  WARNING: --etcdDisableTLS — the etcd database holds every "
+            "registration\n"
+            "           and is unencrypted and unauthenticated. Testing only.",
+        )
+    if config.bootstrap:
+        print(
+            "\n  WARNING: --etcdBootstrap is a ONE-TIME cluster "
+            "initialization.\n"
+            "           Remove it once the cluster has formed, or a later "
+            "restart on an\n"
+            "           emptied data directory will create a second cluster.",
+        )
 
 
 async def go_registry_authorizations(
@@ -624,6 +791,7 @@ async def main(args: argparse.Namespace) -> None:
     from nmos.registry import (
         InterfaceSecurity,
         Registry,
+        StandaloneRegistryBackend,
         create_query_app,
         create_query_ws_app,
         create_registration_app,
@@ -676,16 +844,52 @@ async def main(args: argparse.Namespace) -> None:
         use_serial_number_in_aud=args.oauth2AudienceMode != "cert",
     )
 
-    registration_app = create_registration_app(registry, registration_security)
+    # One backend serves all three apps. Standalone unless --distributed, in
+    # which case resolve_distributed_config() has already validated the cluster
+    # and the etcd backend is built from it.
+    distributed = getattr(args, "distributed_config", None)
+    backend: Any = StandaloneRegistryBackend(registry)
+    supervisor: Any = None
+
+    if distributed is not None:
+        # Imported here, not at module scope: without --distributed the etcd
+        # extra need not be installed at all, and this file must import cleanly
+        # in that checkout.
+        from nmos.etcd.supervisor import EtcdSupervisor
+        from nmos.registry.etcd_backend import EtcdRegistryBackend
+
+        if distributed.manages_process:
+            supervisor = EtcdSupervisor(
+                layout=distributed.layout,
+                binary=distributed.binary,
+                data_dir=distributed.data_dir,
+                bootstrap=distributed.bootstrap,
+                tls=distributed.tls,
+                certificate=distributed.certificate or None,
+                key=distributed.key or None,
+                trusted_root_ca=distributed.trusted_root_ca,
+                certificate_name=distributed.certificate_name or None,
+                client_crl_file=distributed.client_crl_file or None,
+                peer_crl_file=distributed.peer_crl_file or None,
+            )
+            await supervisor.start()
+
+        backend = EtcdRegistryBackend(registry, distributed)
+        await backend.start()
+
+    registration_app = create_registration_app(
+        registry, registration_security, backend,
+    )
     query_app = create_query_app(
         registry,
         query_security,
+        backend,
         tls=tls_enabled,
         ws_port=args.queryWebSocketPort,
         paging_limit=args.pagingLimit,
         paging_limit_max=args.pagingLimitMax,
     )
-    query_ws_app = create_query_ws_app(registry, query_security)
+    query_ws_app = create_query_ws_app(registry, query_security, backend)
 
     dg = await DispatchGroup.create()
 
@@ -704,7 +908,7 @@ async def main(args: argparse.Namespace) -> None:
             dg, registration_app, query_app, query_ws_app, args,
         ),
     )
-    await dg.dispatch(run_garbage_collection(dg, registry))
+    await dg.dispatch(run_garbage_collection(dg, registry, backend))
     await dg.dispatch(run_status_reporting(dg, registry, args.statusInterval))
 
     if args.oauth2:
@@ -742,6 +946,14 @@ async def main(args: argparse.Namespace) -> None:
     except Exception as exc:
         logging.error("registry: stopped after an error: %s", exc, exc_info=True)
         raise SystemExit(1) from exc
+    finally:
+        # Order matters: the watch has to stop before the member it watches,
+        # or the shutdown logs a connection failure that is entirely our own
+        # doing. The supervisor then applies its own ownership rule -- it stops
+        # the child only if it started it.
+        await backend.close()
+        if supervisor is not None:
+            await supervisor.stop()
 
 
 def validate_startup_certs(args: argparse.Namespace) -> None:
@@ -819,9 +1031,16 @@ def validate_startup_certs(args: argparse.Namespace) -> None:
 
 
 def run() -> None:
+    from nmos.registry.distributed import resolve_distributed_config
+
     args = parse_args()
     setup_logging(args)
     validate_startup_certs(args)
+    # Resolved before the event loop so a misconfigured cluster is a CONFIG:
+    # line rather than a registry that comes up and joins the wrong cluster.
+    # Returns None -- and imports nothing from nmos.etcd -- unless
+    # --distributed was given.
+    args.distributed_config = resolve_distributed_config(args)
     try:
         asyncio.run(main(args))
     except KeyboardInterrupt:

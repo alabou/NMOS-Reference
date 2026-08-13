@@ -192,7 +192,18 @@ def apply_paging(
         ``X-Paging-Since`` / ``X-Paging-Until``.
     """
     key = request.cursor_of
-    ascending = sorted(matched, key=key)
+    # Sorted on (cursor, id), not on the cursor alone. The cursor is normally
+    # unique within a type -- ``APIs - Query Parameters.md:17`` asks for that,
+    # and the store enforces it by falling forward a nanosecond on collision --
+    # but "normally" is not "always", and Python's sort is stable, so a tie
+    # would otherwise be broken by dictionary insertion order.
+    #
+    # That is invisible in a single registry and wrong in a cluster: two members
+    # that received the same two resources in a different order would return
+    # the same page with its contents in a different order, and a client paging
+    # across members would see records repeat or vanish. The id is arbitrary but
+    # identical everywhere, which is all a tie-break has to be.
+    ascending = sorted(matched, key=lambda resource: (key(resource), resource.id))
 
     if request.since is not None:
         # Paging forwards: the oldest `limit` records strictly above `since`,

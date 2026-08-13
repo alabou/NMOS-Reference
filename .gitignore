@@ -30,6 +30,19 @@ htmlcov/
 .playwright/
 artifacts/
 
+# Distributed registry backend (nmos/etcd/).
+#
+# nmos/etcd/generated/ is deliberately NOT ignored: it is committed, exactly as
+# nmos/types/generated/ is, so trying the distributed registry needs only
+# `pip install -r requirements-etcd.txt` and `./install-etcd.sh` — no codegen
+# step and no need to understand the build. Staleness is guarded by the proto
+# fingerprint checked at startup, not by regenerating every time.
+#
+# .etcd/ holds the version-pinned etcd binaries fetched by ./install-etcd.sh
+# plus the local cluster's data directories. It must never enter git history —
+# .etcd/data/ in particular is a live database.
+.etcd/
+
 # IDE
 .vscode/
 .idea/
@@ -44,3 +57,4 @@ Thumbs.db
 # ignore specs that are from another git repo
 CLAUDE.md
 AGENTS.md
+bench_registry/.work/

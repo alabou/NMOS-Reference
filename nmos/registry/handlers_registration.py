@@ -57,6 +57,7 @@ from nmos.json.engine import JsonEngine
 from nmos.registry import handlers_query as query_h
 from nmos.registry.decode import DecodeFailure, decode_post_envelope
 from nmos.registry.links import make_link_resolver
+from nmos.registry.backend import BackendState, MutationUnavailable, RegistryBackend
 from nmos.registry.registry import Registry
 from nmos.registry.types import RegistrationError, ResourceType
 
@@ -86,6 +87,41 @@ def _registry(request: web.Request) -> Registry:
     """
     registry: Registry = request.app["registry"]
     return registry
+
+
+def _backend(request: web.Request) -> RegistryBackend:
+    """The storage backend behind the Registration API.
+
+    Every mutation goes through this rather than through ``Registry`` directly,
+    because in distributed mode a registration is an etcd transaction and a
+    fence before it is a store mutation. In standalone mode the backend calls
+    straight through to ``Registry`` without awaiting anything, so this
+    indirection costs nothing there.
+    """
+    backend: RegistryBackend = request.app["backend"]
+    return backend
+
+
+def _unavailable(request: web.Request, state: BackendState) -> web.Response:
+    """The 503 answered when the backend cannot accept mutations.
+
+    ``Retry-After: 1`` because the conditions that produce it -- a lost etcd
+    quorum, a resync after compaction, a member still preloading -- resolve on
+    the order of seconds, and a Node that backs off for minutes would stay
+    unregistered long after the registry recovered.
+
+    Query is deliberately *not* gated on this: a registry serving a cached view
+    during an etcd outage is still useful, and refusing reads because writes are
+    impossible turns a partial outage into a total one.
+    """
+    response = error_response(
+        503,
+        f"registry storage is {state.value}; registration is temporarily "
+        f"unavailable",
+        request=request,
+    )
+    response.headers["Retry-After"] = "1"
+    return response
 
 
 def _resource_location(resource_type: ResourceType, resource_id: str) -> str:
@@ -118,7 +154,18 @@ async def handle_post_resource(request: web.Request) -> web.Response:
         # resource type". Decoding into the generated type IS that check.
         return error_response(400, str(exc), request=request)
 
-    result = registry.register(resource_type, raw, typed)
+    backend = _backend(request)
+    if not backend.state.accepts_mutations:
+        return _unavailable(request, backend.state)
+
+    try:
+        result = await backend.register(resource_type, raw, typed)
+    except MutationUnavailable as exc:
+        # The cluster could not commit within the deadline, or lost quorum
+        # mid-request. Not a client error: the body was fine and the Node
+        # should retry.
+        log.warning("registry: registration unavailable: %s", exc)
+        return _unavailable(request, backend.state)
 
     if not result.ok:
         assert result.error is not None
@@ -132,7 +179,18 @@ async def handle_post_resource(request: web.Request) -> web.Response:
     # nmos-cpp logs the registry status from its POST handler as well as from
     # its expiry thread; matching that makes the two logs directly comparable
     # when diagnosing a registration problem.
-    log.info("registry: %s", registry.status_line())
+    #
+    # Guarded, and that guard is load-bearing rather than stylistic.
+    # ``status_line()`` calls ``statistics()``, which walks every resource in
+    # every bucket -- so it is O(registry size). As a bare argument to
+    # ``log.info`` it is evaluated *eagerly*, on every successful POST, even
+    # with INFO disabled: a registry holding 10 000 resources paid a 10 000-item
+    # scan per registration to build a string it then threw away. Registration
+    # latency is the metric this project is most trying to protect, and Node
+    # startup issues these POSTs serially, so the cost lands squarely on the
+    # critical path.
+    if log.isEnabledFor(logging.INFO):
+        log.info("registry: %s", registry.status_line())
 
     # :25 -- 201 for a create, 200 for an update, Location on both. The body
     # is the registered resource (registrationapi-resource-response.json), and
@@ -186,11 +244,19 @@ async def handle_delete_resource(request: web.Request) -> web.Response:
         return resolved
 
     resource_id = request.match_info["resourceId"]
-    registry = _registry(request)
+    backend = _backend(request)
+    if not backend.state.accepts_mutations:
+        return _unavailable(request, backend.state)
 
     # A 409 would belong here if the resource were held at another API
     # version; unreachable in a single-version registry. See module docstring.
-    if not registry.unregister(resolved, resource_id):
+    try:
+        deleted = await backend.unregister(resolved, resource_id)
+    except MutationUnavailable as exc:
+        log.warning("registry: delete unavailable: %s", exc)
+        return _unavailable(request, backend.state)
+
+    if not deleted:
         return error_response(
             404,
             f"{resolved.value} {resource_id} is not registered",
@@ -258,7 +324,15 @@ async def handle_post_health(request: web.Request) -> web.Response:
     sub-resources, so that the whole subtree survives as one unit.
     """
     node_id = request.match_info["nodeId"]
-    health = _registry(request).store.heartbeat(node_id)
+    backend = _backend(request)
+    if not backend.state.accepts_mutations:
+        return _unavailable(request, backend.state)
+
+    try:
+        health = await backend.heartbeat(node_id)
+    except MutationUnavailable as exc:
+        log.warning("registry: heartbeat unavailable: %s", exc)
+        return _unavailable(request, backend.state)
 
     if health is None:
         # :112-114 -- 404 means "not known to the Registration API", most

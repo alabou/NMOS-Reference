@@ -380,6 +380,39 @@ class RegistrationError(Enum):
     """Parent absent, or the id names the wrong resource type (``:104``)."""
 
 
+@dataclass(frozen=True)
+class PreparedRegistration:
+    """A registration that has passed validation but has not been applied.
+
+    The gap between deciding and applying is what the distributed backend needs:
+    it validates against the local store, commits to etcd, and only then applies
+    — and the thing it has to carry across those steps is exactly this. Frozen,
+    because a decision made against one state must not be quietly edited before
+    being applied against another.
+
+    ``creates`` is the 201-vs-200 answer of ``Behaviour - Registration.md:25``,
+    decided here rather than inferred later from whether the store happened to
+    hold the id.
+    """
+
+    resource_type: ResourceType
+    resource_id: str
+    version: str
+    parent_id: str | None
+
+    creates: bool
+    """True when this registration adds a resource rather than updating one."""
+
+    reviving: bool
+    """True when the id exists but is non-extant.
+
+    A separate flag from ``creates`` even though a revive always creates:
+    application has to clear the old parent/child links that the tombstoned
+    record still carries, and only this distinguishes that case from a genuinely
+    new id.
+    """
+
+
 @dataclass
 class RegistrationResult:
     """Outcome of a ``POST /resource``.

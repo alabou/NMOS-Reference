@@ -1,0 +1,43 @@
+# nmos-reference — optional distributed-registry backend (nmos/etcd/).
+#
+# Only `nmos_registry.py --distributed` imports this. The standalone registry,
+# the node and the controller never do: nmos_registry.py imports nmos.etcd
+# lazily, inside the --distributed branch, so a checkout without these packages
+# runs standalone exactly as before. Passing --distributed without them fails
+# with a CONFIG: message naming this file, not a ModuleNotFoundError.
+#
+# Install it only if you want the distributed registry:
+#
+#     pip install -r requirements-etcd.txt
+#
+# Requires ONE further step that pip CANNOT perform:
+#
+#     ./install-etcd.sh                 # etcd is a Go binary, not a Python package
+#
+# The protobuf stubs are NOT a step. nmos/etcd/generated/ is committed, exactly
+# as nmos/types/generated/ is, so trying the distributed registry needs no
+# codegen and no knowledge that codegen exists. `python -m nmos.etcd.generate`
+# is only for after changing the vendored protos, and a startup fingerprint
+# check tells you if you forgot.
+#
+# install-etcd.sh fetches a version-pinned, checksum-verified etcd into the repo-local
+# .etcd/ directory (~20 MB). Nothing enters the system package database, no apt or
+# sudo step is involved, and removal is `rm -rf .etcd`. A system- or
+# service-managed etcd is equally fine: point --etcdBinary at it, or run it under
+# systemd and let the registry adopt it (see "ownership" in the README).
+#
+# PLATFORM: etcd itself runs on POSIX only in this project. etcd classifies
+# windows/amd64 as Tier 3 -- "considered unstable", no maintainers, and not
+# covered by the functional and robustness suites that verify Raft/WAL/fsync
+# durability. A native-Windows registry is therefore a CLIENT only: --distributed
+# there implies --etcdExternal and requires --etcdEndpoints. Under WSL2
+# sys.platform is "linux", so a registry inside WSL is an ordinary POSIX member
+# with the full supervisor and Tier 1 etcd -- no special case, no detection.
+#
+# grpcio ships py.typed, so with these installed `mypy --strict` checks
+# nmos/etcd/ against real stubs. Verify BOTH states after changing that package --
+# with the extra installed and without it -- because they check different paths.
+# The pyproject override for `grpc.*` covers only the without-it state.
+grpcio==1.83.0
+grpcio-tools==1.83.0     # codegen only; not needed to RUN the registry
+protobuf==7.35.1

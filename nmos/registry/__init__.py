@@ -75,6 +75,11 @@ from nmos.api.response import options_response
 from nmos.registry import handlers_query as query_h
 from nmos.registry import handlers_registration as reg_h
 from nmos.registry import handlers_root as root_h
+from nmos.registry.backend import (
+    BackendState,
+    RegistryBackend,
+    StandaloneRegistryBackend,
+)
 from nmos.registry.registry import InterfaceSecurity, Registry
 from nmos.registry.types import ResourceType
 from nmos.registry.websocket import handle_subscription_websocket
@@ -85,6 +90,9 @@ __all__ = [
     "create_query_ws_app",
     "InterfaceSecurity",
     "Registry",
+    "RegistryBackend",
+    "StandaloneRegistryBackend",
+    "BackendState",
 ]
 
 # TR-10-SEC:439 fixes the OAuth 2.0 scope per API: "For IS-04 NodeAPI,
@@ -100,7 +108,11 @@ QUERY_SCOPE = "query"
 _UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
 
 
-def _new_app(security: InterfaceSecurity, registry: Registry) -> web.Application:
+def _new_app(
+    security: InterfaceSecurity,
+    registry: Registry,
+    backend: RegistryBackend | None = None,
+) -> web.Application:
     """Create an app with the shared middleware stack and DI keys.
 
     The middleware chain is the Node's, imported rather than reimplemented:
@@ -125,6 +137,10 @@ def _new_app(security: InterfaceSecurity, registry: Registry) -> web.Application
     ]
     app = web.Application(middlewares=middlewares)
     app["registry"] = registry
+    # Defaulting to the standalone backend keeps every existing caller --
+    # including the whole registry test suite -- working unchanged, and means a
+    # standalone deployment never has to know this boundary exists.
+    app["backend"] = backend or StandaloneRegistryBackend(registry)
     app["node"] = security
     return app
 
@@ -142,7 +158,9 @@ def _add(app: web.Application, method: str, path: str, handler: Any) -> None:
 
 
 def create_registration_app(
-    registry: Registry, security: InterfaceSecurity,
+    registry: Registry,
+    security: InterfaceSecurity,
+    backend: RegistryBackend | None = None,
 ) -> web.Application:
     """Build the IS-04 Registration API application.
 
@@ -156,7 +174,7 @@ def create_registration_app(
     authentication or mutual authentication — with mTLS enforced on every
     state-changing verb by ``client_auth_middleware``.
     """
-    app = _new_app(security, registry)
+    app = _new_app(security, registry, backend)
     prefix = reg_h.BASE_PATH
 
     _add(app, "GET", "/", root_h.handle_get_root)
@@ -185,6 +203,7 @@ def create_registration_app(
 def create_query_app(
     registry: Registry,
     security: InterfaceSecurity,
+    backend: RegistryBackend | None = None,
     *,
     tls: bool = False,
     ws_port: int = 0,
@@ -213,7 +232,7 @@ def create_query_app(
         paging_limit: Server default page size.
         paging_limit_max: Largest page size the server will honour.
     """
-    app = _new_app(security, registry)
+    app = _new_app(security, registry, backend)
     app["tls"] = tls
     app["ws_port"] = ws_port
     app["oauth2"] = security.oauth2
@@ -260,7 +279,9 @@ def create_query_app(
 
 
 def create_query_ws_app(
-    registry: Registry, security: InterfaceSecurity,
+    registry: Registry,
+    security: InterfaceSecurity,
+    backend: RegistryBackend | None = None,
 ) -> web.Application:
     """Build the Query API WebSocket listener.
 
@@ -274,7 +295,7 @@ def create_query_ws_app(
     ``authorization`` attribute of a subscription meaningful: when the Query
     API requires a token, so does the socket it hands out.
     """
-    app = _new_app(security, registry)
+    app = _new_app(security, registry, backend)
     read = check_oauth2(False, QUERY_SCOPE)
 
     # ``check_oauth2`` is typed against ``Callable[[Request], Awaitable[Response]]``

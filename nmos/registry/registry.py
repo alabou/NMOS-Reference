@@ -125,12 +125,44 @@ class Registry:
             instance".
     """
 
-    __slots__ = ("store", "query_id", "_subscriptions")
+    __slots__ = ("_store", "query_id", "_subscriptions")
 
     def __init__(self, store: RegistryStore, *, query_id: str) -> None:
-        self.store = store
+        self._store = store
         self.query_id = query_id
         self._subscriptions: SubscriptionManager | None = None
+
+    # -----------------------------------------------------------------------
+    # The store
+    # -----------------------------------------------------------------------
+
+    @property
+    def store(self) -> RegistryStore:
+        """The resource store backing every read.
+
+        A property rather than a plain attribute so the whole store can be
+        replaced in one assignment -- see ``swap_store``. Read-only from the
+        outside: the three call sites that reach for it
+        (``handlers_query``, ``subscriptions``) only ever read.
+        """
+        return self._store
+
+    def swap_store(self, store: RegistryStore) -> RegistryStore:
+        """Replace the store atomically, returning the old one.
+
+        Needed for the distributed compaction path: when etcd discards the
+        history a watch was following, the local view has to be rebuilt from a
+        fresh snapshot. That snapshot is built *off to the side* and installed
+        here in a single assignment, so no reader ever observes an empty or
+        half-loaded registry -- Query keeps serving the previous view right up
+        to the swap.
+
+        Deliberately not used in standalone mode, where the store is created
+        once and lives for the life of the process.
+        """
+        previous = self._store
+        self._store = store
+        return previous
 
     # -----------------------------------------------------------------------
     # Subscription manager wiring
@@ -182,6 +214,21 @@ class Registry:
         events = self.store.collect_garbage()
         self._publish(events)
         return len(events)
+
+    def publish(self, events: list[ResourceEvent]) -> None:
+        """Queue grains for changes applied by something other than this class.
+
+        The distributed backend mutates the store directly, because in that
+        mode the authoritative decision was made by etcd and the local store is
+        a read model catching up. It still has to publish, and it must do so
+        through the same path as everything else so that a subscriber cannot
+        tell where a change originated.
+
+        Same contract as every mutation here: synchronous, non-awaiting, and
+        called in the same uninterrupted step as the store mutation it
+        describes.
+        """
+        self._publish(events)
 
     def _publish(self, events: list[ResourceEvent]) -> None:
         """Hand change events to the subscription manager.
