@@ -90,6 +90,37 @@ def product_ca(flavor: Flavor = "rsa") -> Path:
 
 
 # ---------------------------------------------------------------------------
+# etcd identities — the distributed registry's PKI
+# ---------------------------------------------------------------------------
+#
+# A separate build directory, ``build.0.etcd/``, with serials SNX10000 …
+# SNX10004 so a clone can bring up a 1-, 3- or 5-member cluster. One
+# certificate per member covers all four etcd roles — client listener, peer
+# listener, outbound peer, and the registry's own client connection — which is
+# what its dual ``serverAuth, clientAuth`` EKU is for, and why there is no
+# client/server split here as there is above. They chain to the same roots, so
+# :func:`root_ca` is the trust anchor for these too.
+#
+# Note the suffix order differs from the Node identities: ``.etcd.ec.chain.pem``
+# rather than ``.chain.ec.pem``. That is what the generator emits, and the paths
+# are quoted verbatim in the README, so it is preserved rather than normalised.
+
+ETCD_CERTS_DIR = CERT_ROOT / "build.0.etcd"
+
+
+def etcd_chain(serial: str, flavor: Flavor = "rsa") -> Path:
+    """etcd leaf + intermediate, for --etcdCertificate."""
+    tail = "ec.chain.pem" if flavor == "ec" else "chain.pem"
+    return ETCD_CERTS_DIR / "pem" / f"ExampleDeviceServer.ABC.{serial}.etcd.{tail}"
+
+
+def etcd_key(serial: str, flavor: Flavor = "rsa") -> Path:
+    """etcd private key, for --etcdKey."""
+    tail = "ec.key" if flavor == "ec" else "key"
+    return ETCD_CERTS_DIR / "key" / f"ExampleDeviceServer.ABC.{serial}.etcd.{tail}"
+
+
+# ---------------------------------------------------------------------------
 # DNS SAN / CN resolution (what middleware matches aud / client_id against)
 # ---------------------------------------------------------------------------
 

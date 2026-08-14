@@ -69,7 +69,7 @@ Notes on the dependencies:
 
 - **NMOS Registry**: a single Node runs **standalone** with no registry — pass `--rdsHost ""` (the launch-script default already wires this when no `$3 $4` are supplied). In this mode the embedded NMOS Controller seeds its cache **once at startup** from the local Node's resources, so the Controller UI shows the initial set of senders / receivers / sources / flows. **The cache is not live-updated** afterwards — IS-05 activations, IS-11 reconfigurations, BCP-008 status changes that happen at run-time will not appear in the Controller UI until you point the Node at a real registry. To exercise multi-Node negotiation AND see live updates, run the [registry that ships with this repository](#nmos-registry) (`./start-registry.sh`) or any other IS-04-compliant registry such as [nmos-cpp's](https://github.com/sony/nmos-cpp), passing `$3 $4` positional args on the launch script.
 
-- **OAuth 2.0 Authorization Server**: required for Configs B and C — the Node fetches JWKS from the AS, validates Bearer tokens against the published public keys, and enforces the IS-10 claim semantics (`aud`, `scope`, `x-nmos-*`). Any IS-10-compliant AS works; a [Keycloak](https://www.keycloak.org/) realm is a common choice for production deployments. Pass the AS host / port to the launch script as `$1 $2`. Config A does not contact an AS.
+- **OAuth 2.0 Authorization Server**: required for Configs B and C — the Node fetches JWKS from the AS, validates Bearer tokens against the published public keys, and enforces the IS-10 claim semantics (`aud`, `scope`, `x-nmos-*`). Any IS-10-compliant AS works; a [Keycloak](https://www.keycloak.org/) realm is a common choice for professional deployments. Pass the AS host / port to the launch script as `$1 $2`. Config A does not contact an AS.
 - **TLS material**: each launch script references a server cert / key (and, for mTLS, a client cert / key) and a trust root. Vendors substitute their own PKI by editing the scripts or by running `nmos_node.py` directly with `--nodeCertificate` / `--nodeKey` / `--nodeTrustedRootCA`.
 
 ### Dev mode — no TLS
@@ -472,10 +472,6 @@ adopted**:
 | etcd already running, identity differs | refuses | n/a |
 | `--etcdExternal` | no | no |
 
-For production the recommended shape is etcd under systemd with the registry
-adopting it: a registry restart then costs one reconnect and a preload instead
-of a member leave/rejoin with the leader election that implies.
-
 Bootstrap and resizing stay explicit. `--etcdBootstrap` is a one-time flag,
 refused if the data directory is non-empty, and **an empty data directory is
 never** taken to mean "make a new cluster" — that is how recovering one dead
@@ -516,7 +512,10 @@ with the full supervisor and a Tier 1 etcd.
 One certificate per registry/etcd pair covers all four etcd roles — client
 listener, peer listener, outbound peer, and the registry's own client
 connection — which is what its dual `serverAuth, clientAuth` EKU is for.
-Generate them with `Certificates/genEtcdCerts.sh`.
+
+The set ships in `Certificates/build.0.etcd/` — SNX10000..SNX10004, so a clone
+runs a 1-, 3- or 5-member cluster with nothing outside it — and validates
+against the same two roots in `Certificates/build.0/` that the Nodes use.
 
 ```bash
 ./start-registry.sh 2 8444 \
@@ -844,6 +843,11 @@ Certificates/build.0/   — Test PKI subset (SNX00000 infrastructure, SNX00001..
                           Nodes, both RSA and ECDSA, plus ExampleRootCA-bundle.pem
                           holding both roots) so TLS and the TLS test suites run
                           from a clone with nothing outside it
+Certificates/build.0.etcd/ — The etcd half of the same PKI: SNX10000..SNX10004,
+                          both RSA and ECDSA, one dual serverAuth/clientAuth
+                          certificate per member covering all four etcd roles.
+                          Validates against build.0's roots — see Security under
+                          Distributed registry
 fake-as/                — Test OAuth 2.0 Authorization Server, vendored (see below)
 
 nmos_node.py            — Node entry point; parses CLI and starts the server

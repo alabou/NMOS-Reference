@@ -17,6 +17,8 @@ from typing import Any
 
 import pytest
 
+from nmos.api.tests._tls_helpers import Flavor, etcd_chain, etcd_key
+from nmos.cert_check import cert_dns_identities
 from nmos.registry.distributed import (
     DistributedConfigError,
     resolve_distributed_config,
@@ -182,15 +184,36 @@ def test_empty_certificate_name_is_refused(tmp_path: Path) -> None:
 def test_certificate_name_defaults_to_the_generated_shared_san(
     tmp_path: Path,
 ) -> None:
-    """The default must match what genEtcdCerts.sh actually puts in the certs.
-
-    A default naming a SAN that does not exist makes every etcd handshake fail.
-    """
+    """A default naming a SAN that does not exist fails every etcd handshake."""
     config = resolve_distributed_config(_args(tmp_path))
     assert config is not None
     assert config.certificate_name == (
         "Example.Company.Device.Etcd.ABC.example.com"
     )
+
+
+def test_the_default_san_is_present_in_the_shipped_certificates() -> None:
+    """Read the assertion above off the certificates themselves.
+
+    The test above pins the default against a string typed out here, which only
+    ever restated an intention: both could be wrong together, and the failure
+    would surface as an etcd handshake rejecting every peer. Now that the etcd
+    set ships in ``Certificates/build.0.etcd/`` the claim is checkable, so it is
+    checked -- against both certificate flavours, since a cluster may be brought
+    up on either.
+    """
+    flavors: tuple[Flavor, ...] = ("rsa", "ec")
+    for flavor in flavors:
+        chain = etcd_chain("SNX10000", flavor)
+        assert chain.is_file(), f"the shipped set is missing {chain}"
+        assert etcd_key("SNX10000", flavor).is_file(), (
+            "a certificate without its key cannot start etcd"
+        )
+        names = cert_dns_identities(str(chain))
+        assert "Example.Company.Device.Etcd.ABC.example.com" in names, (
+            f"{chain.name} does not carry the default --etcdCertificateName; "
+            f"found {names}"
+        )
 
 
 # ---------------------------------------------------------------------------
