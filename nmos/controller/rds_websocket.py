@@ -21,6 +21,14 @@ Controller's subscription flow:
 
 Per-resource-kind subscriptions run in parallel; each owns one
 subscription + one WebSocket. All feed the same ``ResourceCache``.
+
+**Failing over to an independent registry** is where that parallelism
+stops being free. Six subscribers notice one outage separately, so the
+switch has to be a *coordinated* act rather than six local ones — see
+``_on_selection_moved``, which owns the whole of it. With
+``--rdsDistributed`` none of that applies: cluster members serve the
+same shared state, so there is nothing to invalidate and the switch
+stays what it always was, a log line and a counter reset.
 """
 
 from __future__ import annotations
@@ -115,6 +123,17 @@ class RdsWebSocketClient:
         # pinned to ``config``. With it, every subscriber re-reads the current
         # registry before each attempt, so one member failing moves all six.
         self._selector = selector
+        # The selection generation a resync has already been performed for.
+        # ``RegistrySelector.failover_count`` increments exactly once per
+        # advance, so it already IS the epoch -- there is no second counter to
+        # keep in step with it. Starts below every real generation so the
+        # first switch is never mistaken for one already handled.
+        self._resynced_generation = -1
+        # Every connected subscriber's socket, so a switch can force the ones
+        # that never failed off the registry the process has just abandoned.
+        # Registered on connect and removed in a ``finally``, so a crashed
+        # subscriber cannot leave a closed socket here to be closed again.
+        self._live_sockets: dict[ResourceKind, aiohttp.ClientWebSocketResponse] = {}
 
     def _config_for(self, target: Any) -> RdsWebSocketConfig:
         """The Query/WebSocket half of a ``RegistryTarget``."""
@@ -188,10 +207,16 @@ class RdsWebSocketClient:
             # Node's registration loop -- has already moved on, this one
             # follows without needing to be told.
             target, cfg = self._current()
+            # The generation this attempt belongs to. Captured here, next to
+            # the target it goes with, so a grain can be matched against the
+            # registry it actually came from rather than the one selected by
+            # the time it is applied.
+            epoch = self._generation()
             ssl_ctx = self._build_ssl_context(cfg)
             connector_ssl: bool | ssl.SSLContext = (
                 ssl_ctx if ssl_ctx is not None else False
             )
+            superseded = False
             try:
                 connector = aiohttp.TCPConnector(ssl=connector_ssl)
                 timeout = aiohttp.ClientTimeout(total=None, connect=10)
@@ -205,7 +230,15 @@ class RdsWebSocketClient:
                     async with session.ws_connect(ws_href) as ws:
                         backoff = INITIAL_BACKOFF_S  # reset on successful connect
                         failures = 0
-                        await self._consume_grains(ws, cache, kind, dg)
+                        self._live_sockets[kind] = ws
+                        try:
+                            await self._consume_grains(ws, cache, kind, dg, epoch)
+                        finally:
+                            self._live_sockets.pop(kind, None)
+                        # Returning while the generation has moved means this
+                        # connection was abandoned rather than broken -- either
+                        # by the epoch guard or by ``_drop_stale_sockets``.
+                        superseded = self._generation() != epoch
             except asyncio.CancelledError:
                 return
             except Exception as exc:
@@ -223,17 +256,20 @@ class RdsWebSocketClient:
                             " (%s)",
                             kind, target.label, failures, successor.label,
                             "clustered: keeping cache" if self._distributed
-                            else "independent: clearing cache",
+                            else f"independent: reloading all kinds from "
+                                 f"{successor.label}",
                         )
-                        if not self._distributed:
-                            # Independent registries hold DIFFERENT resources.
-                            # Grains only ever upsert (a SYNC burst carries
-                            # pre == post and removes nothing), so without this
-                            # the cache would become the UNION of both
-                            # registries and show resources that no longer
-                            # exist anywhere. Cleared per kind, because each
-                            # subscriber owns exactly one.
-                            await cache.replace_all(kind, [])
+                        # One call, no mode test here: which of the two
+                        # behaviours applies is decided in exactly one place.
+                        await self._on_selection_moved(cache)
+                        # This subscriber is the one that noticed, so nothing
+                        # has closed its socket -- but it is now just as
+                        # re-targeted as the five that were closed, and the
+                        # backoff it earned was earned against a registry it
+                        # will not contact again. Same reasoning as the
+                        # ``failures`` reset below, applied to the wait.
+                        superseded = True
+                        backoff = INITIAL_BACKOFF_S
                     # Reset either way: on a switch the count belongs to the
                     # new registry, and with no alternative there is nothing to
                     # gain by counting past the threshold forever.
@@ -242,11 +278,114 @@ class RdsWebSocketClient:
             # Back-off and retry (unless we're shutting down).
             if dg.is_done:
                 return
+            if superseded:
+                # Not a failure and not something to wait out: this subscriber
+                # was moved off a registry the process abandoned, and the one
+                # it should be on is already known. Reconnecting immediately
+                # keeps the gap to the new registry as short as the handshake.
+                continue
             try:
                 await asyncio.sleep(backoff + random.random())
             except asyncio.CancelledError:
                 return
             backoff = min(backoff * 2, MAX_BACKOFF_S)
+
+    def _generation(self) -> int:
+        """Which selection generation we are on.
+
+        Zero when there is no selector, so a client pinned to one registry has
+        a single generation for its whole life and every epoch test is a no-op.
+        """
+        return 0 if self._selector is None else int(self._selector.failover_count)
+
+    async def _on_selection_moved(self, cache: ResourceCache) -> None:
+        """React, once, to the selection having advanced to a new registry.
+
+        Six subscribers notice one outage independently and each reports it, so
+        the reaction has to be idempotent per generation rather than per
+        subscriber. Everything a switch does lives here, which is what makes
+        "what happens on failover" a question with one answer.
+        """
+        if self._distributed:
+            # Cluster members serve the same shared state, so there is nothing
+            # to invalidate: not the cache, and not the connections either. A
+            # subscriber still attached to an earlier member is receiving
+            # correct data. Deliberately the first line -- the clustered path
+            # is a visible no-op rather than something to be traced through
+            # three guards to confirm it does nothing.
+            return
+
+        generation = self._generation()
+        if generation <= self._resynced_generation:
+            return
+        # Assigned before the first ``await``. asyncio is single-threaded, so
+        # nothing can run between the test and this line -- which is what makes
+        # six concurrent reports produce exactly one resync.
+        self._resynced_generation = generation
+
+        # 1. Delete, FIRST. Independent registries hold DIFFERENT resources and
+        #    grains only ever upsert -- a SYNC burst carries pre == post and
+        #    removes nothing -- so anything not deleted here survives as a
+        #    resource that exists in no live registry. Every kind, not just the
+        #    one whose subscriber happened to notice first.
+        #
+        #    Before the sockets are dropped, not after, and the order matters:
+        #    a dropped subscriber reconnects immediately, and its SYNC burst
+        #    from the NEW registry can land while this loop is still running.
+        #    Clearing afterwards would wipe data that was already correct, and
+        #    that subscriber will not send it again until its connection next
+        #    breaks -- so a failed reload at step 3 would leave the kind empty
+        #    indefinitely. Clearing first, nothing has reached the new registry
+        #    yet, so this can only ever delete the old one's contents.
+        for _path, kind in self._KINDS:
+            await cache.replace_all(kind, [])
+
+        # 2. No subscriber may keep feeding the cache from the registry we have
+        #    just abandoned. The ones that failed are already reconnecting; the
+        #    ones whose sockets are healthy would otherwise never notice, and
+        #    two independent registries would merge into one cache.
+        await self._drop_stale_sockets()
+
+        # 3. Reload. Best effort by design: if it fails the cache stays empty,
+        #    which is the honest state, and the six subscribers are already
+        #    reconnecting -- their SYNC bursts repopulate it. The reconnect loop
+        #    IS the retry, so there is no retry task here.
+        await self._reload_from_current(cache)
+
+    async def _drop_stale_sockets(self) -> None:
+        """Close every live subscription so all six re-target together."""
+        for kind, ws in list(self._live_sockets.items()):
+            try:
+                await ws.close()
+            except Exception as exc:  # pragma: no cover - close is best effort
+                log.debug("rds_ws[%s]: closing stale socket: %s", kind, exc)
+
+    async def _reload_from_current(self, cache: ResourceCache) -> None:
+        """Refill the cache from whichever registry is now selected."""
+        # Imported here rather than at module scope: rds_query imports the same
+        # cache module, and this is the only path that needs it.
+        from nmos.controller.rds_query import RdsQueryClient, RdsQueryConfig
+
+        _target, cfg = self._current()
+        query_config = RdsQueryConfig(
+            host=cfg.query_host,
+            port=cfg.query_port,
+            tls=cfg.tls,
+            trusted_root_ca=cfg.trusted_root_ca,
+            client_certificate=cfg.client_certificate,
+            client_key=cfg.client_key,
+        )
+        try:
+            await RdsQueryClient(query_config).bootstrap(cache)
+        except Exception as exc:
+            # Not an error path. An empty cache that fills from the WebSocket a
+            # few seconds later is a correct outcome; a populated one holding
+            # the previous registry's resources would not be.
+            log.warning(
+                "rds_ws: reload from %s:%d failed (%s) - the cache stays empty "
+                "until the subscriptions resync",
+                cfg.query_host, cfg.query_port, exc,
+            )
 
     async def _create_subscription(
         self, session: aiohttp.ClientSession, resource_path: str,
@@ -288,9 +427,17 @@ class RdsWebSocketClient:
         cache: ResourceCache,
         kind: ResourceKind,
         dg: Any,
+        epoch: int = 0,
     ) -> None:
         async for msg in ws:
             if dg.is_done:
+                return
+            if not self._distributed and self._generation() != epoch:
+                # This connection belongs to a registry the process has
+                # abandoned. Closing its socket is not enough on its own:
+                # ``close()`` does not preempt a frame already being handled,
+                # so without this test a late grain could re-upsert the old
+                # registry's resources into a cache that was just cleared.
                 return
             if msg.type == aiohttp.WSMsgType.TEXT:
                 await self._handle_text(msg.data, cache, kind)

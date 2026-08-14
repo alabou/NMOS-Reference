@@ -25,9 +25,12 @@ from base 22000.
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from nmos.errors import InvalidData
+from nmos.ip import Addr, new_addr_from_string
 from nmos.node.activation_engine import (
     AUTO_PORT_BASE,
     _MAX_STREAM_INDEX,
@@ -42,9 +45,17 @@ from nmos.node.types import IPv4Settings, Leg
 MAX_PORT = 65535
 
 
-def _leg(address: str | None) -> Leg:
+def _leg(address: Addr | str | None) -> Leg:
+    """A leg carrying ``address``.
+
+    ``str`` is accepted alongside ``Addr`` on purpose. Production can no longer
+    put a name in this field — ``nmos_node._leg_addr`` yields None instead —
+    but ``_get_unused_multicast_address_ipv4`` still has to be robust to one,
+    and that robustness is what the degradation test below pins. The cast is
+    the honest way to express "deliberately passing what the type forbids".
+    """
     return Leg(name="lo", enable=True, use_ipv4=True,
-               ipv4=IPv4Settings(address=address))
+               ipv4=IPv4Settings(address=cast("Addr | None", address)))
 
 
 class TestMulticastAddress:
@@ -81,6 +92,45 @@ class TestMulticastAddress:
         """
         assert _get_unused_multicast_address_ipv4(0, _leg("XYZ-SNX00001")) == "239.1.0.0"
         assert _get_unused_multicast_address_ipv4(0, _leg(None)) == "239.1.0.0"
+
+
+class TestLegAddressIsTyped:
+    """``IPv4Settings.address`` is ``Addr | None``, and now actually is one.
+
+    A plain string satisfied every consumer by accident -- they all read it as
+    ``str(leg.ipv4.address) if leg.ipv4.address else "0.0.0.0"`` -- while
+    contradicting the declared type. ``nmos_node._leg_addr`` converts, and has
+    to tolerate a name: ``_resolve_leg_address`` deliberately returns the
+    unresolved host when DNS fails rather than stopping the Node.
+    """
+
+    def test_a_numeric_address_survives_the_round_trip(self) -> None:
+        from nmos_node import _leg_addr
+
+        addr = _leg_addr("192.168.123.45")
+        assert addr is not None
+        assert str(addr) == "192.168.123.45"
+        assert _get_unused_multicast_address_ipv4(0, _leg(addr)) == "239.1.123.45"
+
+    def test_a_name_becomes_none_rather_than_raising(self) -> None:
+        """The degraded start stays a start.
+
+        It also removes the one case where a hostname could reach an IS-05
+        ``source_ip``, where it was never valid -- the multicast group is
+        unaffected either way, since a name already derived zero octets.
+        """
+        from nmos_node import _leg_addr
+
+        assert _leg_addr("XYZ-SNX00001") is None
+        assert _leg_addr("") is None
+        assert _get_unused_multicast_address_ipv4(0, _leg(None)) == "239.1.0.0"
+
+    def test_ipv6_is_accepted_too(self) -> None:
+        """``_resolve_leg_address`` passes v6 literals straight through."""
+        from nmos_node import _leg_addr
+
+        addr = _leg_addr("::1")
+        assert addr is not None and addr.is_ipv6()
 
 
 class TestSerialPortBlock:
@@ -181,7 +231,10 @@ class TestTwoNodesOnOneMediaAddress:
         desc = get_transport_descriptor(transport)
         activation = _make_activation(desc)
         legs = _make_legs()
-        legs[0].ipv4.address = "127.0.0.1"   # both Nodes share the media address
+        # Both Nodes share the media address. Assigned as the declared
+        # Addr, not a bare string -- the field is typed, and the point
+        # here is the port, not a loose address.
+        legs[0].ipv4.address = new_addr_from_string("127.0.0.1")
         init_sender_activation(activation, legs, transport, desc)
         activation.staged[0].DestinationIp.value = "auto"
         activation.staged[0].DestinationPort.value = "auto"

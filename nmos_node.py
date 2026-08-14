@@ -35,6 +35,7 @@ from typing import Any
 from aiohttp import web
 
 from nmos.api.tr10_tls import apply_tr10_tls_restrictions
+from nmos.ip import Addr, new_addr_from_string
 
 # Access-log format for the node API: aiohttp's default plus ``%Tf`` — the
 # time taken to serve each request, in seconds (floating fraction). aiohttp's
@@ -99,6 +100,27 @@ def _resolve_leg_address(host: str) -> str:
     return resolved
 
 
+def _leg_addr(value: str) -> Addr | None:
+    """``value`` as a typed address, or None when it is not one.
+
+    ``IPv4Settings.address`` is declared ``Addr | None`` and every consumer
+    reads it as ``str(leg.ipv4.address) if leg.ipv4.address else "0.0.0.0"``, so
+    a raw string satisfied them by accident while contradicting the type.
+
+    None rather than an exception on the unparseable path, because
+    ``_resolve_leg_address`` deliberately returns the *unresolved name* when DNS
+    fails rather than stopping the Node -- so this can be handed a hostname, and
+    turning a warned-about degraded start into a crash would be worse than the
+    thing being fixed. It also makes the code do what that warning already
+    says: the address falls back to ``0.0.0.0`` rather than a name reaching an
+    IS-05 ``source_ip``, where it would never have been valid.
+    """
+    try:
+        return new_addr_from_string(value)
+    except Exception:
+        return None
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     p = argparse.ArgumentParser(
@@ -129,12 +151,14 @@ def parse_args() -> argparse.Namespace:
              "sharing state (the registry's own --distributed mode), rather "
              "than independent registries. Only the Controller needs telling: "
              "the Node discovers it at runtime from the heartbeat response "
-             "(Behaviour - Registration.md:124). Clustered, a failover keeps "
-             "the resource cache because the new member holds the same state; "
-             "independent, the cache MUST be cleared or it becomes the union "
-             "of two registries' contents. Defaults off, which is the "
-             "recoverable direction: a needless refetch rather than phantom "
-             "resources.",
+             "(Behaviour - Registration.md:124). Clustered, a failover changes "
+             "nothing: the new member holds the same state, so there is "
+             "nothing to invalidate. Independent, the Controller drops every "
+             "subscription, empties ALL SIX resource kinds and refetches them "
+             "from the new registry -- otherwise the cache becomes the union "
+             "of two registries' contents and shows resources that exist "
+             "nowhere. Defaults off, which is the recoverable direction: a "
+             "needless refetch rather than phantom resources.",
     )
     g.add_argument(
         "--rds", action="append", default=None, metavar="SPEC",
@@ -378,11 +402,6 @@ def setup_logging(args: argparse.Namespace) -> None:
 
 def registry_selector(args: argparse.Namespace) -> Any:
     """The ordered registries this process should use, or None for standalone.
-
-    Built once and shared by the Node's registration loop and the Controller's
-    subscribers, so that one member failing moves both together rather than
-    leaving the Node registered with a dead registry while its Controller
-    watches a live one.
 
     Each caller gets its **own** selector, deliberately. The Node's
     registration loop and the Controller are independent clients that happen to
@@ -897,8 +916,9 @@ async def go_controller_server(
         selector = registry_selector(args)
         if selector is not None:
             # Bootstrap from whichever registry is current. The WebSocket
-            # subscriptions below then follow the shared selector, so a member
-            # failing moves the Controller and the Node together.
+            # subscriptions below hold this selector -- the Controller's own,
+            # separate from the registration loop's -- so a member failing
+            # moves all six subscribers together.
             target = selector.current
             query_config = RdsQueryConfig(
                 host=target.host,
@@ -1130,7 +1150,8 @@ async def main(args: argparse.Namespace) -> None:
         ipmx=args.ipmx,
         privacy=args.privacy,
         legs=[Leg(name=iface_name, enable=True,
-                  ipv4=IPv4Settings(port=args.nodePort, address=leg_address))],
+                  ipv4=IPv4Settings(port=args.nodePort,
+                                    address=_leg_addr(leg_address)))],
         node_label="Node",
         node_description="This is the node",
         device_label="Device",

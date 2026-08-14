@@ -17,6 +17,14 @@ registry #2 has never heard of this Node, so the heartbeat probe mandated by
 ``Behaviour - Registration.md:124`` must answer 404 and drive a full
 re-registration. The clustered case is the easy one -- 200, nothing to do.
 
+A **second Node** registers with registry #1 alone and has no list to fail over
+along, so everything it published exists in that registry and nowhere else. It
+is what makes "the cache became the union of both registries" observable rather
+than theoretical: once the Controller has moved, anything of PHANTOM02's still
+on a page exists in no live registry at all. Driving the UI by hand found
+exactly that -- three of its senders still listed, with a green health dot,
+seven minutes after the only registry holding them had died.
+
 Marked ``e2e``: excluded from the default gate, run with ``-m "e2e or slow"``.
 """
 
@@ -100,6 +108,7 @@ class _Rig:
         self.r2 = {k: _free_port() for k in ("reg", "q", "ws")}
         self.node_port = _free_port()
         self.ctrl_port = _free_port()
+        self.phantom_port = _free_port()
         self.registry1: subprocess.Popen[bytes] | None = None
 
     def _spawn(self, cmd: list[str], name: str) -> subprocess.Popen[bytes]:
@@ -154,6 +163,43 @@ class _Rig:
             "--logFile", "",
         ], "node")
 
+        # Pinned to registry #1 with no --rds list, so it has nowhere to go.
+        # No --nodeControlPort either: it serves no UI and cannot be confused
+        # with the Node under test.
+        self._spawn([
+            sys.executable, "nmos_node.py",
+            "--nodeDisableTLS", "--nodeAddr", "127.0.0.1",
+            "--nodePort", str(self.phantom_port),
+            "--nodeSerialNumber", "PHANTOM02",
+            "--rdsDisableTLS", "--rdsHost", "127.0.0.1",
+            "--rdsRegistrationPort", str(self.r1["reg"]),
+            "--rdsQueryPort", str(self.r1["q"]),
+            "--rdsWebSocketPort", str(self.r1["ws"]),
+            "--logFile", "",
+        ], "phantom")
+
+    def controller_html(self, path: str) -> str:
+        """One Controller page, as a signed-in operator would be served it.
+
+        Read through the operator surface rather than the Controller's JSON
+        API on purpose: what this asserts is what somebody would actually be
+        looking at.
+        """
+        import http.cookiejar
+        import urllib.parse
+
+        from nmos.controller.app import LOGIN_PATH
+
+        opener = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
+        )
+        base = f"http://127.0.0.1:{self.ctrl_port}"
+        form = urllib.parse.urlencode({"password": ADMIN_PASSWORD}).encode()
+        with opener.open(f"{base}{LOGIN_PATH}", form, timeout=15) as response:
+            response.read()
+        with opener.open(f"{base}{path}", timeout=15) as response:
+            return str(response.read().decode(errors="replace"))
+
     def kill_registry1(self) -> None:
         assert self.registry1 is not None
         os.killpg(os.getpgid(self.registry1.pid), signal.SIGKILL)
@@ -202,12 +248,24 @@ def _await_line(rig: _Rig, needles: tuple[str, ...], seconds: float) -> str:
 class TestRegistryFailover:
     """Ordered: each step depends on the previous one having happened."""
 
-    def test_1_node_registers_with_the_best_priority_registry(
+    def test_1_both_nodes_register_with_the_best_priority_registry(
         self, rig: _Rig,
     ) -> None:
-        """TR-10-9 section 15: select the service with the best priority."""
+        """TR-10-9 section 15: select the service with the best priority.
+
+        Both must be present before the kill, or the phantom half of the
+        experiment never reaches the Controller's cache to begin with and
+        test 8 would pass without proving anything.
+        """
         elapsed = _wait_node_on(rig.r1["q"], 90.0)
         assert elapsed is not None, "Node never registered with registry #1"
+
+        deadline = time.time() + 60.0
+        while time.time() < deadline and len(_nodes_on(rig.r1["q"])) < 2:
+            time.sleep(0.25)
+        assert len(_nodes_on(rig.r1["q"])) == 2, (
+            "PHANTOM02 never registered with registry #1"
+        )
 
     def test_2_the_second_registry_is_untouched(self, rig: _Rig) -> None:
         """Proves these really are independent, so step 4 exercises the 404."""
@@ -248,14 +306,17 @@ class TestRegistryFailover:
         ``RegistrySelector.fail()`` advances only while the reported target is
         still current, so the first of the six to reach the threshold moves the
         selection and the other five follow by re-reading ``current``.
+
+        That is also why the reaction to the switch cannot live in this branch
+        per subscriber: for five kinds in six it never runs. It is delegated to
+        ``_on_selection_moved``, which acts once for all of them -- which is
+        what the next test measures the result of.
         """
         line = _await_line(
             rig, ("rds_ws[", "switching to"), CONTROLLER_FAILOVER_TIMEOUT,
         )
         assert line, "no Controller subscriber switched"
-        # Independent registries hold different resources, so the cache must be
-        # cleared or it becomes the union of both.
-        assert "clearing cache" in line, line
+        assert "reloading all kinds" in line, line
 
     def test_7_controller_ui_still_serves(self, rig: _Rig) -> None:
         """The operator-facing surface survives losing its registry."""
@@ -264,3 +325,42 @@ class TestRegistryFailover:
             f"http://127.0.0.1:{rig.ctrl_port}{LOGIN_PATH}", timeout=10,
         ) as response:
             assert response.status == 200
+
+    def test_8_nothing_from_the_abandoned_registry_survives(
+        self, rig: _Rig,
+    ) -> None:
+        """The phantom test, and the reason the second Node exists.
+
+        PHANTOM02 lives only in the registry that died and has no list to fail
+        over along, so after the switch it exists nowhere. Grains only upsert,
+        so anything the switch does not delete stays on screen for the life of
+        the process -- which is what a by-hand run found: its senders listed,
+        healthy-looking, long after the registry holding them had gone.
+
+        Both pages are checked. Checking one would have passed before this was
+        fixed: the single kind that did get cleared was, by luck of the draw,
+        ``receiver``, so the Receivers page looked perfect while the Senders
+        page carried three resources that existed nowhere.
+        """
+        assert _nodes_on(rig.r2["q"]) and len(_nodes_on(rig.r2["q"])) == 1, (
+            "ground truth: the surviving registry holds exactly one Node"
+        )
+
+        deadline = time.time() + CONTROLLER_FAILOVER_TIMEOUT
+        pages: dict[str, str] = {}
+        while time.time() < deadline:
+            pages = {
+                path: rig.controller_html(f"/controller/{path}")
+                for path in ("senders", "receivers")
+            }
+            # The reload is what repopulates FAILOVER01; waiting for it also
+            # rules out passing on a page that is merely still empty.
+            if all("FAILOVER01" in html for html in pages.values()):
+                break
+            time.sleep(2.0)
+
+        for path, html in pages.items():
+            assert "FAILOVER01" in html, f"{path}: surviving node not listed"
+            assert "PHANTOM02" not in html, (
+                f"{path}: still shows a resource that exists in no registry"
+            )
