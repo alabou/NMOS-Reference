@@ -123,6 +123,32 @@ def parse_args() -> argparse.Namespace:
     g.add_argument("--rdsClientCertificate", default="", help="Client certificate (*.chain.pem)")
     g.add_argument("--rdsClientKey", default="", help="Client private key")
     g.add_argument("--rdsDisableTLS", action="store_true", help="Disable TLS for registry")
+    g.add_argument(
+        "--rdsDistributed", action="store_true",
+        help="The --rds entries are members of ONE distributed registry "
+             "sharing state (the registry's own --distributed mode), rather "
+             "than independent registries. Only the Controller needs telling: "
+             "the Node discovers it at runtime from the heartbeat response "
+             "(Behaviour - Registration.md:124). Clustered, a failover keeps "
+             "the resource cache because the new member holds the same state; "
+             "independent, the cache MUST be cleared or it becomes the union "
+             "of two registries' contents. Defaults off, which is the "
+             "recoverable direction: a needless refetch rather than phantom "
+             "resources.",
+    )
+    g.add_argument(
+        "--rds", action="append", default=None, metavar="SPEC",
+        help="Additional registry, repeatable up to 5 times, for failover "
+             "against a distributed registry. Comma-separated key=value "
+             "fields: host, registrationPort, queryPort, wsPort, certName, "
+             "ca (repeatable), cert, key, disableTLS. Anything omitted is "
+             "inherited from the --rds* flags above, so "
+             "'--rds host=10.0.0.2' is a complete entry when members share "
+             "ports and trust material. Clients move to the next entry when "
+             "the current registry fails and stay there; they do not fail "
+             "back. Without --rds the --rds* flags describe one registry, "
+             "exactly as before.",
+    )
 
     # --- Node server ---
     g = p.add_argument_group("Node Server")
@@ -349,6 +375,54 @@ def setup_logging(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 # TLS helpers
 # ---------------------------------------------------------------------------
+
+def registry_selector(args: argparse.Namespace) -> Any:
+    """The ordered registries this process should use, or None for standalone.
+
+    Built once and shared by the Node's registration loop and the Controller's
+    subscribers, so that one member failing moves both together rather than
+    leaving the Node registered with a dead registry while its Controller
+    watches a live one.
+
+    Each caller gets its **own** selector, deliberately. The Node's
+    registration loop and the Controller are independent clients that happen to
+    share a process, and every member of a distributed registry serves the same
+    shared state -- so the two of them sitting on different members is normal
+    operation, not a fault to be corrected.
+
+    Sharing one selector would merge their failure domains: six Controller-side
+    WebSocket failures would move the Node's registration even though its own
+    connection was healthy, and vice versa. Keeping them separate means each
+    fails over on evidence about the registry *it* is talking to.
+
+    Returns None when no registry is configured at all (``--rdsHost ""``),
+    which is the standalone mode the Controller seeds from the local Node.
+    """
+    from nmos.rds_targets import (
+        RegistrySelector, build_targets, target_from_scalars,
+    )
+
+    default = target_from_scalars(
+        host=args.rdsHost,
+        registration_port=args.rdsRegistrationPort,
+        query_port=args.rdsQueryPort,
+        ws_port=args.rdsWebSocketPort,
+        tls=not args.rdsDisableTLS,
+        certificate_name=args.rdsCertificateName,
+        trusted_root_ca=_ca_list(args.rdsTrustedRootCA, args.trustedRootCA),
+        client_certificate=args.rdsClientCertificate,
+        client_key=args.rdsClientKey,
+    )
+    targets = build_targets(getattr(args, "rds", None), default)
+    selector = RegistrySelector(targets) if targets else None
+    if selector is not None and len(selector) > 1:
+        logging.info(
+            "registry: %d registries configured, starting with %s "
+            "(failover moves forward only, no failback)",
+            len(selector), selector.current.label,
+        )
+    return selector
+
 
 def _ca_list(specific: list[str], fallback: list[str]) -> list[str]:
     """Resolve the effective list of trusted-root-CA paths for one service.
@@ -820,16 +894,19 @@ async def go_controller_server(
         # Without --rdsHost, the controller has nowhere to get
         # resources from, so we seed from the local Node so the
         # operator at least sees the Node it's embedded in.
-        if args.rdsHost:
+        selector = registry_selector(args)
+        if selector is not None:
+            # Bootstrap from whichever registry is current. The WebSocket
+            # subscriptions below then follow the shared selector, so a member
+            # failing moves the Controller and the Node together.
+            target = selector.current
             query_config = RdsQueryConfig(
-                host=args.rdsHost,
-                port=args.rdsQueryPort,
-                tls=not args.rdsDisableTLS,
-                trusted_root_ca=tuple(
-                    _ca_list(args.rdsTrustedRootCA, args.trustedRootCA),
-                ),
-                client_certificate=args.rdsClientCertificate,
-                client_key=args.rdsClientKey,
+                host=target.host,
+                port=target.query_port,
+                tls=target.tls,
+                trusted_root_ca=target.trusted_root_ca,
+                client_certificate=target.client_certificate,
+                client_key=target.client_key,
             )
             try:
                 await RdsQueryClient(query_config).bootstrap(cache)
@@ -837,19 +914,19 @@ async def go_controller_server(
                 logging.warning("controller bootstrap failed: %s", exc)
 
             ws_config = RdsWebSocketConfig(
-                query_host=args.rdsHost,
-                query_port=args.rdsQueryPort,
-                ws_host=args.rdsHost,
-                ws_port=args.rdsWebSocketPort,
-                tls=not args.rdsDisableTLS,
-                trusted_root_ca=tuple(
-                    _ca_list(args.rdsTrustedRootCA, args.trustedRootCA),
-                ),
-                client_certificate=args.rdsClientCertificate,
-                client_key=args.rdsClientKey,
+                query_host=target.host,
+                query_port=target.query_port,
+                ws_host=target.host,
+                ws_port=target.ws_port,
+                tls=target.tls,
+                trusted_root_ca=target.trusted_root_ca,
+                client_certificate=target.client_certificate,
+                client_key=target.client_key,
             )
             rds_tasks.append(asyncio.create_task(
-                RdsWebSocketClient(ws_config).run(dg, cache),
+                RdsWebSocketClient(
+                    ws_config, selector, distributed=args.rdsDistributed,
+                ).run(dg, cache),
             ))
         else:
             from nmos.controller.local_bootstrap import bootstrap_local_node
@@ -878,21 +955,12 @@ async def go_node_registration(
     dg: Any, node: Any, args: argparse.Namespace,
 ) -> None:
     """Run the registry registration loop."""
-    from nmos.node.registry import RegistryClient, RegistryConfig
+    from nmos.node.registry import RegistryClient
 
-    config = RegistryConfig(
-        host=args.rdsHost,
-        port=args.rdsRegistrationPort,
-        tls=not args.rdsDisableTLS,
-        certificate_name=args.rdsCertificateName,
-        trusted_root_ca=tuple(
-            _ca_list(args.rdsTrustedRootCA, args.trustedRootCA),
-        ),
-        client_certificate=args.rdsClientCertificate,
-        client_key=args.rdsClientKey,
-    )
-
-    client = RegistryClient(config, node)
+    selector = registry_selector(args)
+    if selector is None:
+        return
+    client = RegistryClient(selector, node)
     await client.run(dg)
 
 

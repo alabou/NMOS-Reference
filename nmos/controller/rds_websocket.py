@@ -44,7 +44,12 @@ log = logging.getLogger(__name__)
 QUERY_API_VERSION = "v1.3"
 MAX_UPDATE_RATE_MS = 100
 INITIAL_BACKOFF_S = 1.0
-MAX_BACKOFF_S = 30.0
+# Capped well below the operational rule that a failed registry stays down
+# long enough for every participant to observe it. A subscriber must get
+# FAILOVER_AFTER attempts inside that window, and each attempt costs at most
+# (connect timeout + backoff); at 30 s the worst case was 3 x 40 s = 120 s, so
+# a subscriber could sleep through the whole outage and never notice.
+MAX_BACKOFF_S = 5.0
 
 
 @dataclass
@@ -87,11 +92,60 @@ class RdsWebSocketClient:
         ("/flows", "flow"),
     )
 
-    def __init__(self, config: RdsWebSocketConfig) -> None:
-        self._config = config
+    #: Consecutive failed connect/consume cycles against one registry before
+    #: this subscriber reports it. Matches the Node client's threshold so the
+    #: two halves of a process reach the same conclusion at about the same
+    #: time rather than one dragging the other back and forth.
+    FAILOVER_AFTER = 3
 
-    def _build_ssl_context(self) -> ssl.SSLContext | None:
-        if not self._config.tls:
+    def __init__(
+        self,
+        config: RdsWebSocketConfig,
+        selector: Any = None,
+        *,
+        distributed: bool = False,
+    ) -> None:
+        self._config = config
+        # Whether the configured registries share state. The Controller cannot
+        # work this out for itself: it holds no registration to probe, and a
+        # subscription succeeds identically against a clustered member and an
+        # unrelated registry. See ``--rdsDistributed``.
+        self._distributed = distributed
+        # Optional: without it this client behaves exactly as it did before,
+        # pinned to ``config``. With it, every subscriber re-reads the current
+        # registry before each attempt, so one member failing moves all six.
+        self._selector = selector
+
+    def _config_for(self, target: Any) -> RdsWebSocketConfig:
+        """The Query/WebSocket half of a ``RegistryTarget``."""
+        return RdsWebSocketConfig(
+            query_host=target.host,
+            query_port=target.query_port,
+            ws_host=target.host,
+            ws_port=target.ws_port,
+            tls=target.tls,
+            trusted_root_ca=tuple(target.trusted_root_ca),
+            client_certificate=target.client_certificate,
+            client_key=target.client_key,
+        )
+
+    def _current(self) -> tuple[Any, RdsWebSocketConfig]:
+        """The registry to use for the next attempt, and its config.
+
+        Read fresh each time rather than cached: that is the whole mechanism
+        by which a subscriber follows a failover another subscriber -- or the
+        Node's registration loop -- has already decided.
+        """
+        if self._selector is None:
+            return None, self._config
+        target = self._selector.current
+        return target, self._config_for(target)
+
+    def _build_ssl_context(
+        self, cfg: RdsWebSocketConfig | None = None,
+    ) -> ssl.SSLContext | None:
+        cfg = cfg if cfg is not None else self._config
+        if not cfg.tls:
             return None
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         apply_tr10_tls_restrictions(ctx)
@@ -127,27 +181,63 @@ class RdsWebSocketClient:
         kind: ResourceKind,
     ) -> None:
         backoff = INITIAL_BACKOFF_S
-        ssl_ctx = self._build_ssl_context()
-        connector_ssl: bool | ssl.SSLContext = (
-            ssl_ctx if ssl_ctx is not None else False
-        )
+        failures = 0
 
         while not dg.is_done:
+            # Re-read before every attempt. If another subscriber -- or the
+            # Node's registration loop -- has already moved on, this one
+            # follows without needing to be told.
+            target, cfg = self._current()
+            ssl_ctx = self._build_ssl_context(cfg)
+            connector_ssl: bool | ssl.SSLContext = (
+                ssl_ctx if ssl_ctx is not None else False
+            )
             try:
                 connector = aiohttp.TCPConnector(ssl=connector_ssl)
                 timeout = aiohttp.ClientTimeout(total=None, connect=10)
                 async with aiohttp.ClientSession(
                     connector=connector, timeout=timeout,
                 ) as session:
-                    ws_href = await self._create_subscription(session, resource_path)
+                    ws_href = await self._create_subscription(
+                        session, resource_path, cfg,
+                    )
                     log.info("rds_ws[%s]: connecting %s", kind, ws_href)
                     async with session.ws_connect(ws_href) as ws:
                         backoff = INITIAL_BACKOFF_S  # reset on successful connect
+                        failures = 0
                         await self._consume_grains(ws, cache, kind, dg)
             except asyncio.CancelledError:
                 return
             except Exception as exc:
                 log.warning("rds_ws[%s]: %s; reconnect in %.1fs", kind, exc, backoff)
+                failures += 1
+                if (
+                    target is not None
+                    and self._selector is not None
+                    and failures >= self.FAILOVER_AFTER
+                ):
+                    successor = self._selector.fail(target)
+                    if successor != target:
+                        log.warning(
+                            "rds_ws[%s]: %s failed %d times - switching to %s"
+                            " (%s)",
+                            kind, target.label, failures, successor.label,
+                            "clustered: keeping cache" if self._distributed
+                            else "independent: clearing cache",
+                        )
+                        if not self._distributed:
+                            # Independent registries hold DIFFERENT resources.
+                            # Grains only ever upsert (a SYNC burst carries
+                            # pre == post and removes nothing), so without this
+                            # the cache would become the UNION of both
+                            # registries and show resources that no longer
+                            # exist anywhere. Cleared per kind, because each
+                            # subscriber owns exactly one.
+                            await cache.replace_all(kind, [])
+                    # Reset either way: on a switch the count belongs to the
+                    # new registry, and with no alternative there is nothing to
+                    # gain by counting past the threshold forever.
+                    failures = 0
 
             # Back-off and retry (unless we're shutting down).
             if dg.is_done:
@@ -160,18 +250,20 @@ class RdsWebSocketClient:
 
     async def _create_subscription(
         self, session: aiohttp.ClientSession, resource_path: str,
+        cfg: RdsWebSocketConfig | None = None,
     ) -> str:
         """POST /x-nmos/query/v1.3/subscriptions/ and extract ws_href."""
-        scheme = Https.s if self._config.tls else Http.s
+        cfg = cfg if cfg is not None else self._config
+        scheme = Https.s if cfg.tls else Http.s
         url = (
-            f"{scheme}://{self._config.query_host}:{self._config.query_port}"
+            f"{scheme}://{cfg.query_host}:{cfg.query_port}"
             f"/x-nmos/query/{QUERY_API_VERSION}/subscriptions/"
         )
         body = {
             "max_update_rate_ms": MAX_UPDATE_RATE_MS,
             "resource_path": resource_path,
             "persist": False,
-            "secure": self._config.tls,
+            "secure": cfg.tls,
             "params": {},
         }
         headers = {
