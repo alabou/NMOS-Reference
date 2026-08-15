@@ -50,6 +50,16 @@ DEFAULT_PEER_PORT = 2382
 
 MEMBER_NAME_PREFIX = "nmos-registry"
 
+# The SAN every member's etcd certificate shares, and therefore the single
+# string that is both the gRPC target-name override and etcd's
+# --client-cert-allowed-hostname / --peer-cert-allowed-hostname.
+#
+# It lives here, next to the rest of the topology constants, because more than
+# one entry point needs it -- the registry's --etcdCertificateName default and
+# the rig's secured cluster -- and a second copy that drifted would not fail
+# loudly: it would leave one side accepting certificates the other rejects.
+DEFAULT_ETCD_CERTIFICATE_NAME = "Example.Company.Device.Etcd.ABC.example.com"
+
 # etcd accepts almost anything as a member name, but the name also becomes part
 # of a data-directory path and of log lines, so it is restricted to characters
 # that need no quoting anywhere.
@@ -235,9 +245,29 @@ def derive_cluster(
     # same way, which is what makes the derivation agree across hosts.
     ordered = sorted(specs, key=lambda s: (s.host, s.peer_port, s.client_port))
 
+    # Members that share a host are told apart by their peer port, because the
+    # host alone no longer identifies them. Co-location is not exotic: members
+    # on one machine must share its address (etcd checks a peer's certificate
+    # against the address its connection arrives from), so the port is the only
+    # thing left that differs. Names are still a pure function of the member
+    # list, so every member derives the same ones.
+    #
+    # A host appearing once keeps the plain `nmos-registry-<host>`: the name
+    # becomes a data-directory path, and changing it for existing deployments
+    # would orphan their databases.
+    shared = {
+        spec.host for spec in ordered
+        if sum(1 for other in ordered if other.host == spec.host) > 1
+    }
+
     members = tuple(
         Member(
-            name=spec.derived_name(),
+            name=(
+                spec.name or (
+                    f"{spec.derived_name()}-{spec.peer_port}"
+                    if spec.host in shared else spec.derived_name()
+                )
+            ),
             host=spec.host,
             client_port=spec.client_port,
             peer_port=spec.peer_port,

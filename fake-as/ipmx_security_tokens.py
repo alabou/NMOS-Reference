@@ -151,7 +151,8 @@ class TokenTemplate:
         config at run time).
       - ``aud`` contains the DUT's instance-id (the serial number),
         which under OAIM=0 must also match the TLS server cert SAN.
-      - ``scope`` includes the NMOS API names the validator probes.
+      - ``scope`` includes the NMOS API names the validator probes, plus
+        ``query`` for Registry DUTs (see the field below).
       - ``client_id`` matches the OAuth 2.0 client_id the validator
         registered at the fake AS.
       - ``sub == client_id`` so the token is valid as a client-credentials
@@ -164,7 +165,15 @@ class TokenTemplate:
     iss: str
     instance_id: str
     client_id: str
-    scope: str = "node connection streamcompatibility manufacturer"
+    # ``query`` is included so the same default token also reaches an NMOS
+    # Registry's Query API, which is the other kind of DUT these tokens are
+    # pointed at. Without it a client_credentials token authenticates
+    # correctly and is then refused 403 "insufficient permissions" on every
+    # read, and the Query API's OAuth 2.0 path cannot be exercised at all.
+    # Read access is all this grants: per "NMOS With OAuth2.0" § Validation
+    # the scope claim provides Read to the API's hierarchy, and Write needs an
+    # ``x-nmos-*`` claim that this template deliberately omits.
+    scope: str = "node connection streamcompatibility manufacturer query"
     ttl: int = DEFAULT_TTL_SECONDS
     aud_entry: str | None = None
     """The string the validator places in ``aud[0]``. When ``None``,

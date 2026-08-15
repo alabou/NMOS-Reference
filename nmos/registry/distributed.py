@@ -178,6 +178,7 @@ def resolve_distributed_config(args: Any) -> DistributedConfig | None:
         external = _apply_windows_rule(args)
 
     tls = not args.etcdDisableTLS
+    _reject_plaintext_etcd_under_a_secure_registry(args, tls=tls)
     _validate_tls_inputs(args, tls=tls)
 
     explicit_endpoints = _explicit_endpoints(args)
@@ -202,15 +203,14 @@ def resolve_distributed_config(args: Any) -> DistributedConfig | None:
         ]
         local_host, local_peer = specs[0].host, specs[0].peer_port
     else:
+        members = _canonical_members(args)
         specs = [
-            MemberSpec(
-                host=host,
-                client_port=args.etcdClientPort,
-                peer_port=args.etcdPeerPort,
-            )
-            for host in _canonical_hosts(args)
+            MemberSpec(host=host, client_port=client, peer_port=peer)
+            for host, client, peer in members
         ]
-        local_host, local_peer = args.registryAdvertisedHost, None
+        # The advertised host is always first, and its peer port disambiguates
+        # it from any co-located member sharing the same host.
+        local_host, local_peer = members[0][0], members[0][2]
 
     try:
         layout = derive_cluster(
@@ -322,8 +322,34 @@ def _was_supplied(args: Any, attribute: str) -> bool:
     return bool(value)
 
 
-def _canonical_hosts(args: Any) -> list[str]:
-    """The canonical member list: this host plus its neighbours."""
+def _split_member(value: str, args: Any) -> tuple[str, int, int]:
+    """``host`` or ``host:client_port`` -> (host, client_port, peer_port).
+
+    Members carry their own ports because they do not always have an address to
+    themselves. When several members share one machine -- the single-host rig,
+    and any co-located deployment -- they must share its address as well: etcd
+    verifies the certificate a peer presents against the address the connection
+    arrives *from*, and connections between loopback addresses are all sourced
+    from 127.0.0.1 whatever the destination. One address that every member name
+    resolves to satisfies that check; per-member addresses do not. What then
+    separates the members is the port.
+
+    The peer port is the client port plus one, which is both the relationship
+    between the --etcdClientPort/--etcdPeerPort defaults (2381/2382) and what
+    --etcdEndpoints already assumes in the external path below.
+    """
+    host, separator, port = value.rpartition(":")
+    if not separator:
+        return value, args.etcdClientPort, args.etcdPeerPort
+    if not host or not port.isdigit():
+        raise DistributedConfigError(
+            f"member {value!r} is not host or host:client_port",
+        )
+    return host, int(port), int(port) + 1
+
+
+def _canonical_members(args: Any) -> list[tuple[str, int, int]]:
+    """The canonical member list: this member first, then its neighbours."""
     local = args.registryAdvertisedHost
     if not local:
         raise DistributedConfigError(
@@ -331,16 +357,90 @@ def _canonical_hosts(args: Any) -> list[str]:
             "member. It must be a SAN of this member's etcd certificate.",
         )
 
-    hosts = [local, *[h.strip() for h in args.registryNeighbour if h.strip()]]
+    members = [
+        _split_member(value, args)
+        for value in (local, *(h.strip() for h in args.registryNeighbour))
+        if value
+    ]
 
-    duplicates = {h for h in hosts if hosts.count(h) > 1}
+    # Keyed on host AND port: co-located members legitimately share a host and
+    # are distinguished by port, so refusing a repeated host outright would
+    # refuse the single-machine cluster this exists to support.
+    endpoints = [(host, client) for host, client, _ in members]
+    duplicates = {e for e in endpoints if endpoints.count(e) > 1}
     if duplicates:
         raise DistributedConfigError(
-            f"duplicate host(s) in the member list: "
-            f"{', '.join(sorted(duplicates))}. --registryAdvertisedHost must "
-            f"not be repeated as a --registryNeighbour.",
+            f"duplicate member(s) in the list: "
+            f"{', '.join(f'{h}:{p}' for h, p in sorted(duplicates))}. Each "
+            f"member needs its own host, or its own port on a shared host.",
         )
-    return hosts
+    return members
+
+
+def _registry_listeners_are_tls(args: Any) -> bool:
+    """Whether the Registration and Query listeners run over TLS.
+
+    Deliberately the same three inputs ``classify_registry_rap`` uses in
+    ``nmos_registry.py`` to tell RAP 0 from RAP 1 and 2: TLS is on when it was
+    not disabled *and* a certificate/key pair was actually supplied. Recomputed
+    here rather than imported because ``nmos_registry`` imports this module, and
+    kept to those three inputs so the two can never disagree about whether a
+    given command line describes a secured registry.
+    """
+    return not getattr(args, "registryDisableTLS", False) and bool(
+        getattr(args, "registryCertificate", "")
+        and getattr(args, "registryKey", ""),
+    )
+
+
+def _reject_plaintext_etcd_under_a_secure_registry(
+    args: Any, *, tls: bool,
+) -> None:
+    """A secured registry may not keep its database on a plaintext etcd.
+
+    etcd holds *every* registered resource, so this combination is strictly
+    worse than a plain-HTTP registry: it encrypts the interface an operator can
+    see while leaving the entire database readable, and writable, by anyone who
+    can reach the client port.
+
+    It also fails silently rather than loudly. ``tls`` is derived from
+    ``--etcdDisableTLS`` alone, so a command line carrying both that flag and a
+    full ``--etcdCertificate``/``--etcdKey``/``--etcdTrustedRootCA`` set is
+    accepted with the certificates **ignored** -- the operator reads back their
+    own secured command line and believes it took effect. Refusing here is what
+    makes "secured registry implies secured etcd" a property of the program
+    rather than a property of whichever launch script was used.
+    """
+    if tls or not _registry_listeners_are_tls(args):
+        return
+
+    supplied = [
+        flag for flag, value in (
+            ("--etcdCertificate", getattr(args, "etcdCertificate", "")),
+            ("--etcdKey", getattr(args, "etcdKey", "")),
+            ("--etcdTrustedRootCA", getattr(args, "etcdTrustedRootCA", None)),
+        ) if value
+    ]
+    ignored = (
+        f"\n  {', '.join(supplied)} would be IGNORED: --etcdDisableTLS is the "
+        f"only input that decides this, so the certificates you passed would "
+        f"never reach etcd."
+        if supplied else ""
+    )
+
+    raise DistributedConfigError(
+        "--etcdDisableTLS cannot be combined with a TLS Registration/Query "
+        "interface.\n"
+        "  etcd holds every registered resource, so a secured registry over a "
+        "plaintext etcd leaves the whole database readable and writable by "
+        "anyone who can reach the client port -- while the interface an "
+        "operator inspects looks secure."
+        f"{ignored}\n"
+        "  Either secure etcd as well (--etcdCertificate, --etcdKey, "
+        "--etcdTrustedRootCA; this repository ships a set in "
+        "Certificates/build.0.etcd/), or run the whole rig unsecured with "
+        "--registryDisableTLS.",
+    )
 
 
 def _validate_tls_inputs(args: Any, *, tls: bool) -> None:

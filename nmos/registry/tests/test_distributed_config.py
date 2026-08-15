@@ -119,7 +119,50 @@ def test_repeating_the_local_host_as_a_neighbour_is_refused(
         "--etcdCertificate", cert, "--etcdKey", key,
         "--etcdTrustedRootCA", ca,
     ])
-    with pytest.raises(DistributedConfigError, match="duplicate host"):
+    with pytest.raises(DistributedConfigError, match="duplicate member"):
+        resolve_distributed_config(args)
+
+
+def test_co_located_members_are_distinguished_by_port(tmp_path: Path) -> None:
+    """One host, three members, three ports.
+
+    The shape a single-machine secured cluster has to take: co-located members
+    share the machine's address because etcd verifies a peer's certificate
+    against the address its connection arrives from, so only the port is left
+    to tell them apart.
+    """
+    cert, key, ca = _certs(tmp_path)
+    args = parse_args([
+        "--registryDisableTLS", "--distributed",
+        "--registryAdvertisedHost", "a:2381",
+        "--registryNeighbour", "a:2391",
+        "--registryNeighbour", "a:2401",
+        "--etcdCertificate", cert, "--etcdKey", key,
+        "--etcdTrustedRootCA", ca,
+    ])
+    config = resolve_distributed_config(args)
+    assert config is not None
+    assert config.layout.size == 3
+    assert sorted(m.client_port for m in config.layout.members) == [
+        2381, 2391, 2401,
+    ]
+    # Peer ports follow the client port, as --etcdEndpoints already assumes.
+    assert sorted(m.peer_port for m in config.layout.members) == [
+        2382, 2392, 2402,
+    ]
+    # The local member is this process's, not merely the first sharing a host.
+    assert config.layout.local.client_port == 2381
+
+
+def test_a_member_with_a_malformed_port_is_refused(tmp_path: Path) -> None:
+    cert, key, ca = _certs(tmp_path)
+    args = parse_args([
+        "--registryDisableTLS", "--distributed",
+        "--registryAdvertisedHost", "a:not-a-port",
+        "--etcdCertificate", cert, "--etcdKey", key,
+        "--etcdTrustedRootCA", ca,
+    ])
+    with pytest.raises(DistributedConfigError, match="host:client_port"):
         resolve_distributed_config(args)
 
 
@@ -134,6 +177,111 @@ def test_even_sized_cluster_is_refused(tmp_path: Path) -> None:
     ])
     with pytest.raises(DistributedConfigError, match="1, 3, 5 members"):
         resolve_distributed_config(args)
+
+
+# ---------------------------------------------------------------------------
+# A secured registry implies a secured etcd
+# ---------------------------------------------------------------------------
+
+def _secure_listener_args(tmp_path: Path) -> list[str]:
+    """The flags that make the Registration and Query listeners TLS."""
+    cert, key, _ = _certs(tmp_path)
+    return ["--registryCertificate", cert, "--registryKey", key]
+
+
+def test_plaintext_etcd_under_a_tls_registry_is_refused(tmp_path: Path) -> None:
+    """The combination that is strictly worse than a plain-HTTP registry.
+
+    etcd holds every registered resource. Encrypting the interface an operator
+    inspects while leaving that database readable and writable by anyone who can
+    reach the client port is the one arrangement that actively misleads.
+    """
+    cert, key, ca = _certs(tmp_path)
+    args = parse_args([
+        *_secure_listener_args(tmp_path),
+        "--distributed", "--etcdDisableTLS",
+        "--registryAdvertisedHost", "a",
+        "--etcdCertificate", cert, "--etcdKey", key,
+        "--etcdTrustedRootCA", ca,
+    ])
+    with pytest.raises(DistributedConfigError, match="--etcdDisableTLS cannot"):
+        resolve_distributed_config(args)
+
+
+def test_the_refusal_names_the_certificates_it_would_have_ignored(
+    tmp_path: Path,
+) -> None:
+    """Silence here is the actual defect being fixed.
+
+    ``tls`` derives from --etcdDisableTLS alone, so before this refusal a
+    command line carrying both that flag and a full certificate set was accepted
+    with the certificates dropped -- and the operator read back their own
+    secured command line and believed it had taken effect.
+    """
+    cert, key, ca = _certs(tmp_path)
+    args = parse_args([
+        *_secure_listener_args(tmp_path),
+        "--distributed", "--etcdDisableTLS",
+        "--registryAdvertisedHost", "a",
+        "--etcdCertificate", cert, "--etcdKey", key,
+        "--etcdTrustedRootCA", ca,
+    ])
+    with pytest.raises(DistributedConfigError) as caught:
+        resolve_distributed_config(args)
+
+    message = str(caught.value)
+    assert "IGNORED" in message
+    for flag in ("--etcdCertificate", "--etcdKey", "--etcdTrustedRootCA"):
+        assert flag in message
+
+
+def test_plaintext_etcd_is_allowed_when_the_registry_is_plaintext_too(
+    tmp_path: Path,
+) -> None:
+    """The development rig stays available: unsecured is fine, mixed is not."""
+    args = parse_args([
+        "--registryDisableTLS", "--distributed", "--etcdDisableTLS",
+        "--registryAdvertisedHost", "a",
+    ])
+    config = resolve_distributed_config(args)
+    assert config is not None
+    assert config.tls is False
+
+
+def test_a_tls_registry_over_a_secured_etcd_is_accepted(tmp_path: Path) -> None:
+    """The configuration the secured rig actually uses."""
+    cert, key, ca = _certs(tmp_path)
+    args = parse_args([
+        *_secure_listener_args(tmp_path),
+        "--distributed",
+        "--registryAdvertisedHost", "a",
+        "--etcdCertificate", cert, "--etcdKey", key,
+        "--etcdTrustedRootCA", ca,
+    ])
+    config = resolve_distributed_config(args)
+    assert config is not None
+    assert config.tls is True
+
+
+def test_a_certificate_without_a_key_does_not_count_as_a_tls_registry(
+    tmp_path: Path,
+) -> None:
+    """Same three inputs classify_registry_rap uses to tell RAP 0 from RAP 1/2.
+
+    A certificate with no key produces no TLS listener, so the registry is RAP 0
+    and --etcdDisableTLS is not the mixed configuration this rule refuses. The
+    two classifications must agree, or a command line would be RAP 0 to one and
+    secured to the other.
+    """
+    cert, _, _ = _certs(tmp_path)
+    args = parse_args([
+        "--registryCertificate", cert,
+        "--distributed", "--etcdDisableTLS",
+        "--registryAdvertisedHost", "a",
+    ])
+    config = resolve_distributed_config(args)
+    assert config is not None
+    assert config.tls is False
 
 
 # ---------------------------------------------------------------------------

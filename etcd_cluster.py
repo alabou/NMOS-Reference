@@ -5,10 +5,17 @@
 """Bring a local etcd cluster up and down for the distributed registry.
 
     python3 etcd_cluster.py up [--members 1|3|5] [--profile wsl|linux] [--bootstrap]
+    python3 etcd_cluster.py --secure up            # mutual TLS, client and peer
     python3 etcd_cluster.py status
     python3 etcd_cluster.py endpoints
     python3 etcd_cluster.py down
     python3 etcd_cluster.py wipe --yes
+
+``--secure`` is a top-level flag rather than an ``up`` flag on purpose: every
+subcommand needs it. ``status`` has to present a client certificate to a
+secured cluster, ``endpoints`` prints https-reachable names, and ``wipe`` has to
+find the secured data root. Being top-level also means ``--detach`` forwards it
+for free, since that re-executes this script with its own argv minus the flag.
 
 Why this is Python and not a shell script
 -----------------------------------------
@@ -48,14 +55,24 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import shutil
 import signal
 import sys
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent
 DEFAULT_DATA_ROOT = REPO_ROOT / ".etcd" / "data"
 BUNDLED_ETCD = REPO_ROOT / ".etcd" / "etcd"
+
+# A secured cluster advertises its members by DNS name where a plaintext one
+# advertises loopback addresses (see _member_specs), so the two describe the
+# same member with different peer URLs. etcd records a member's peer URL in its
+# WAL, so re-using one data directory across the two modes makes the second run
+# fail with a peer-URL mismatch on a database that is otherwise fine. Separate
+# roots keep the modes independent and make `wipe` mode-specific too.
+SECURE_DATA_ROOT = REPO_ROOT / ".etcd" / "data-secure"
 
 # Records that a member's data directory has been initialised, so a second
 # `up` joins as `existing` instead of bootstrapping a second cluster on top of
@@ -71,6 +88,49 @@ PROFILE_WSL = "wsl"
 _WSL_PORT_STRIDE = 10
 _WSL_BASE_CLIENT = 2381
 _WSL_BASE_PEER = 2382
+
+# --- secured cluster identities -------------------------------------------
+#
+# A secured member is addressed by the name its certificate attests, because
+# the shipped etcd certificates carry DNS SANs and no IP SAN. Two separate
+# checks depend on that name, and only the first is obvious:
+#
+#   1. The member DIALLING a peer verifies the certificate it gets back against
+#      the host in the peer URL. A name in the certificate satisfies this; a
+#      bare loopback address does not.
+#
+#   2. The member being dialled verifies the certificate the caller PRESENTS
+#      against the address the connection arrives from -- resolving each DNS
+#      name in that certificate and looking for the source address among the
+#      results.
+#
+# Check 2 is why every member shares one bind address and separates by port
+# block instead of taking a loopback address each. Connections between
+# addresses on `lo` are sourced from 127.0.0.1 whatever the destination
+# (`ip route get 127.0.0.11` -> `src 127.0.0.1`), so per-member addresses make
+# the source address match no member's name and every peer handshake is
+# rejected. One address that every member name resolves to satisfies both
+# checks with no certificate change and nothing disabled.
+#
+# The same shape deploys across machines unchanged: there each name resolves to
+# its own host's address, which is also the source address of that host's peer
+# traffic, so the ports need not differ. (It breaks only where the source
+# address cannot match the advertised one -- behind NAT, or on a multi-homed
+# host that routes out of a different interface.)
+_SECURE_HOST_TEMPLATE = "XYZ-SNX1000{index}"
+_SECURE_BIND_ADDRESS = "127.0.0.1"
+_SECURE_SERIAL_TEMPLATE = "SNX1000{index}"
+
+# Certificate flavour, spelled the way start-registry.sh spells it so one rig
+# uses one vocabulary. Both flavours ship for every serial.
+TCT_RSA = 0
+TCT_ECDSA = 1
+_TCT_INFIX = {TCT_RSA: "", TCT_ECDSA: ".ec"}
+
+# Probe used to recognise a usable Certificates/ tree, mirroring the resolution
+# start-registry.sh performs: IPMX_CERT_ROOT, then this checkout, then the
+# workspace tree one level up.
+_CERT_PROBE = "build.0.etcd/pem/ExampleDeviceServer.ABC.SNX10000.etcd.chain.pem"
 
 
 def _default_profile() -> str:
@@ -88,8 +148,126 @@ def _default_profile() -> str:
     return PROFILE_WSL if "microsoft" in release.lower() else PROFILE_LINUX
 
 
-def _member_specs(count: int, profile: str) -> list[object]:
+def _cert_root() -> Path:
+    """Locate a Certificates/ tree carrying the etcd identities.
+
+    Same resolution order as start-registry.sh -- IPMX_CERT_ROOT, this
+    checkout, then the workspace tree one level up -- so a rig driven from
+    outside this repository finds the same PKI both halves of it use. Matching
+    nothing anywhere names every directory searched rather than failing later
+    inside etcd with a path it cannot read.
+    """
+    override = os.environ.get("IPMX_CERT_ROOT", "")
+    if override:
+        return Path(override)
+
+    searched = [REPO_ROOT / "Certificates", REPO_ROOT.parent / "Certificates"]
+    for candidate in searched:
+        if (candidate / _CERT_PROBE).is_file():
+            return candidate
+
+    raise SystemExit(
+        f"--secure needs the etcd certificate set, and {_CERT_PROBE} is in "
+        f"none of the trees searched:\n"
+        + "".join(f"  {path}\n" for path in searched)
+        + "  Set IPMX_CERT_ROOT to a Certificates/ tree that carries it.",
+    )
+
+
+def _secure_identity(index: int, tct: int) -> tuple[str, str, str]:
+    """The (certificate, key, trusted root CA) triple for one secured member.
+
+    One certificate per member serves every role it has -- etcd's client
+    listener, its peer listener, its outbound peer connections, and the
+    registry's own client channel -- which is what the dual serverAuth,
+    clientAuth EKU on these certificates is for.
+    """
+    root = _cert_root()
+    infix = _TCT_INFIX[tct]
+    serial = _SECURE_SERIAL_TEMPLATE.format(index=index)
+    stem = f"ExampleDeviceServer.ABC.{serial}.etcd"
+
+    certificate = root / "build.0.etcd" / "pem" / f"{stem}{infix}.chain.pem"
+    key = root / "build.0.etcd" / "key" / f"{stem}{infix}.key"
+
+    # One file holding both generations of the root CA, so either certificate
+    # flavour validates against a single trust anchor. The supervisor would
+    # combine separate roots itself, but handing it one file that already is
+    # the trust store keeps what etcd receives identical to what is on disk.
+    bundle = root / "build.0" / "ExampleRootCA-bundle.pem"
+    flavoured = root / "build.0" / f"ExampleRootCA{infix}.pem"
+    ca = bundle if bundle.is_file() else flavoured
+
+    for role, path in (
+        ("certificate", certificate), ("key", key), ("trusted root CA", ca),
+    ):
+        if not path.is_file():
+            raise SystemExit(
+                f"--secure: member {index}'s {role} is missing: {path}",
+            )
+
+    return str(certificate), str(key), str(ca)
+
+
+def _check_secure_resolution(layouts: list[object]) -> None:
+    """Refuse to start a secured cluster whose member names resolve elsewhere.
+
+    Without this the misconfiguration surfaces as etcd rejecting every peer
+    handshake with a TLS error naming a certificate that is in fact perfectly
+    valid -- an hour of reading handshake logs to discover a hosts-file entry.
+    Both checks in _SECURE_HOST_TEMPLATE depend on this one fact, so it is
+    worth one getaddrinfo per member at start-up.
+    """
+    import socket
+
+    wrong: list[str] = []
+    for layout in layouts:
+        member = layout.local  # type: ignore[attr-defined]
+        try:
+            resolved: set[str] = {
+                str(info[4][0])
+                for info in socket.getaddrinfo(
+                    member.host, member.client_port, socket.AF_INET,
+                )
+            }
+        except OSError as exc:
+            wrong.append(f"  {member.host}: does not resolve ({exc.strerror})")
+            continue
+        if member.bind_address not in resolved:
+            wrong.append(
+                f"  {member.host}: resolves to {', '.join(sorted(resolved))}, "
+                f"but the member listens on {member.bind_address}",
+            )
+
+    if wrong:
+        raise SystemExit(
+            "--secure: member names must resolve to the address the members "
+            "listen on.\n"
+            + "\n".join(wrong)
+            + f"\n  Map every member name to {_SECURE_BIND_ADDRESS} in "
+            f"/etc/hosts (and in the Windows hosts file, if a registry there "
+            f"drives this cluster).",
+        )
+
+
+def _member_specs(count: int, profile: str, secure: bool = False) -> list[object]:
     from nmos.etcd.cluster import MemberSpec
+
+    if secure:
+        # Addressed by name and separated by port, all on one bind address --
+        # see _SECURE_HOST_TEMPLATE for why the addresses cannot differ. The
+        # port block is the wsl profile's, so a secured cluster is reachable
+        # from a native-Windows registry through localhost forwarding too.
+        return [
+            MemberSpec(
+                host=_SECURE_HOST_TEMPLATE.format(index=index),
+                client_port=_WSL_BASE_CLIENT + index * _WSL_PORT_STRIDE,
+                peer_port=_WSL_BASE_PEER + index * _WSL_PORT_STRIDE,
+                name=f"nmos-registry-{index}",
+                bind_address=_SECURE_BIND_ADDRESS,
+            )
+            for index in range(count)
+        ]
 
     specs: list[object] = []
     for index in range(count):
@@ -111,19 +289,24 @@ def _member_specs(count: int, profile: str) -> list[object]:
     return specs
 
 
-def _layouts(count: int, profile: str) -> list[object]:
-    """One layout per member -- identical membership, differing only in `local`."""
+def _layouts(count: int, profile: str, secure: bool = False) -> list[object]:
+    """One layout per member -- identical membership, differing only in `local`.
+
+    Every subcommand routes through here, which makes it the one place that has
+    to agree with itself about what the cluster looks like -- including whether
+    its URLs are https.
+    """
     from nmos.etcd.cluster import derive_cluster
 
-    specs = _member_specs(count, profile)
-    layouts = []
+    specs = _member_specs(count, profile, secure)
+    layouts: list[object] = []
     for spec in specs:
         layouts.append(derive_cluster(
             specs,                      # type: ignore[arg-type]
             local_host=spec.host,       # type: ignore[attr-defined]
             local_peer_port=spec.peer_port,  # type: ignore[attr-defined]
             namespace=NAMESPACE,
-            tls=False,
+            tls=secure,
         ))
     return layouts
 
@@ -146,6 +329,18 @@ def _data_dir(root: Path, name: str) -> Path:
     return root / name
 
 
+def _data_root(args: argparse.Namespace) -> Path:
+    """Where this mode's member databases live.
+
+    An explicit --data-root always wins. Otherwise secured and plaintext
+    clusters get separate roots, for the peer-URL reason SECURE_DATA_ROOT
+    documents.
+    """
+    if args.data_root:
+        return Path(args.data_root)
+    return SECURE_DATA_ROOT if args.secure else DEFAULT_DATA_ROOT
+
+
 # ---------------------------------------------------------------------------
 # up
 # ---------------------------------------------------------------------------
@@ -161,14 +356,18 @@ async def _up(args: argparse.Namespace) -> int:
             "registry at it with --etcdExternal --etcdEndpoints.",
         )
 
+    from nmos.etcd.cluster import DEFAULT_ETCD_CERTIFICATE_NAME
+
     binary = _binary(args.binary)
-    root = Path(args.data_root)
+    root = _data_root(args)
     root.mkdir(parents=True, exist_ok=True)
 
-    layouts = _layouts(args.members, args.profile)
+    layouts = _layouts(args.members, args.profile, args.secure)
+    if args.secure:
+        _check_secure_resolution(layouts)
     supervisors: list[EtcdSupervisor] = []
 
-    for layout in layouts:
+    for index, layout in enumerate(layouts):
         local = layout.local  # type: ignore[attr-defined]
         data_dir = _data_dir(root, local.name)
         marker = data_dir / BOOTSTRAP_MARKER
@@ -184,12 +383,22 @@ async def _up(args: argparse.Namespace) -> int:
                 f"discard it.",
             )
 
+        certificate, key, trusted_ca = (
+            _secure_identity(index, args.tct) if args.secure else ("", "", "")
+        )
+
         supervisors.append(EtcdSupervisor(
             layout=layout,  # type: ignore[arg-type]
             binary=binary,
             data_dir=data_dir,
             bootstrap=bootstrap,
-            tls=False,
+            tls=args.secure,
+            certificate=certificate or None,
+            key=key or None,
+            trusted_root_ca=(trusted_ca,) if trusted_ca else (),
+            certificate_name=(
+                DEFAULT_ETCD_CERTIFICATE_NAME if args.secure else None
+            ),
             startup_timeout=args.timeout,
         ))
 
@@ -225,8 +434,20 @@ async def _up(args: argparse.Namespace) -> int:
         print(f"  {local.name:24} client {local.client_target}")
 
     print("\nPoint a registry at it with:\n")
-    print(f"  --distributed --etcdExternal --etcdDisableTLS \\")
-    print(f"  --etcdEndpoints {_endpoint_string(layouts[0], args.profile)}")
+    if args.secure:
+        certificate, key, trusted_ca = _secure_identity(0, args.tct)
+        print("  --distributed --etcdExternal \\")
+        print(f"  --etcdCertificate {certificate} \\")
+        print(f"  --etcdKey {key} \\")
+        print(f"  --etcdTrustedRootCA {trusted_ca} \\")
+        print(f"  --etcdEndpoints {_endpoint_string(layouts[0], args.profile, args.secure)}")
+        print(
+            "\n  (member 0's identity shown; each registry member passes its "
+            "own, matching the etcd member it talks to)",
+        )
+    else:
+        print("  --distributed --etcdExternal --etcdDisableTLS \\")
+        print(f"  --etcdEndpoints {_endpoint_string(layouts[0], args.profile, args.secure)}")
 
     print("\nRunning in the foreground. Ctrl-C stops every member.")
     stop = asyncio.Event()
@@ -244,14 +465,21 @@ async def _up(args: argparse.Namespace) -> int:
     return 0
 
 
-def _endpoint_string(layout: object, profile: str) -> str:
+def _endpoint_string(layout: object, profile: str, secure: bool = False) -> str:
     """Endpoints as a registry should be given them.
 
     On the wsl profile the addresses are rewritten to ``localhost`` because
     that is how a native-Windows registry reaches them -- through WSL2's
     localhost forwarding, which covers 127.0.0.1 only.
+
+    A secured cluster keeps its member names on every profile. They already
+    resolve to the one address the members share, which is what makes them
+    reachable from Windows too, and naming them keeps the endpoint line
+    readable against the certificate each member presents.
     """
     members = layout.members  # type: ignore[attr-defined]
+    if secure:
+        return ",".join(m.client_target for m in members)
     if profile == PROFILE_WSL:
         return ",".join(f"localhost:{m.client_port}" for m in members)
     return ",".join(m.client_target for m in members)
@@ -268,9 +496,28 @@ async def _status(args: argparse.Namespace) -> int:
     which is what keeps the split rig diagnosable from the side the operator is
     sitting on.
     """
-    from nmos.etcd.channel import EtcdChannelPool, parse_endpoints, unary_method
+    from nmos.etcd.channel import (
+        EtcdChannelPool,
+        build_credentials,
+        parse_endpoints,
+        unary_method,
+    )
+    from nmos.etcd.cluster import DEFAULT_ETCD_CERTIFICATE_NAME
     from nmos.etcd.errors import EtcdError
     from nmos.etcd.generated import rpc_pb2
+
+    # A secured cluster answers nobody who cannot present a client certificate
+    # carrying the shared etcd SAN, so `status` has to authenticate exactly as
+    # a registry member does. Any member's identity serves: the certificates
+    # differ per serial, but the SAN etcd checks is the same on all of them.
+    credentials = None
+    target_name = None
+    if args.secure:
+        certificate, key, trusted_ca = _secure_identity(0, args.tct)
+        credentials = build_credentials(
+            trusted_root_ca=[trusted_ca], certificate=certificate, key=key,
+        )
+        target_name = DEFAULT_ETCD_CERTIFICATE_NAME
 
     status_rpc = unary_method(
         "Maintenance", "Status", rpc_pb2.StatusRequest, rpc_pb2.StatusResponse,
@@ -280,7 +527,7 @@ async def _status(args: argparse.Namespace) -> int:
         rpc_pb2.MemberListRequest, rpc_pb2.MemberListResponse,
     )
 
-    layouts = _layouts(args.members, args.profile)
+    layouts = _layouts(args.members, args.profile, args.secure)
     # `endpoints` only exists on the `status` subparser; --detach reuses this
     # function with an `up` namespace to poll for readiness.
     explicit = getattr(args, "endpoints", "")
@@ -293,7 +540,7 @@ async def _status(args: argparse.Namespace) -> int:
     for target in targets:
         pool = EtcdChannelPool(
             parse_endpoints([target]),
-            credentials=None, target_name=None, rpc_timeout=3.0,
+            credentials=credentials, target_name=target_name, rpc_timeout=3.0,
         )
         try:
             status = await pool.call(status_rpc, rpc_pb2.StatusRequest())
@@ -311,7 +558,7 @@ async def _status(args: argparse.Namespace) -> int:
     if healthy:
         pool = EtcdChannelPool(
             parse_endpoints(list(targets)),
-            credentials=None, target_name=None, rpc_timeout=3.0,
+            credentials=credentials, target_name=target_name, rpc_timeout=3.0,
         )
         try:
             members = await pool.call(member_list, rpc_pb2.MemberListRequest())
@@ -327,8 +574,8 @@ async def _status(args: argparse.Namespace) -> int:
 
 
 def _endpoints(args: argparse.Namespace) -> int:
-    layouts = _layouts(args.members, args.profile)
-    print(_endpoint_string(layouts[0], args.profile))
+    layouts = _layouts(args.members, args.profile, args.secure)
+    print(_endpoint_string(layouts[0], args.profile, args.secure))
     return 0
 
 
@@ -361,7 +608,7 @@ def _down(args: argparse.Namespace) -> int:
     else:
         print("  signalled the cluster supervisor")
 
-    layouts = _layouts(args.members, args.profile)
+    layouts = _layouts(args.members, args.profile, args.secure)
     members = layouts[0].members  # type: ignore[attr-defined]
 
     deadline = time.monotonic() + 30.0
@@ -393,8 +640,8 @@ def _wipe(args: argparse.Namespace) -> int:
     Separate, explicit and confirming, because this is the operation the old
     scripts performed silently on every start.
     """
-    root = Path(args.data_root)
-    layouts = _layouts(args.members, args.profile)
+    root = _data_root(args)
+    layouts = _layouts(args.members, args.profile, args.secure)
     targets = [
         _data_dir(root, layout.local.name)  # type: ignore[attr-defined]
         for layout in layouts
@@ -430,18 +677,37 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--members", type=int, default=3, choices=[1, 3, 5])
     parser.add_argument(
-        "--profile", default=_default_profile(),
+        "--profile", default=None,
         choices=[PROFILE_LINUX, PROFILE_WSL],
-        help="linux: one loopback address per member. wsl: one address, one "
-             "port block per member, so Windows localhost forwarding reaches "
-             "all of them.",
+        help=f"linux: one loopback address per member. wsl: one address, one "
+             f"port block per member, so Windows localhost forwarding reaches "
+             f"all of them. Default: {_default_profile()} here, or linux "
+             f"under --secure.",
     )
-    parser.add_argument("--data-root", default=str(DEFAULT_DATA_ROOT))
+    _add_security_options(parser, default_secure=False, default_tct=TCT_RSA)
+    parser.add_argument(
+        "--data-root", default="",
+        help=f"Member databases. Defaults to {DEFAULT_DATA_ROOT}, or "
+             f"{SECURE_DATA_ROOT} under --secure.",
+    )
     parser.add_argument("--binary", default="")
+
+    # The security options are accepted on BOTH sides of the subcommand.
+    # `--secure` belongs to the cluster rather than to one verb, so it reads
+    # naturally before it -- but the wrapper scripts append their extra
+    # arguments after the subcommand, and a flag that works in only one
+    # position is a flag that fails in a shell script for no reason the user
+    # can see. SUPPRESS on the subparser copies is what makes both orders work:
+    # without it the subparser's own default would overwrite a value the
+    # top-level parser had already set.
+    common = argparse.ArgumentParser(add_help=False)
+    _add_security_options(
+        common, default_secure=argparse.SUPPRESS, default_tct=argparse.SUPPRESS,
+    )
 
     sub = parser.add_subparsers(dest="command", required=True)
 
-    up = sub.add_parser("up", help="start the cluster")
+    up = sub.add_parser("up", help="start the cluster", parents=[common])
     up.add_argument("--bootstrap", action="store_true",
                     help="force a one-time bootstrap (refused if already "
                          "initialised)")
@@ -450,16 +716,58 @@ def build_parser() -> argparse.ArgumentParser:
                          "foreground")
     up.add_argument("--timeout", type=float, default=60.0)
 
-    status = sub.add_parser("status", help="report member health")
+    status = sub.add_parser(
+        "status", help="report member health", parents=[common],
+    )
     status.add_argument("--endpoints", default="")
 
-    sub.add_parser("endpoints", help="print the --etcdEndpoints line")
-    sub.add_parser("down", help="stop members started by `up --detach`")
+    sub.add_parser(
+        "endpoints", help="print the --etcdEndpoints line", parents=[common],
+    )
+    sub.add_parser(
+        "down", help="stop members started by `up --detach`", parents=[common],
+    )
 
-    wipe = sub.add_parser("wipe", help="delete every member's data directory")
+    wipe = sub.add_parser(
+        "wipe", help="delete every member's data directory", parents=[common],
+    )
     wipe.add_argument("--yes", action="store_true", required=False)
 
     return parser
+
+
+def _add_security_options(
+    parser: argparse.ArgumentParser, *, default_secure: Any, default_tct: Any,
+) -> None:
+    """The --secure/--tct pair, added to the top-level parser and each verb."""
+    parser.add_argument(
+        "--secure", action="store_true", default=default_secure,
+        help="Run the cluster with mutual TLS on both the client and the peer "
+             "listeners, using the etcd certificate set in "
+             "Certificates/build.0.etcd/. Members are then addressed as "
+             "XYZ-SNX1000n, which their certificates attest and bare loopback "
+             "addresses do not, and every such name must resolve to "
+             f"{_SECURE_BIND_ADDRESS}.",
+    )
+    parser.add_argument(
+        "--tct", type=int, default=default_tct, choices=[TCT_RSA, TCT_ECDSA],
+        help="TLS Certificate Type for --secure: 0=RSA, 1=ECDSA. Spelled as "
+             "start-registry.sh spells it, and it must match what the "
+             "registry members present.",
+    )
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    """Parse and normalise, so every entry point sees the same namespace.
+
+    ``--detach`` re-parses its own argv rather than going through main(), so
+    profile resolution has to live here and not there -- otherwise a detached
+    secured cluster would be polled for readiness against the wrong topology.
+    """
+    args = build_parser().parse_args(argv)
+    if args.profile is None:
+        args.profile = _default_profile()
+    return args
 
 
 def _spawn_detached(argv: list[str]) -> int:
@@ -488,8 +796,7 @@ def _spawn_detached(argv: list[str]) -> int:
         start_new_session=True,
     )
 
-    parser = build_parser()
-    args = parser.parse_args(forwarded)
+    args = parse_args(forwarded)
     deadline = time.monotonic() + args.timeout
 
     while time.monotonic() < deadline:
@@ -512,7 +819,7 @@ def _spawn_detached(argv: list[str]) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
-    args = build_parser().parse_args(raw)
+    args = parse_args(raw)
 
     if args.command == "up":
         if args.detach:

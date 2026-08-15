@@ -105,6 +105,25 @@ class MemberIdentity:
     version: str
 
 
+def _read_root(path: str) -> bytes:
+    """Read one trusted root, failing with the path rather than a bare OSError.
+
+    Mirrors ``nmos.etcd.channel._read_bytes``: the two sides of mutual TLS read
+    the same files, and a typo in one of them should read the same either way.
+    """
+    try:
+        with open(path, "rb") as handle:
+            content = handle.read()
+    except OSError as exc:
+        raise SupervisorError(f"cannot read --etcdTrustedRootCA {path!r}: {exc}") from exc
+
+    # PEM files do not always end in a newline, and two roots concatenated
+    # without one between them produce a single unparseable block: etcd would
+    # then trust the first root only, which is the failure this whole method
+    # exists to prevent.
+    return content if content.endswith(b"\n") else content + b"\n"
+
+
 @dataclass
 class EtcdSupervisor:
     """Owns the local etcd member process.
@@ -131,6 +150,9 @@ class EtcdSupervisor:
     startup_timeout: float = 60.0
 
     _process: asyncio.subprocess.Process | None = field(default=None, init=False)
+    _generated_ca: Path | None = field(default=None, init=False)
+    """A trust store this supervisor combined from several roots, if it did."""
+
     _ownership: ProcessOwnership | None = field(default=None, init=False)
     _monitor: asyncio.Task[None] | None = field(default=None, init=False)
     _stopping: bool = field(default=False, init=False)
@@ -357,7 +379,7 @@ class EtcdSupervisor:
         # One certificate serves all four roles -- client listener, peer
         # listener, outbound peer connection, and the registry's own client
         # connection -- which is why it carries both serverAuth and clientAuth.
-        ca = self.trusted_root_ca[0]
+        ca = self._trusted_ca_file()
         argv += [
             "--cert-file", self.certificate,
             "--key-file", self.key,
@@ -384,6 +406,59 @@ class EtcdSupervisor:
             argv += ["--peer-crl-file", self.peer_crl_file]
 
         return argv
+
+    def _discard_generated_ca(self) -> None:
+        """Remove a trust store this supervisor wrote, if it wrote one.
+
+        Best effort: the file holds public certificates, so leaving one behind
+        after an abrupt exit leaks nothing, and failing a shutdown over it would
+        be worse than the litter.
+        """
+        bundle = self._generated_ca
+        self._generated_ca = None
+        if bundle is None:
+            return
+        try:
+            bundle.unlink(missing_ok=True)
+        except OSError as exc:                          # pragma: no cover
+            log.debug("etcd: could not remove %s: %s", bundle, exc)
+
+    def _trusted_ca_file(self) -> str:
+        """One file for etcd, however many roots the registry was given.
+
+        ``--trusted-ca-file`` and ``--peer-trusted-ca-file`` each take a
+        *single* path, while ``--etcdTrustedRootCA`` is repeatable and
+        ``build_credentials`` trusts every root it is handed. Passing only the
+        first would split the trust store in half: this member would reject
+        peers and clients that the registry's own client channel, on the very
+        same process, accepts -- and reject them with a certificate error
+        naming a certificate that is perfectly valid.
+
+        So several roots are concatenated into one file. That is what a PEM
+        trust store is; ``Certificates/build.0/ExampleRootCA-bundle.pem``, which
+        holds the RSA and ECDSA generations of the same CA, is exactly this file
+        prepared by hand.
+
+        The bundle is written beside the data directory rather than inside it.
+        Inside, it would make an empty data directory non-empty and so trip the
+        bootstrap refusal -- turning a first start into "the data directory is
+        already initialised".
+        """
+        roots = self.trusted_root_ca
+        if len(roots) == 1:
+            return roots[0]
+
+        bundle = self.data_dir.with_name(f"{self.data_dir.name}.trusted-roots.pem")
+        try:
+            bundle.parent.mkdir(parents=True, exist_ok=True)
+            bundle.write_bytes(b"".join(_read_root(path) for path in roots))
+        except OSError as exc:
+            raise SupervisorError(
+                f"cannot write the combined trust store {bundle}: {exc}",
+            ) from exc
+
+        self._generated_ca = bundle
+        return str(bundle)
 
     def _probe_pool(self) -> EtcdChannelPool:
         """A short-lived pool aimed only at the local member."""
@@ -521,6 +596,8 @@ class EtcdSupervisor:
                     self.layout.local.name,
                 )
             return
+
+        self._discard_generated_ca()
 
         process = self._process
         self._process = None

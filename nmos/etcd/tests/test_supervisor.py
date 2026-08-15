@@ -158,6 +158,186 @@ def test_tls_argv_carries_the_identity_restriction(tmp_path: Path) -> None:
     assert argv[argv.index("--peer-cert-file") + 1] == "/tmp/cert.pem"
 
 
+def test_a_single_trusted_root_is_passed_straight_through(
+    tmp_path: Path,
+) -> None:
+    """The common case writes nothing: one root is already one file."""
+    root = tmp_path / "root.pem"
+    root.write_bytes(b"-----ROOT-----\n")
+
+    supervisor = EtcdSupervisor(
+        layout=_single_member_layout(_free_port(), _free_port()),
+        binary="etcd",
+        data_dir=tmp_path / "member",
+        tls=True,
+        certificate="/tmp/cert.pem",
+        key="/tmp/key.pem",
+        trusted_root_ca=(str(root),),
+    )
+    argv = supervisor._build_argv()
+
+    assert argv[argv.index("--trusted-ca-file") + 1] == str(root)
+    assert argv[argv.index("--peer-trusted-ca-file") + 1] == str(root)
+    assert supervisor._generated_ca is None
+
+
+def test_every_trusted_root_reaches_etcd_not_just_the_first(
+    tmp_path: Path,
+) -> None:
+    """The two halves of mutual TLS must trust the same set of roots.
+
+    ``--trusted-ca-file`` takes one path while ``--etcdTrustedRootCA`` is
+    repeatable, so passing ``trusted_root_ca[0]`` silently split the trust
+    store: ``build_credentials`` trusted both roots on the client side while
+    this member trusted one, and the member then rejected peers the same
+    process would have accepted — with a certificate error naming a valid
+    certificate.
+    """
+    rsa = tmp_path / "root-rsa.pem"
+    ec = tmp_path / "root-ec.pem"
+    rsa.write_bytes(b"-----ROOT RSA-----\n")
+    ec.write_bytes(b"-----ROOT EC-----\n")
+
+    supervisor = EtcdSupervisor(
+        layout=_single_member_layout(_free_port(), _free_port()),
+        binary="etcd",
+        data_dir=tmp_path / "member",
+        tls=True,
+        certificate="/tmp/cert.pem",
+        key="/tmp/key.pem",
+        trusted_root_ca=(str(rsa), str(ec)),
+    )
+    argv = supervisor._build_argv()
+
+    bundle = Path(argv[argv.index("--trusted-ca-file") + 1])
+    assert argv[argv.index("--peer-trusted-ca-file") + 1] == str(bundle)
+    assert bundle.read_bytes() == b"-----ROOT RSA-----\n-----ROOT EC-----\n"
+
+
+def test_the_combined_trust_store_stays_out_of_the_data_directory(
+    tmp_path: Path,
+) -> None:
+    """Writing it inside would turn a first start into "already initialised".
+
+    ``start()`` refuses to bootstrap a non-empty data directory, so a file
+    placed there before that check would make every fresh secured member look
+    like one that had already been initialised.
+    """
+    rsa = tmp_path / "root-rsa.pem"
+    ec = tmp_path / "root-ec.pem"
+    rsa.write_bytes(b"-----ROOT RSA-----\n")
+    ec.write_bytes(b"-----ROOT EC-----\n")
+    data_dir = tmp_path / "member"
+
+    supervisor = EtcdSupervisor(
+        layout=_single_member_layout(_free_port(), _free_port()),
+        binary="etcd",
+        data_dir=data_dir,
+        tls=True,
+        certificate="/tmp/cert.pem",
+        key="/tmp/key.pem",
+        trusted_root_ca=(str(rsa), str(ec)),
+    )
+    supervisor._build_argv()
+
+    assert not data_dir.exists() or not any(data_dir.iterdir())
+
+
+def test_a_root_without_a_trailing_newline_still_concatenates(
+    tmp_path: Path,
+) -> None:
+    """Two PEM blocks run together parse as one, and etcd would trust neither.
+
+    PEM files do not reliably end in a newline, so joining them verbatim can
+    produce ``-----END CERTIFICATE----------BEGIN CERTIFICATE-----``.
+    """
+    first = tmp_path / "first.pem"
+    second = tmp_path / "second.pem"
+    first.write_bytes(b"-----ROOT ONE-----")      # no trailing newline
+    second.write_bytes(b"-----ROOT TWO-----\n")
+
+    supervisor = EtcdSupervisor(
+        layout=_single_member_layout(_free_port(), _free_port()),
+        binary="etcd",
+        data_dir=tmp_path / "member",
+        tls=True,
+        certificate="/tmp/cert.pem",
+        key="/tmp/key.pem",
+        trusted_root_ca=(str(first), str(second)),
+    )
+    argv = supervisor._build_argv()
+
+    bundle = Path(argv[argv.index("--trusted-ca-file") + 1])
+    assert bundle.read_bytes() == b"-----ROOT ONE-----\n-----ROOT TWO-----\n"
+
+
+def test_an_unreadable_trusted_root_names_the_path(tmp_path: Path) -> None:
+    root = tmp_path / "root.pem"
+    root.write_bytes(b"-----ROOT-----\n")
+
+    supervisor = EtcdSupervisor(
+        layout=_single_member_layout(_free_port(), _free_port()),
+        binary="etcd",
+        data_dir=tmp_path / "member",
+        tls=True,
+        certificate="/tmp/cert.pem",
+        key="/tmp/key.pem",
+        trusted_root_ca=(str(root), str(tmp_path / "absent.pem")),
+    )
+    with pytest.raises(SupervisorError, match="absent.pem"):
+        supervisor._build_argv()
+
+
+def test_revocation_lists_reach_both_listeners(tmp_path: Path) -> None:
+    """--etcdClientCrlFile and --etcdPeerCrlFile are separate flags for a reason.
+
+    A revoked certificate is the case where the allowed-hostname restriction
+    stops helping: the certificate still carries the etcd SAN, so only the CRL
+    keeps its holder out. The client and peer lists are independent because a
+    deployment may revoke a registry's access without ejecting its etcd member.
+    """
+    supervisor = EtcdSupervisor(
+        layout=_single_member_layout(_free_port(), _free_port()),
+        binary="etcd",
+        data_dir=tmp_path / "member",
+        tls=True,
+        certificate="/tmp/cert.pem",
+        key="/tmp/key.pem",
+        trusted_root_ca=("/tmp/ca.pem",),
+        certificate_name="Example.Company.Device.Etcd.ABC.example.com",
+        client_crl_file="/tmp/clients.crl",
+        peer_crl_file="/tmp/peers.crl",
+    )
+    argv = supervisor._build_argv()
+
+    assert argv[argv.index("--client-crl-file") + 1] == "/tmp/clients.crl"
+    assert argv[argv.index("--peer-crl-file") + 1] == "/tmp/peers.crl"
+
+
+def test_no_revocation_flags_when_no_lists_are_configured(
+    tmp_path: Path,
+) -> None:
+    """Empty CRL paths must be omitted, not passed as empty strings.
+
+    etcd refuses to start on an unreadable --client-crl-file, so passing "" for
+    "no list" would turn the default configuration into a start-up failure.
+    """
+    supervisor = EtcdSupervisor(
+        layout=_single_member_layout(_free_port(), _free_port()),
+        binary="etcd",
+        data_dir=tmp_path / "member",
+        tls=True,
+        certificate="/tmp/cert.pem",
+        key="/tmp/key.pem",
+        trusted_root_ca=("/tmp/ca.pem",),
+        certificate_name="Example.Company.Device.Etcd.ABC.example.com",
+    )
+    argv = supervisor._build_argv()
+
+    assert "--client-crl-file" not in argv
+    assert "--peer-crl-file" not in argv
+
+
 def test_tls_without_a_certificate_is_refused(tmp_path: Path) -> None:
     supervisor = EtcdSupervisor(
         layout=_single_member_layout(_free_port(), _free_port()),

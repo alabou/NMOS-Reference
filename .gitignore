@@ -43,6 +43,18 @@ artifacts/
 # .etcd/data/ in particular is a live database.
 .etcd/
 
+# Run output from the launch scripts.
+#
+# Every launcher passes --logFile, so a rig leaves nmos-registry.log,
+# nmos-registry-<member>.log and nmos-node<n>.log in the working directory, plus
+# the .1/.2 files the logger rotates them into. All of it is per-run output like
+# artifacts/ and bench_registry/.work/ — regenerated on the next start and
+# meaningless to anyone else's checkout.
+nmos-registry*.log
+nmos-registry*.log.[0-9]*
+nmos-node*.log
+nmos-node*.log.[0-9]*
+
 # IDE
 .vscode/
 .idea/

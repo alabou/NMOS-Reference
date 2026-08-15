@@ -885,12 +885,20 @@ class FakeAuthorizationServer:
     def _handle_client_credentials_grant(
         self, data: dict[str, str],
     ) -> web.Response:
-        """Machine-to-machine grant. Unchanged from the original fixture.
+        """Machine-to-machine grant.
 
-        Audience: the spec says ``aud`` entries should include the DUT's
-        instance-id; this uses the client_id as a placeholder because the
-        token endpoint doesn't know which Node to scope to. Adversarial
-        tests should mint directly.
+        Audience: the DUT this server was configured for, exactly as the
+        authorization_code grant below scopes its tokens, falling back to the
+        client_id when no ``--default-aud`` was given.
+
+        The fallback used to be unconditional, on the grounds that "the token
+        endpoint doesn't know which Node to scope to". It does: ``--default-aud``
+        is that answer, and it is already what the other grant uses. Without it
+        every machine-to-machine token names its own client in ``aud`` and no
+        DUT accepts it -- ``validate_access`` finds no audience entry covering
+        the target and answers 403, which reads as a permissions problem rather
+        than a token addressed to the wrong party. Adversarial tests that want a
+        deliberately mis-addressed token still mint directly.
         """
         client_id = data.get("client_id", "")
         if not client_id:
@@ -898,8 +906,9 @@ class FakeAuthorizationServer:
                 OAuthError.INVALID_REQUEST, "client_id is required")
         tmpl = TokenTemplate(
             iss=self._config.issuer,
-            instance_id=client_id,
+            instance_id=self._default_aud_entry or client_id,
             client_id=client_id,
+            aud_entry=self._default_aud_entry,
         )
         access_token = mint_token(tmpl, self.primary_key)
         self._audit("token_issued", subject=client_id, client_id=client_id,

@@ -163,13 +163,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         "managed etcd cluster. Requires the optional etcd "
                         "extra (see requirements-etcd.txt).")
     g.add_argument("--registryAdvertisedHost", type=_host_arg, default="",
-                   help="This member's advertised hostname. MUST be a SAN of "
-                        "its etcd certificate — every peer and every registry "
-                        "client verifies it against that name.")
+                   help="This member's advertised host, as host or "
+                        "host:client_port. MUST be a SAN of its etcd "
+                        "certificate — every peer and every registry client "
+                        "verifies it against that name. The port defaults to "
+                        "--etcdClientPort and is only needed when members "
+                        "share a machine, where they must also share its "
+                        "address and are separated by port instead.")
     g.add_argument("--registryNeighbour", action="append", default=None,
-                   help="A peer registry's advertised host (repeat once per "
-                        "peer). This host plus its neighbours must total 1, 3 "
-                        "or 5 and be the SAME set on every member.")
+                   help="A peer registry's advertised host, same host or "
+                        "host:client_port form (repeat once per peer). This "
+                        "member plus its neighbours must total 1, 3 or 5 and "
+                        "be the SAME set on every member.")
     g.add_argument("--etcdEndpoints", default="",
                    help="Comma-separated etcd client endpoints. Normally "
                         "derived from the member list; required with "

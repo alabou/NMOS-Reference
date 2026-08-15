@@ -458,6 +458,20 @@ paging cursors and its subscription events are identical on both.
 Member *n* uses one port block of 10: registration `8444 + 10n`, query
 `8443 + 10n`, WebSocket `8448 + 10n`.
 
+That rig is **unsecured on purpose** — plain HTTP on the NMOS interfaces and
+plaintext etcd. The secured equivalent adds `--secure` to the cluster and uses
+a different launcher, taking the same RAP / `--oauth2` / `--nap` / `--tct`
+arguments `start-registry.sh` takes:
+
+```bash
+./start-etcd-cluster.sh 3 --secure        # mutual TLS, client and peer
+./start-registry-dist-secure.sh 0 3 2     # member 0, RAP=2 (mutual TLS)
+./start-registry-dist-secure.sh 1 3 2
+./start-registry-dist-secure.sh 2 3 2
+```
+
+See [Security](#security) below for what that requires of your hosts file.
+
 #### Managing etcd
 
 A registry supervises **exactly one** etcd process — its own local member. It
@@ -501,7 +515,10 @@ elsewhere, and `--etcdBinary`/`--etcdDataDir`/`--etcdBootstrap` are rejected
 rather than ignored. Run the cluster under WSL with `start-etcd-cluster.bat` and
 point the registry at it with `start-registry-dist.bat`. Nothing needs
 installing on the Windows side — `etcd_cluster.py status` and `endpoints` are
-pure client calls and work from Windows against the WSL cluster.
+pure client calls and work from Windows against the WSL cluster. Against a
+`--secure` cluster `status` is still a pure client call, but it has to
+authenticate like any other client, so it needs read access to the certificates
+in `Certificates/build.0.etcd/` as well.
 
 WSL itself is not a special case and gets no detection: inside WSL
 `sys.platform` is `"linux"`, so a registry there is an ordinary POSIX member
@@ -511,21 +528,80 @@ with the full supervisor and a Tier 1 etcd.
 
 One certificate per registry/etcd pair covers all four etcd roles — client
 listener, peer listener, outbound peer, and the registry's own client
-connection — which is what its dual `serverAuth, clientAuth` EKU is for.
+connection — which is what its dual `serverAuth, clientAuth` EKU is for. The
+same certificate also serves that member's Registration and Query listeners,
+because it carries the ordinary device-server SANs (`XYZ-SNX1000n`) alongside
+the shared etcd one; a secured member therefore has exactly one identity.
 
 The set ships in `Certificates/build.0.etcd/` — SNX10000..SNX10004, so a clone
 runs a 1-, 3- or 5-member cluster with nothing outside it — and validates
 against the same two roots in `Certificates/build.0/` that the Nodes use.
 
+`start-registry-dist-secure.sh` assembles all of it:
+
 ```bash
-./start-registry.sh 2 8444 \
-  --distributed \
-  --registryAdvertisedHost XYZ-SNX10000 \
-  --registryNeighbour XYZ-SNX10001 --registryNeighbour XYZ-SNX10002 \
-  --etcdCertificate  Certificates/build.0.etcd/pem/ExampleDeviceServer.ABC.SNX10000.etcd.ec.chain.pem \
-  --etcdKey          Certificates/build.0.etcd/key/ExampleDeviceServer.ABC.SNX10000.etcd.ec.key \
-  --etcdTrustedRootCA Certificates/build.0/ExampleRootCA.ec.pem
+./start-etcd-cluster.sh 3 --secure
+./start-registry-dist-secure.sh 0 3 2 --oauth2
 ```
+
+which is the equivalent of, for member 0:
+
+```bash
+python3 nmos_registry.py \
+  --registrySerialNumber SNX10000 \
+  --registryCertificate Certificates/build.0.etcd/pem/ExampleDeviceServer.ABC.SNX10000.etcd.chain.pem \
+  --registryKey         Certificates/build.0.etcd/key/ExampleDeviceServer.ABC.SNX10000.etcd.key \
+  --registrationTrustedRootCA Certificates/build.0/ExampleRootCA-bundle.pem \
+  --queryTrustedRootCA        Certificates/build.0/ExampleRootCA-bundle.pem \
+  --distributed --etcdExternal \
+  --registryAdvertisedHost XYZ-SNX10000:2381 \
+  --registryNeighbour XYZ-SNX10001:2391 --registryNeighbour XYZ-SNX10002:2401 \
+  --etcdEndpoints XYZ-SNX10000:2381,XYZ-SNX10001:2391,XYZ-SNX10002:2401 \
+  --etcdCertificate   Certificates/build.0.etcd/pem/ExampleDeviceServer.ABC.SNX10000.etcd.chain.pem \
+  --etcdKey           Certificates/build.0.etcd/key/ExampleDeviceServer.ABC.SNX10000.etcd.key \
+  --etcdTrustedRootCA Certificates/build.0/ExampleRootCA-bundle.pem
+```
+
+**`--etcdDisableTLS` is refused when the Registration and Query listeners are
+TLS.** Encrypting the interface an operator inspects while leaving the database
+that holds every registered resource in the clear is worse than running the
+whole rig unsecured, and it used to be accepted *silently*, with any
+`--etcdCertificate` passed alongside it ignored.
+
+##### Members share an address and differ by port
+
+Note the `host:client_port` form above, and that all three members are the same
+address. That is a requirement, not a layout choice.
+
+etcd runs two different checks. The member **dialling** a peer verifies the
+certificate it gets back against the host in the peer URL — satisfied by a name
+the certificate carries. The member **being dialled** verifies the certificate
+the caller presents against the address the connection *arrives from*, by
+resolving each DNS name in that certificate and looking for that address.
+
+Connections between loopback addresses are all sourced from `127.0.0.1` whatever
+their destination (`ip route get 127.0.0.11` → `src 127.0.0.1`), so giving each
+member its own loopback address makes the second check fail for every pair, with
+certificates that are entirely valid. One shared address that every member name
+resolves to satisfies both. Your hosts file therefore needs:
+
+```text
+127.0.0.1   XYZ-SNX10000
+127.0.0.1   XYZ-SNX10001
+127.0.0.1   XYZ-SNX10002
+```
+
+on the WSL side and, if a native-Windows registry drives the cluster, in
+`%SystemRoot%\System32\drivers\etc\hosts` too. `etcd_cluster.py --secure`
+checks this before starting anything and refuses with the mismatch named,
+because the alternative is reading TLS handshake logs to find a hosts entry.
+
+**Deployed across machines this configuration needs no change**: there each name
+resolves to its own host's address, which is also where that host's peer traffic
+originates, so the ports need not differ either. It breaks only where the source
+address cannot match the advertised one — behind NAT, or on a multi-homed host
+routing out of another interface — which is what etcd's
+`--peer-skip-client-san-verification` exists for. This rig does not use it.
 
 `--etcdCertificateName` (default
 `Example.Company.Device.Etcd.ABC.example.com`) is both the gRPC target-name
