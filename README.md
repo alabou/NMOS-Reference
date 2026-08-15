@@ -537,12 +537,38 @@ The set ships in `Certificates/build.0.etcd/` — SNX10000..SNX10004, so a clone
 runs a 1-, 3- or 5-member cluster with nothing outside it — and validates
 against the same two roots in `Certificates/build.0/` that the Nodes use.
 
-`start-registry-dist-secure.sh` assembles all of it:
+`start-registry-dist-secure.sh` assembles all of it, in either of the two
+shapes a distributed registry takes:
 
 ```bash
+# MANAGED — each registry starts and supervises its own etcd member.
+# The deployed shape: one registry and one etcd per machine, nothing else to
+# install or supervise, and the member stops when the registry does.
+./start-registry-dist-secure.sh 0 3 2 --managed --oauth2
+
+# EXTERNAL — the members were brought up by someone else.
+# Convenient on one machine, where a single cluster serves all three:
 ./start-etcd-cluster.sh 3 --secure
 ./start-registry-dist-secure.sh 0 3 2 --oauth2
 ```
+
+Across machines, both shapes work with the *same* arguments — only what the
+member names resolve to changes. Managed mode needs nothing else at all; for an
+external cluster, each machine starts its own member with `--index`:
+
+```bash
+# on XYZ-SNX10000                       # on XYZ-SNX10001, XYZ-SNX10002
+./start-etcd-cluster.sh 3 --secure --index 0     # ... --index 1 / --index 2
+```
+
+`--index` starts one member while `--initial-cluster` still names all three: a
+member that does not know its peers cannot join them. `down` and `wipe` respect
+it too, so one host cannot stop or delete another's.
+
+**`--etcdDisableTLS` is refused as soon as a member is off the loopback** — by
+the registry and by `etcd_cluster.py` alike. A cluster spread over machines has
+its database on a wire by definition, and there is no configuration in which
+that should be in the clear; loopback keeps the unsecured development rig.
 
 which is the equivalent of, for member 0:
 

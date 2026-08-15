@@ -35,8 +35,10 @@ and a Tier 1 etcd. The gate is one platform check with no heuristics.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
+import socket
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -179,6 +181,7 @@ def resolve_distributed_config(args: Any) -> DistributedConfig | None:
 
     tls = not args.etcdDisableTLS
     _reject_plaintext_etcd_under_a_secure_registry(args, tls=tls)
+    _reject_plaintext_etcd_off_the_loopback(args, tls=tls)
     _validate_tls_inputs(args, tls=tls)
 
     explicit_endpoints = _explicit_endpoints(args)
@@ -205,7 +208,17 @@ def resolve_distributed_config(args: Any) -> DistributedConfig | None:
     else:
         members = _canonical_members(args)
         specs = [
-            MemberSpec(host=host, client_port=client, peer_port=peer)
+            MemberSpec(
+                host=host, client_port=client, peer_port=peer,
+                # A member is NAMED for its certificate but must LISTEN on an
+                # address: etcd refuses a hostname in --listen-*-urls outright
+                # ("expected IP in URL for binding"), so a managed member whose
+                # bind address defaulted to its own name could never start.
+                # Resolution failure is left as None -- derive_cluster then
+                # falls back to the name, and the resulting error is about the
+                # name not resolving, which is the actual problem.
+                bind_address=_resolve_host(host),
+            )
             for host, client, peer in members
         ]
         # The advertised host is always first, and its peer port disambiguates
@@ -375,6 +388,83 @@ def _canonical_members(args: Any) -> list[tuple[str, int, int]]:
             f"member needs its own host, or its own port on a shared host.",
         )
     return members
+
+
+def _reject_plaintext_etcd_off_the_loopback(args: Any, *, tls: bool) -> None:
+    """An unsecured cluster may exist on one machine and nowhere else.
+
+    A distributed registry whose members are on separate machines has its etcd
+    traffic on a wire by definition, and that traffic carries every registered
+    resource plus every write that changes them. There is no configuration in
+    which that should be in the clear, and "we were only testing" is exactly how
+    it ends up deployed, so the refusal lives here rather than in a comment.
+
+    Loopback is the one case where plaintext is defensible: the packets cannot
+    leave the host, so ``--etcdDisableTLS`` keeps the development rig it was
+    added for. Anything else -- a private LAN address included, since reachable
+    is reachable -- is refused.
+
+    Names that do not resolve are left alone. That is a different failure, it
+    has its own diagnosis further on, and guessing about it here would turn a
+    DNS problem into a confusing security message.
+    """
+    if tls:
+        return
+
+    exposed: list[str] = []
+    for host in _configured_hosts(args):
+        address = _resolve_host(host)
+        if address is None:
+            continue
+        if not ipaddress.ip_address(address).is_loopback:
+            exposed.append(f"{host} ({address})")
+
+    if not exposed:
+        return
+
+    raise DistributedConfigError(
+        "--etcdDisableTLS is only available to a cluster confined to one "
+        "machine, and these members are not:\n"
+        + "".join(f"  {entry}\n" for entry in exposed)
+        + "  etcd holds every registered resource, so off the loopback this "
+        "would put the whole registry database on the network unencrypted and "
+        "unauthenticated.\n"
+        "  Secure it with --etcdCertificate, --etcdKey and "
+        "--etcdTrustedRootCA; this repository ships a set in "
+        "Certificates/build.0.etcd/.",
+    )
+
+
+def _configured_hosts(args: Any) -> list[str]:
+    """Every host this configuration names, from whichever source describes it.
+
+    ``--etcdEndpoints`` when given, because in external mode that is the only
+    truthful description of the cluster; the member list otherwise. Returns
+    empty rather than raising when neither is usable: the missing pieces have
+    their own diagnostics, and a security refusal should not pre-empt them with
+    a message about a different problem.
+    """
+    endpoints = _explicit_endpoints(args)
+    if endpoints:
+        try:
+            return [host for host, _ in _split_endpoints(endpoints)]
+        except DistributedConfigError:
+            return []
+
+    if not getattr(args, "registryAdvertisedHost", ""):
+        return []
+    try:
+        return [host for host, _, _ in _canonical_members(args)]
+    except DistributedConfigError:
+        return []
+
+
+def _resolve_host(host: str) -> str | None:
+    """The IPv4 address ``host`` resolves to, or None if it does not resolve."""
+    try:
+        return str(socket.getaddrinfo(host, None, socket.AF_INET)[0][4][0])
+    except (OSError, IndexError):
+        return None
 
 
 def _registry_listeners_are_tls(args: Any) -> bool:

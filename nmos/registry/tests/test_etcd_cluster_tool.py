@@ -151,52 +151,156 @@ def test_endpoints_keep_the_member_names_when_secured() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The resolution preflight
+# One member per machine
 # ---------------------------------------------------------------------------
 
-def test_a_member_name_resolving_elsewhere_is_refused(
+def test_index_selects_one_member_and_keeps_the_whole_cluster() -> None:
+    """How a cluster spread over machines is started: same list, one member.
+
+    The selected member is the only one this host runs, but --initial-cluster
+    must still name all three -- a member that does not know its peers cannot
+    join them.
+    """
+    layouts = etcd_cluster._layouts(3, etcd_cluster.PROFILE_LINUX, secure=True)
+    args = etcd_cluster.parse_args(["--secure", "--index", "1", "up"])
+
+    selected = etcd_cluster._selected(layouts, args)
+
+    assert [index for index, _ in selected] == [1]
+    started = selected[0][1]
+    assert started.local.name == "nmos-registry-1"           # type: ignore[attr-defined]
+    assert len(started.members) == 3                          # type: ignore[attr-defined]
+    assert started.initial_cluster().count("nmos-registry") == 3  # type: ignore[attr-defined]
+
+
+def test_without_index_every_member_is_this_machine_s() -> None:
+    layouts = etcd_cluster._layouts(3, etcd_cluster.PROFILE_LINUX, secure=True)
+    args = etcd_cluster.parse_args(["--secure", "up"])
+    assert [index for index, _ in etcd_cluster._selected(layouts, args)] == [
+        0, 1, 2,
+    ]
+
+
+def test_an_index_outside_the_cluster_is_refused() -> None:
+    layouts = etcd_cluster._layouts(3, etcd_cluster.PROFILE_LINUX, secure=True)
+    args = etcd_cluster.parse_args(["--secure", "--index", "7", "up"])
+    with pytest.raises(SystemExit, match="indices 0..2"):
+        etcd_cluster._selected(layouts, args)
+
+
+def test_the_selected_member_carries_its_own_identity() -> None:
+    """Certificates are per member, so --index has to pick the right serial."""
+    certificate, _, _ = etcd_cluster._secure_identity(2, etcd_cluster.TCT_RSA)
+    assert "SNX10002" in certificate
+
+
+# ---------------------------------------------------------------------------
+# Addressing
+# ---------------------------------------------------------------------------
+
+def test_a_secured_member_binds_a_resolved_address_not_its_name() -> None:
+    """etcd refuses a name in a listen URL: "expected IP in URL for binding".
+
+    The member is still ADVERTISED by name -- that is what peers verify its
+    certificate against -- so the two URLs deliberately differ.
+    """
+    layouts = etcd_cluster._layouts(3, etcd_cluster.PROFILE_LINUX, secure=True)
+    local = layouts[0].local
+
+    assert local.host == "XYZ-SNX10000"
+    assert local.bind_address == "127.0.0.1"
+    assert local.listen_peer_url(tls=True) == "https://127.0.0.1:2382"
+    assert local.advertise_peer_url(tls=True) == "https://XYZ-SNX10000:2382"
+
+
+def test_an_unsecured_cluster_is_refused_off_the_loopback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Turns an hour of reading handshake logs into one line of config error.
+    """The rig may not put an unauthenticated database on the network.
 
-    Without the preflight, a hosts file pointing XYZ-SNX1000n somewhere else
-    surfaces as etcd rejecting every peer connection with a TLS error naming a
-    certificate that is in fact entirely valid.
+    Same rule the registry enforces, in the tool that would otherwise be the
+    easy way around it.
     """
-    def elsewhere(host: str, port: object, family: object = 0) -> list[object]:
-        return [(family, 1, 6, "", ("10.9.9.9", 2381))]
+    monkeypatch.setattr(etcd_cluster, "_resolved_address", lambda host: "10.1.2.3")
+    monkeypatch.setattr(etcd_cluster, "_is_local_address", lambda address: True)
+    layouts = etcd_cluster._layouts(1, etcd_cluster.PROFILE_LINUX, secure=False)
 
-    monkeypatch.setattr(socket, "getaddrinfo", elsewhere)
+    with pytest.raises(SystemExit, match="unsecured cluster on a routable"):
+        etcd_cluster._check_addressing(
+            [layout.local for layout in layouts], secure=False,
+        )
+
+
+def test_a_secured_cluster_may_use_a_routable_address(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The multi-machine case: routable is exactly what it must be."""
+    monkeypatch.setattr(etcd_cluster, "_resolved_address", lambda host: "10.1.2.3")
+    monkeypatch.setattr(etcd_cluster, "_is_local_address", lambda address: True)
+    layouts = etcd_cluster._layouts(1, etcd_cluster.PROFILE_LINUX, secure=True)
+
+    etcd_cluster._check_addressing(
+        [layout.local for layout in layouts], secure=True,
+    )
+
+
+def test_a_member_belonging_to_another_machine_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Starting all three on one host is the mistake --index exists to avoid.
+
+    Without the check, a member whose name points at another machine binds
+    nothing here and fails inside etcd; the message names the address and
+    suggests --index instead.
+    """
+    monkeypatch.setattr(etcd_cluster, "_resolved_address", lambda host: "10.9.9.9")
+    monkeypatch.setattr(etcd_cluster, "_is_local_address", lambda address: False)
     layouts = etcd_cluster._layouts(3, etcd_cluster.PROFILE_LINUX, secure=True)
 
-    with pytest.raises(SystemExit) as caught:
-        etcd_cluster._check_secure_resolution(layouts)
+    with pytest.raises(SystemExit, match="--index"):
+        etcd_cluster._check_addressing(
+            [layout.local for layout in layouts], secure=True,
+        )
 
-    message = str(caught.value)
-    assert "10.9.9.9" in message
-    assert "127.0.0.1" in message
 
+# ---------------------------------------------------------------------------
+# Diagnosing the addressing rather than leaving it to etcd
+# ---------------------------------------------------------------------------
 
 def test_an_unresolvable_member_name_is_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fails(host: str, port: object, family: object = 0) -> list[object]:
-        raise OSError(-2, "Name or service not known")
+    """Named, but pointing nowhere.
 
-    monkeypatch.setattr(socket, "getaddrinfo", fails)
+    etcd's own failure for this is a bind error on a URL it prints back at
+    you; naming the host that will not resolve is the difference between a
+    minute and an afternoon.
+    """
+    monkeypatch.setattr(etcd_cluster, "_resolved_address", lambda host: None)
     layouts = etcd_cluster._layouts(1, etcd_cluster.PROFILE_LINUX, secure=True)
 
     with pytest.raises(SystemExit, match="does not resolve"):
-        etcd_cluster._check_secure_resolution(layouts)
+        etcd_cluster._check_addressing(
+            [layout.local for layout in layouts], secure=True,
+        )
 
 
-def test_the_preflight_passes_on_a_correctly_configured_host() -> None:
-    """Guards the guard: a check that always failed would pass the two above."""
+def test_the_check_passes_on_a_correctly_configured_host() -> None:
+    """Guards the guard: a check that always failed would pass every test above."""
     layouts = etcd_cluster._layouts(3, etcd_cluster.PROFILE_LINUX, secure=True)
     try:
-        etcd_cluster._check_secure_resolution(layouts)
-    except SystemExit as exit_:
-        pytest.skip(f"hosts file not set up for the secured rig: {exit_}")
+        etcd_cluster._check_addressing(
+            [layout.local for layout in layouts], secure=True,
+        )
+    except SystemExit as refused:
+        pytest.skip(f"hosts file not set up for the secured rig: {refused}")
+
+
+def test_a_local_address_is_decided_by_binding_it() -> None:
+    """Asked the same way etcd will ask it, rather than by parsing interfaces."""
+    assert etcd_cluster._is_local_address("127.0.0.1") is True
+    # A public address this machine certainly does not hold.
+    assert etcd_cluster._is_local_address("203.0.113.7") is False
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +324,35 @@ def test_the_secured_launcher_disables_nothing() -> None:
     assert "--etcdDisableTLS" not in secured
     for flag in ("--etcdCertificate", "--etcdKey", "--etcdTrustedRootCA"):
         assert flag in secured
+
+
+def test_the_secured_launcher_can_manage_its_own_member() -> None:
+    """--managed is the deployed shape, and had no launcher until now.
+
+    Without it every rig script passed --etcdExternal, so the supervisor's
+    ownership rule -- launch it, keep it alive, stop what you started -- was
+    exercised only by tests and never by the rig it exists for.
+    """
+    secured = _script("start-registry-dist-secure.sh")
+
+    assert "--managed" in secured
+    assert "--etcdBootstrap" in secured, "a first start has to bootstrap once"
+    assert "--etcdDataDir" in secured, "the production default needs root"
+
+
+def test_managed_mode_passes_no_endpoints() -> None:
+    """Endpoints and a managed member are two descriptions of one cluster.
+
+    Accepting both would let a registry supervise a member of one cluster
+    while talking to another, which is a split brain with a plausible-looking
+    command line.
+    """
+    secured = _script("start-registry-dist-secure.sh")
+    managed_branch = secured.split('if [ "$MANAGED" = "1" ]; then', 1)[1]
+    managed_branch = managed_branch.split("else", 1)[0]
+
+    assert "--etcdEndpoints" not in managed_branch
+    assert "--etcdExternal" not in managed_branch
 
 
 def test_the_unsecured_launcher_is_explicitly_unsecured() -> None:

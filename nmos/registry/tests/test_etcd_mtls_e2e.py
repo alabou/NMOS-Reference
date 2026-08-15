@@ -186,6 +186,7 @@ def _layout(ports: list[tuple[int, int]], local: int) -> Any:
 
 def _supervisor(
     binary: str, data_dir: Path, ports: list[tuple[int, int]], local: int,
+    bootstrap: bool = True,
 ) -> Any:
     from nmos.etcd.supervisor import EtcdSupervisor
 
@@ -194,7 +195,7 @@ def _supervisor(
         layout=_layout(ports, local),
         binary=binary,
         data_dir=data_dir,
-        bootstrap=True,
+        bootstrap=bootstrap,
         tls=True,
         certificate=certificate,
         key=key,
@@ -387,6 +388,90 @@ async def test_the_etcd_identity_is_accepted_by_the_same_member(
         assert await _member_count(pool) == 1
     finally:
         await pool.close()
+
+
+# ---------------------------------------------------------------------------
+# A member the registry owns
+# ---------------------------------------------------------------------------
+
+async def test_the_registry_starts_and_stops_its_own_secured_member(
+    etcd_binary: str, tmp_path: Path,
+) -> None:
+    """Managed mode: the deployed shape, and the one nothing used to exercise.
+
+    Everything else here points a registry at a cluster somebody else brought
+    up. That is the rig's convenience, not the product's design: in a
+    deployment each registry supervises the member on its own machine, which is
+    what ``EtcdSupervisor``'s whole ownership rule -- launch it, keep it alive,
+    stop what you started -- exists to do.
+
+    Two claims, and the second is the one that decides whether a Ctrl-C leaves
+    a database holding its port: the member serves while the supervisor is up,
+    and it is gone once the supervisor stops.
+    """
+    from nmos.etcd.supervisor import ProcessOwnership
+
+    ports = [(_free_port(), _free_port())]
+    supervisor = _supervisor(etcd_binary, tmp_path / "owned", ports, local=0)
+    endpoint = f"{BIND_ADDRESS}:{ports[0][0]}"
+
+    ownership = await supervisor.start()
+    assert ownership is ProcessOwnership.LAUNCHED
+    assert supervisor.owns_process
+
+    pool = _pool([endpoint], etcd_identity(0))
+    try:
+        assert await _member_count(pool) == 1
+    finally:
+        await pool.close()
+
+    await supervisor.stop()
+
+    # Nothing is listening: the member did not outlive the registry that owns
+    # it, so the next start finds its port and data directory free.
+    with socket.socket() as probe:
+        probe.settimeout(1.0)
+        assert probe.connect_ex((BIND_ADDRESS, ports[0][0])) != 0
+
+
+async def test_a_member_it_did_not_start_is_left_running(
+    etcd_binary: str, tmp_path: Path,
+) -> None:
+    """The other half of the rule, and the one that protects a real deployment.
+
+    The recommended production shape is etcd under systemd with the registry
+    adopting it, so that a registry restart costs one reconnect rather than a
+    member leaving and rejoining the cluster. A registry that stopped an
+    adopted member would take etcd down with it every time it restarted.
+    """
+    from nmos.etcd.supervisor import ProcessOwnership
+
+    ports = [(_free_port(), _free_port())]
+    owner = _supervisor(etcd_binary, tmp_path / "owned", ports, local=0)
+    await owner.start()
+
+    # A second supervisor over the same member: same layout, same identity,
+    # and NOT asking to bootstrap -- that check runs before the probe, so a
+    # supervisor that meant to adopt would be refused for the right reason
+    # before it ever got the chance.
+    adopter = _supervisor(
+        etcd_binary, tmp_path / "owned", ports, local=0, bootstrap=False,
+    )
+    try:
+        assert await adopter.start() is ProcessOwnership.ADOPTED
+        assert not adopter.owns_process
+
+        await adopter.stop()
+
+        pool = _pool([f"{BIND_ADDRESS}:{ports[0][0]}"], etcd_identity(0))
+        try:
+            assert await _member_count(pool) == 1, (
+                "the adopted member should still be serving"
+            )
+        finally:
+            await pool.close()
+    finally:
+        await owner.stop()
 
 
 # ---------------------------------------------------------------------------

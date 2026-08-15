@@ -4,7 +4,7 @@
 # members holding the shared state.
 #
 # Usage:
-#   start-registry-dist-secure.sh <index> [members] [rap] [--oauth2]
+#   start-registry-dist-secure.sh <index> [members] [rap] [--managed] [--oauth2]
 #                                 [--as-host=H] [--as-port=P] [--tct=T] [--nap=N]
 #
 #   <index>   Which member this is, 0..members-1.
@@ -18,7 +18,15 @@
 # --as-host, --as-port, --tct and --nap mean exactly what they mean there, so
 # one rig has one vocabulary whether or not the registry is distributed.
 #
-#   Bring the cluster up FIRST, secured, then start one registry per member:
+#   --managed  Start and supervise this member's own etcd process, instead of
+#              connecting to a cluster someone else brought up. This is the
+#              deployed shape -- one registry and one etcd per machine, the
+#              registry owning its member's lifetime -- and the only mode
+#              that needs no separate cluster command at all.
+#
+#     ./start-registry-dist-secure.sh 0 3 2 --managed   # each on its own host
+#
+#   Without it, bring the cluster up FIRST and start one registry per member:
 #
 #     ./start-etcd-cluster.sh 3 --secure
 #     ./start-registry-dist-secure.sh 0 3 2 --oauth2      # window 1
@@ -68,9 +76,11 @@ AS_PORT=9443
 TCT=0
 NAP=2
 USE_OAUTH2=0
+MANAGED=0
 
 for arg in "$@"; do
   case "$arg" in
+    --managed)   MANAGED=1 ;;
     --oauth2)    USE_OAUTH2=1 ;;
     --as-host=*) AS_HOST="${arg#*=}" ;;
     --as-port=*) AS_PORT="${arg#*=}" ;;
@@ -203,7 +213,46 @@ for peer in $(seq 0 $((MEMBERS - 1))); do
   MEMBER_FLAGS+=(--registryNeighbour "XYZ-SNX1000${peer}:$((2381 + peer * 10))")
 done
 
-ENDPOINTS="$("$PYTHON" etcd_cluster.py --members "$MEMBERS" --secure endpoints)"
+# --- etcd: managed by this registry, or somebody else's ---------------------
+#
+# MANAGED is the deployed shape: the registry starts its own etcd member, keeps
+# it alive, and stops it on the way out -- one process pair per machine, nothing
+# else to install or supervise. EXTERNAL is the default here because the
+# single-machine rig usually has one cluster serving three registries, which
+# etcd_cluster.py already brings up.
+#
+# Endpoints are passed only in external mode. Managed mode derives them from the
+# member list, so the registry cannot be pointed at one cluster while
+# supervising a member of another.
+if [ "$MANAGED" = "1" ]; then
+  # Repo-local and git-ignored, unlike the production default of
+  # /var/lib/nmos-registry/etcd, which needs root and outlives the rig.
+  ETCD_DATA_DIR="$SCRIPT_DIR/.etcd/managed/$SERIAL"
+  ETCD_FLAGS=(--etcdDataDir "$ETCD_DATA_DIR")
+
+  # The supervisor creates the member's own directory but refuses to invent the
+  # tree above it -- a data directory whose parent does not exist is far more
+  # often a typo than an intention, and creating it anyway is how a member ends
+  # up with an empty database somewhere nobody meant.
+  mkdir -p "$(dirname "$ETCD_DATA_DIR")"
+
+  # Bootstrap exactly once, on the first start of a member that has no data
+  # directory yet. Leaving the flag on is what forks a cluster on a later
+  # restart, and the supervisor refuses it anyway on a non-empty directory --
+  # this is the belt to that pair of braces.
+  if [ ! -d "$ETCD_DATA_DIR" ]; then
+    ETCD_FLAGS+=(--etcdBootstrap)
+    BOOTSTRAP_NOTE="  (bootstrapping: first start of $SERIAL)"
+  else
+    BOOTSTRAP_NOTE=""
+  fi
+  ETCD_DESCRIPTION="managed by this registry, data in $ETCD_DATA_DIR"
+else
+  ENDPOINTS="$("$PYTHON" etcd_cluster.py --members "$MEMBERS" --secure endpoints)"
+  ETCD_FLAGS=(--etcdExternal --etcdEndpoints "$ENDPOINTS")
+  ETCD_DESCRIPTION="external: ${ENDPOINTS}"
+  BOOTSTRAP_NOTE=""
+fi
 
 # One port block of 10 per member, matching start-registry-dist.sh so the two
 # rigs never collide when both are on a developer's machine.
@@ -215,7 +264,8 @@ echo "Secured registry member $INDEX of $MEMBERS  (RAP=$RAP NAP=$NAP OAuth2=$USE
 echo "  Registration : https://XYZ-SNX1000${INDEX}:${REG_PORT}/x-nmos/registration/v1.3/"
 echo "  Query        : https://XYZ-SNX1000${INDEX}:${QUERY_PORT}/x-nmos/query/v1.3/"
 echo "  Identity     : $SERIAL"
-echo "  etcd         : ${ENDPOINTS}  (mutual TLS)"
+echo "  etcd         : mutual TLS, ${ETCD_DESCRIPTION}"
+[ -n "$BOOTSTRAP_NOTE" ] && echo "$BOOTSTRAP_NOTE"
 echo
 
 exec "$PYTHON" nmos_registry.py \
@@ -231,9 +281,8 @@ exec "$PYTHON" nmos_registry.py \
   "${OAUTH2_FLAGS[@]}" \
   --trustedRootCA "$CA" \
   --distributed \
-  --etcdExternal \
+  "${ETCD_FLAGS[@]}" \
   "${MEMBER_FLAGS[@]}" \
-  --etcdEndpoints "$ENDPOINTS" \
   --etcdCertificate "$CERT" \
   --etcdKey "$KEY" \
   --etcdTrustedRootCA "$CA" \

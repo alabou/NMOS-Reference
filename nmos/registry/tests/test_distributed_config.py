@@ -284,6 +284,126 @@ def test_a_certificate_without_a_key_does_not_count_as_a_tls_registry(
     assert config.tls is False
 
 
+@pytest.fixture(autouse=True)
+def resolves(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Pin name resolution for the whole module.
+
+    The off-the-loopback rule resolves every member name, so without this the
+    placeholder hosts these tests use ("a", "b", "c") each cost a real DNS
+    round trip -- NXDOMAIN through the search list, which took this file from
+    3 seconds to 45.
+
+    Hermetic matters more than fast, though: on a machine with no DNS a
+    routable name would not resolve, the rule would skip it, and a test
+    asserting a refusal would pass for the wrong reason. Tests that care about
+    an address say so; everything else resolves to loopback.
+    """
+    mapping: dict[str, str | None] = {}
+    fallback: list[str | None] = ["127.0.0.1"]
+
+    monkeypatch.setattr(
+        "nmos.registry.distributed._resolve_host",
+        lambda host: mapping.get(host, fallback[0]),
+    )
+
+    def pin(known: dict[str, str | None], *, others: str | None = "127.0.0.1") -> None:
+        mapping.update(known)
+        fallback[0] = others
+
+    return pin
+
+
+def test_an_unsecured_cluster_may_not_leave_the_machine(
+    tmp_path: Path, resolves,
+) -> None:
+    """Plaintext etcd is a development convenience, not a deployment option.
+
+    Off the loopback the member's database -- every registered resource, and
+    every write that changes one -- is on a wire, unencrypted and
+    unauthenticated. "We were only testing" is how that reaches a deployment,
+    so the boundary is enforced rather than documented.
+    """
+    resolves({"registry-on-the-lan": "192.168.7.20"})
+    args = parse_args([
+        "--registryDisableTLS", "--distributed", "--etcdDisableTLS",
+        "--registryAdvertisedHost", "registry-on-the-lan",
+    ])
+    with pytest.raises(DistributedConfigError, match="confined to one machine"):
+        resolve_distributed_config(args)
+
+
+def test_the_same_rule_applies_to_an_external_cluster(
+    tmp_path: Path, resolves,
+) -> None:
+    """--etcdExternal describes its cluster with endpoints, not a member list.
+
+    The refusal has to read whichever of the two actually describes the
+    deployment, or pointing a registry at someone else's plaintext cluster on
+    the network would slip past the rule that stops it running its own.
+    """
+    resolves({"etcd-on-the-lan": "10.4.0.9"})
+    args = parse_args([
+        "--registryDisableTLS", "--distributed", "--etcdExternal",
+        "--etcdDisableTLS", "--etcdEndpoints", "etcd-on-the-lan:2381",
+    ])
+    with pytest.raises(DistributedConfigError, match="confined to one machine"):
+        resolve_distributed_config(args)
+
+
+def test_loopback_keeps_the_development_rig(tmp_path: Path) -> None:
+    """The case --etcdDisableTLS exists for: packets that never reach a wire."""
+    args = parse_args([
+        "--registryDisableTLS", "--distributed", "--etcdDisableTLS",
+        "--registryAdvertisedHost", "127.0.0.1",
+    ])
+    config = resolve_distributed_config(args)
+    assert config is not None
+    assert config.tls is False
+
+
+def test_a_name_that_does_not_resolve_is_left_to_its_own_diagnosis(
+    tmp_path: Path, resolves,
+) -> None:
+    """A DNS problem must not surface as a security message.
+
+    Unresolvable hosts fail later with an error about the name; pre-empting
+    that here would send an operator looking for a certificate they never
+    needed.
+    """
+    resolves({}, others=None)          # nothing resolves at all
+    args = parse_args([
+        "--registryDisableTLS", "--distributed", "--etcdDisableTLS",
+        "--registryAdvertisedHost", "no-such-host.invalid",
+    ])
+    config = resolve_distributed_config(args)
+    assert config is not None
+
+
+# ---------------------------------------------------------------------------
+# A managed member has to bind an address, not a name
+# ---------------------------------------------------------------------------
+
+def test_a_managed_member_binds_a_resolved_address(tmp_path: Path) -> None:
+    """etcd refuses a hostname in a listen URL -- "expected IP in URL for
+    binding" -- so a member whose bind address defaulted to its own name could
+    never start. It has to be NAMED for its certificate and LISTEN on an
+    address, and nothing exercised that until the managed mode did.
+    """
+    args = parse_args([
+        "--registryDisableTLS", "--distributed", "--etcdDisableTLS",
+        "--registryAdvertisedHost", "localhost",
+    ])
+    config = resolve_distributed_config(args)
+    assert config is not None
+
+    local = config.layout.local
+    assert local.host == "localhost"                  # named for the certificate
+    assert local.bind_address == "127.0.0.1"          # listens on an address
+    assert local.listen_peer_url(tls=False) == "http://127.0.0.1:2382"
+    # The advertised URL keeps the name: that is what peers verify against.
+    assert local.advertise_peer_url(tls=False) == "http://localhost:2382"
+
+
 # ---------------------------------------------------------------------------
 # TLS inputs
 # ---------------------------------------------------------------------------

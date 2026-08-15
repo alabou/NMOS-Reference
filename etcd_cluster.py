@@ -54,10 +54,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ipaddress
 import json
 import os
 import shutil
 import signal
+import socket
 import sys
 from pathlib import Path
 from typing import Any
@@ -209,44 +211,110 @@ def _secure_identity(index: int, tct: int) -> tuple[str, str, str]:
     return str(certificate), str(key), str(ca)
 
 
-def _check_secure_resolution(layouts: list[object]) -> None:
-    """Refuse to start a secured cluster whose member names resolve elsewhere.
+def _selected(
+    layouts: list[object], args: argparse.Namespace,
+) -> list[tuple[int, object]]:
+    """The members THIS invocation is responsible for, with their indices.
 
-    Without this the misconfiguration surfaces as etcd rejecting every peer
-    handshake with a TLS error naming a certificate that is in fact perfectly
-    valid -- an hour of reading handshake logs to discover a hosts-file entry.
-    Both checks in _SECURE_HOST_TEMPLATE depend on this one fact, so it is
-    worth one getaddrinfo per member at start-up.
+    All of them by default -- the single-machine rig -- or exactly one under
+    ``--index``, which is how a cluster spread over several machines is run:
+    same ``--members``, same names, same ports, each host starting only its
+    own. The index is kept alongside the layout because it selects that
+    member's certificate and serial.
     """
-    import socket
-
-    wrong: list[str] = []
-    for layout in layouts:
-        member = layout.local  # type: ignore[attr-defined]
-        try:
-            resolved: set[str] = {
-                str(info[4][0])
-                for info in socket.getaddrinfo(
-                    member.host, member.client_port, socket.AF_INET,
-                )
-            }
-        except OSError as exc:
-            wrong.append(f"  {member.host}: does not resolve ({exc.strerror})")
-            continue
-        if member.bind_address not in resolved:
-            wrong.append(
-                f"  {member.host}: resolves to {', '.join(sorted(resolved))}, "
-                f"but the member listens on {member.bind_address}",
-            )
-
-    if wrong:
+    index = getattr(args, "index", None)
+    if index is None:
+        return list(enumerate(layouts))
+    if not 0 <= index < len(layouts):
         raise SystemExit(
-            "--secure: member names must resolve to the address the members "
-            "listen on.\n"
-            + "\n".join(wrong)
-            + f"\n  Map every member name to {_SECURE_BIND_ADDRESS} in "
-            f"/etc/hosts (and in the Windows hosts file, if a registry there "
-            f"drives this cluster).",
+            f"--index {index} is outside the cluster: --members "
+            f"{len(layouts)} means indices 0..{len(layouts) - 1}.",
+        )
+    return [(index, layouts[index])]
+
+
+def _resolved_address(host: str) -> str | None:
+    """The IPv4 address ``host`` resolves to, or None.
+
+    One answer is taken deliberately: a member binds one address, and a name
+    with several A records cannot describe a member.
+    """
+    try:
+        return str(socket.getaddrinfo(host, None, socket.AF_INET)[0][4][0])
+    except (OSError, IndexError):
+        return None
+
+
+def _is_local_address(address: str) -> bool:
+    """Whether this machine can bind ``address``.
+
+    Asked by binding rather than by enumerating interfaces: binding is the
+    same question etcd is about to ask, so it cannot answer differently.
+    """
+    with socket.socket() as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind((address, 0))
+        except OSError:
+            return False
+    return True
+
+
+def _check_addressing(members: list[object], *, secure: bool) -> None:
+    """Refuse a cluster this machine cannot host, or must not host in the clear.
+
+    Two rules, both about the members THIS invocation starts:
+
+    **Every one of them must resolve to an address this machine owns.** A
+    secured member is addressed by the name its certificate attests, and etcd
+    verifies a peer's certificate against the address its connection arrives
+    from; get the mapping wrong and every peer handshake is refused with a
+    TLS error naming a certificate that is perfectly valid. Diagnosing that
+    from handshake logs costs an hour. Diagnosing it from here costs a line.
+
+    **Plaintext is allowed only on loopback.** Off the loopback the member is
+    reachable from the network, and its database -- which holds every
+    registered resource -- would be readable and writable by anyone who can
+    reach the port. That is a deployment decision nobody should be able to
+    make by omitting a flag, so it is refused here rather than documented.
+    """
+    unreachable: list[str] = []
+    exposed: list[str] = []
+
+    for member in members:
+        host = member.host                      # type: ignore[attr-defined]
+        address = _resolved_address(host)
+        if address is None:
+            unreachable.append(f"  {host}: does not resolve")
+            continue
+        if not _is_local_address(address):
+            unreachable.append(
+                f"  {host}: resolves to {address}, which is not an address "
+                f"this machine can bind",
+            )
+            continue
+        if not secure and not ipaddress.ip_address(address).is_loopback:
+            exposed.append(f"  {host}: {address}")
+
+    if unreachable:
+        raise SystemExit(
+            "cannot start these members here:\n"
+            + "\n".join(unreachable)
+            + "\n  Every member this command starts must resolve to one of "
+            "this machine's own addresses. Map the names in /etc/hosts (and "
+            "in the Windows hosts file, if a registry there drives this "
+            "cluster), or use --index to start only the member that belongs "
+            "to this machine.",
+        )
+
+    if exposed:
+        raise SystemExit(
+            "refusing to run an unsecured cluster on a routable address:\n"
+            + "\n".join(exposed)
+            + "\n  etcd holds every registered resource, so off the loopback "
+            "an unsecured member offers that database to anyone who can reach "
+            "the port. Add --secure, or bind the members to loopback if this "
+            "really is a single-machine development rig.",
         )
 
 
@@ -254,17 +322,33 @@ def _member_specs(count: int, profile: str, secure: bool = False) -> list[object
     from nmos.etcd.cluster import MemberSpec
 
     if secure:
-        # Addressed by name and separated by port, all on one bind address --
-        # see _SECURE_HOST_TEMPLATE for why the addresses cannot differ. The
-        # port block is the wsl profile's, so a secured cluster is reachable
-        # from a native-Windows registry through localhost forwarding too.
+        # Addressed by name and separated by port. The bind address is left to
+        # the member's own name: `derive_cluster` falls back to it, and this
+        # repository's hosts convention makes that name resolve to 127.0.0.1
+        # when everything is on one machine and to the host's own address when
+        # the members are spread over three. One description, both layouts,
+        # with DNS as the only thing that differs -- which is also what makes
+        # the peer certificate check work in each case, since a member's peer
+        # traffic then originates from the address its name attests.
+        #
+        # The port block is kept even across machines: a member keeps its
+        # identity if it is ever moved onto a shared host, and one rig
+        # debugged on a laptop is the same rig deployed on three servers.
         return [
             MemberSpec(
                 host=_SECURE_HOST_TEMPLATE.format(index=index),
                 client_port=_WSL_BASE_CLIENT + index * _WSL_PORT_STRIDE,
                 peer_port=_WSL_BASE_PEER + index * _WSL_PORT_STRIDE,
                 name=f"nmos-registry-{index}",
-                bind_address=_SECURE_BIND_ADDRESS,
+                # etcd refuses a name in a listen URL -- "expected IP in URL
+                # for binding" -- so the name is resolved here rather than
+                # handed over as-is. Resolution failure is left to the
+                # addressing preflight, which explains it; falling back to the
+                # name keeps `endpoints` and `wipe` working on a machine whose
+                # DNS cannot see the other members.
+                bind_address=_resolved_address(
+                    _SECURE_HOST_TEMPLATE.format(index=index),
+                ),
             )
             for index in range(count)
         ]
@@ -362,12 +446,14 @@ async def _up(args: argparse.Namespace) -> int:
     root = _data_root(args)
     root.mkdir(parents=True, exist_ok=True)
 
-    layouts = _layouts(args.members, args.profile, args.secure)
-    if args.secure:
-        _check_secure_resolution(layouts)
+    selected = _selected(_layouts(args.members, args.profile, args.secure), args)
+    _check_addressing(
+        [layout.local for _, layout in selected],  # type: ignore[attr-defined]
+        secure=args.secure,
+    )
     supervisors: list[EtcdSupervisor] = []
 
-    for index, layout in enumerate(layouts):
+    for index, layout in selected:
         local = layout.local  # type: ignore[attr-defined]
         data_dir = _data_dir(root, local.name)
         marker = data_dir / BOOTSTRAP_MARKER
@@ -429,7 +515,7 @@ async def _up(args: argparse.Namespace) -> int:
             await supervisor.stop()
         return 1
 
-    for layout in layouts:
+    for _, layout in selected:
         local = layout.local  # type: ignore[attr-defined]
         print(f"  {local.name:24} client {local.client_target}")
 
@@ -440,14 +526,14 @@ async def _up(args: argparse.Namespace) -> int:
         print(f"  --etcdCertificate {certificate} \\")
         print(f"  --etcdKey {key} \\")
         print(f"  --etcdTrustedRootCA {trusted_ca} \\")
-        print(f"  --etcdEndpoints {_endpoint_string(layouts[0], args.profile, args.secure)}")
+        print(f"  --etcdEndpoints {_endpoint_string(selected[0][1], args.profile, args.secure)}")
         print(
             "\n  (member 0's identity shown; each registry member passes its "
             "own, matching the etcd member it talks to)",
         )
     else:
         print("  --distributed --etcdExternal --etcdDisableTLS \\")
-        print(f"  --etcdEndpoints {_endpoint_string(layouts[0], args.profile, args.secure)}")
+        print(f"  --etcdEndpoints {_endpoint_string(selected[0][1], args.profile, args.secure)}")
 
     print("\nRunning in the foreground. Ctrl-C stops every member.")
     stop = asyncio.Event()
@@ -574,6 +660,8 @@ async def _status(args: argparse.Namespace) -> int:
 
 
 def _endpoints(args: argparse.Namespace) -> int:
+    # Every member, never just --index's: a registry is a client of the whole
+    # cluster whichever member happens to share its machine.
     layouts = _layouts(args.members, args.profile, args.secure)
     print(_endpoint_string(layouts[0], args.profile, args.secure))
     return 0
@@ -596,20 +684,41 @@ def _down(args: argparse.Namespace) -> int:
     separation is the whole difference between this and the scripts it
     replaces.
     """
+    import signal as signals
     import socket
     import subprocess
     import time
 
-    result = subprocess.run(
-        ["pkill", "-f", r"etcd_cluster\.py .*\bup\b"], capture_output=True,
+    # Matched, then filtered by --index rather than pkill'd wholesale. On a
+    # machine running one member that is the same thing; on a machine running
+    # several, `down --index 1` must not stop its neighbours, and a regex
+    # cannot express "these two tokens in either order" reliably.
+    found = subprocess.run(
+        ["pgrep", "-af", r"etcd_cluster\.py .*\bup\b"],
+        capture_output=True, text=True,
     )
-    if result.returncode != 0:
-        print("  no detached cluster supervisor found")
-    else:
-        print("  signalled the cluster supervisor")
+    wanted = getattr(args, "index", None)
+    signalled = 0
+    for line in found.stdout.splitlines():
+        pid, _, command = line.partition(" ")
+        if wanted is not None and f"--index {wanted}" not in command:
+            continue
+        try:
+            os.kill(int(pid), signals.SIGTERM)
+        except (OSError, ValueError):
+            continue
+        signalled += 1
 
-    layouts = _layouts(args.members, args.profile, args.secure)
-    members = layouts[0].members  # type: ignore[attr-defined]
+    if signalled:
+        print(f"  signalled {signalled} cluster supervisor(s)")
+    else:
+        print("  no detached cluster supervisor found")
+
+    # Only the members this machine started: under --index the others belong
+    # to other hosts, and waiting for them to go away would mean waiting for
+    # someone else to shut down their half of the cluster.
+    selected = _selected(_layouts(args.members, args.profile, args.secure), args)
+    members = [layout.local for _, layout in selected]  # type: ignore[attr-defined]
 
     deadline = time.monotonic() + 30.0
     while time.monotonic() < deadline:
@@ -635,16 +744,18 @@ def _down(args: argparse.Namespace) -> int:
 
 
 def _wipe(args: argparse.Namespace) -> int:
-    """Delete every member's data directory. Requires --yes.
+    """Delete this machine's member data directories. Requires --yes.
 
     Separate, explicit and confirming, because this is the operation the old
-    scripts performed silently on every start.
+    scripts performed silently on every start. Under --index it deletes one
+    directory rather than all of them -- the others are databases on other
+    machines, and this command has never been able to reach them anyway.
     """
     root = _data_root(args)
-    layouts = _layouts(args.members, args.profile, args.secure)
+    selected = _selected(_layouts(args.members, args.profile, args.secure), args)
     targets = [
         _data_dir(root, layout.local.name)  # type: ignore[attr-defined]
-        for layout in layouts
+        for _, layout in selected
     ]
     present = [path for path in targets if path.exists()]
 
@@ -684,7 +795,9 @@ def build_parser() -> argparse.ArgumentParser:
              f"all of them. Default: {_default_profile()} here, or linux "
              f"under --secure.",
     )
-    _add_security_options(parser, default_secure=False, default_tct=TCT_RSA)
+    _add_security_options(
+        parser, default_secure=False, default_tct=TCT_RSA, default_index=None,
+    )
     parser.add_argument(
         "--data-root", default="",
         help=f"Member databases. Defaults to {DEFAULT_DATA_ROOT}, or "
@@ -703,6 +816,7 @@ def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     _add_security_options(
         common, default_secure=argparse.SUPPRESS, default_tct=argparse.SUPPRESS,
+        default_index=argparse.SUPPRESS,
     )
 
     sub = parser.add_subparsers(dest="command", required=True)
@@ -738,16 +852,26 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _add_security_options(
     parser: argparse.ArgumentParser, *, default_secure: Any, default_tct: Any,
+    default_index: Any,
 ) -> None:
-    """The --secure/--tct pair, added to the top-level parser and each verb."""
+    """The cluster-shaping options, on the top-level parser and on each verb."""
     parser.add_argument(
         "--secure", action="store_true", default=default_secure,
         help="Run the cluster with mutual TLS on both the client and the peer "
              "listeners, using the etcd certificate set in "
              "Certificates/build.0.etcd/. Members are then addressed as "
-             "XYZ-SNX1000n, which their certificates attest and bare loopback "
-             "addresses do not, and every such name must resolve to "
-             f"{_SECURE_BIND_ADDRESS}.",
+             "XYZ-SNX1000n, which their certificates attest and bare "
+             "addresses do not; each name must resolve to the address its "
+             "member listens on -- 127.0.0.1 for a single-machine cluster, "
+             "the host's own address when the members are spread out.",
+    )
+    parser.add_argument(
+        "--index", type=int, default=default_index,
+        help="Start only this member of the cluster, 0-based, instead of all "
+             "of them. This is how one etcd per machine is run: every host "
+             "gets the same --members and the same names, and differs only in "
+             "which one it starts. --initial-cluster still lists them all, "
+             "because a member that does not know its peers cannot join.",
     )
     parser.add_argument(
         "--tct", type=int, default=default_tct, choices=[TCT_RSA, TCT_ECDSA],
