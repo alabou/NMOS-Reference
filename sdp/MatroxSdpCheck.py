@@ -440,7 +440,7 @@ def check_sdp_st2110_21(md: MediaDescriptor) -> None:
     
     valid_senders = {MatroxSdpEnums.SenderType2110TPN, MatroxSdpEnums.SenderType2110TPNL, MatroxSdpEnums.SenderType2110TPW}
     if md.sender_type not in valid_senders:
-        raise SdpCheckError("ST2110-21 invalid45@0 TP")
+        raise SdpCheckError("ST2110-21 invalid TP")
 
 
 def check_sdp_st2110_22(md: MediaDescriptor) -> None:
@@ -497,7 +497,7 @@ def check_sdp_st2110_30(md: MediaDescriptor) -> None:
     if md.p_time_us == 0:
         raise SdpCheckError("ST2110-30 invalid ptime")
     
-    valid_ptimes = {125, 120, 250, 333, 330, 1000, 4000, 272, 270, 363, 360, 1088, 1090, 4354, 4350}
+    valid_ptimes = {125, 120, 250, 333, 330, 1000, 4000, 136, 130, 272, 270, 363, 360, 1088, 1090, 4354, 4350}
     if md.p_time_us not in valid_ptimes:
         raise SdpCheckError("ST2110-30 unexpected ptime")
     
