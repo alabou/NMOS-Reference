@@ -2607,29 +2607,35 @@ def convert_caps_json_to_caps(caps_json: Dict[str, Any]) -> Caps:
 	    CapTransportUsbClass: RangeType.INT,
     }
 
+    def parse_item(item : Any, context : str) -> Any:
+        # A rational is encoded in JSON as a { "numerator": ..., "denominator": ... } object.
+        # Any other value is passed through unchanged.
+        if not isinstance(item, dict):
+            return item
+
+        numerator : Optional[int] = item.get("numerator") # type: ignore
+        denominator : Optional[int] = item.get("denominator", 1) # type: ignore
+        if denominator is None:
+            denominator = 1 # an explicit JSON null means 'not provided'
+        if numerator is not None and isinstance(numerator, int) and isinstance(denominator, int):
+            try:
+                return Fraction(numerator, denominator)
+            except ZeroDivisionError:
+                raise ValueError(f"Invalid fraction with denominator 0 in capability constraints: {item}")
+        else:
+            raise ValueError(f"Invalid {context} without 'numerator': {item}")
+
     def parse_range_value(cap_constraints : Dict[str, Any], range_type: RangeType) -> RangeValue:
 
         infinite = False  # Default value
-        min = cap_constraints.get("minimum")
-        max = cap_constraints.get("maximum")
+        min = parse_item(cap_constraints.get("minimum"), "minimum constraint")
+        max = parse_item(cap_constraints.get("maximum"), "maximum constraint")
         enumerated : List[Union[bool, int, float, Fraction, str]] = []
 
         if "enum" in cap_constraints:
             enum_list = cap_constraints["enum"]
             for item in enum_list:
-                if isinstance(item, dict):
-                    numerator : Optional[int] = item.get("numerator") # type: ignore
-                    denominator : Optional[int] = item.get("denominator", 1) # type: ignore
-                    if numerator is not None and isinstance(numerator, int) and (denominator is None or isinstance(denominator, int)):
-                        try:
-                            fraction = Fraction(numerator, denominator)
-                            enumerated.append(fraction)
-                        except ZeroDivisionError:
-                            raise ValueError(f"Invalid fraction with denominator 0 in capability constraints: {item}")
-                    else:
-                        raise ValueError(f"Invalid enumerated dict without 'numerator': {item}")
-                else:
-                    enumerated.append(item)
+                enumerated.append(parse_item(item, "enumerated dict"))
 
         if min is None and max is None and not "enum" in cap_constraints:
             infinite = True
@@ -2671,13 +2677,27 @@ def convert_caps_json_to_caps(caps_json: Dict[str, Any]) -> Caps:
                 caps : Dict[str, Any] = cap_constraints
 
                 try:
-                    range_value = parse_range_value(caps, range_type)
+                    if "numerator" in caps:
+                        # A bare rational used as the capability value, not a constraint object
+                        range_value = RangeValue(
+                            empty=False,
+                            infinite=False,
+                            type=range_type,
+                            values=(parse_item(caps, "rational value"),),
+                        )
+                    else:
+                        range_value = parse_range_value(caps, range_type)
                 except ValueError as ve:
                     raise ValueError(f"Error parsing capability '{cap_name}' in CapSet '{label}': {ve}")
                 
             elif isinstance(cap_constraints, list):
 
-                elements : List[Union[int, float, Fraction, str, bool]] = cap_constraints
+                try:
+                    elements : List[Union[int, float, Fraction, str, bool]] = [
+                        parse_item(v, "enumerated dict") for v in cap_constraints
+                    ]
+                except ValueError as ve:
+                    raise ValueError(f"Error parsing capability '{cap_name}' in CapSet '{label}': {ve}")
 
                 range_value = RangeValue(
                     empty=False,
