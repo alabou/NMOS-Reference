@@ -43,6 +43,15 @@ artifacts/
 # .etcd/data/ in particular is a live database.
 .etcd/
 
+# Distributed registry backend (nmos/raft/).
+#
+# .raft/ is where start-registry-raft.sh puts each member's term/vote file.
+# Not a database — the raft log is in memory, and what lands here is about
+# 24 bytes per member, rewritten when the election term changes. Committing it
+# would hand every clone the same recorded vote, which is precisely the state
+# election safety depends on being local to one member.
+.raft/
+
 # Run output from the launch scripts.
 #
 # Every launcher passes --logFile, so a rig leaves nmos-registry.log,

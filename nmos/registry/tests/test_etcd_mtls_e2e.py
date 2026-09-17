@@ -276,12 +276,12 @@ async def _member_count(pool: Any) -> int:
 
 
 def _secured_config(endpoints: list[str], namespace: str) -> Any:
-    from nmos.registry.distributed import DistributedConfig
+    from nmos.registry.distributed import EtcdConfig
 
     certificate, key, ca = etcd_identity(0)
     ports = [(int(e.rpartition(":")[2]), int(e.rpartition(":")[2]) + 1)
              for e in endpoints]
-    return DistributedConfig(
+    return EtcdConfig(
         layout=_layout(ports, 0),
         endpoints=tuple(endpoints),
         namespace=namespace,

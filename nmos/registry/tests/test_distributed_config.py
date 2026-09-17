@@ -45,7 +45,7 @@ def _args(tmp_path: Path, *extra: str) -> Any:
     cert, key, ca = _certs(tmp_path)
     return parse_args([
         "--registryDisableTLS",
-        "--distributed",
+        "--distributed", "--distributedBackend", "etcd",
         "--registryAdvertisedHost", "a",
         "--registryNeighbour", "b",
         "--registryNeighbour", "c",
@@ -97,7 +97,7 @@ def test_three_member_cluster_resolves(tmp_path: Path) -> None:
 def test_advertised_host_is_required(tmp_path: Path) -> None:
     cert, key, ca = _certs(tmp_path)
     args = parse_args([
-        "--registryDisableTLS", "--distributed",
+        "--registryDisableTLS", "--distributed", "--distributedBackend", "etcd",
         "--etcdCertificate", cert, "--etcdKey", key,
         "--etcdTrustedRootCA", ca,
     ])
@@ -112,7 +112,7 @@ def test_repeating_the_local_host_as_a_neighbour_is_refused(
 ) -> None:
     cert, key, ca = _certs(tmp_path)
     args = parse_args([
-        "--registryDisableTLS", "--distributed",
+        "--registryDisableTLS", "--distributed", "--distributedBackend", "etcd",
         "--registryAdvertisedHost", "a",
         "--registryNeighbour", "a",
         "--registryNeighbour", "b",
@@ -133,7 +133,7 @@ def test_co_located_members_are_distinguished_by_port(tmp_path: Path) -> None:
     """
     cert, key, ca = _certs(tmp_path)
     args = parse_args([
-        "--registryDisableTLS", "--distributed",
+        "--registryDisableTLS", "--distributed", "--distributedBackend", "etcd",
         "--registryAdvertisedHost", "a:2381",
         "--registryNeighbour", "a:2391",
         "--registryNeighbour", "a:2401",
@@ -157,7 +157,7 @@ def test_co_located_members_are_distinguished_by_port(tmp_path: Path) -> None:
 def test_a_member_with_a_malformed_port_is_refused(tmp_path: Path) -> None:
     cert, key, ca = _certs(tmp_path)
     args = parse_args([
-        "--registryDisableTLS", "--distributed",
+        "--registryDisableTLS", "--distributed", "--distributedBackend", "etcd",
         "--registryAdvertisedHost", "a:not-a-port",
         "--etcdCertificate", cert, "--etcdKey", key,
         "--etcdTrustedRootCA", ca,
@@ -169,7 +169,7 @@ def test_a_member_with_a_malformed_port_is_refused(tmp_path: Path) -> None:
 def test_even_sized_cluster_is_refused(tmp_path: Path) -> None:
     cert, key, ca = _certs(tmp_path)
     args = parse_args([
-        "--registryDisableTLS", "--distributed",
+        "--registryDisableTLS", "--distributed", "--distributedBackend", "etcd",
         "--registryAdvertisedHost", "a",
         "--registryNeighbour", "b",
         "--etcdCertificate", cert, "--etcdKey", key,
@@ -199,7 +199,7 @@ def test_plaintext_etcd_under_a_tls_registry_is_refused(tmp_path: Path) -> None:
     cert, key, ca = _certs(tmp_path)
     args = parse_args([
         *_secure_listener_args(tmp_path),
-        "--distributed", "--etcdDisableTLS",
+        "--distributed", "--distributedBackend", "etcd", "--etcdDisableTLS",
         "--registryAdvertisedHost", "a",
         "--etcdCertificate", cert, "--etcdKey", key,
         "--etcdTrustedRootCA", ca,
@@ -221,7 +221,7 @@ def test_the_refusal_names_the_certificates_it_would_have_ignored(
     cert, key, ca = _certs(tmp_path)
     args = parse_args([
         *_secure_listener_args(tmp_path),
-        "--distributed", "--etcdDisableTLS",
+        "--distributed", "--distributedBackend", "etcd", "--etcdDisableTLS",
         "--registryAdvertisedHost", "a",
         "--etcdCertificate", cert, "--etcdKey", key,
         "--etcdTrustedRootCA", ca,
@@ -240,7 +240,7 @@ def test_plaintext_etcd_is_allowed_when_the_registry_is_plaintext_too(
 ) -> None:
     """The development rig stays available: unsecured is fine, mixed is not."""
     args = parse_args([
-        "--registryDisableTLS", "--distributed", "--etcdDisableTLS",
+        "--registryDisableTLS", "--distributed", "--distributedBackend", "etcd", "--etcdDisableTLS",
         "--registryAdvertisedHost", "a",
     ])
     config = resolve_distributed_config(args)
@@ -253,7 +253,7 @@ def test_a_tls_registry_over_a_secured_etcd_is_accepted(tmp_path: Path) -> None:
     cert, key, ca = _certs(tmp_path)
     args = parse_args([
         *_secure_listener_args(tmp_path),
-        "--distributed",
+        "--distributed", "--distributedBackend", "etcd",
         "--registryAdvertisedHost", "a",
         "--etcdCertificate", cert, "--etcdKey", key,
         "--etcdTrustedRootCA", ca,
@@ -276,7 +276,7 @@ def test_a_certificate_without_a_key_does_not_count_as_a_tls_registry(
     cert, _, _ = _certs(tmp_path)
     args = parse_args([
         "--registryCertificate", cert,
-        "--distributed", "--etcdDisableTLS",
+        "--distributed", "--distributedBackend", "etcd", "--etcdDisableTLS",
         "--registryAdvertisedHost", "a",
     ])
     config = resolve_distributed_config(args)
@@ -325,7 +325,7 @@ def test_an_unsecured_cluster_may_not_leave_the_machine(
     """
     resolves({"registry-on-the-lan": "192.168.7.20"})
     args = parse_args([
-        "--registryDisableTLS", "--distributed", "--etcdDisableTLS",
+        "--registryDisableTLS", "--distributed", "--distributedBackend", "etcd", "--etcdDisableTLS",
         "--registryAdvertisedHost", "registry-on-the-lan",
     ])
     with pytest.raises(DistributedConfigError, match="confined to one machine"):
@@ -343,7 +343,7 @@ def test_the_same_rule_applies_to_an_external_cluster(
     """
     resolves({"etcd-on-the-lan": "10.4.0.9"})
     args = parse_args([
-        "--registryDisableTLS", "--distributed", "--etcdExternal",
+        "--registryDisableTLS", "--distributed", "--distributedBackend", "etcd", "--etcdExternal",
         "--etcdDisableTLS", "--etcdEndpoints", "etcd-on-the-lan:2381",
     ])
     with pytest.raises(DistributedConfigError, match="confined to one machine"):
@@ -353,7 +353,7 @@ def test_the_same_rule_applies_to_an_external_cluster(
 def test_loopback_keeps_the_development_rig(tmp_path: Path) -> None:
     """The case --etcdDisableTLS exists for: packets that never reach a wire."""
     args = parse_args([
-        "--registryDisableTLS", "--distributed", "--etcdDisableTLS",
+        "--registryDisableTLS", "--distributed", "--distributedBackend", "etcd", "--etcdDisableTLS",
         "--registryAdvertisedHost", "127.0.0.1",
     ])
     config = resolve_distributed_config(args)
@@ -372,7 +372,7 @@ def test_a_name_that_does_not_resolve_is_left_to_its_own_diagnosis(
     """
     resolves({}, others=None)          # nothing resolves at all
     args = parse_args([
-        "--registryDisableTLS", "--distributed", "--etcdDisableTLS",
+        "--registryDisableTLS", "--distributed", "--distributedBackend", "etcd", "--etcdDisableTLS",
         "--registryAdvertisedHost", "no-such-host.invalid",
     ])
     config = resolve_distributed_config(args)
@@ -390,7 +390,7 @@ def test_a_managed_member_binds_a_resolved_address(tmp_path: Path) -> None:
     address, and nothing exercised that until the managed mode did.
     """
     args = parse_args([
-        "--registryDisableTLS", "--distributed", "--etcdDisableTLS",
+        "--registryDisableTLS", "--distributed", "--distributedBackend", "etcd", "--etcdDisableTLS",
         "--registryAdvertisedHost", "localhost",
     ])
     config = resolve_distributed_config(args)
@@ -410,7 +410,7 @@ def test_a_managed_member_binds_a_resolved_address(tmp_path: Path) -> None:
 
 def test_missing_etcd_certificate_is_refused(tmp_path: Path) -> None:
     args = parse_args([
-        "--registryDisableTLS", "--distributed",
+        "--registryDisableTLS", "--distributed", "--distributedBackend", "etcd",
         "--registryAdvertisedHost", "a",
     ])
     with pytest.raises(DistributedConfigError, match="--etcdCertificate"):
@@ -420,7 +420,7 @@ def test_missing_etcd_certificate_is_refused(tmp_path: Path) -> None:
 def test_unreadable_certificate_is_refused(tmp_path: Path) -> None:
     _cert, key, ca = _certs(tmp_path)
     args = parse_args([
-        "--registryDisableTLS", "--distributed",
+        "--registryDisableTLS", "--distributed", "--distributedBackend", "etcd",
         "--registryAdvertisedHost", "a",
         "--etcdCertificate", str(tmp_path / "absent.pem"),
         "--etcdKey", key, "--etcdTrustedRootCA", ca,
@@ -431,7 +431,7 @@ def test_unreadable_certificate_is_refused(tmp_path: Path) -> None:
 
 def test_disable_tls_skips_certificate_checks(tmp_path: Path) -> None:
     args = parse_args([
-        "--registryDisableTLS", "--distributed", "--etcdDisableTLS",
+        "--registryDisableTLS", "--distributed", "--distributedBackend", "etcd", "--etcdDisableTLS",
         "--registryAdvertisedHost", "a",
     ])
     config = resolve_distributed_config(args)

@@ -2,10 +2,11 @@
 # Copyright (C) 2025-2026 Alain Bouchard
 # SPDX-License-Identifier: Apache-2.0
 
-"""Run the load generator across every target and separate the three taxes.
+"""Run the load generator across every target and separate the taxes.
 
     python3 bench_registry/compare.py --quiet
     python3 bench_registry/compare.py --targets cpp,standalone,dist1,dist3
+    python3 bench_registry/compare.py --targets cpp,standalone,raft1,raft3,raft5
 
 Matched observability comes first
 ---------------------------------
@@ -22,14 +23,16 @@ evidence that they do.
 
 Separating the taxes
 --------------------
-A single side-by-side number would conflate three unrelated costs::
+A single side-by-side number would conflate unrelated costs::
 
-    nmos-cpp      -> Python standalone    the PYTHON tax     (what Rust recovers)
-    standalone    -> distributed 1        the ETCD tax       (no quorum involved)
-    distributed 1 -> 3 -> 5               the CONSENSUS tax  (what resilience costs)
+    nmos-cpp    -> Python standalone   the PYTHON tax     (what Rust recovers)
+    standalone  -> dist1  / raft1      the BACKEND tax    (no quorum involved)
+    dist1 -> dist3 / raft1 -> raft3    the CONSENSUS tax  (what resilience costs)
 
-The 1-member distributed configuration exists purely to split the last two,
-which are otherwise indistinguishable.
+The 1-member distributed configurations exist purely to split the last two,
+which are otherwise indistinguishable. Both backends are measured the same way,
+so "raft is faster" is a comparison of like with like rather than of a ratio
+against a number.
 """
 
 from __future__ import annotations
@@ -280,7 +283,12 @@ def start_python(
                 raise SystemExit("bench etcd cluster did not start")
 
         command += [
-            "--distributed", "--etcdExternal", "--etcdDisableTLS",
+            # --distributedBackend defaults to raft, and naming --etcd* flags
+            # without it is refused rather than reinterpreted. Spelled out
+            # here for the same reason the launch scripts spell it out: the
+            # benchmark must measure the backend it says it is measuring.
+            "--distributed", "--distributedBackend", "etcd",
+            "--etcdExternal", "--etcdDisableTLS",
             "--registryAdvertisedHost", "127.0.0.1",
             "--etcdEndpoints", endpoints,
             "--etcdNamespace", f"/bench/{name}",
@@ -321,6 +329,105 @@ def start_python(
     )
 
 
+
+def _free_pair() -> tuple[int, int]:
+    """A free port ``P`` whose neighbour ``P+1`` is free too.
+
+    ``--registryAdvertisedHost host:client_port`` derives the peer port as
+    ``client_port + 1`` (see ``_split_member``), so members co-located on one
+    machine need consecutive pairs rather than two independent ports.
+    """
+    for _attempt in range(200):
+        first = _free_port()
+        with socket.socket() as probe:
+            try:
+                probe.bind(("127.0.0.1", first + 1))
+            except OSError:
+                continue
+        return first, first + 1
+    raise SystemExit("could not find a consecutive free port pair")
+
+
+def start_raft(name: str, quiet: bool, *, members: int) -> Target:
+    """Start ``members`` registry processes forming one raft cluster.
+
+    Structurally different from the etcd path, and the difference is the whole
+    point of the backend: there, one registry is a *client* of a separate
+    cluster of ``members`` etcd processes, so the benchmark starts 1 + N
+    processes. Here the registries **are** the cluster, so it starts N -- and
+    the load generator drives one of them, exactly as a Node would.
+
+    That also means this measures the honest thing. A registration driven at
+    member 0 is owned by member 0, which is what a real deployment looks like:
+    a Node registers with one registry and stays there.
+    """
+    pairs = [_free_pair() for _ in range(members)]
+    advertised = [f"127.0.0.1:{client}" for client, _peer in pairs]
+
+    processes: list[subprocess.Popen[bytes]] = []
+    fronts: list[tuple[int, int, int]] = []
+
+    for index in range(members):
+        registration_port, query_port, ws_port = (
+            _free_port(), _free_port(), _free_port(),
+        )
+        fronts.append((registration_port, query_port, ws_port))
+        state_dir = WORK / f"{name}-raft" / f"m{index}"
+        if state_dir.exists():
+            shutil.rmtree(state_dir)
+        state_dir.mkdir(parents=True)
+
+        command = [
+            sys.executable, str(REPO / "nmos_registry.py"),
+            "--registryDisableTLS",
+            "--registryAddr", "127.0.0.1",
+            "--registrationPort", str(registration_port),
+            "--queryPort", str(query_port),
+            "--queryWebSocketPort", str(ws_port),
+            "--logFile", "" if quiet else str(WORK / f"{name}-m{index}.log"),
+            "--statusInterval", "0" if quiet else "5",
+            "--distributed",
+            "--distributedBackend", "raft",
+            "--raftDisableTLS",
+            "--raftStateDir", str(state_dir),
+            "--raftNamespace", f"/bench/{name}",
+            "--registryAdvertisedHost", advertised[index],
+        ]
+        for other in advertised:
+            if other != advertised[index]:
+                command += ["--registryNeighbour", other]
+
+        environment = dict(os.environ, PYTHONPATH=str(REPO))
+        if quiet:
+            environment["NMOS_LOG_LEVEL"] = "WARNING"
+        stdout_path = WORK / f"{name}-m{index}.out"
+        processes.append(subprocess.Popen(
+            command, cwd=str(REPO),
+            stdout=stdout_path.open("wb"), stderr=subprocess.STDOUT,
+            env=environment,
+        ))
+
+    registration_port, query_port, ws_port = fronts[0]
+    query = f"http://127.0.0.1:{query_port}"
+    for _registration, member_query, _ws in fronts:
+        if not _wait_http(f"http://127.0.0.1:{member_query}/x-nmos/query/v1.3/",
+                          timeout=90.0):
+            for process in processes:
+                process.kill()
+            raise SystemExit(f"{name} did not start; see {WORK}/{name}-m*.out")
+
+    return Target(
+        name=name,
+        registration=f"http://127.0.0.1:{registration_port}",
+        query=query,
+        websocket=f"ws://127.0.0.1:{ws_port}",
+        process=processes[0],
+        log_paths=[],
+        stdout_path=WORK / f"{name}-m0.out",
+        extra=processes[1:],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Comparison
 # ---------------------------------------------------------------------------
@@ -330,8 +437,17 @@ TAXES = [
      "JSON, generated-type decode, event loop -- what a Rust port recovers"),
     ("etcd tax", "standalone", "dist1",
      "client, serialization and fence overhead, with no quorum involved"),
-    ("consensus tax", "dist1", "dist3",
+    ("etcd consensus tax", "dist1", "dist3",
      "Raft fsync and quorum breadth -- what resilience actually costs"),
+    # The same two questions asked of the native backend, so the comparison is
+    # between like measurements rather than between a ratio and a number. The
+    # first row is the one the backend exists to shrink: no fence, no
+    # read-before-write, no fsync, so a one-member cluster should cost almost
+    # nothing over standalone.
+    ("raft tax", "standalone", "raft1",
+     "log, framing and apply -- no fence, no fsync, no quorum involved"),
+    ("raft consensus tax", "raft1", "raft3",
+     "quorum breadth and a second apply, without the fsync"),
 ]
 
 
@@ -378,7 +494,7 @@ def _report(results: dict[str, dict[str, Any]], log_bytes: dict[str, int]) -> No
         print(row)
 
     print("\n" + "=" * 78)
-    print("THE THREE TAXES  (p50 ratio, registration chain)")
+    print("THE TAXES  (p50 ratio, registration chain)")
     print("=" * 78)
     for label, faster, slower, why in TAXES:
         if faster not in results or slower not in results:
@@ -419,6 +535,10 @@ async def main_async(args: argparse.Namespace) -> int:
             elif name.startswith("dist"):
                 members = int(name[4:] or "1")
                 target = start_python(name, args.quiet, members=members)
+                key = name
+            elif name.startswith("raft"):
+                members = int(name[4:] or "1")
+                target = start_raft(name, args.quiet, members=members)
                 key = name
             else:
                 print(f"unknown target {name!r}", file=sys.stderr)

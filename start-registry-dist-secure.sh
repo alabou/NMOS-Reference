@@ -281,6 +281,7 @@ exec "$PYTHON" nmos_registry.py \
   "${OAUTH2_FLAGS[@]}" \
   --trustedRootCA "$CA" \
   --distributed \
+  --distributedBackend etcd \
   "${ETCD_FLAGS[@]}" \
   "${MEMBER_FLAGS[@]}" \
   --etcdCertificate "$CERT" \

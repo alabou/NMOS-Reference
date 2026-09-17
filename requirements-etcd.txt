@@ -1,12 +1,20 @@
-# nmos-reference — optional distributed-registry backend (nmos/etcd/).
+# nmos-reference — the etcd distributed-registry backend (nmos/etcd/).
 #
-# Only `nmos_registry.py --distributed` imports this. The standalone registry,
-# the node and the controller never do: nmos_registry.py imports nmos.etcd
-# lazily, inside the --distributed branch, so a checkout without these packages
-# runs standalone exactly as before. Passing --distributed without them fails
-# with a CONFIG: message naming this file, not a ModuleNotFoundError.
+# NOT needed for a distributed registry in general. --distributedBackend
+# defaults to `raft`, which is this checkout's own consensus layer and needs
+# nothing installed at all. This file is only for the *other* backend:
+# `--distributed --distributedBackend etcd`, which buys disk durability across
+# total cluster loss and live cluster resizing, at the cost of a second process
+# and these packages.
 #
-# Install it only if you want the distributed registry:
+# Only that combination imports this. The standalone registry, the raft
+# backend, the node and the controller never do: nmos_registry.py imports
+# nmos.etcd lazily, inside the etcd branch, so a checkout without these
+# packages runs standalone and raft exactly as before. Selecting the etcd
+# backend without them fails with a CONFIG: message naming this file, not a
+# ModuleNotFoundError.
+#
+# Install it only if you want the etcd backend:
 #
 #     pip install -r requirements-etcd.txt
 #

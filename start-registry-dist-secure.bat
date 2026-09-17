@@ -98,6 +98,7 @@ echo.
     --queryTrustedRootCA "%CA%" ^
     --trustedRootCA "%CA%" ^
     --distributed ^
+    --distributedBackend etcd ^
     --etcdExternal ^
     %MEMBER_FLAGS% ^
     --etcdEndpoints %ENDPOINTS% ^

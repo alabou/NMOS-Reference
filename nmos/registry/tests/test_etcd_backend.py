@@ -49,9 +49,9 @@ NAMESPACE = "/nmos-test/registry/v1"
 # ---------------------------------------------------------------------------
 
 def _config(endpoint: str, namespace: str):
-    """A DistributedConfig aimed at one plain-HTTP etcd."""
+    """An EtcdConfig aimed at one plain-HTTP etcd."""
     from nmos.etcd.cluster import MemberSpec, derive_cluster
-    from nmos.registry.distributed import DistributedConfig
+    from nmos.registry.distributed import EtcdConfig
 
     host, _, port = endpoint.rpartition(":")
     host = host.replace("http://", "").replace("https://", "")
@@ -61,7 +61,7 @@ def _config(endpoint: str, namespace: str):
         namespace=namespace,
         tls=False,
     )
-    return DistributedConfig(
+    return EtcdConfig(
         layout=layout,
         endpoints=(f"{host}:{port}",),
         namespace=namespace,

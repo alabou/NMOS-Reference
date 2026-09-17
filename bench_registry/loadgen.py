@@ -90,11 +90,39 @@ class Samples:
     errors: dict[int, int] = field(default_factory=dict)
     started: float = 0.0
     finished: float = 0.0
+    _window_open: bool = field(default=False, repr=False)
 
     def record(self, elapsed: float, status: int) -> None:
         self.seconds.append(elapsed)
         if status >= 400:
             self.errors[status] = self.errors.get(status, 0) + 1
+
+    def mark(self, began: float, ended: float) -> None:
+        """Widen this phase's wall-clock window to cover one more request.
+
+        For a phase that owns its own stretch of time, stamping ``started``
+        once before and ``finished`` once after is right. It is wrong the
+        moment two phases' requests interleave -- the cold burst issues
+        senders and receivers from a single ``gather`` -- because then every
+        interleaved phase shares one window, and ``rate`` degrades from "this
+        type's throughput" to "this type's share of a window it did not own".
+
+        That is exactly what it used to report: four phases stamped from the
+        same two calls to ``perf_counter`` divided one wall time into four
+        counts, so ``cold_node`` at 54/s and ``cold_sender`` at 322/s were one
+        measurement wearing two numbers, and neither was a registration rate.
+
+        Widening from the requests themselves gives each type the span it was
+        genuinely in flight for. Overlapping windows between types are correct
+        and expected -- they really did overlap.
+        """
+        if not self._window_open:
+            self.started = began
+            self.finished = ended
+            self._window_open = True
+            return
+        self.started = min(self.started, began)
+        self.finished = max(self.finished, ended)
 
     @property
     def count(self) -> int:
@@ -373,15 +401,24 @@ async def phase_cold_burst(
         name: Samples(f"cold-burst {name}")
         for name in ("node", "device", "sender", "receiver")
     }
-    for samples in by_type.values():
-        samples.started = time.perf_counter()
+    aggregate = Samples("cold-burst (all)")
 
     semaphore = asyncio.Semaphore(concurrency)
 
     async def issue(resource_type: str, data: dict[str, Any]) -> None:
         async with semaphore:
+            # Timed from inside the semaphore, so the window covers the span
+            # this type was genuinely in flight rather than the span it spent
+            # queued behind the concurrency limit -- which is also the window
+            # ``elapsed`` measures, so rate and latency agree about what they
+            # are describing.
+            began = time.perf_counter()
             elapsed, status = await driver.post(resource_type, data)
+            ended = time.perf_counter()
             by_type[resource_type].record(elapsed, status)
+            by_type[resource_type].mark(began, ended)
+            aggregate.record(elapsed, status)
+            aggregate.mark(began, ended)
 
     for node_index in range(nodes):
         await issue("node", make_node(node_index))
@@ -402,8 +439,12 @@ async def phase_cold_burst(
                 ))
     await asyncio.gather(*tasks)
 
-    for samples in by_type.values():
-        samples.finished = time.perf_counter()
+    # The aggregate is reported alongside the per-type figures because it is
+    # the only one of the five that is comparable across implementations
+    # without knowing the resource mix: "how fast does a facility power up"
+    # is one number, and dividing it by type tells you about the mix, not
+    # about the registry.
+    by_type["all"] = aggregate
     return by_type
 
 

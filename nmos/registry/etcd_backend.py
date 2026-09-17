@@ -73,7 +73,7 @@ if TYPE_CHECKING:
     from nmos.etcd.kv import EtcdKV
     from nmos.etcd.lease import EtcdLease
     from nmos.etcd.watch import EtcdWatch, RevisionBatch
-    from nmos.registry.distributed import DistributedConfig
+    from nmos.registry.distributed import EtcdConfig
 
 log = logging.getLogger(__name__)
 
@@ -120,7 +120,7 @@ class EtcdRegistryBackend:
     def __init__(
         self,
         registry: Registry,
-        config: DistributedConfig,
+        config: EtcdConfig,
         *,
         metrics: RegistryMetrics | None = None,
     ) -> None:
@@ -350,7 +350,8 @@ class EtcdRegistryBackend:
         """
         with self._metrics.timer(Event.PRELOAD) as timer:
             revision, candidate, count = await self._read_snapshot()
-            timer.note(revision=revision, resources=count)
+            timer.note(revision=revision)
+            timer.count(count)
 
         self._registry.swap_store(candidate)
         log.info(
@@ -658,6 +659,10 @@ class EtcdRegistryBackend:
 
         self._metrics.record(
             Event.WATCH_BATCH, None,
+            # Aggregated, so "how many changes does one replication round
+            # carry?" can be answered across a whole run rather than from
+            # whatever is left in the trace ring.
+            units=len(batch.events),
             revision=batch.revision,
             # ``events`` is every KV event etcd delivered for this revision;
             # ``added``/``removed`` are the ones that turned into store
@@ -711,7 +716,8 @@ class EtcdRegistryBackend:
         self._set_state(BackendState.RESYNCING)
         with self._metrics.timer(Event.RESNAPSHOT) as timer:
             revision, candidate, count = await self._read_snapshot()
-            timer.note(revision=revision, resources=count)
+            timer.note(revision=revision)
+            timer.count(count)
 
             previous = self._registry.swap_store(candidate)
             diff = _diff_stores(previous, candidate)
@@ -779,7 +785,15 @@ class EtcdRegistryBackend:
         deadline = asyncio.get_running_loop().time() + self._config.mutation_timeout
         placement = self._placement(resource_type, body.data)
         if isinstance(placement, RegistrationResult):
+            # Decided locally, so it cost nothing on the wire. Recorded anyway:
+            # a backend whose cheap rejections vanished from the denominator
+            # would report a flattering average.
+            self._metrics.record(
+                Event.MUTATION, None, units=0, verb="register", outcome="local",
+            )
             return placement
+
+        trips = _Trips()
 
         if resource_type is ResourceType.NODE:
             # Every key in this Node's subtree will hang off this lease, so it
@@ -787,23 +801,32 @@ class EtcdRegistryBackend:
             # Node's lease already is; if it is not known here yet, the parent
             # check has already failed and the fenced path re-decides.
             placement = placement.with_lease(
-                await self._ensure_node_lease(placement.node_id),
+                await self._ensure_node_lease(placement.node_id, trips),
             )
 
         async def run() -> RegistrationResult:
             if self._fast_path:
                 fast = await self._try_fast_path(
-                    resource_type, body, placement,
+                    resource_type, body, placement, trips,
                 )
                 if fast is not None:
                     return fast
             return await self._fenced_register(
-                resource_type, body, placement, deadline,
+                resource_type, body, placement, deadline, trips,
             )
 
-        result: RegistrationResult = await self._guarded(
-            f"registration of {placement.resource_id}", run(),
-        )
+        with self._metrics.timer(
+            Event.MUTATION, verb="register", type=resource_type.value,
+        ) as timer:
+            try:
+                result: RegistrationResult = await self._guarded(
+                    f"registration of {placement.resource_id}", run(),
+                )
+            finally:
+                # Counted even when the mutation failed: a path that gives up
+                # after three round trips has still spent three, and excluding
+                # failures is how an average hides the expensive cases.
+                timer.count(trips.count)
         return result
 
     async def _try_fast_path(
@@ -811,6 +834,7 @@ class EtcdRegistryBackend:
         resource_type: ResourceType,
         body: Body,
         placement: _Placement,
+        trips: _Trips,
     ) -> RegistrationResult | None:
         """One speculative CAS from believed revisions. None means "fall back".
 
@@ -830,6 +854,7 @@ class EtcdRegistryBackend:
             return None
 
         compares = self._compare_set(placement, speculative=True)
+        trips.add()
         with self._metrics.timer(Event.CAS, path="fast") as timer:
             result = await self.kv.txn(
                 compare=compares,
@@ -847,7 +872,7 @@ class EtcdRegistryBackend:
             return None
 
         self._metrics.record(Event.FAST_PATH_HIT, None, revision=result.revision)
-        await self._await_commit(result.revision)
+        await self._await_commit(result.revision, trips)
         return RegistrationResult(created=prepared.creates, events=[])
 
     async def _fenced_register(
@@ -856,6 +881,7 @@ class EtcdRegistryBackend:
         body: Body,
         placement: _Placement,
         deadline: float,
+        trips: _Trips,
     ) -> RegistrationResult:
         """Read, fence, validate, commit -- retrying until the deadline."""
         from nmos.etcd.errors import EtcdError
@@ -864,7 +890,7 @@ class EtcdRegistryBackend:
         while True:
             attempt += 1
             try:
-                revision = await self._read_fence(placement)
+                revision = await self._read_fence(placement, trips)
             except EtcdError as exc:
                 self._degrade(f"registration read failed: {exc}")
                 raise
@@ -875,6 +901,7 @@ class EtcdRegistryBackend:
             if isinstance(prepared, RegistrationResult):
                 return prepared
 
+            trips.add()
             with self._metrics.timer(
                 Event.CAS, path="fenced", attempt=attempt,
             ) as timer:
@@ -886,7 +913,7 @@ class EtcdRegistryBackend:
                 timer.note(succeeded=result.succeeded, revision=result.revision)
 
             if result.succeeded:
-                await self._await_commit(result.revision)
+                await self._await_commit(result.revision, trips)
                 return RegistrationResult(created=prepared.creates, events=[])
 
             self._metrics.record(
@@ -904,7 +931,7 @@ class EtcdRegistryBackend:
             # re-submitting the same comparisons, which would fail identically.
             await asyncio.sleep(0)
 
-    async def _read_fence(self, placement: _Placement) -> int:
+    async def _read_fence(self, placement: _Placement, trips: _Trips) -> int:
         """Linearizable read of the write set, then wait for the view to match.
 
         The read gives the revisions the CAS must compare against; the wait is
@@ -914,6 +941,7 @@ class EtcdRegistryBackend:
         if placement.parent is not None:
             keys.append(placement.parent)
 
+        trips.add()
         with self._metrics.timer(Event.LINEARIZABLE_READ) as timer:
             read = await self.kv.read_set(keys)
             timer.note(revision=read.revision, keys=len(keys))
@@ -1012,13 +1040,20 @@ class EtcdRegistryBackend:
             else updated
         return created, updated
 
-    async def _await_commit(self, revision: int) -> None:
+    async def _await_commit(self, revision: int, trips: _Trips) -> None:
         """Wait until our own commit has come back through the watch.
 
         This is what gives read-your-write on the member that answered, and it
         is why a locally originated write needs no special handling anywhere
         else: it becomes visible by exactly the same path as a remote one.
+
+        Counted as a round trip even though no request is sent: the mutation
+        cannot answer until the commit has travelled to etcd, been replicated,
+        and come back down the watch stream. That is a full network traversal
+        on the critical path, and leaving it out would make the fast path look
+        like it costs one traversal when it costs two.
         """
+        trips.add()
         with self._metrics.timer(
             Event.COMMIT_TO_WATCH, revision=revision,
         ) as timer:
@@ -1096,7 +1131,7 @@ class EtcdRegistryBackend:
             lease=self._leases.get(node_id, 0),
         )
 
-    async def _ensure_node_lease(self, node_id: str) -> int:
+    async def _ensure_node_lease(self, node_id: str, trips: _Trips) -> int:
         """The lease every key in a Node's subtree hangs off.
 
         TTL is ``ceil(--garbageCollectionInterval)`` -- 12 s by default, the
@@ -1104,6 +1139,11 @@ class EtcdRegistryBackend:
         15 s the legacy dRDS used against the same 12 s registry interval, which
         left a Node the registry had already collected alive in etcd for
         several more seconds.
+
+        Memoised, so only a Node's *first* registration pays the grant. That is
+        why the trip is counted here rather than assumed per registration: the
+        average over a burst is what the number is for, and charging every
+        registration for a grant that happens once per Node would overstate it.
         """
         existing = self._leases.get(node_id)
         if existing:
@@ -1111,6 +1151,7 @@ class EtcdRegistryBackend:
         import math
 
         ttl = max(1, math.ceil(self._registry.store.gc_interval))
+        trips.add()
         lease = await self.lease.grant(ttl)
         self._leases[node_id] = lease.id
         return lease.id
@@ -1125,14 +1166,21 @@ class EtcdRegistryBackend:
         goes produces a watch event, so the local store learns about each one
         individually and emits removals descendants-first.
         """
-        deleted: bool = await self._guarded(
-            f"delete of {resource_id}",
-            self._unregister(resource_type, resource_id),
-        )
+        trips = _Trips()
+        with self._metrics.timer(
+            Event.MUTATION, verb="unregister", type=resource_type.value,
+        ) as timer:
+            try:
+                deleted: bool = await self._guarded(
+                    f"delete of {resource_id}",
+                    self._unregister(resource_type, resource_id, trips),
+                )
+            finally:
+                timer.count(trips.count)
         return deleted
 
     async def _unregister(
-        self, resource_type: ResourceType, resource_id: str,
+        self, resource_type: ResourceType, resource_id: str, trips: _Trips,
     ) -> bool:
         from nmos.etcd.kv import delete_op, delete_prefix_op
 
@@ -1161,13 +1209,14 @@ class EtcdRegistryBackend:
         # leaving one behind for every delete would grow without bound.
         ops.append(delete_op(placement.claim))
 
+        trips.add()
         with self._metrics.timer(
             Event.CAS, path="delete", type=resource_type.value,
         ) as timer:
             result = await self.kv.txn(compare=(), success=ops)
             timer.note(revision=result.revision)
 
-        await self._await_commit(result.revision)
+        await self._await_commit(result.revision, trips)
 
         if resource_type is ResourceType.NODE:
             # Best-effort, and after the prefix delete: the lease has nothing
@@ -1175,6 +1224,7 @@ class EtcdRegistryBackend:
             # both outcomes leave the cluster in the state the caller wanted.
             lease_id = self._leases.pop(resource_id, 0)
             if lease_id:
+                trips.add()
                 await self.lease.revoke(lease_id)
         return True
 
@@ -1188,17 +1238,26 @@ class EtcdRegistryBackend:
         to record something the lease already records more reliably, since a
         lease cannot be renewed by a member that has lost quorum.
         """
-        health: int | None = await self._guarded(
-            f"heartbeat of {node_id}", self._heartbeat(node_id),
-        )
+        trips = _Trips()
+        with self._metrics.timer(Event.MUTATION, verb="heartbeat") as timer:
+            try:
+                health: int | None = await self._guarded(
+                    f"heartbeat of {node_id}", self._heartbeat(node_id, trips),
+                )
+            finally:
+                timer.count(trips.count)
         return health
 
-    async def _heartbeat(self, node_id: str) -> int | None:
+    async def _heartbeat(self, node_id: str, trips: _Trips) -> int | None:
         from nmos.etcd.errors import EtcdLeaseNotFound
 
         lease_id = self._leases.get(node_id)
         if not lease_id:
+            # Not ours to renew, and answered without touching the network --
+            # the 404 that makes the Node re-register.
             return None
+
+        trips.add()
 
         with self._metrics.timer(Event.HEARTBEAT, node=node_id) as timer:
             try:
@@ -1222,14 +1281,63 @@ class EtcdRegistryBackend:
         return health
 
     async def collect_garbage(self) -> int:
-        """Local expiry is disabled in distributed mode.
+        """Stage two only: forget tombstones, never expire live resources.
 
-        A Node's liveness is an etcd lease. If every member also ran
-        health-based expiry they could disagree about which Nodes are alive,
-        and the member with the slowest clock would resurrect resources the
-        others had collected.
+        **Expiry stays disabled.** A Node's liveness is an etcd lease. If every
+        member also ran health-based expiry they could disagree about which
+        Nodes are alive, and the member with the slowest clock would resurrect
+        resources the others had collected.
+
+        **Forgetting must not be disabled with it**, which it previously was.
+        This returned 0 without touching the store, and ``gc.py`` calls the
+        backend rather than the store, so ``_forget`` was never reached in
+        distributed mode. ``remove_one`` only marks a resource non-extant, so
+        every deleted resource left a permanent record in ``_by_type`` *and* in
+        ``_type_of`` -- which meant memory grew without bound, the status
+        line's non-extant count never fell, and an id that had been deleted
+        could never be registered again under a different type, because
+        ``prepare`` still saw the old mapping and answered ID_TYPE_CONFLICT.
+
+        Stage two is safe to run locally and unilaterally: it drops records
+        that are *already* non-extant, so it cannot resurrect anything, cannot
+        remove anything a peer still considers live, and emits no grains. The
+        only cross-member requirement is that every member eventually reaches
+        the same conclusion, and every member watches the same deletes.
+
+        Returns zero, and that is not a leftover. The number this method
+        reports is the *expiry* count -- ``Registry.collect_garbage`` returns
+        ``len(events)``, and stage two produces no events, so forgetting is
+        uncounted in standalone mode too. Reporting forgotten tombstones here
+        would make one method mean two different things depending on the
+        backend, and would make ``gc.py`` announce a collection that removed
+        nothing anyone could observe.
         """
+        store = self._registry.store
+        for resource_type, resource_id in store.forgettable():
+            store.forget(resource_type, resource_id)
         return 0
+
+
+@dataclass
+class _Trips:
+    """Network waits on the critical path of one mutation.
+
+    Threaded through the call chain rather than kept on the backend, because
+    several mutations are in flight at once and an instance-level counter would
+    attribute one registration's round trips to whichever one happened to
+    finish next.
+
+    "Round trip" here means *a wait that cannot complete without the network*,
+    which includes waiting for our own commit to return through the watch even
+    though no request is sent for it. Counting only outbound requests would
+    report the fast path as costing one traversal when it costs two, and would
+    make a design that removes the second look like no improvement at all.
+    """
+
+    count: int = 0
+
+    def add(self, n: int = 1) -> None:
+        self.count += n
 
 
 class ClusterMismatch(Exception):

@@ -155,6 +155,11 @@ ignore_missing_imports = true
 testpaths = [
     "caps/tests",
     "nmos",
+    # ``bench_registry`` is here for the same reason it is in mypy's ``files``:
+    # its numbers are cited, and a benchmark that reports a wrong number
+    # confidently is worse than no benchmark. The arithmetic that turns
+    # samples into rates is cheap to test and has been wrong before.
+    "bench_registry/tests",
 ]
 addopts = "-m \"not e2e and not slow\""
 markers = [

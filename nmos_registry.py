@@ -51,6 +51,8 @@ from aiohttp import web
 from aiohttp.log import access_logger as aiohttp_access_logger
 
 from nmos.api.tr10_tls import apply_tr10_tls_restrictions
+from nmos.cluster.layout import DEFAULT_CERTIFICATE_NAME
+from nmos.registry.distributed import DistributedBackend
 from nmos.node.security_tags import NAP, RAAM, RAP
 
 # Same access-log format as the Node: aiohttp's default plus ``%Tf``, the
@@ -157,7 +159,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # --- Distributed registry (etcd) ---
     # Optional. Without --distributed nothing below is read, no etcd module is
     # imported, and the registry behaves exactly as it always has.
-    g = p.add_argument_group("Distributed Registry (etcd)")
+    g = p.add_argument_group("Distributed Registry")
+    g.add_argument("--distributedBackend", default="raft",
+                   choices=["raft", "etcd"],
+                   help="Which storage layer backs --distributed. 'raft' is "
+                        "in-process: no grpcio, no protobuf, no Go binary, and "
+                        "it runs natively on Windows. 'etcd' is the "
+                        "disk-persistent option -- it alone survives losing "
+                        "every member at once, and it alone supports resizing "
+                        "a live cluster -- and needs requirements-etcd.txt "
+                        "plus ./install-etcd.sh. Neither is deprecated. Flags "
+                        "named for one backend are REFUSED, never "
+                        "reinterpreted, when the other is selected.")
     g.add_argument("--distributed", action="store_true",
                    help="Share state with 1, 3 or 5 peer registries through a "
                         "managed etcd cluster. Requires the optional etcd "
@@ -175,6 +188,59 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         "host:client_port form (repeat once per peer). This "
                         "member plus its neighbours must total 1, 3 or 5 and "
                         "be the SAME set on every member.")
+    # --- Distributed registry: raft (the default backend) ---
+    g = p.add_argument_group("Distributed Registry (raft)")
+    g.add_argument("--raftNamespace", default="/nmos-reference/registry/v1",
+                   help="raft key namespace. Part of the cluster token, so "
+                        "two deployments on the same hosts cannot merge.")
+    g.add_argument("--raftClientPort", type=int, default=2481,
+                   help="raft member-status port (clear of --etcdClientPort's "
+                        "2381, so a raft rig and an etcd rig can share a "
+                        "machine)")
+    g.add_argument("--raftPeerPort", type=int, default=2482,
+                   help="raft transport port -- AppendEntries, RequestVote "
+                        "and InstallSnapshot between members (clear of "
+                        "--etcdPeerPort's 2382)")
+    g.add_argument("--raftStateDir",
+                   default="/var/lib/nmos-registry/raft",
+                   help="Where this member's term/vote file lives. NOT a "
+                        "database: the raft log is in memory, and what "
+                        "reaches the disk is ~24 bytes written when the "
+                        "election term changes. Deleting it tells this member "
+                        "it has never voted, which is the one state election "
+                        "safety depends on it not being in.")
+    g.add_argument("--raftCertificate", default="",
+                   help="Shared raft certificate (*.etcd.chain.pem serves "
+                        "unchanged -- the roles are identical). One "
+                        "certificate covers both raft roles, listening and "
+                        "dialling, which is what its dual serverAuth+"
+                        "clientAuth EKU is for.")
+    g.add_argument("--raftKey", default="",
+                   help="Private key for --raftCertificate")
+    g.add_argument("--raftTrustedRootCA", action="append", default=None,
+                   help="Trusted root CA for raft peer verification (PEM "
+                        "path; may be repeated)")
+    g.add_argument("--raftCertificateName",
+                   default=DEFAULT_CERTIFICATE_NAME,
+                   help="Shared SAN every peer is verified against. It is "
+                        "what stops any device certificate signed by the same "
+                        "Product CA from joining the cluster and writing to "
+                        "the registry database.")
+    g.add_argument("--raftCrlFile", default="",
+                   help="CRL for raft peer certificates. One, not two: raft "
+                        "members talk only to each other, so there is a "
+                        "single relationship to revoke against.")
+    g.add_argument("--raftDisableTLS", action="store_true",
+                   help="Disable TLS between raft members. TESTING ONLY -- "
+                        "refused off the loopback.")
+    g.add_argument("--raftRpcTimeout", type=float, default=2.0,
+                   help="Per-message deadline in seconds")
+    g.add_argument("--raftMutationTimeout", type=float, default=7.0,
+                   help="Overall deadline for one registration to commit; "
+                        "past it the Registration API answers 503.")
+
+    # --- Distributed registry: etcd ---
+    g = p.add_argument_group("Distributed Registry (etcd)")
     g.add_argument("--etcdEndpoints", default="",
                    help="Comma-separated etcd client endpoints. Normally "
                         "derived from the member list; required with "
@@ -280,6 +346,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     ns = p.parse_args(argv)
 
+    # Exactly which flags the operator typed, as opposed to which have
+    # non-default values. The backend selector needs the difference: refusing
+    # "--etcdDisableTLS without --distributedBackend etcd" has to distinguish a
+    # flag that was passed from one that merely looks passed because its
+    # default is falsy.
+    tokens = sys.argv[1:] if argv is None else argv
+    ns.suppliedFlags = sorted({
+        token.split("=", 1)[0] for token in tokens if token.startswith("--")
+    })
+
     # ``action="append"`` leaves the attribute None when the flag is omitted;
     # normalise so every CA option is uniformly a list[str].
     for attr in (
@@ -288,6 +364,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "oauth2TrustedRootCA",
         "trustedRootCA",
         "etcdTrustedRootCA",
+        "raftTrustedRootCA",
         "registryNeighbour",
     ):
         if getattr(ns, attr) is None:
@@ -695,6 +772,24 @@ def _print_distributed_banner(args: argparse.Namespace) -> None:
     print(f"                  this member: {layout.local.name}")
     print(f"                  namespace:   {layout.namespace}")
     print(f"                  endpoints:   {', '.join(config.endpoints)}")
+
+    # Everything above is topology and reads the same on either backend. Only
+    # the storage line below differs, because only the storage layer does.
+    if config.backend is DistributedBackend.RAFT:
+        print(
+            f"                  raft:        in-process, "
+            f"{layout.size}-member quorum, log in memory",
+        )
+        print(f"                  state-dir:   {config.state_dir}")
+        if not config.tls:
+            print(
+                "\n  WARNING: --raftDisableTLS — the raft transport carries "
+                "every registration\n"
+                "           and is unencrypted and unauthenticated. Testing "
+                "only.",
+            )
+        return
+
     print(
         f"                  etcd:        "
         + (
@@ -789,6 +884,107 @@ async def go_registry_authorizations(
 # Main
 # ---------------------------------------------------------------------------
 
+
+def _build_raft_node(registry: Any, config: Any) -> Any:
+    """Assemble one raft member: transport, term store, state machine, node.
+
+    Built here rather than inside the backend so that everything with a
+    lifetime is created in one place, the way the etcd supervisor and backend
+    are. A backend that constructed its own transport would own a socket the
+    caller could not close.
+    """
+    from nmos.raft.cluster import derive_raft_layout
+    from nmos.raft.cursors import CursorAllocator
+    from nmos.raft.machine import StateMachine
+    from nmos.raft.node import RaftNode
+    from nmos.raft.ownership import OwnershipTable
+    from nmos.raft.persist import TermStore
+    from nmos.raft.snapshot import SnapshotStore
+    from nmos.raft.transport import RaftTransport
+
+    layout = derive_raft_layout(config.layout)
+
+    server_ssl: ssl.SSLContext | None = None
+    client_ssl: ssl.SSLContext | None = None
+    if config.tls:
+        server_ssl, client_ssl = build_raft_ssl_contexts(config)
+
+    transport = RaftTransport(
+        local=layout.local.index,
+        peers=layout.peer_targets(),
+        bind=(config.layout.local.bind_address, layout.local.port),
+        cluster_id=layout.cluster_id,
+        member_name=layout.local.name,
+        incarnation=0,
+        server_ssl=server_ssl,
+        client_ssl=client_ssl,
+        peer_name=config.certificate_name or None,
+        rpc_timeout=config.rpc_timeout,
+    )
+
+    config.state_dir.mkdir(parents=True, exist_ok=True)
+    snapshots = SnapshotStore(registry.store)
+    machine = StateMachine(
+        registry,
+        ownership=OwnershipTable(),
+        cursors=CursorAllocator(layout.local.index),
+        member=layout.local.index,
+        snapshots=snapshots,
+    )
+    node = RaftNode(
+        layout,
+        transport=transport,
+        terms=TermStore(config.state_dir / "raft-state.json"),
+        machine=machine,
+        snapshots=snapshots,
+    )
+    # The node loaded the term store, and loading is what increments the start
+    # counter -- so the transport adopts the node's number rather than reading
+    # it again and telling every peer this member had restarted once more than
+    # it had.
+    transport.set_incarnation(node.incarnation)
+    return node
+
+
+def build_raft_ssl_contexts(config: Any) -> tuple[ssl.SSLContext, ssl.SSLContext]:
+    """Mutual TLS both ways, from one certificate.
+
+    A raft member both listens and dials, and it is the same member either
+    way, so one certificate with a dual ``serverAuth, clientAuth`` EKU covers
+    both roles -- which is exactly what the shipped set under
+    ``Certificates/build.0.etcd/`` carries.
+
+    Both contexts require a peer certificate. There is no anonymous role in
+    this protocol: every connection is between two members of a known set, so a
+    listener that accepted an unauthenticated connection would be accepting
+    proposals for the registry database from anyone who could reach the port.
+
+    Name checking is asymmetric only because ``ssl`` makes it so: the client
+    context verifies ``--raftCertificateName`` during the handshake, and the
+    listener's half of the same check lives in ``RaftTransport._refuse_certificate``,
+    because ``ssl`` has no server-side equivalent.
+    """
+    server = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    client = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+    for context in (server, client):
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.load_cert_chain(config.certificate, config.key)
+        for authority in config.trusted_root_ca:
+            context.load_verify_locations(authority)
+        context.verify_mode = ssl.CERT_REQUIRED
+        if config.crl_file:
+            context.verify_flags |= ssl.VERIFY_CRL_CHECK_LEAF
+            context.load_verify_locations(config.crl_file)
+
+    # The peer is verified against the shared SAN rather than its address, and
+    # the transport passes that name as ``server_hostname``. Members co-located
+    # on one host all answer at the same address, so address verification would
+    # have to be switched off -- and switching it off is what lets any device
+    # certificate from the same Product CA answer for a member.
+    client.check_hostname = bool(config.certificate_name)
+    return server, client
+
+
 async def main(args: argparse.Namespace) -> None:
     """Build the registry and dispatch every background task."""
     from nmos.cert_check import cert_dns_identities
@@ -856,7 +1052,17 @@ async def main(args: argparse.Namespace) -> None:
     backend: Any = StandaloneRegistryBackend(registry)
     supervisor: Any = None
 
-    if distributed is not None:
+    if distributed is not None and distributed.backend is DistributedBackend.RAFT:
+        # Imported here for symmetry with the etcd arm, and because nothing
+        # outside --distributed has any reason to pull in a consensus layer.
+        from nmos.registry.raft_backend import RaftRegistryBackend
+
+        backend = RaftRegistryBackend(
+            registry, distributed, _build_raft_node(registry, distributed),
+        )
+        await backend.start()
+
+    elif distributed is not None:
         # Imported here, not at module scope: without --distributed the etcd
         # extra need not be installed at all, and this file must import cleanly
         # in that checkout.

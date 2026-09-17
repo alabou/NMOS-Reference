@@ -413,25 +413,81 @@ banner, so the running compliance mode is visible rather than inferred.
 ### Distributed registry (`--distributed`)
 
 One registry is a single point of failure. `--distributed` runs 1, 3 or 5
-registries over a shared etcd cluster: any of them serves any request, and the
-cluster keeps working while members fail.
+registries as one cluster: any of them serves any request, and the cluster keeps
+working while members fail.
 
-| Registry/etcd pairs | Failures tolerated |
+| Members | Failures tolerated |
 |---:|---:|
 | 1 | 0 |
 | 3 | 1 |
 | 5 | 2 |
 
-etcd is authoritative for resource content, mutation ordering and Node
-liveness. Each registry keeps a complete local view and serves **Query entirely
-from memory** — the read path never touches etcd, which is why Query is exactly
-as fast distributed as standalone. That view is fed by one thing only: the etcd
-watch. A registry's own writes come back to it the same way a peer's do, so
-there is nothing to deduplicate and no way for two members to diverge.
+Whichever backend holds the state, it is authoritative for resource content,
+mutation ordering and Node liveness — and each registry still keeps a complete
+local view and serves **Query entirely from memory**. The read path never
+touches the storage layer, which is why Query is exactly as fast distributed as
+standalone, on either backend.
 
-#### Try it
+#### Two backends: `--distributedBackend {raft,etcd}`
 
-Two steps:
+Both are supported and neither is deprecated. They solve the same problem with
+different trade-offs, and the choice is one flag.
+
+| | `raft` (default) | `etcd` |
+|---|---|---|
+| Where it runs | in this process | a separate `etcd` child or cluster |
+| To install | nothing | `requirements-etcd.txt` + `./install-etcd.sh` |
+| Log | in memory, quorum-replicated | on disk, fsynced (WAL) |
+| Survives losing **every** member at once | no — the state is gone | yes |
+| Survives losing up to `f` members | yes | yes |
+| Resize a live cluster | no — rolling restart | yes |
+| Native Windows | yes | **no** — client only (etcd rates it Tier 3) |
+| Round trips per registration | **1** | 2–3 |
+
+The `raft` log is deliberately volatile. IS-04 registry state is *soft*: every
+Node re-registers its resources within the 12 s garbage-collection interval, so
+a cluster that lost everything repopulates itself. What that buys is the removal
+of the fsync and of the read-before-write from the mutation path. Only
+`{term, voted_for, incarnation}` reaches the disk — about 24 bytes, written when
+the election term changes.
+
+Pick `etcd` when a deployment genuinely needs the registry's state to survive
+total cluster loss without waiting for the Nodes to come back, or needs to add
+and remove members without restarting. Pick `raft` — the default — otherwise.
+
+Flags are named for their backend and are **refused, never reinterpreted**, when
+the other one is selected: passing `--etcdEndpoints` without
+`--distributedBackend etcd` is a startup error, not a silently ignored argument.
+
+The functional contract is identical on both, and a shared conformance suite
+(`nmos/registry/tests/test_cluster_conformance.py`) runs the same assertions
+against each: one view across members, identical paging cursors, the 400-vs-503
+taxonomy, `DEGRADED` keeping Query alive when writes stop, and garbage
+collection with re-registration.
+
+#### Try it — raft
+
+Nothing to install and nothing to bring up first. The registries *are* the
+cluster, so start three of them, one terminal each:
+
+```bash
+./start-registry-raft.sh 0 3     # member 0
+./start-registry-raft.sh 1 3     # member 1
+./start-registry-raft.sh 2 3     # member 2
+```
+
+Until two are up there is no quorum and writes are refused with 503 — that is
+the cluster working, not failing.
+
+Member *n* uses registration `8544 + 10n`, query `8543 + 10n`, WebSocket
+`8548 + 10n`, and the raft transport on `2482 + 10n`. Add `--secure` for mutual
+TLS on both the NMOS listeners and the peer transport; it needs no hosts file,
+because raft verifies a peer against the shared certificate SAN rather than
+against the address the connection came from.
+
+#### Try it — etcd
+
+Two steps first:
 
 ```bash
 pip install -r requirements-etcd.txt   # grpcio, protobuf
@@ -453,7 +509,10 @@ Then, one terminal each:
 ```
 
 Register against member 0 and read it back from member 1 — the resource, its
-paging cursors and its subscription events are identical on both.
+paging cursors and its subscription events are identical on both. Each
+registry's local view is fed by one thing only: the etcd watch. A registry's own
+writes come back to it the same way a peer's do, so there is nothing to
+deduplicate and no way for two members to diverge.
 
 Member *n* uses one port block of 10: registration `8444 + 10n`, query
 `8443 + 10n`, WebSocket `8448 + 10n`.
@@ -503,22 +562,28 @@ configured for refuses to serve rather than joining a split view.
 
 #### Platform support
 
+This section is about `--distributedBackend etcd` only. The `raft` backend is
+this checkout's own asyncio code and runs wherever Python does, native Windows
+included — `start-registry-raft.bat` is the whole rig there, with nothing in WSL
+and nothing to install.
+
 etcd rates its own platforms: Linux amd64/arm64 are **Tier 1** ("guaranteed to
 pass all tests including functional and robustness tests"), while windows/amd64
 is **Tier 3** ("considered unstable"), unmaintained and *not* covered by the
 suites that verify Raft/WAL/fsync durability — the exact guarantees that justify
 putting the registry's state in etcd.
 
-So **no etcd member ever runs on native Windows.** There, `--distributed`
-implies `--etcdExternal`: the registry is a client of a cluster managed
-elsewhere, and `--etcdBinary`/`--etcdDataDir`/`--etcdBootstrap` are rejected
-rather than ignored. Run the cluster under WSL with `start-etcd-cluster.bat` and
-point the registry at it with `start-registry-dist.bat`. Nothing needs
-installing on the Windows side — `etcd_cluster.py status` and `endpoints` are
-pure client calls and work from Windows against the WSL cluster. Against a
-`--secure` cluster `status` is still a pure client call, but it has to
-authenticate like any other client, so it needs read access to the certificates
-in `Certificates/build.0.etcd/` as well.
+So **no etcd member ever runs on native Windows.** There,
+`--distributedBackend etcd` implies `--etcdExternal`: the registry is a client
+of a cluster managed elsewhere, and
+`--etcdBinary`/`--etcdDataDir`/`--etcdBootstrap` are rejected rather than
+ignored. Run the cluster under WSL with `start-etcd-cluster.bat` and point the
+registry at it with `start-registry-dist.bat`. Nothing needs installing on the
+Windows side — `etcd_cluster.py status` and `endpoints` are pure client calls
+and work from Windows against the WSL cluster. Against a `--secure` cluster
+`status` is still a pure client call, but it has to authenticate like any other
+client, so it needs read access to the certificates in
+`Certificates/build.0.etcd/` as well.
 
 WSL itself is not a special case and gets no detection: inside WSL
 `sys.platform` is `"linux"`, so a registry there is an ordinary POSIX member
@@ -537,8 +602,27 @@ The set ships in `Certificates/build.0.etcd/` — SNX10000..SNX10004, so a clone
 runs a 1-, 3- or 5-member cluster with nothing outside it — and validates
 against the same two roots in `Certificates/build.0/` that the Nodes use.
 
-`start-registry-dist-secure.sh` assembles all of it, in either of the two
-shapes a distributed registry takes:
+The **raft** backend reuses that same set unchanged, and takes the same RAP
+argument:
+
+```bash
+./start-registry-raft.sh 0 3 2 --secure    # member 0, RAP=2 (mutual TLS)
+./start-registry-raft.sh 1 3 2 --secure
+./start-registry-raft.sh 2 3 2 --secure
+```
+
+One certificate covers both raft roles — listening and dialling — which is what
+the dual EKU is for, and it needs no hosts file. etcd verifies a peer against
+the address its connection arrived *from*, which on one machine is always
+127.0.0.1, so its members have to be named; raft verifies the shared SAN
+(`--raftCertificateName`) instead, passed as the TLS server name, so members
+address each other as plain 127.0.0.1. That check is what stops any device
+certificate signed by the same Product CA from joining the cluster, and it runs
+in **both** directions — as `server_hostname` when dialling, and against the
+presented certificate before the peer handshake is answered.
+
+`start-registry-dist-secure.sh` assembles the etcd equivalent, in either of the
+two shapes an etcd-backed registry takes:
 
 ```bash
 # MANAGED — each registry starts and supervises its own etcd member.
@@ -960,7 +1044,9 @@ multi_aud_as.py         — Runs fake-as/ with a multi-Node token audience, for 
 run_server.py           — Lightweight wrapper for embedding nmos_node from scripts
 demo_controller.py      — Standalone demo controller for manual exploration
 start-node*.sh          — Launch scripts for the three security configurations
-start-registry*.sh      — Registry launchers (bare = no TLS; the other takes a RAP value)
+start-registry*.sh      — Registry launchers (bare = no TLS; the others take a RAP value).
+                          -dist* back onto etcd and need a cluster first; -raft is
+                          self-contained — the members are the registries
 start-fake-as.sh        — Test OAuth 2.0 Authorization Server (vendored; see below)
 start-node*-bare.bat    — Windows launchers for the bare (registry-only) rigs
 start-registry*.bat     — Windows registry launchers

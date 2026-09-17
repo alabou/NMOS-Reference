@@ -696,6 +696,88 @@ class RegistryStore:
             if siblings is not None:
                 siblings.discard(resource.id)
 
+    def subtree(
+        self, resource_type: ResourceType, resource_id: str,
+    ) -> list[RegisteredResource]:
+        """A resource and every descendant, deepest first, in a fixed order.
+
+        The order mirrors ``_erase_subtree``: children before their parent, so
+        a caller acting on the list in order never removes a parent while its
+        children are still present.
+
+        Exists for the distributed backends, which have to *see* what a cascade
+        is about to remove before it removes it -- a snapshot taken while a
+        Node is being deleted must still describe the resources that existed at
+        the index it claims. Siblings are sorted by id rather than left in
+        ``_children`` order, because that is a ``set`` and its iteration order
+        differs between members.
+
+        Returns an empty list when the resource is absent or already
+        non-extant, matching ``delete``'s view of what there is to remove.
+        """
+        root = self.get(resource_type, resource_id)
+        if root is None:
+            return []
+
+        collected: list[RegisteredResource] = []
+
+        def walk(resource: RegisteredResource) -> None:
+            for child_id in sorted(self._children.get(resource.id, ())):
+                child = self.find_any(child_id)
+                if child is not None and child.extant:
+                    walk(child)
+            collected.append(resource)
+
+        walk(root)
+        return collected
+
+    def forgettable(self, now: int | None = None) -> list[tuple[ResourceType, str]]:
+        """Which tombstones have outlived the forget interval, in a fixed order.
+
+        Pure query: it decides *what* stage two would drop without dropping
+        anything, so the decision can be made in one place and applied in
+        another. That split is what the distributed backends need — one member
+        decides, every member applies the same list — and it is why the
+        clock is read here and never inside ``forget``.
+
+        Sorted by ``(type, id)`` so two members handed the same store produce
+        byte-identical lists. Iteration order of the underlying buckets depends
+        on insertion history, which differs between a member that has been up
+        for a week and one that preloaded five minutes ago.
+
+        Args:
+            now: TAI seconds to measure against. Defaults to the local clock;
+                pass it explicitly wherever the answer has to be reproducible.
+        """
+        moment = health_now() if now is None else now
+        forget_before = moment - int(self._forget_interval)
+        victims = [
+            (resource.resource_type, resource.id)
+            for bucket in self._by_type.values()
+            for resource in bucket.values()
+            if not resource.extant and resource.health < forget_before
+        ]
+        victims.sort(key=lambda victim: (victim[0].value, victim[1]))
+        return victims
+
+    def forget(self, resource_type: ResourceType, resource_id: str) -> bool:
+        """Drop one tombstoned resource entirely. Returns whether it was there.
+
+        Stage two of the lifecycle, addressable by id. Reads no clock and
+        makes no policy decision — ``forgettable`` does that — so applying a
+        list of victims produces the same store on every member regardless of
+        when they apply it.
+
+        Refuses to drop a resource that is still extant. Stage two exists to
+        clear records that stage one already retired; dropping a live resource
+        here would erase it without the removal grain its subscribers are owed.
+        """
+        resource = self._by_type[resource_type].get(resource_id)
+        if resource is None or resource.extant:
+            return False
+        self._forget(resource)
+        return True
+
     # -----------------------------------------------------------------------
     # Health and garbage collection
     # -----------------------------------------------------------------------
@@ -752,7 +834,6 @@ class RegistryStore:
         """
         now = health_now()
         expire_before = now - int(self._gc_interval)
-        forget_before = now - int(self._forget_interval)
 
         events: list[ResourceEvent] = []
 
@@ -765,11 +846,13 @@ class RegistryStore:
                 )
                 events.extend(self._erase_subtree(node))
 
-        # Stage two: drop tombstones whose forget interval has elapsed.
-        for bucket in self._by_type.values():
-            for resource in list(bucket.values()):
-                if not resource.extant and resource.health < forget_before:
-                    self._forget(resource)
+        # Stage two: drop tombstones whose forget interval has elapsed. Routed
+        # through ``forgettable``/``forget`` rather than inlined, so standalone
+        # and the distributed backends share one answer to "which records are
+        # past saving" -- the two stages are independently suppressible, and a
+        # backend that disables expiry must not lose forgetting with it.
+        for resource_type, resource_id in self.forgettable(now):
+            self.forget(resource_type, resource_id)
 
         return events
 

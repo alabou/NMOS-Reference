@@ -34,11 +34,18 @@ from nmos.node.types import format_tai
 
 _CONN = "/x-nmos/connection/v1.1/single/senders"
 
-# Long enough for the PATCH to return with the activation still pending.
-_DELAY_S = 0.20
+# Long enough for the PATCH to return with the activation still pending -- and,
+# for the cancellation tests, long enough for a *second* PATCH to complete
+# before the timer fires. That second round trip is what sets the floor, and it
+# is why this is 0.50 rather than the 0.20 it started at: at 0.20 the margin was
+# thin enough that merely importing more test modules pushed
+# ``test_cancelling_one_leaves_the_other_armed`` over it, and the test failed
+# with the activation it had cancelled already applied. The failure looked like
+# a broken cancellation and was a lost race.
+_DELAY_S = 0.50
 # Comfortably past _DELAY_S, but far below the 37 s TAI offset, so a test that
 # passes here proves the offset was applied rather than merely tolerated.
-_SETTLE_S = 0.60
+_SETTLE_S = 1.00
 
 
 def _make_node() -> Node:

@@ -88,6 +88,17 @@ class Event(Enum):
     HEARTBEAT = "heartbeat"
     """One lease renewal."""
 
+    MUTATION = "mutation"
+    """One Registration-API mutation, end to end, in ``units`` round trips.
+
+    Backend-neutral on purpose. "How many network round trips does a
+    registration cost?" is the question the distributed backends most need
+    answered, and it is the one question latency cannot answer: a fast round
+    trip and a skipped round trip look identical on a quiet loopback rig and
+    diverge completely on a real network. Counting them directly turns a
+    design claim into a measurement.
+    """
+
 
 @dataclass
 class Counter:
@@ -102,12 +113,22 @@ class Counter:
     count: int = 0
     total_seconds: float = 0.0
     max_seconds: float = 0.0
+    units_count: int = 0
+    total_units: int = 0
+    max_units: int = 0
     _samples: deque[float] = field(
         default_factory=lambda: deque(maxlen=1024), repr=False,
     )
 
-    def record(self, seconds: float | None = None) -> None:
+    def record(
+        self, seconds: float | None = None, units: int | None = None,
+    ) -> None:
         self.count += 1
+        if units is not None:
+            self.units_count += 1
+            self.total_units += units
+            if units > self.max_units:
+                self.max_units = units
         if seconds is None:
             return
         self.total_seconds += seconds
@@ -118,6 +139,17 @@ class Counter:
     @property
     def mean_seconds(self) -> float:
         return self.total_seconds / self.count if self.count else 0.0
+
+    @property
+    def mean_units(self) -> float:
+        """Average countable work per event -- round trips, entries, grains.
+
+        Totalled rather than sampled into the reservoir: a mean over *every*
+        event is what a design claim like "one round trip per registration" has
+        to be checked against, and a bounded reservoir would silently answer
+        for the last thousand instead of for the run.
+        """
+        return self.total_units / self.units_count if self.units_count else 0.0
 
     def percentile(self, fraction: float) -> float:
         """Nearest-rank percentile over the retained samples.
@@ -142,11 +174,13 @@ class Sample:
     monotonic: float
     seconds: float | None
     detail: dict[str, Any]
+    units: int | None = None
 
     def render(self) -> str:
         duration = "" if self.seconds is None else f" {self.seconds * 1e3:.3f}ms"
+        countable = "" if self.units is None else f" x{self.units}"
         inputs = " ".join(f"{k}={v}" for k, v in self.detail.items())
-        return f"{self.event.value}{duration} {inputs}".rstrip()
+        return f"{self.event.value}{duration}{countable} {inputs}".rstrip()
 
 
 class RegistryMetrics:
@@ -178,6 +212,8 @@ class RegistryMetrics:
         self,
         event: Event,
         seconds: float | None = None,
+        *,
+        units: int | None = None,
         **detail: Any,
     ) -> None:
         """Record one event with its decision-driving inputs.
@@ -187,16 +223,25 @@ class RegistryMetrics:
         what makes a fence wait diagnosable is the revision waited for versus
         the revision applied. Forcing those into a fixed schema would mean
         omitting whichever one the next investigation needs.
+
+        ``units`` is the exception, and it is separate from ``detail`` because
+        it is *aggregated* rather than merely retained. Detail lives only in
+        the bounded ring, so a question about a whole benchmark run -- "how
+        many round trips did the average registration take?" -- cannot be
+        answered from it once the ring has turned over. Anything countable
+        belongs here: round trips per mutation, entries per batch, grains per
+        fan-out.
         """
         if not self._enabled:
             return
-        self.counter(event).record(seconds)
+        self.counter(event).record(seconds, units)
         self._trace.append(
             Sample(
                 event=event,
                 monotonic=time.monotonic(),
                 seconds=seconds,
                 detail=detail,
+                units=units,
             ),
         )
 
@@ -234,6 +279,12 @@ class RegistryMetrics:
                 "p95_ms": counter.percentile(0.95) * 1e3,
                 "p99_ms": counter.percentile(0.99) * 1e3,
                 "max_ms": counter.max_seconds * 1e3,
+                # Always present, zero where nothing countable was recorded,
+                # so the benchmark harness can read one shape for every event
+                # rather than branching on which ones carry units.
+                "total_units": counter.total_units,
+                "mean_units": counter.mean_units,
+                "max_units": counter.max_units,
             }
             for event, counter in sorted(
                 self._counters.items(), key=lambda item: item[0].value,
@@ -246,18 +297,24 @@ class RegistryMetrics:
             return "registry metrics: nothing recorded yet"
         lines = [
             f"{'event':22} {'count':>8} {'mean':>9} {'p50':>9} "
-            f"{'p95':>9} {'p99':>9} {'max':>9}",
+            f"{'p95':>9} {'p99':>9} {'max':>9} {'per-op':>9}",
         ]
         for event, counter in sorted(
             self._counters.items(), key=lambda item: item[0].value,
         ):
+            # Blank rather than 0.00 where nothing countable was recorded: a
+            # zero would read as "measured, and it was none", which is a
+            # different and much more alarming claim than "not measured here".
+            per_op = (
+                f"{counter.mean_units:>9.2f}" if counter.units_count else " " * 9
+            )
             lines.append(
                 f"{event.value:22} {counter.count:>8} "
                 f"{counter.mean_seconds * 1e3:>8.3f}m "
                 f"{counter.percentile(0.50) * 1e3:>8.3f}m "
                 f"{counter.percentile(0.95) * 1e3:>8.3f}m "
                 f"{counter.percentile(0.99) * 1e3:>8.3f}m "
-                f"{counter.max_seconds * 1e3:>8.3f}m",
+                f"{counter.max_seconds * 1e3:>8.3f}m {per_op}",
             )
         return "\n".join(lines)
 
@@ -278,6 +335,23 @@ class RegistryMetrics:
         total = hit_count + miss_count
         return hit_count / total if total else 0.0
 
+    @property
+    def round_trips_per_mutation(self) -> float:
+        """Measured network round trips per Registration-API mutation.
+
+        The headline number for any distributed backend, and the one the
+        acceptance criteria are written against. Latency cannot substitute for
+        it: every distributed benchmark in this repository runs on loopback,
+        where a round trip costs almost nothing, so a design that takes three
+        of them and one that takes one look nearly identical here and diverge
+        by a factor of three on a real network.
+
+        Zero when nothing has been recorded, which for a standalone registry
+        is the correct answer rather than a missing one.
+        """
+        counter = self._counters.get(Event.MUTATION)
+        return counter.mean_units if counter else 0.0
+
     def clear(self) -> None:
         self._counters.clear()
         self._trace.clear()
@@ -286,7 +360,7 @@ class RegistryMetrics:
 class _Timer:
     """Times a block; records duration and any exception type."""
 
-    __slots__ = ("_metrics", "_event", "_detail", "_started")
+    __slots__ = ("_metrics", "_event", "_detail", "_started", "_units")
 
     def __init__(
         self, metrics: RegistryMetrics, event: Event, detail: dict[str, Any],
@@ -295,6 +369,7 @@ class _Timer:
         self._event = event
         self._detail = detail
         self._started = 0.0
+        self._units: int | None = None
 
     def __enter__(self) -> _Timer:
         self._started = time.perf_counter()
@@ -309,8 +384,19 @@ class _Timer:
         """
         self._detail.update(detail)
 
+    def count(self, units: int) -> None:
+        """Record how much countable work the block did.
+
+        Absolute, not incremental, so a retry loop that calls it once per
+        attempt reports the attempt count rather than a running total that
+        depends on where the loop happened to exit.
+        """
+        self._units = units
+
     def __exit__(self, exc_type: Any, *_rest: Any) -> None:
         elapsed = time.perf_counter() - self._started
         if exc_type is not None:
             self._detail["failed"] = exc_type.__name__
-        self._metrics.record(self._event, elapsed, **self._detail)
+        self._metrics.record(
+            self._event, elapsed, units=self._units, **self._detail,
+        )

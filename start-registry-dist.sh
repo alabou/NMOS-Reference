@@ -60,6 +60,7 @@ exec "$PYTHON" nmos_registry.py \
     --queryPort "$QUERY_PORT" \
     --queryWebSocketPort "$WS_PORT" \
     --distributed \
+    --distributedBackend etcd \
     --etcdExternal \
     --etcdDisableTLS \
     --registryAdvertisedHost 127.0.0.1 \

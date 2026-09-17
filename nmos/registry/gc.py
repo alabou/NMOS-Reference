@@ -39,9 +39,13 @@ async def run_garbage_collection(
     automatically".
 
     Collection also drives the second stage of the resource lifecycle,
-    dropping tombstoned records once their forget interval has elapsed. Both
-    live in ``RegistryStore.collect_garbage``; this task only supplies the
-    clock.
+    dropping tombstoned records once their forget interval has elapsed. This
+    task only supplies the clock.
+
+    The two stages are **independently suppressible**, and must be: a backend
+    that turns off expiry has no reason to turn off forgetting, and turning
+    both off with one ``return 0`` is how the distributed registry used to
+    accumulate tombstones forever.
 
     The AMWA test-suite mock records heartbeat times but never expires
     anything, so a Node that is unplugged stays in its registry forever.
@@ -49,10 +53,17 @@ async def run_garbage_collection(
     Args:
         backend: Where collection actually happens. Defaults to the standalone
             backend, which is the behaviour this task has always had. The
-            distributed backend suppresses local expiry entirely and returns
-            zero: there, a Node's liveness is an etcd lease, and every member
-            running its own health-based expiry would let them disagree about
-            which Nodes are alive.
+            distributed backend suppresses local *expiry* — there, a Node's
+            liveness is a lease, and every member running its own health-based
+            expiry would let them disagree about which Nodes are alive — but
+            still runs stage two, which only drops records already marked
+            non-extant and so cannot disagree with anyone.
+
+    The returned count is the number of resources *expired*, which stage two
+    deliberately does not contribute to: forgetting emits no grains and is
+    invisible to every client, so announcing it as a collection would report a
+    removal nobody can observe. A distributed backend therefore reports zero
+    even on a pass that dropped tombstones.
     """
     collector = backend or StandaloneRegistryBackend(registry)
     log.info("registry: garbage collection running every %.1fs", GC_TICK_S)

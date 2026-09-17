@@ -41,6 +41,7 @@ import os
 import socket
 import sys
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -74,13 +75,63 @@ class DistributedConfigError(SystemExit):
         super().__init__(f"CONFIG: {message}")
 
 
+class DistributedBackend(Enum):
+    """Which storage layer backs ``--distributed``.
+
+    Both are supported and neither is deprecated. They differ in durability and
+    platform, not in maturity: etcd persists to disk, survives the loss of every
+    member at once, and can be resized while running; raft is in-process, needs
+    nothing installed beyond this checkout, and runs natively on Windows, where
+    etcd is Tier 3 and therefore client-only here.
+
+    An enum rather than bare strings so the two arms cannot drift apart by a
+    typo, and so ``isinstance`` narrowing on the config has something to be
+    checked against.
+    """
+
+    ETCD = "etcd"
+    RAFT = "raft"
+
+
 @dataclass(frozen=True)
 class DistributedConfig:
-    """A validated distributed-registry configuration."""
+    """What every distributed backend is configured with.
+
+    Deliberately a base class with a concrete arm per backend, rather than one
+    dataclass carrying every field either might need. The banner, the TLS
+    refusals and the mutation timeouts all read the *same* ten fields whichever
+    backend is running; the alternative is an ``if backend ==`` ladder in each
+    of them, and a field like ``rpc_timeout`` quietly meaning two things.
+
+    **No field here may acquire a default.** A dataclass base with a defaulted
+    field forces defaults onto every subclass field too, and the test rigs
+    rebuild these from ``config.__dict__``, which only works while every field
+    is constructible by keyword.
+    """
 
     layout: ClusterLayout
     endpoints: tuple[str, ...]
+    """Where the peers are. etcd: the client endpoints this registry dials.
+    raft: the peer transport targets, local first."""
     namespace: str
+
+    tls: bool
+    certificate: str
+    key: str
+    trusted_root_ca: tuple[str, ...]
+    certificate_name: str
+
+    rpc_timeout: float
+    mutation_timeout: float
+
+    @property
+    def backend(self) -> DistributedBackend:
+        raise NotImplementedError
+
+
+@dataclass(frozen=True)
+class EtcdConfig(DistributedConfig):
+    """Configuration for the etcd-backed distributed registry."""
 
     external: bool
     """True when no etcd process is managed by this registry -- either
@@ -90,20 +141,148 @@ class DistributedConfig:
     data_dir: Path
     bootstrap: bool
 
-    tls: bool
-    certificate: str
-    key: str
-    trusted_root_ca: tuple[str, ...]
-    certificate_name: str
     client_crl_file: str
     peer_crl_file: str
 
-    rpc_timeout: float
-    mutation_timeout: float
+    @property
+    def backend(self) -> DistributedBackend:
+        return DistributedBackend.ETCD
 
     @property
     def manages_process(self) -> bool:
         return not self.external
+
+
+@dataclass(frozen=True)
+class RaftConfig(DistributedConfig):
+    """Configuration for the in-process raft-backed distributed registry."""
+
+    state_dir: Path
+    """Where the term/vote file lives.
+
+    Not a database directory. The raft backend keeps its log in memory; what
+    reaches the disk is about 24 bytes of ``{term, voted_for, incarnation}``,
+    written when the election term changes. Deleting it is not equivalent to
+    deleting an etcd data directory -- it is equivalent to telling this member
+    it has never voted, which is exactly the state election safety depends on
+    it not being in. See ``nmos/raft/persist.py``.
+    """
+
+    crl_file: str
+    """One CRL, not two.
+
+    etcd has separate client and peer listeners with separate certificate
+    roles; raft members talk only to each other, so there is one relationship
+    to revoke against.
+    """
+
+    peer_port: int
+
+    @property
+    def backend(self) -> DistributedBackend:
+        return DistributedBackend.RAFT
+
+
+@dataclass(frozen=True)
+class _StorageFlags:
+    """One backend's storage-layer flag family, by name and by value.
+
+    The security refusals below -- plaintext off the loopback, plaintext under a
+    secured registry, and the certificate-set check -- are identical arguments
+    whichever storage layer is running, and they are the most dangerous code in
+    this module to duplicate. A second copy written for a new backend that
+    happened to omit one would ship an unencrypted registry database on a LAN,
+    while the refusal that should have caught it sat ten lines away, working
+    perfectly, for the other backend.
+
+    So there is one implementation, and this record is what tells it which
+    flags to name in its message and which values to inspect. ``flag`` builds
+    the flag name from the prefix, so ``--etcdDisableTLS`` and
+    ``--raftDisableTLS`` come out of the same format string.
+    """
+
+    backend: DistributedBackend
+    prefix: str
+    """Flag-name stem: ``etcd`` gives ``--etcdCertificate``."""
+
+    noun: str
+    """How the storage layer is referred to in prose, mid-sentence."""
+
+    certificate_hint: str
+    """Where this backend's shipped certificate set lives."""
+
+    roles_hint: str
+    """What the one shared certificate covers, for the 'why one cert' line."""
+
+    name_hint: str
+    """What ``--*CertificateName`` is enforced as, and what it prevents."""
+
+    certificate: str
+    key: str
+    trusted_root_ca: tuple[str, ...]
+    certificate_name: str
+    crls: tuple[tuple[str, str], ...]
+    """``(flag, path)`` for each CRL that was actually supplied."""
+
+    client_port: int
+    peer_port: int
+
+    def flag(self, suffix: str) -> str:
+        return f"--{self.prefix}{suffix}"
+
+
+def _etcd_flags(args: Any) -> _StorageFlags:
+    """The etcd flag family, as the shared validators see it."""
+    crls = [
+        (flag, path) for flag, path in (
+            ("--etcdClientCrlFile", getattr(args, "etcdClientCrlFile", "")),
+            ("--etcdPeerCrlFile", getattr(args, "etcdPeerCrlFile", "")),
+        ) if path
+    ]
+    return _StorageFlags(
+        backend=DistributedBackend.ETCD,
+        prefix="etcd",
+        noun="etcd",
+        certificate_hint="Certificates/build.0.etcd/",
+        roles_hint="all four etcd roles",
+        name_hint=(
+            "it is both the gRPC target-name override and etcd's "
+            "--client/peer-cert-allowed-hostname, which is what stops any "
+            "device certificate signed by the same Product CA from writing to "
+            "the registry database"
+        ),
+        certificate=getattr(args, "etcdCertificate", ""),
+        key=getattr(args, "etcdKey", ""),
+        trusted_root_ca=tuple(getattr(args, "etcdTrustedRootCA", None) or ()),
+        certificate_name=getattr(args, "etcdCertificateName", ""),
+        crls=tuple(crls),
+        client_port=getattr(args, "etcdClientPort", 0),
+        peer_port=getattr(args, "etcdPeerPort", 0),
+    )
+
+
+def _raft_flags(args: Any) -> _StorageFlags:
+    """The raft flag family, as the shared validators see it."""
+    crl = getattr(args, "raftCrlFile", "")
+    return _StorageFlags(
+        backend=DistributedBackend.RAFT,
+        prefix="raft",
+        noun="the raft cluster",
+        certificate_hint="Certificates/build.0.etcd/",
+        roles_hint="both raft roles -- listening and dialling",
+        name_hint=(
+            "it is the SAN every peer is verified against, which is what "
+            "stops any device certificate signed by the same Product CA from "
+            "joining the cluster and writing to the registry database"
+        ),
+        certificate=getattr(args, "raftCertificate", ""),
+        key=getattr(args, "raftKey", ""),
+        trusted_root_ca=tuple(getattr(args, "raftTrustedRootCA", None) or ()),
+        certificate_name=getattr(args, "raftCertificateName", ""),
+        crls=((("--raftCrlFile", crl),) if crl else ()),
+        client_port=getattr(args, "raftClientPort", 0),
+        peer_port=getattr(args, "raftPeerPort", 0),
+    )
 
 
 def etcd_extra_available() -> bool:
@@ -165,6 +344,160 @@ def resolve_distributed_config(args: Any) -> DistributedConfig | None:
         _reject_stray_flags(args)
         return None
 
+    backend = DistributedBackend(
+        getattr(args, "distributedBackend", DistributedBackend.RAFT.value),
+    )
+    _reject_flags_for_the_other_backend(args, backend)
+
+    if backend is DistributedBackend.ETCD:
+        return _resolve_etcd(args)
+    return _resolve_raft(args)
+
+
+_ETCD_TO_RAFT: dict[str, str | None] = {
+    "--etcdNamespace": "--raftNamespace",
+    "--etcdClientPort": "--raftClientPort",
+    "--etcdPeerPort": "--raftPeerPort",
+    "--etcdCertificate": "--raftCertificate",
+    "--etcdKey": "--raftKey",
+    "--etcdTrustedRootCA": "--raftTrustedRootCA",
+    "--etcdCertificateName": "--raftCertificateName",
+    "--etcdPeerCrlFile": "--raftCrlFile",
+    "--etcdDisableTLS": "--raftDisableTLS",
+    "--etcdRpcTimeout": "--raftRpcTimeout",
+    "--etcdMutationTimeout": "--raftMutationTimeout",
+    "--etcdDataDir": "--raftStateDir",
+    # None means the concept does not exist on the other side. That is a
+    # sanctioned divergence, not an omission, so the message says so rather
+    # than leaving the operator hunting for a flag that was never written.
+    "--etcdEndpoints": None,
+    "--etcdExternal": None,
+    "--etcdBinary": None,
+    "--etcdBootstrap": None,
+    "--etcdClientCrlFile": None,
+}
+
+_RAFT_TO_ETCD = {
+    raft: etcd for etcd, raft in _ETCD_TO_RAFT.items() if raft is not None
+}
+
+
+def _reject_flags_for_the_other_backend(
+    args: Any, backend: DistributedBackend,
+) -> None:
+    """Refuse backend flags the selected backend will never read.
+
+    The failure this exists to make impossible: a command line full of
+    ``--etcd*`` flags quietly coming up on raft because ``--distributedBackend``
+    was left at its default. That registry would start, form a cluster, and
+    serve -- and its operator, reading back their own command line, would
+    believe they had joined an etcd cluster. Nothing later would contradict
+    them until the two halves of the deployment failed to see each other.
+
+    Refused, never reinterpreted, and never silently ignored.
+    """
+    supplied = set(getattr(args, "suppliedFlags", ()) or ())
+    explicit = "--distributedBackend" in supplied
+
+    if backend is DistributedBackend.RAFT:
+        offending = sorted(supplied & set(_ETCD_TO_RAFT))
+        mapping: dict[str, str | None] = _ETCD_TO_RAFT
+        other = "etcd"
+    else:
+        offending = sorted(supplied & set(_RAFT_TO_ETCD))
+        mapping = dict(_RAFT_TO_ETCD)
+        other = "raft"
+
+    if not offending:
+        return
+
+    equivalents = [
+        mapping[flag] for flag in offending if mapping.get(flag) is not None
+    ]
+    instead = (
+        f"pass {', '.join(str(e) for e in equivalents)} instead"
+        if equivalents else
+        f"{backend.value} has no equivalent -- it manages no separate "
+        f"process, so there is nothing to point at, launch, store or bootstrap"
+    )
+    named = ", ".join(offending)
+
+    if not explicit:
+        raise DistributedConfigError(
+            f"{named} cannot be used without --distributedBackend {other}.\n"
+            f"  --distributedBackend defaults to {backend.value}, a different "
+            f"storage layer with its own flags, so the flag(s) above would be "
+            f"read by nothing at all -- and a registry that came up on "
+            f"{backend.value} while its operator believed it had joined "
+            f"{'an etcd' if other == 'etcd' else 'a raft'} cluster is exactly "
+            f"the failure this refusal exists to prevent.\n"
+            f"  Add --distributedBackend {other} to use them"
+            f"{' (that backend needs `pip install -r requirements-etcd.txt` '
+               'and `./install-etcd.sh`)' if other == 'etcd' else ''}, "
+            f"or {instead}.",
+        )
+
+    raise DistributedConfigError(
+        f"{named} cannot be used with --distributedBackend {backend.value}.\n"
+        f"  Both backends are supported and neither is deprecated, but they "
+        f"are configured separately: a flag named for one is never read by "
+        f"the other.\n"
+        f"  Either change --distributedBackend, or {instead}.",
+    )
+
+
+def _resolve_raft(args: Any) -> RaftConfig:
+    """The raft arm. No optional extra, no child process, no platform gate."""
+    from nmos.cluster.layout import ClusterConfigError, MemberSpec, derive_cluster
+    from nmos.raft.cluster import RAFT_FLAVOUR
+
+    flags = _raft_flags(args)
+    tls = not args.raftDisableTLS
+    _reject_plaintext_storage_under_a_secure_registry(args, flags, tls=tls)
+    _reject_plaintext_storage_off_the_loopback(args, flags, tls=tls)
+    _validate_tls_inputs(flags, tls=tls)
+
+    members = _canonical_members(args, flags)
+    specs = [
+        MemberSpec(
+            host=host, client_port=client, peer_port=peer,
+            bind_address=_resolve_host(host),
+        )
+        for host, client, peer in members
+    ]
+    try:
+        layout = derive_cluster(
+            specs,
+            local_host=members[0][0],
+            local_peer_port=members[0][2],
+            namespace=args.raftNamespace,
+            tls=tls,
+            flavour=RAFT_FLAVOUR,
+        )
+    except ClusterConfigError as exc:
+        raise DistributedConfigError(str(exc)) from exc
+
+    return RaftConfig(
+        layout=layout,
+        endpoints=tuple(
+            f"{m.host}:{m.peer_port}" for m in layout.members
+        ),
+        namespace=args.raftNamespace,
+        tls=tls,
+        certificate=args.raftCertificate,
+        key=args.raftKey,
+        trusted_root_ca=tuple(args.raftTrustedRootCA),
+        certificate_name=args.raftCertificateName,
+        rpc_timeout=args.raftRpcTimeout,
+        mutation_timeout=args.raftMutationTimeout,
+        state_dir=Path(args.raftStateDir),
+        crl_file=args.raftCrlFile,
+        peer_port=layout.local.peer_port,
+    )
+
+
+def _resolve_etcd(args: Any) -> EtcdConfig:
+    """The etcd arm: an optional extra, a child process, a platform gate."""
     require_etcd_extra()
 
     from nmos.etcd.cluster import (
@@ -179,10 +512,11 @@ def resolve_distributed_config(args: Any) -> DistributedConfig | None:
     if windows:
         external = _apply_windows_rule(args)
 
+    flags = _etcd_flags(args)
     tls = not args.etcdDisableTLS
-    _reject_plaintext_etcd_under_a_secure_registry(args, tls=tls)
-    _reject_plaintext_etcd_off_the_loopback(args, tls=tls)
-    _validate_tls_inputs(args, tls=tls)
+    _reject_plaintext_storage_under_a_secure_registry(args, flags, tls=tls)
+    _reject_plaintext_storage_off_the_loopback(args, flags, tls=tls)
+    _validate_tls_inputs(flags, tls=tls)
 
     explicit_endpoints = _explicit_endpoints(args)
 
@@ -206,7 +540,7 @@ def resolve_distributed_config(args: Any) -> DistributedConfig | None:
         ]
         local_host, local_peer = specs[0].host, specs[0].peer_port
     else:
-        members = _canonical_members(args)
+        members = _canonical_members(args, flags)
         specs = [
             MemberSpec(
                 host=host, client_port=client, peer_port=peer,
@@ -253,7 +587,7 @@ def resolve_distributed_config(args: Any) -> DistributedConfig | None:
             layout.size,
         )
 
-    return DistributedConfig(
+    return EtcdConfig(
         layout=layout,
         endpoints=endpoints,
         namespace=args.etcdNamespace,
@@ -335,7 +669,7 @@ def _was_supplied(args: Any, attribute: str) -> bool:
     return bool(value)
 
 
-def _split_member(value: str, args: Any) -> tuple[str, int, int]:
+def _split_member(value: str, flags: _StorageFlags) -> tuple[str, int, int]:
     """``host`` or ``host:client_port`` -> (host, client_port, peer_port).
 
     Members carry their own ports because they do not always have an address to
@@ -353,7 +687,7 @@ def _split_member(value: str, args: Any) -> tuple[str, int, int]:
     """
     host, separator, port = value.rpartition(":")
     if not separator:
-        return value, args.etcdClientPort, args.etcdPeerPort
+        return value, flags.client_port, flags.peer_port
     if not host or not port.isdigit():
         raise DistributedConfigError(
             f"member {value!r} is not host or host:client_port",
@@ -361,7 +695,9 @@ def _split_member(value: str, args: Any) -> tuple[str, int, int]:
     return host, int(port), int(port) + 1
 
 
-def _canonical_members(args: Any) -> list[tuple[str, int, int]]:
+def _canonical_members(
+    args: Any, flags: _StorageFlags,
+) -> list[tuple[str, int, int]]:
     """The canonical member list: this member first, then its neighbours."""
     local = args.registryAdvertisedHost
     if not local:
@@ -371,7 +707,7 @@ def _canonical_members(args: Any) -> list[tuple[str, int, int]]:
         )
 
     members = [
-        _split_member(value, args)
+        _split_member(value, flags)
         for value in (local, *(h.strip() for h in args.registryNeighbour))
         if value
     ]
@@ -390,19 +726,22 @@ def _canonical_members(args: Any) -> list[tuple[str, int, int]]:
     return members
 
 
-def _reject_plaintext_etcd_off_the_loopback(args: Any, *, tls: bool) -> None:
+def _reject_plaintext_storage_off_the_loopback(
+    args: Any, flags: _StorageFlags, *, tls: bool,
+) -> None:
     """An unsecured cluster may exist on one machine and nowhere else.
 
-    A distributed registry whose members are on separate machines has its etcd
-    traffic on a wire by definition, and that traffic carries every registered
-    resource plus every write that changes them. There is no configuration in
-    which that should be in the clear, and "we were only testing" is exactly how
-    it ends up deployed, so the refusal lives here rather than in a comment.
+    A distributed registry whose members are on separate machines has its
+    storage-layer traffic on a wire by definition, and that traffic carries
+    every registered resource plus every write that changes them. There is no
+    configuration in which that should be in the clear, and "we were only
+    testing" is exactly how it ends up deployed, so the refusal lives here
+    rather than in a comment.
 
     Loopback is the one case where plaintext is defensible: the packets cannot
-    leave the host, so ``--etcdDisableTLS`` keeps the development rig it was
-    added for. Anything else -- a private LAN address included, since reachable
-    is reachable -- is refused.
+    leave the host, so ``--*DisableTLS`` keeps the development rig it was added
+    for. Anything else -- a private LAN address included, since reachable is
+    reachable -- is refused.
 
     Names that do not resolve are left alone. That is a different failure, it
     has its own diagnosis further on, and guessing about it here would turn a
@@ -412,7 +751,7 @@ def _reject_plaintext_etcd_off_the_loopback(args: Any, *, tls: bool) -> None:
         return
 
     exposed: list[str] = []
-    for host in _configured_hosts(args):
+    for host in _configured_hosts(args, flags):
         address = _resolve_host(host)
         if address is None:
             continue
@@ -423,19 +762,19 @@ def _reject_plaintext_etcd_off_the_loopback(args: Any, *, tls: bool) -> None:
         return
 
     raise DistributedConfigError(
-        "--etcdDisableTLS is only available to a cluster confined to one "
-        "machine, and these members are not:\n"
+        f"{flags.flag('DisableTLS')} is only available to a cluster confined "
+        f"to one machine, and these members are not:\n"
         + "".join(f"  {entry}\n" for entry in exposed)
-        + "  etcd holds every registered resource, so off the loopback this "
-        "would put the whole registry database on the network unencrypted and "
-        "unauthenticated.\n"
-        "  Secure it with --etcdCertificate, --etcdKey and "
-        "--etcdTrustedRootCA; this repository ships a set in "
-        "Certificates/build.0.etcd/.",
+        + f"  {flags.noun} holds every registered resource, so off the "
+        f"loopback this would put the whole registry database on the network "
+        f"unencrypted and unauthenticated.\n"
+        f"  Secure it with {flags.flag('Certificate')}, {flags.flag('Key')} "
+        f"and {flags.flag('TrustedRootCA')}; this repository ships a set in "
+        f"{flags.certificate_hint}.",
     )
 
 
-def _configured_hosts(args: Any) -> list[str]:
+def _configured_hosts(args: Any, flags: _StorageFlags) -> list[str]:
     """Every host this configuration names, from whichever source describes it.
 
     ``--etcdEndpoints`` when given, because in external mode that is the only
@@ -454,7 +793,7 @@ def _configured_hosts(args: Any) -> list[str]:
     if not getattr(args, "registryAdvertisedHost", ""):
         return []
     try:
-        return [host for host, _, _ in _canonical_members(args)]
+        return [host for host, _, _ in _canonical_members(args, flags)]
     except DistributedConfigError:
         return []
 
@@ -483,92 +822,89 @@ def _registry_listeners_are_tls(args: Any) -> bool:
     )
 
 
-def _reject_plaintext_etcd_under_a_secure_registry(
-    args: Any, *, tls: bool,
+def _reject_plaintext_storage_under_a_secure_registry(
+    args: Any, flags: _StorageFlags, *, tls: bool,
 ) -> None:
-    """A secured registry may not keep its database on a plaintext etcd.
+    """A secured registry may not keep its database on a plaintext storage layer.
 
-    etcd holds *every* registered resource, so this combination is strictly
-    worse than a plain-HTTP registry: it encrypts the interface an operator can
-    see while leaving the entire database readable, and writable, by anyone who
-    can reach the client port.
+    The storage layer holds *every* registered resource, so this combination is
+    strictly worse than a plain-HTTP registry: it encrypts the interface an
+    operator can see while leaving the entire database readable, and writable,
+    by anyone who can reach the port.
 
     It also fails silently rather than loudly. ``tls`` is derived from
-    ``--etcdDisableTLS`` alone, so a command line carrying both that flag and a
-    full ``--etcdCertificate``/``--etcdKey``/``--etcdTrustedRootCA`` set is
-    accepted with the certificates **ignored** -- the operator reads back their
-    own secured command line and believes it took effect. Refusing here is what
-    makes "secured registry implies secured etcd" a property of the program
-    rather than a property of whichever launch script was used.
+    ``--*DisableTLS`` alone, so a command line carrying both that flag and a
+    full certificate set is accepted with the certificates **ignored** -- the
+    operator reads back their own secured command line and believes it took
+    effect. Refusing here is what makes "secured registry implies secured
+    storage" a property of the program rather than a property of whichever
+    launch script was used.
     """
     if tls or not _registry_listeners_are_tls(args):
         return
 
     supplied = [
         flag for flag, value in (
-            ("--etcdCertificate", getattr(args, "etcdCertificate", "")),
-            ("--etcdKey", getattr(args, "etcdKey", "")),
-            ("--etcdTrustedRootCA", getattr(args, "etcdTrustedRootCA", None)),
+            (flags.flag("Certificate"), flags.certificate),
+            (flags.flag("Key"), flags.key),
+            (flags.flag("TrustedRootCA"), flags.trusted_root_ca),
         ) if value
     ]
     ignored = (
-        f"\n  {', '.join(supplied)} would be IGNORED: --etcdDisableTLS is the "
-        f"only input that decides this, so the certificates you passed would "
-        f"never reach etcd."
+        f"\n  {', '.join(supplied)} would be IGNORED: "
+        f"{flags.flag('DisableTLS')} is the only input that decides this, so "
+        f"the certificates you passed would never reach {flags.noun}."
         if supplied else ""
     )
 
     raise DistributedConfigError(
-        "--etcdDisableTLS cannot be combined with a TLS Registration/Query "
-        "interface.\n"
-        "  etcd holds every registered resource, so a secured registry over a "
-        "plaintext etcd leaves the whole database readable and writable by "
-        "anyone who can reach the client port -- while the interface an "
-        "operator inspects looks secure."
+        f"{flags.flag('DisableTLS')} cannot be combined with a TLS "
+        f"Registration/Query interface.\n"
+        f"  {flags.noun} holds every registered resource, so a secured "
+        f"registry over a plaintext {flags.noun} leaves the whole database "
+        f"readable and writable by anyone who can reach the port -- while the "
+        f"interface an operator inspects looks secure."
         f"{ignored}\n"
-        "  Either secure etcd as well (--etcdCertificate, --etcdKey, "
-        "--etcdTrustedRootCA; this repository ships a set in "
-        "Certificates/build.0.etcd/), or run the whole rig unsecured with "
-        "--registryDisableTLS.",
+        f"  Either secure {flags.noun} as well ({flags.flag('Certificate')}, "
+        f"{flags.flag('Key')}, {flags.flag('TrustedRootCA')}; this repository "
+        f"ships a set in {flags.certificate_hint}), or run the whole rig "
+        f"unsecured with --registryDisableTLS.",
     )
 
 
-def _validate_tls_inputs(args: Any, *, tls: bool) -> None:
-    """Check the etcd certificate set before anything tries to hand it to etcd."""
+def _validate_tls_inputs(flags: _StorageFlags, *, tls: bool) -> None:
+    """Check the certificate set before anything tries to use it."""
     if not tls:
         return
 
-    if not args.etcdCertificate or not args.etcdKey:
+    if not flags.certificate or not flags.key:
         raise DistributedConfigError(
-            "--distributed requires --etcdCertificate and --etcdKey (or "
-            "--etcdDisableTLS for testing only). One shared certificate serves "
-            "all four etcd roles; this repository ships a set in "
-            "Certificates/build.0.etcd/ -- pass the *.etcd.chain.pem and its "
-            "matching key, verified against Certificates/build.0/"
-            "ExampleRootCA.ec.pem.",
+            f"--distributed requires {flags.flag('Certificate')} and "
+            f"{flags.flag('Key')} (or {flags.flag('DisableTLS')} for testing "
+            f"only). One shared certificate serves {flags.roles_hint}; this "
+            f"repository ships a set in {flags.certificate_hint} -- pass the "
+            f"*.etcd.chain.pem and its matching key, verified against "
+            f"Certificates/build.0/ExampleRootCA.ec.pem.",
         )
-    if not args.etcdTrustedRootCA:
+    if not flags.trusted_root_ca:
         raise DistributedConfigError(
-            "--distributed requires --etcdTrustedRootCA to verify etcd client "
-            "and peer certificates.",
+            f"--distributed requires {flags.flag('TrustedRootCA')} to verify "
+            f"{flags.noun} client and peer certificates.",
         )
-    if not args.etcdCertificateName:
+    if not flags.certificate_name:
         raise DistributedConfigError(
-            "--etcdCertificateName must not be empty: it is both the gRPC "
-            "target-name override and etcd's --client/peer-cert-allowed-"
-            "hostname, which is what stops any device certificate signed by "
-            "the same Product CA from writing to the registry database.",
+            f"{flags.flag('CertificateName')} must not be empty: "
+            f"{flags.name_hint}.",
         )
 
     required: list[tuple[str, str]] = [
-        ("--etcdCertificate", args.etcdCertificate),
-        ("--etcdKey", args.etcdKey),
+        (flags.flag("Certificate"), flags.certificate),
+        (flags.flag("Key"), flags.key),
     ]
-    required += [("--etcdTrustedRootCA", ca) for ca in args.etcdTrustedRootCA]
-    if args.etcdClientCrlFile:
-        required.append(("--etcdClientCrlFile", args.etcdClientCrlFile))
-    if args.etcdPeerCrlFile:
-        required.append(("--etcdPeerCrlFile", args.etcdPeerCrlFile))
+    required += [
+        (flags.flag("TrustedRootCA"), ca) for ca in flags.trusted_root_ca
+    ]
+    required += list(flags.crls)
 
     for role, path in required:
         if not os.path.isfile(path):
