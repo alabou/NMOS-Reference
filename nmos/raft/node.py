@@ -1047,8 +1047,29 @@ class RaftNode:
                 for wire in message.entries
             ])
 
-        if message.leader_commit > self._commit_index:
-            self._commit_index = min(message.leader_commit, self._log.last_index)
+        # Figure 2, AppendEntries receiver rule 5, verbatim: "If leaderCommit >
+        # commitIndex, set commitIndex = min(leaderCommit, index of last new
+        # entry)".
+        #
+        # "Index of last new entry" -- NOT this follower's last index, which is
+        # what an earlier version used. The difference is a State Machine
+        # Safety bug and the chaos soak found it: a follower holding stale
+        # uncommitted entries *beyond* the window this message covered would
+        # commit them on the strength of a commit index that said nothing about
+        # them. Observed as index 3 applied from term 1 on an isolated member
+        # while the majority held a term 2 entry there.
+        #
+        # The leader vouches only as far as ``prev_log_index`` plus what it
+        # actually sent -- which for a heartbeat is ``prev_log_index`` alone,
+        # and heartbeats are exactly when a follower's log runs ahead of the
+        # leader's knowledge of it.
+        vouched_for = message.prev_log_index + len(message.entries)
+        advanced = min(message.leader_commit, vouched_for)
+        if advanced > self._commit_index:
+            # Compared rather than assigned, because ``min`` with a short
+            # window can land below where this member already is, and a commit
+            # index that moves backwards would un-apply committed state.
+            self._commit_index = advanced
             self._schedule_apply()
 
         return AppendEntriesReply(

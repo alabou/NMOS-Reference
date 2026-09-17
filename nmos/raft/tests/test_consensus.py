@@ -22,8 +22,14 @@ from pathlib import Path
 import pytest
 
 from nmos.raft.errors import RaftUnavailable
+from nmos.raft.messages import AppendEntries, WireEntry
 from nmos.raft.node import Role
-from nmos.raft.operations import ProposalId, RegisterOp, UnregisterOp
+from nmos.raft.operations import (
+    ProposalId,
+    RegisterOp,
+    UnregisterOp,
+    encode_operation,
+)
 from nmos.raft.tests._harness import Cluster
 from nmos.registry.tests._fixtures import (
     NODE_ID,
@@ -653,3 +659,107 @@ class TestProposalIdentityAcrossRestarts:
             stale.cancel()
         finally:
             await cluster.close()
+
+
+class TestTheFollowerCommitRule:
+    """Figure 2, AppendEntries receiver rule 5, and the word that matters.
+
+        "If leaderCommit > commitIndex, set commitIndex =
+         min(leaderCommit, index of last new entry)"
+
+    *New entry* -- what this message delivered -- not the follower's own last
+    index. An earlier version used the latter, and the chaos soak caught the
+    difference as a State Machine Safety violation: index 3 applied from term 1
+    on an isolated member while the majority held a term 2 entry there.
+
+    The gap opens whenever a follower's log runs ahead of what the leader has
+    vouched for, which is precisely the situation a heartbeat describes -- it
+    carries a commit index and no entries, so it says nothing about anything
+    past ``prev_log_index``.
+    """
+
+    async def test_a_heartbeat_does_not_commit_entries_it_said_nothing_about(
+        self, tmp_path: Path,
+    ) -> None:
+        cluster = await _cluster(3, tmp_path)
+        try:
+            follower = cluster.members[1]
+            term = follower.node.term or 1
+
+            # Three entries, none of them yet declared committed.
+            entries = tuple(
+                WireEntry(
+                    term=term, index=index,
+                    payload=encode_operation(
+                        _register(_stale_id(index), 0),
+                    ),
+                )
+                for index in (1, 2, 3)
+            )
+            first = follower.node.on_append_entries(0, AppendEntries(
+                term=term, leader=0, prev_log_index=0, prev_log_term=0,
+                leader_commit=0, request_id=0, entries=entries,
+            ))
+            assert first.success
+            assert follower.node.log.last_index == 3
+            assert follower.node.commit_index == 0
+
+            # A heartbeat vouching only for index 1, but carrying a commit
+            # index of 3. The leader is saying "I have committed through 3" --
+            # about *its* log, which at index 2 and 3 may hold something else
+            # entirely. This follower must not take that as permission to
+            # commit the entries it happens to be holding.
+            second = follower.node.on_append_entries(0, AppendEntries(
+                term=term, leader=0, prev_log_index=1, prev_log_term=term,
+                leader_commit=3, request_id=0, entries=(),
+            ))
+            assert second.success
+            assert follower.node.commit_index <= 1, (
+                f"committed through {follower.node.commit_index} on a "
+                f"heartbeat that vouched only for index 1"
+            )
+        finally:
+            await cluster.close()
+
+    async def test_the_commit_index_never_moves_backwards(
+        self, tmp_path: Path,
+    ) -> None:
+        """The other half of the same rule, and the reason for the comparison.
+
+        ``min(leaderCommit, vouched_for)`` can land *below* where this member
+        already is -- a short heartbeat after a long append. Assigning it would
+        un-apply committed state, which is the one thing a state machine may
+        never do, so the new value is compared before it is taken.
+        """
+        cluster = await _cluster(3, tmp_path)
+        try:
+            follower = cluster.members[1]
+            term = follower.node.term or 1
+
+            entries = tuple(
+                WireEntry(
+                    term=term, index=index,
+                    payload=encode_operation(_register(_stale_id(index), 0)),
+                )
+                for index in (1, 2, 3)
+            )
+            follower.node.on_append_entries(0, AppendEntries(
+                term=term, leader=0, prev_log_index=0, prev_log_term=0,
+                leader_commit=3, request_id=0, entries=entries,
+            ))
+            committed = follower.node.commit_index
+            assert committed == 3
+
+            follower.node.on_append_entries(0, AppendEntries(
+                term=term, leader=0, prev_log_index=1, prev_log_term=term,
+                leader_commit=3, request_id=0, entries=(),
+            ))
+            assert follower.node.commit_index == committed, (
+                "a short heartbeat pulled the commit index backwards"
+            )
+        finally:
+            await cluster.close()
+
+
+def _stale_id(index: int) -> str:
+    return f"{index:08x}-dead-4000-8000-00000000000a"
