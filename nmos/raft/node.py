@@ -1482,6 +1482,28 @@ class RaftNode:
                 term=self._term, bytes_received=0, done=False,
             )
 
+        impossible = self._why_the_snapshot_cannot_be_real(meta, message.term)
+        if impossible is not None:
+            # openraft's issue-1892 lesson, in their words: "rejects
+            # protocol-impossible input early, instead of corrupting its
+            # state". A correct leader cannot produce these, because it builds
+            # a snapshot from its own committed state -- so seeing one means a
+            # peer is wrong, and the only safe answer is to keep our own state
+            # rather than adopt theirs.
+            #
+            # Installing it anyway is worse than it sounds: the log would take
+            # the snapshot's term as its own, and a member whose last log term
+            # is above its current term considers itself impossibly up to date.
+            # It would then refuse every vote and win any election it entered.
+            log.error(
+                "raft: refusing a snapshot from member %d: %s",
+                peer, impossible,
+            )
+            self._installing.pop(peer, None)
+            return InstallSnapshotReply(
+                term=self._term, bytes_received=0, done=False,
+            )
+
         self._machine.install_snapshot(store, ownership, meta.last_index)
         self._log.reset_to_snapshot(meta.last_index, meta.last_term)
         # The fence jumps rather than advances: everything through this index
@@ -1498,6 +1520,35 @@ class RaftNode:
         return InstallSnapshotReply(
             term=self._term, bytes_received=len(buffer), done=True,
         )
+
+    def _why_the_snapshot_cannot_be_real(
+        self, meta: SnapshotMeta, sender_term: int,
+    ) -> str | None:
+        """Is this snapshot's metadata possible at all? ``None`` if it is.
+
+        Two checks, both about metadata rather than content -- the content
+        already had to decode and install before we got here.
+
+        A snapshot cannot describe a term above the one its sender holds: the
+        sender built it from entries it had committed, and it cannot have
+        committed an entry from a term it has not reached.
+
+        Nor can it move this member's snapshot boundary *backwards*. Everything
+        below the boundary is already applied, so accepting an older snapshot
+        would un-apply committed state -- the one thing a state machine may
+        never do.
+        """
+        if meta.last_term > sender_term:
+            return (
+                f"it covers term {meta.last_term} but arrived from a member "
+                f"at term {sender_term}"
+            )
+        if meta.last_index < self._log.snapshot_index:
+            return (
+                f"it ends at index {meta.last_index}, below the boundary "
+                f"already applied here ({self._log.snapshot_index})"
+            )
+        return None
 
     def on_install_snapshot_reply(
         self, peer: int, message: InstallSnapshotReply,

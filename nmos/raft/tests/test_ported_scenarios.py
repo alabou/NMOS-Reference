@@ -24,17 +24,28 @@ Sources, each named on the test that came from it:
   again without prompting) and ``replicate_pause.txt`` (entries are not
   re-sent while an append is outstanding).
 
-Where a scenario's *mechanism* has no counterpart here, the *claim* is ported
-instead and the difference is stated on the test -- an assertion about etcd's
-internals would only prove this is not etcd.
 * **MIT 6.5840 Lab 2** -- ``TestRejoin``, ``TestBackup``: a deposed leader
   rejoins carrying entries that were never committed, and they must be
   overwritten rather than resurrected.
+* **openraft ``tests/tests/snapshot_streaming/``** -- ``t90_issue_808`` (a
+  transfer to a vanished peer must not block the leader), ``t33`` (installing a
+  snapshot deletes conflicting logs) and ``t90_issue_1892`` (protocol-impossible
+  input is refused rather than allowed to corrupt state). Chosen because its
+  tests drive real multi-node async clusters, which is the shape of this
+  harness, and because snapshot transfer is the thinnest path here.
 
-Deliberately not ported: the ``confchange_*`` family, which is the whole of
-dynamic cluster membership. This backend does not implement it -- see
-``nmos/raft/__init__.py`` -- so those scenarios have nothing here to run
-against.
+Where a scenario's *mechanism* has no counterpart here, the *claim* is ported
+instead and the difference is stated on the test -- an assertion about another
+implementation's internals would only prove this is not that implementation.
+
+Deliberately not ported, having read them rather than guessed from the names:
+the ``confchange_*`` family and openraft's learner and membership tests, which
+are dynamic cluster membership -- not implemented here, see
+``nmos/raft/__init__.py``; openraft's ``t50_leader_restart_cluster_committed_not_restored``,
+which is about a commit index read back from a durable log, and this one is
+volatile so there is nothing to read back; and ``t34_replication_does_not_block_purge``
+and ``t50_snapshot_when_lacking_log``, both already covered by
+``test_compaction.py``.
 """
 
 from __future__ import annotations
@@ -47,7 +58,7 @@ from typing import Any
 
 import pytest
 
-from nmos.raft.messages import RequestVote
+from nmos.raft.messages import InstallSnapshot, RequestVote
 from nmos.raft.node import Role
 from nmos.raft.operations import ProposalId, RegisterOp
 from nmos.raft.tests._harness import FAST, Cluster, Member
@@ -602,3 +613,212 @@ class TestLaggingCommit:
             )
         finally:
             await cluster.close()
+
+
+class TestSnapshotScenariosFromOpenraft:
+    """Scenarios from openraft's ``tests/tests/snapshot_streaming/``.
+
+    A different kind of source from etcd's. etcd's ``testdata`` drives a single
+    raft state machine with scripted messages; openraft's tests spin up real
+    multi-node async clusters with fault injection, which is the shape of this
+    harness -- so its scenarios port as scenarios rather than needing to be
+    translated out of a message script.
+
+    Snapshot transfer is the thinnest path here and the one that has already
+    produced a real bug: two code paths drove the same transfer, sent duplicate
+    offsets, and the pair looped forever making no progress. So this is where
+    an outside suite was most likely to be worth reading, and it was.
+    """
+
+    async def test_a_peer_vanishing_mid_transfer_does_not_wedge_the_leader(
+        self, tmp_path: Path,
+    ) -> None:
+        """openraft ``t90_issue_808``: "When transferring snapshot to
+        unreachable node, it should not block for ever."
+
+        The mirror of the bug we already had. That one was the leader looping
+        on a transfer that never progressed; this is the leader waiting on a
+        transfer whose recipient has gone. Either way the failure is the same
+        shape -- a leader occupied by a member that is not coming back -- and
+        the cluster must go on committing without it.
+        """
+        cluster = Cluster(3, tmp_path, timing=dataclasses.replace(
+            FAST, compaction_threshold=4,
+        ))
+        await cluster.start()
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            vanishing = next(
+                m for m in cluster.members if m.index != leader.index
+            )
+            survivor = next(
+                m for m in cluster.members
+                if m.index not in (leader.index, vanishing.index)
+            )
+
+            # Compact past it so catching it up must be a snapshot, then take
+            # it away while that transfer is under way.
+            cluster.network.stop(vanishing.index)
+            for tag in range(80, 92):
+                await asyncio.wait_for(
+                    leader.node.propose(_register(_node_id(tag), leader)),
+                    timeout=5.0,
+                )
+            await cluster.settle(30)
+            cluster.network.resume(vanishing.index)
+            await cluster.settle(4)          # let a chunk or two go out
+            cluster.network.stop(vanishing.index)
+            await cluster.settle(40)
+
+            # The claim: the leader is still a leader and still commits, with
+            # the quorum it has left.
+            assert leader.node.role is Role.LEADER
+            outcome = await asyncio.wait_for(
+                leader.node.propose(_register(_node_id(93), leader)),
+                timeout=5.0,
+            )
+            assert outcome.result.ok
+            # The leader's future resolves on *its* apply; the survivor holds
+            # the entry but has not necessarily run it yet.
+            await cluster.settle(20)
+            assert survivor.registry.store.get(
+                ResourceType.NODE, _node_id(93),
+            ) is not None
+
+            # And when it comes back it is still caught up, rather than being
+            # stuck behind a transfer nobody ever finished.
+            cluster.network.resume(vanishing.index)
+            await cluster.settle(300)
+            assert vanishing.registry.store.get(
+                ResourceType.NODE, _node_id(93),
+            ) is not None
+        finally:
+            await cluster.close()
+
+    async def test_installing_a_snapshot_discards_conflicting_entries(
+        self, tmp_path: Path,
+    ) -> None:
+        """openraft ``t33``: "Installing snapshot on a node that has logs
+        conflict with snapshot.meta.last_log_id will delete all conflict logs."
+
+        Ported without its membership half -- openraft asserts the snapshot's
+        *membership* replaces the receiver's, and this backend has no dynamic
+        membership to replace. What remains is the part that applies: whatever
+        the receiver was holding beyond the snapshot boundary is gone, because
+        it was either included in the snapshot or never committed.
+        """
+        cluster = Cluster(3, tmp_path, timing=dataclasses.replace(
+            FAST, compaction_threshold=4,
+        ))
+        await cluster.start()
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            stranded = next(
+                m for m in cluster.members if m.index != leader.index
+            )
+
+            # Give the stranded member entries of its own that the cluster
+            # never agreed to, then compact the leader past it so the only way
+            # back is a snapshot.
+            cluster.network.isolate(stranded.index)
+            for tag in range(100, 104):
+                stranded.node.propose(_register(_node_id(tag), stranded))
+            await cluster.settle(20)
+            conflicting = stranded.node.log.last_index
+
+            for tag in range(110, 124):
+                await asyncio.wait_for(
+                    leader.node.propose(_register(_node_id(tag), leader)),
+                    timeout=5.0,
+                )
+            await cluster.settle(30)
+            assert leader.node.log.first_index > 1, (
+                "the leader never compacted, so no snapshot would be sent"
+            )
+
+            cluster.network.heal()
+            await cluster.settle(300)
+
+            assert stranded.node.log.snapshot_index >= conflicting, (
+                "the snapshot did not cover the entries it had to replace"
+            )
+            for tag in range(100, 104):
+                assert stranded.registry.store.get(
+                    ResourceType.NODE, _node_id(tag),
+                ) is None, (
+                    f"{_node_id(tag)} survived a snapshot install, but it was "
+                    f"never committed by the cluster"
+                )
+            for tag in range(110, 124):
+                assert stranded.registry.store.get(
+                    ResourceType.NODE, _node_id(tag),
+                ) is not None
+        finally:
+            await cluster.close()
+
+    async def test_a_protocol_impossible_snapshot_is_refused(
+        self, tmp_path: Path,
+    ) -> None:
+        """openraft ``t90_issue_1892``: "rejects protocol-impossible input
+        early, instead of corrupting its state".
+
+        Their bug was a snapshot installing while conflicting log tails
+        survived, leaving the log's ids non-monotonic and crashing replication
+        later. Ours would be worse and quieter: the log adopts the snapshot's
+        term, so a member holding a last log term above its own current term
+        considers itself impossibly up to date -- refusing every vote and
+        winning any election it entered.
+
+        A correct leader cannot send this, which is exactly why it is worth a
+        check rather than an assumption: if it ever arrives, something is
+        already wrong and adopting it makes this member wrong too.
+        """
+        cluster = await _cluster(3, tmp_path)
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            victim = next(
+                m for m in cluster.members if m.index != leader.index
+            )
+            before_term = victim.node.log.last_term
+            before_index = victim.node.log.snapshot_index
+
+            body = await _snapshot_bytes(
+                leader, last_index=9_999, last_term=9_999,
+            )
+            reply = victim.node.on_install_snapshot(
+                leader.index,
+                InstallSnapshot(
+                    term=victim.node.term, leader=leader.index,
+                    last_index=9_999, last_term=9_999,
+                    offset=0, data=body, done=True,
+                ),
+            )
+
+            assert reply.done is False
+            assert victim.node.log.snapshot_index == before_index, (
+                "an impossible snapshot moved the log's boundary"
+            )
+            assert victim.node.log.last_term <= victim.node.term, (
+                f"log term {victim.node.log.last_term} is above the member's "
+                f"own term {victim.node.term}, which makes it unbeatable in "
+                f"any election (was {before_term})"
+            )
+        finally:
+            await cluster.close()
+
+
+async def _snapshot_bytes(
+    member: Member, *, last_index: int, last_term: int,
+) -> bytes:
+    """A structurally valid snapshot carrying impossible metadata.
+
+    Produced by the real ``SnapshotStore`` rather than hand-assembled, so it is
+    valid in every respect the receiver checks *before* the metadata: it
+    decodes, it installs, and it is refused on the one thing under test. A
+    hand-rolled blob could be rejected for being malformed and the test would
+    pass while proving nothing.
+    """
+    capture = member.snapshots.begin(
+        index=last_index, term=last_term, ownership=member.machine.ownership,
+    )
+    return await member.snapshots.finish(capture)

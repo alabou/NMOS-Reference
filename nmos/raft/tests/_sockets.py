@@ -233,8 +233,14 @@ class SocketCluster:
     # -- lifecycle -------------------------------------------------------
 
     async def start(self) -> None:
-        self._release()
+        # The proxies bind *first*, while the members' ports are still held.
+        # Releasing first and then letting the proxies ask for any free port
+        # lets the kernel hand one of them a port a member is about to want,
+        # and the member's bind then fails with EADDRINUSE -- a collision this
+        # rig created for itself, in the window its own reservation exists to
+        # close.
         await self._mesh.start()
+        self._release()
         self.members = [
             SocketMember(
                 layout, root=self.root, bind_port=self._ports[index],
