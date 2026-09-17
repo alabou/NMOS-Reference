@@ -63,6 +63,23 @@ anywhere -- the ones that do not are already beyond saving. The argument, and
 the five-member case that makes the second clause necessary, are in ``node.py``
 under "when every voter has forgotten".
 
+Tracking etcd where the concepts coincide
+-----------------------------------------
+etcd's raft is the most exercised implementation of this algorithm, so where a
+mechanism exists in both, this one follows theirs rather than inventing a
+variant: **Pre-Vote** (§9.6 -- ask whether you would win before claiming a
+term), **check-quorum** in both directions (a leader that loses contact stands
+down; a follower being served refuses to help depose its leader), and
+**replication flow control** (an outstanding append pauses the entries, not the
+heartbeat). ``tests/test_ported_scenarios.py`` names the scenario each was
+checked against.
+
+Where the concepts do not coincide, they are not forced to. There is no learner
+role, no dynamic membership, no lease-based read-only path -- Query is served
+from the local store and never touches consensus -- and there is a recovery
+rule for a forgotten quorum that etcd has no counterpart for, because etcd's
+log is durable and never forgets.
+
 What is deliberately not implemented
 ------------------------------------
 **Dynamic cluster membership change.** The member set is static, derived on

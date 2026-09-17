@@ -94,9 +94,26 @@ from nmos.registry.fence import RevisionFence
 
 log = logging.getLogger(__name__)
 
+# Proposal ids a single incarnation of a member may mint before it would tread
+# on the next one's range. Four billion is far beyond what any member will
+# issue between restarts, and the id is a varint on the wire, so the larger
+# numbers cost a couple of bytes per entry and nothing else.
+PROPOSALS_PER_INCARNATION = 1 << 32
+
 
 class Role(Enum):
     FOLLOWER = "follower"
+    PRE_CANDIDATE = "pre-candidate"
+    """Asking whether it *would* win, without having claimed a term.
+
+    Raft §9.6. A pre-candidate has incremented nothing and persisted nothing,
+    so a member that has lost contact can discover it would lose without
+    forcing a term increment on a cluster that is working. It also, by having
+    given up on its leader, stops refusing votes on that leader's behalf --
+    which is what lets a quorum of pre-candidates replace a leader that really
+    has died. See ``_pre_campaign``.
+    """
+
     CANDIDATE = "candidate"
     LEADER = "leader"
 
@@ -153,6 +170,37 @@ class _PeerState:
 
     promote_through: int = 0
     """Index this peer must reach before its vote counts again."""
+
+    pending_through: int = 0
+    """Highest index sent to this peer and not yet acknowledged.
+
+    Flow control, and the reason for it is measurable. ``next_index`` only
+    advances on a reply, so without this the leader re-sends the *same* window
+    on every heartbeat until the peer answers. A healthy peer answers within a
+    tick and the cost is nil -- measured at x1.0 -- but a peer one RTT behind
+    receives the window once per heartbeat for as long as the round trip
+    takes: measured at **x15** against a 0.5 s link and a 20 ms heartbeat,
+    and it scales with RTT / heartbeat.
+
+    Retransmission is idempotent, so this was never a correctness problem. It
+    is a feedback loop: the slower a link gets, the more traffic is pushed
+    into it. etcd avoids it by sending heartbeats as a separate message from
+    appends, which is what ``_send_append`` now does when this is outstanding.
+    """
+
+    pending_request: int = 0
+    """Correlation id of the outstanding append.
+
+    Needed because "still in flight" and "lost" are otherwise
+    indistinguishable: a heartbeat sent meanwhile draws a reply whose
+    ``match_index`` is still behind, which looks exactly like loss and would
+    retransmit for the same reason the pause exists to avoid. Replies echo the
+    id, so only the answer to *this* append clears it.
+    """
+
+    pending_since: float = 0.0
+    """When ``pending_through`` was sent, so a genuinely lost append -- or a
+    lost reply -- is still retransmitted rather than waited on forever."""
 
     snapshot_offset: int = 0
     """How much of the snapshot this peer has confirmed receiving."""
@@ -226,8 +274,22 @@ class RaftNode:
         self._observed_amnesiac: set[int] = set()
 
         self._votes: set[int] = set()
+        self._pre_votes: set[int] = set()
+        # Correlates an append with its reply, so the flow-control pause
+        # in ``_send_append`` releases on the right answer.
+        self._append_sequence = 0
         self._waiters: dict[ProposalId, asyncio.Future[Outcome]] = {}
-        self._sequence = 0
+        # Seeded from the incarnation, NOT from zero. A restarted member's
+        # entries outlive it: they are still in the cluster's log and will
+        # apply after it comes back. Starting the sequence again at zero mints
+        # ids the previous incarnation already used, and the outcome of an old
+        # entry then resolves a *new* caller's future -- observed as a
+        # registration being answered with an unregistration's result.
+        #
+        # Giving each incarnation its own range makes the id unique over the
+        # member's whole history, which is what "identifies a proposal so its
+        # originator can be answered" actually requires.
+        self._sequence = state.incarnation * PROPOSALS_PER_INCARNATION
         self._batcher: ProposalBatcher[RegistryOperation, Outcome] = (
             ProposalBatcher(self._drain)
         )
@@ -420,7 +482,10 @@ class RaftNode:
         if now < self._deadline:
             return
         if self._voting or self._cluster_has_forgotten():
-            self._campaign()
+            # Pre-Vote first, always. Winning the real election is the *only*
+            # thing a term increment buys, so asking first costs one round trip
+            # and saves every disruption a doomed campaign would cause.
+            self._pre_campaign()
         else:
             # Cannot vote, and no evidence yet that the cluster has lost its
             # voters. Ask, rather than campaign: see the section above.
@@ -550,6 +615,7 @@ class RaftNode:
         self._role = Role.FOLLOWER
         self._leader = None
         self._votes.clear()
+        self._pre_votes.clear()
         self._batcher.fail_all(RaftUnavailable(reason))
         self._reset_election_timer()
 
@@ -561,10 +627,62 @@ class RaftNode:
         self._role = Role.FOLLOWER
         self._leader = None
         self._votes.clear()
+        self._pre_votes.clear()
         self._persist()
         if was_leader:
             # In-flight proposals cannot commit under a term we no longer own.
             self._batcher.fail_all(RaftUnavailable("no longer the leader"))
+
+    def _pre_campaign(self) -> None:
+        """Ask whether this member would win, before claiming a term.
+
+        Raft §9.6, and etcd's ``MsgPreVote``. Nothing here is mutated that a
+        peer could observe: the term is not incremented, the vote is not
+        recorded, nothing reaches the disk. The request carries the term this
+        member *would* stand in -- one above its own -- so voters can apply the
+        up-to-dateness check against a real proposal.
+
+        The role change is not cosmetic. Becoming a pre-candidate clears
+        ``_leader``, which releases the lease this member was holding on its
+        old leader's behalf. That is what makes etcd's ``prevote_checkquorum``
+        case work: "a node is able to obtain prevotes ... if a quorum of voters
+        are precandidates". Without it, PreVote and CheckQuorum together refuse
+        to elect anyone after a leader dies -- each member still vouching for a
+        leader that is gone.
+        """
+        self._role = Role.PRE_CANDIDATE
+        self._leader = None
+        self._pre_votes = {self._layout.local.index}
+        self._reset_election_timer()
+
+        log.debug(
+            "raft: %s pre-campaigning for term %d",
+            self._layout.local.name, self._term + 1,
+        )
+
+        if self._won_pre_vote():
+            self._campaign()
+            return
+
+        request = RequestVote(
+            term=self._term + 1, candidate=self._layout.local.index,
+            last_log_index=self._log.last_index,
+            last_log_term=self._log.last_term,
+            amnesiac=tuple(sorted(self._observed_amnesiac)),
+            pre_vote=True,
+        )
+        for peer in self._peers:
+            self._transport.send(peer, request)
+
+    def _won_pre_vote(self) -> bool:
+        """Same arithmetic as a real election, over pre-votes.
+
+        Shares ``_won``'s recovery clause deliberately: if a pre-vote round
+        could be won on terms the real election would refuse, the pre-vote
+        would stop predicting anything and the term increment it exists to
+        avoid would happen anyway.
+        """
+        return self._won(votes=self._pre_votes)
 
     def _campaign(self) -> None:
         """Start an election. Only ever called with a reachable quorum.
@@ -640,7 +758,11 @@ class RaftNode:
             # normally.
             return RequestVoteReply(
                 term=self._term, granted=False, voting=self._voting,
+                pre_vote=message.pre_vote,
             )
+
+        if message.pre_vote:
+            return self._answer_pre_vote(message)
 
         if message.term > self._term:
             self._step_down(message.term)
@@ -674,19 +796,55 @@ class RaftNode:
             term=self._term, granted=granted, voting=self._voting,
         )
 
-    def on_request_vote_reply(self, peer: int, message: RequestVoteReply) -> None:
-        if message.term > self._term:
-            self._step_down(message.term)
-            return
+    def _answer_pre_vote(self, message: RequestVote) -> RequestVoteReply:
+        """Answer "would you vote for me?" without becoming a party to it.
 
-        # Recorded before anything else, and for probes too: this is the only
-        # way a member learns which of its peers have forgotten, and a reply
-        # that arrives after the election it belonged to is still evidence.
+        Nothing is mutated: not the term, not ``voted_for``, not the election
+        timer, nothing on disk. That is the entire contract of a pre-vote, and
+        breaking any part of it would make the round as disruptive as the
+        election it exists to avoid.
+
+        The grant conditions are the real election's, minus the recorded vote
+        -- a member may pre-vote for several candidates in the same round,
+        because it has promised none of them anything.
+
+        The reply's term follows etcd: the *prospective* term when granting, so
+        the candidate can count it against the term it proposed, and this
+        member's own term when refusing, so a candidate standing on a stale
+        term learns to step down.
+        """
+        may_vote = self._voting or self._cluster_has_forgotten(
+            set(message.amnesiac),
+        )
+        granted = (
+            may_vote
+            and message.term > self._term
+            and self._log.is_at_least_as_current_as(
+                message.last_log_index, message.last_log_term,
+            )
+        )
+        return RequestVoteReply(
+            term=message.term if granted else self._term,
+            granted=granted, voting=self._voting, pre_vote=True,
+        )
+
+    def on_request_vote_reply(self, peer: int, message: RequestVoteReply) -> None:
+        # Recorded before anything else, and for probes and pre-votes too:
+        # this is the only way a member learns which of its peers have
+        # forgotten, and a reply that arrives after the round it belonged to
+        # is still evidence.
         if message.voting:
             self._observed_amnesiac.discard(peer)
         else:
             self._observed_amnesiac.add(peer)
 
+        if message.pre_vote:
+            self._on_pre_vote_reply(peer, message)
+            return
+
+        if message.term > self._term:
+            self._step_down(message.term)
+            return
         if self._role is not Role.CANDIDATE or message.term != self._term:
             return
         if message.granted:
@@ -694,7 +852,27 @@ class RaftNode:
             if self._won():
                 self._become_leader()
 
-    def _won(self) -> bool:
+    def _on_pre_vote_reply(self, peer: int, message: RequestVoteReply) -> None:
+        """Count a pre-vote, or learn that this member is behind.
+
+        A *refused* pre-vote carries the voter's own term. If that is above
+        ours we are stale and step down -- which is the one state change a
+        pre-vote round may cause, and it is a correction, not a disruption.
+
+        A *granted* pre-vote carries the prospective term, which is ours plus
+        one; it must never be mistaken for evidence that we are behind.
+        """
+        if not message.granted and message.term > self._term:
+            self._step_down(message.term)
+            return
+        if self._role is not Role.PRE_CANDIDATE:
+            return
+        if message.granted and message.term == self._term + 1:
+            self._pre_votes.add(peer)
+            if self._won_pre_vote():
+                self._campaign()
+
+    def _won(self, votes: set[int] | None = None) -> bool:
         """Has this candidate collected enough of the right votes?
 
         Ordinarily a quorum, unchanged. Once a quorum of voters is impossible,
@@ -707,7 +885,8 @@ class RaftNode:
         granted -- so a partitioned cluster never satisfies this, which is the
         intended answer.
         """
-        if len(self._votes) < self._layout.quorum:
+        tally = self._votes if votes is None else votes
+        if len(tally) < self._layout.quorum:
             return False
         if not self._cluster_has_forgotten():
             return True
@@ -717,7 +896,7 @@ class RaftNode:
         remembering = {
             member.index for member in self._layout.members
         } - forgotten
-        return remembering <= self._votes
+        return remembering <= tally
 
     def _become_leader(self) -> None:
         self._role = Role.LEADER
@@ -778,6 +957,14 @@ class RaftNode:
             entries = self._log.slice(
                 state.next_index, self._timing.max_entries_per_append,
             )
+            if self._carrying_entries_would_repeat_them(state):
+                # An append is already outstanding to this peer. Send the
+                # heartbeat without the payload: it still renews the lease,
+                # still carries the commit index, and still draws the reply
+                # that will tell us where the peer actually is -- without
+                # putting the same entries on a link that has not yet drained
+                # the last copy. See ``_PeerState.pending_through``.
+                entries = ()
         except RaftLogCompacted:
             # The entries this peer needs have been compacted away. It cannot
             # be caught up by replication, so it is caught up by state.
@@ -786,18 +973,43 @@ class RaftNode:
             # own tick.
             self._send_snapshot(peer, state)
             return
+        request_id = 0
+        if entries:
+            self._append_sequence += 1
+            request_id = self._append_sequence
+            state.pending_through = entries[-1].index
+            state.pending_request = request_id
+            state.pending_since = asyncio.get_running_loop().time()
+
         self._transport.send(peer, AppendEntries(
             term=self._term,
             leader=self._layout.local.index,
             prev_log_index=previous,
             prev_log_term=prev_term,
             leader_commit=self._commit_index,
-            request_id=0,
+            request_id=request_id,
             entries=tuple(
                 WireEntry(term=e.term, index=e.index, payload=e.payload)
                 for e in entries
             ),
         ))
+
+    def _carrying_entries_would_repeat_them(self, state: _PeerState) -> bool:
+        """Is an append already in flight to this peer, and not yet overdue?
+
+        Overdue matters as much as outstanding: a lost append, or a lost
+        reply, draws no answer at all, so a leader that waited forever would
+        strand the peer. ``election_min`` is the backstop -- the same scale
+        etcd un-pauses on, and necessarily shorter than the interval after
+        which this leader would be replaced anyway.
+        """
+        if state.pending_request == 0:
+            return False
+        elapsed = asyncio.get_running_loop().time() - state.pending_since
+        if elapsed >= self._timing.election_min:
+            state.pending_request = 0
+            return False
+        return True
 
     def on_append_entries(
         self, peer: int, message: AppendEntries,
@@ -864,6 +1076,12 @@ class RaftNode:
         state = self._peers.get(peer)
         if state is None:
             return
+
+        # Only the answer to *this* append releases the pause. A reply to a
+        # heartbeat sent meanwhile carries request_id 0 and says nothing about
+        # whether the entries landed.
+        if message.request_id != 0 and message.request_id == state.pending_request:
+            state.pending_request = 0
 
         was_catching_up = state.catching_up
         state.catching_up = message.catching_up
@@ -1105,9 +1323,11 @@ class RaftNode:
             if self._role is Role.LEADER:
                 state.next_index = self._log.last_index + 1
                 state.match_index = 0
-                # A reconnect invalidates any transfer that was in flight: the
-                # chunk it was waiting on will never be answered.
+                # A reconnect invalidates anything that was in flight: neither
+                # the chunk nor the append it was waiting on will ever be
+                # answered, and holding the pause open would strand the peer.
                 state.snapshot_in_flight = False
+                state.pending_request = 0
                 state.snapshot_offset = 0
                 self._send_append(peer, state)
         else:

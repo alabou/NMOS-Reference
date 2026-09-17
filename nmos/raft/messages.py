@@ -227,6 +227,16 @@ class RequestVote:
     last_log_term: int
     probe: bool = False
     amnesiac: tuple[int, ...] = ()
+    pre_vote: bool = False
+    """Raft §9.6, and etcd's ``MsgPreVote``: "would you vote for me?".
+
+    ``term`` then carries the term the candidate *would* stand in -- its own
+    plus one -- while the candidate's own term stays where it is. A voter
+    answers without changing its term, its recorded vote or anything on disk,
+    which is the whole point: a member that has lost contact can find out
+    whether it could win before inflicting a term increment on a cluster that
+    is working perfectly well without it.
+    """
 
     TYPE = MessageType.REQUEST_VOTE
 
@@ -241,12 +251,14 @@ class RequestVote:
         )
         for member in self.amnesiac:
             writer.uint(6, member)
+        writer.bool_(7, self.pre_vote)
         return writer.take()
 
     @classmethod
     def decode(cls, payload: bytes) -> RequestVote:
         term = candidate = last_index = last_term = 0
         probe = False
+        pre_vote = False
         amnesiac: list[int] = []
         reader = Reader(payload)
         for number, wire in reader:
@@ -262,12 +274,14 @@ class RequestVote:
                 probe = reader.bool_()
             elif number == 6:
                 amnesiac.append(reader.uint())
+            elif number == 7:
+                pre_vote = reader.bool_()
             else:
                 reader.skip(wire)
         return cls(
             term=term, candidate=candidate,
             last_log_index=last_index, last_log_term=last_term,
-            probe=probe, amnesiac=tuple(amnesiac),
+            probe=probe, amnesiac=tuple(amnesiac), pre_vote=pre_vote,
         )
 
 
@@ -286,6 +300,14 @@ class RequestVoteReply:
     term: int
     granted: bool
     voting: bool
+    pre_vote: bool = False
+    """Which question this answers.
+
+    Load-bearing, not decoration: a granted pre-vote carries the *prospective*
+    term and a refused one carries the voter's own, so a candidate comparing
+    terms alone could not tell a pre-vote reply from a real one -- and would
+    either count a pre-vote as a vote or step down from its own proposal.
+    """
 
     TYPE = MessageType.REQUEST_VOTE_REPLY
 
@@ -295,6 +317,7 @@ class RequestVoteReply:
             .uint(1, self.term)
             .bool_(2, self.granted)
             .bool_(3, self.voting)
+            .bool_(4, self.pre_vote)
             .take()
         )
 
@@ -303,6 +326,7 @@ class RequestVoteReply:
         term = 0
         granted = False
         voting = False
+        pre_vote = False
         reader = Reader(payload)
         for number, wire in reader:
             if number == 1:
@@ -311,9 +335,13 @@ class RequestVoteReply:
                 granted = reader.bool_()
             elif number == 3:
                 voting = reader.bool_()
+            elif number == 4:
+                pre_vote = reader.bool_()
             else:
                 reader.skip(wire)
-        return cls(term=term, granted=granted, voting=voting)
+        return cls(
+            term=term, granted=granted, voting=voting, pre_vote=pre_vote,
+        )
 
 
 @dataclass(frozen=True)

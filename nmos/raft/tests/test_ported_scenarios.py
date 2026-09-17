@@ -19,7 +19,14 @@ Sources, each named on the test that came from it:
   ``checkquorum.txt`` (a leader steps down without a quorum, *and* votes are
   rejected while a leader is active), ``slow_follower_after_compaction.txt``
   (a probe meets a gap and turns into a snapshot transfer),
-  ``lagging_commit.txt`` (a follower's commit index trails a hiccup).
+  ``lagging_commit.txt`` (a follower's commit index trails a hiccup),
+  ``heartbeat_resp_recovers_from_probing.txt`` (a peer left behind is picked up
+  again without prompting) and ``replicate_pause.txt`` (entries are not
+  re-sent while an append is outstanding).
+
+Where a scenario's *mechanism* has no counterpart here, the *claim* is ported
+instead and the difference is stated on the test -- an assertion about etcd's
+internals would only prove this is not etcd.
 * **MIT 6.5840 Lab 2** -- ``TestRejoin``, ``TestBackup``: a deposed leader
   rejoins carrying entries that were never committed, and they must be
   overwritten rather than resurrected.
@@ -36,6 +43,7 @@ import asyncio
 import dataclasses
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -161,6 +169,96 @@ class TestDisruptionByAStaleCandidate:
                     "the lease outlived the leader: no replacement was "
                     f"elected among {[m.index for m in survivors]}",
                 )
+        finally:
+            await cluster.close()
+
+
+class TestPreVote:
+    """etcd-io/raft ``prevote.txt`` and ``prevote_checkquorum.txt``.
+
+    Their headers state both halves. From ``prevote.txt``: "Tests that PreVote
+    prevents a node that is behind on the log from obtaining prevotes and
+    calling an election. Also tests that a node that is up-to-date on its log
+    can hold an election." From ``prevote_checkquorum.txt``: "Tests that
+    PreVote+CheckQuorum prevents a node from obtaining prevotes if voters have
+    heard from a leader recently. Also tests that a node is able to obtain
+    prevotes if the voter hasn't heard from the leader in the past election
+    timeout interval, or if a quorum of voters are precandidates."
+
+    That last clause is why both halves are here rather than only the first.
+    PreVote and CheckQuorum each refuse elections, and together they can refuse
+    *every* election -- each member still vouching for a leader that has died.
+    What prevents it is that becoming a pre-candidate releases the lease, so a
+    quorum of pre-candidates no longer blocks each other.
+    """
+
+    async def test_a_member_behind_on_the_log_cannot_inflate_the_term(
+        self, tmp_path: Path,
+    ) -> None:
+        """The headline benefit, and it is measurable.
+
+        Before Pre-Vote this member campaigned on every timeout and carried its
+        term up with it -- the soak recorded 183 -- so that on reconnecting it
+        would depose a leader that had never stopped working.
+        """
+        cluster = await _cluster(3, tmp_path)
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            behind = next(
+                m for m in cluster.members if m.index != leader.index
+            )
+
+            # One direction only: it stays reachable to everyone, so the quorum
+            # gate on campaigning does not stop it. Pre-Vote has to.
+            cluster.network.block(leader.index, behind.index)
+            for tag in range(70, 78):
+                await asyncio.wait_for(
+                    leader.node.propose(_register(_node_id(tag), leader)),
+                    timeout=5.0,
+                )
+            term_before = behind.node.term
+            await cluster.settle(400)
+
+            assert behind.node.log.last_index < leader.node.log.last_index, (
+                "the member under test never actually fell behind"
+            )
+            assert behind.node.term == term_before, (
+                f"term climbed from {term_before} to {behind.node.term} while "
+                f"the member could not have won"
+            )
+            assert behind.node.role is Role.PRE_CANDIDATE
+            assert cluster.leaders == [leader]
+        finally:
+            await cluster.close()
+
+    async def test_a_quorum_of_pre_candidates_still_replaces_a_dead_leader(
+        self, tmp_path: Path,
+    ) -> None:
+        """PreVote plus CheckQuorum must not add up to "never elect anyone".
+
+        Each survivor holds a lease on the dead leader and would refuse votes
+        on its behalf. Becoming a pre-candidate clears that leader, which
+        releases the lease -- so the survivors stop blocking one another and
+        one of them wins.
+        """
+        cluster = await _cluster(5, tmp_path)
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            await cluster.settle(20)
+            cluster.network.stop(leader.index)
+
+            survivors = [m for m in cluster.members if m.index != leader.index]
+            deadline = asyncio.get_running_loop().time() + 10.0
+            while asyncio.get_running_loop().time() < deadline:
+                elected = [m for m in survivors if m.node.role is Role.LEADER]
+                if len(elected) == 1:
+                    assert elected[0].node.term > leader.node.term
+                    return
+                await asyncio.sleep(cluster.timing.heartbeat)
+            raise AssertionError(
+                "PreVote and CheckQuorum between them refused every election: "
+                f"{[(m.index, m.node.role.value) for m in survivors]}",
+            )
         finally:
             await cluster.close()
 
@@ -348,6 +446,113 @@ class TestSlowFollowerAfterCompaction:
                 ) is not None, (
                     f"member {stranded.index} never received {_node_id(tag)}"
                 )
+        finally:
+            await cluster.close()
+
+
+class TestHeartbeatRecoversAStuckPeer:
+    """etcd-io/raft ``heartbeat_resp_recovers_from_probing.txt``.
+
+    etcd tracks each peer in an explicit probe-or-replicate state and uses a
+    heartbeat response to move it out of probing. We have no such state
+    machine -- ``_PeerState`` carries ``next_index``/``match_index`` and, since
+    the flow-control fix, a pause on an outstanding append -- so the mechanism
+    does not port. The *claim* does, and it is the one worth asserting: a peer
+    that has fallen behind and stopped being sent entries must be picked up
+    again without anything having to prod it.
+
+    That claim is what the pause could have broken. A pause released only by a
+    reply that never comes would strand the peer silently, and nothing else in
+    the suite would notice.
+    """
+
+    async def test_a_peer_whose_append_was_lost_is_caught_up_anyway(
+        self, tmp_path: Path,
+    ) -> None:
+        cluster = await _cluster(3, tmp_path)
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            stuck = next(
+                m for m in cluster.members if m.index != leader.index
+            )
+
+            # Cut the link *after* the leader has entries to send, so the
+            # append is genuinely lost rather than never attempted -- which is
+            # the state the pause has to recover from on its own.
+            cluster.network.block(leader.index, stuck.index)
+            for tag in range(40, 46):
+                leader.node.propose(_register(_node_id(tag), leader))
+            await cluster.settle(40)
+
+            cluster.network.heal()
+            await cluster.settle(200)
+
+            for tag in range(40, 46):
+                assert stuck.registry.store.get(
+                    ResourceType.NODE, _node_id(tag),
+                ) is not None, (
+                    f"member {stuck.index} never recovered {_node_id(tag)} "
+                    f"after its append was lost"
+                )
+        finally:
+            await cluster.close()
+
+
+class TestReplicatePause:
+    """etcd-io/raft ``replicate_pause.txt``: do not keep re-sending entries.
+
+    The gap this closes was measured before it was fixed. ``next_index`` only
+    advances on a reply, so the leader re-sent the same window every heartbeat
+    until the peer answered: harmless against a healthy peer (x1.0) and **x15**
+    against a 0.5 s link, scaling with RTT over heartbeat. Idempotent, so never
+    a correctness bug -- but a feedback loop, since the slower a link gets the
+    more traffic is pushed into it.
+
+    Asserted as a bound on bytes rather than on frames: the heartbeat must keep
+    flowing to hold the lease, so the frame count is *supposed* to stay the
+    same. What must not repeat is the payload.
+    """
+
+    async def test_entries_are_not_repeated_while_an_append_is_outstanding(
+        self, tmp_path: Path,
+    ) -> None:
+        cluster = await _cluster(3, tmp_path)
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            slow = next(m for m in cluster.members if m.index != leader.index)
+
+            sent: dict[int, int] = {}
+            distinct: dict[int, int] = {}
+            original = leader.node.transport.send
+
+            def counted(peer: int, message: Any, **kwargs: Any) -> None:
+                entries = getattr(message, "entries", None)
+                if entries is not None:
+                    sent[peer] = sent.get(peer, 0) + sum(
+                        len(e.payload) for e in entries
+                    )
+                    for entry in entries:
+                        distinct[entry.index] = len(entry.payload)
+                original(peer, message, **kwargs)
+
+            leader.node.transport.send = counted      # type: ignore[method-assign]
+
+            # Reachable, so the leader keeps heartbeating it, but its
+            # acknowledgements never arrive: the shape of a slow peer.
+            cluster.network.block(slow.index, leader.index)
+            for tag in range(50, 58):
+                leader.node.propose(_register(_node_id(tag), leader))
+            await cluster.settle(120)
+
+            payload = sum(distinct.values())
+            assert payload > 0, "the leader sent no entries at all"
+            to_slow = sent.get(slow.index, 0)
+            assert to_slow <= payload * 3, (
+                f"{to_slow} entry-bytes sent to a peer that never "
+                f"acknowledged, for {payload} distinct bytes "
+                f"(x{to_slow / payload:.1f}) -- the window is being repeated "
+                f"on every heartbeat"
+            )
         finally:
             await cluster.close()
 

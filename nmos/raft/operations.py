@@ -107,9 +107,16 @@ class ProposalId:
     """Identifies a proposal so its originator can be answered.
 
     ``(member, sequence)`` rather than a UUID: it is two varints instead of
-    sixteen bytes on every entry, it is ordered, and a member restarting cannot
-    collide with itself because a restarted member has no outstanding waiters
-    to confuse.
+    sixteen bytes on every entry, and it is ordered.
+
+    The sequence must be unique over the member's whole **history**, not just
+    over one run of it. A restarted member has no outstanding waiters of its
+    own, which is what an earlier version of this docstring relied on -- but
+    its *entries* survive it, sitting in the cluster's log and applying after
+    it returns. If the new incarnation mints the same ids, an old entry's
+    outcome resolves a new caller's future: a registration answered with an
+    unregistration's result. ``node.py`` therefore seeds the sequence from the
+    incarnation, giving each run of the member its own range.
     """
 
     member: int

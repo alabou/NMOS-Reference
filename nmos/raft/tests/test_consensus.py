@@ -23,7 +23,7 @@ import pytest
 
 from nmos.raft.errors import RaftUnavailable
 from nmos.raft.node import Role
-from nmos.raft.operations import ProposalId, RegisterOp
+from nmos.raft.operations import ProposalId, RegisterOp, UnregisterOp
 from nmos.raft.tests._harness import Cluster
 from nmos.registry.tests._fixtures import (
     NODE_ID,
@@ -571,5 +571,85 @@ class TestCommitRule:
             assert leader.node.log.term_at(
                 leader.node.log.last_index,
             ) == leader.node.term
+        finally:
+            await cluster.close()
+
+
+class TestProposalIdentityAcrossRestarts:
+    """A proposal id must be unique over a member's history, not just its run.
+
+    Found by the chaos soak, which reported a registration future resolving to
+    a bool. The cause was that ``_sequence`` restarted at zero: a member's
+    entries outlive the member, so a new incarnation minting the same ids has
+    an old entry's outcome delivered to a new caller's future.
+
+    Client-visible, and in the worst direction -- a Node could be told its
+    registration failed when it had succeeded, because the answer belonged to
+    somebody else's operation.
+    """
+
+    async def test_a_restarted_member_does_not_reuse_proposal_ids(
+        self, tmp_path: Path,
+    ) -> None:
+        cluster = await _cluster(3, tmp_path)
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            member = next(
+                m for m in cluster.members if m.index != leader.index
+            )
+
+            before = member.node.propose(_register(NODE_ID, member.index))
+            await asyncio.sleep(0)      # let the batcher mint the id
+            old_ids = set(member.node._waiters)      # noqa: SLF001
+            assert old_ids
+
+            replacement = await cluster.restart(member.index)
+            replacement.node.propose(_register(NODE_ID_2, replacement.index))
+            await asyncio.sleep(0)
+            new_ids = set(replacement.node._waiters)     # noqa: SLF001
+            assert new_ids
+
+            assert not (old_ids & new_ids), (
+                f"the restarted member reused {sorted(old_ids & new_ids)}, so "
+                f"an entry from its previous incarnation will resolve a "
+                f"waiter belonging to this one"
+            )
+            before.cancel()
+        finally:
+            await cluster.close()
+
+    async def test_an_outcome_reaches_the_caller_that_asked_for_it(
+        self, tmp_path: Path,
+    ) -> None:
+        """The client-visible form of the same claim.
+
+        Two operations whose results are different *types* -- an unregister
+        answers with a bool, a register with a result object -- so a crossed
+        future is unambiguous rather than a plausible-looking wrong value.
+        """
+        cluster = await _cluster(3, tmp_path)
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            member = next(
+                m for m in cluster.members if m.index != leader.index
+            )
+
+            stale = member.node.propose(UnregisterOp(
+                proposal=ProposalId(member.index, 0),
+                resource_type=ResourceType.NODE, resource_id=NODE_ID,
+            ))
+            await asyncio.sleep(0)
+
+            replacement = await cluster.restart(member.index)
+            fresh = replacement.node.propose(
+                _register(NODE_ID_2, replacement.index),
+            )
+            outcome = await asyncio.wait_for(fresh, timeout=5.0)
+
+            assert not isinstance(outcome.result, bool), (
+                "a registration was answered with an unregistration's result"
+            )
+            assert outcome.result.ok
+            stale.cancel()
         finally:
             await cluster.close()
