@@ -200,28 +200,54 @@ class WireEntry:
 
 @dataclass(frozen=True)
 class RequestVote:
-    """Raft §5.2. Ask a peer for its vote in ``term``."""
+    """Raft §5.2. Ask a peer for its vote in ``term``.
+
+    Two fields beyond the paper's, both serving the recovery path described in
+    ``node.py`` under "when every voter has forgotten".
+
+    ``probe`` asks a peer only to state whether it can vote, never for the vote
+    itself. A member that came back from a restart needs to know how many of
+    its peers are in the same condition before it may do anything about it, and
+    without a probe the only way to ask would be to stand for election -- which
+    inflates the term on every attempt and, in the state this exists to escape,
+    can never succeed.
+
+    ``amnesiac`` carries the evidence: the members this candidate has *itself
+    observed* answering ``voting=False``. A voter that has lost its log grants
+    nothing on trust; it re-does the arithmetic on this list plus its own
+    status, and grants only when the two together prove that no quorum of
+    voters can exist. Members the candidate has not heard from are absent from
+    the list and therefore counted as voters -- which is what stops a partition
+    looking like an empty cluster.
+    """
 
     term: int
     candidate: int
     last_log_index: int
     last_log_term: int
+    probe: bool = False
+    amnesiac: tuple[int, ...] = ()
 
     TYPE = MessageType.REQUEST_VOTE
 
     def encode(self) -> bytes:
-        return (
+        writer = (
             Writer()
             .uint(1, self.term)
             .uint(2, self.candidate)
             .uint(3, self.last_log_index)
             .uint(4, self.last_log_term)
-            .take()
+            .bool_(5, self.probe)
         )
+        for member in self.amnesiac:
+            writer.uint(6, member)
+        return writer.take()
 
     @classmethod
     def decode(cls, payload: bytes) -> RequestVote:
         term = candidate = last_index = last_term = 0
+        probe = False
+        amnesiac: list[int] = []
         reader = Reader(payload)
         for number, wire in reader:
             if number == 1:
@@ -232,11 +258,16 @@ class RequestVote:
                 last_index = reader.uint()
             elif number == 4:
                 last_term = reader.uint()
+            elif number == 5:
+                probe = reader.bool_()
+            elif number == 6:
+                amnesiac.append(reader.uint())
             else:
                 reader.skip(wire)
         return cls(
             term=term, candidate=candidate,
             last_log_index=last_index, last_log_term=last_term,
+            probe=probe, amnesiac=tuple(amnesiac),
         )
 
 

@@ -217,6 +217,14 @@ class RaftNode:
         # commit. Making it wait for a promotion would deadlock a cold start.
         self._voting = state.incarnation == 1 or layout.size == 1
 
+        # Peers positively observed answering ``voting=False``. Evidence, not
+        # belief: a peer that has simply not replied is absent from this set
+        # and is therefore treated as a voter, which is what keeps a partition
+        # from being mistaken for a cluster that has forgotten everything.
+        # Cleared whenever a leader is heard from, so it can never go stale and
+        # justify a recovery the cluster does not need.
+        self._observed_amnesiac: set[int] = set()
+
         self._votes: set[int] = set()
         self._waiters: dict[ProposalId, asyncio.Future[Outcome]] = {}
         self._sequence = 0
@@ -226,6 +234,10 @@ class RaftNode:
 
         self._deadline = 0.0
         self._quorum_deadline = 0.0
+        # When this member last accepted an AppendEntries from a leader. The
+        # basis of the lease in ``on_request_vote``: a follower that is being
+        # served by a healthy leader refuses to help depose it.
+        self._heard_from_leader_at = 0.0
         self._ticker: asyncio.Task[None] | None = None
         self._applier: asyncio.Task[None] | None = None
         self._apply_wake = asyncio.Event()
@@ -405,10 +417,109 @@ class RaftNode:
             # window, which the incumbent's heartbeat comfortably wins.
             self._reset_election_timer()
             return
-        if now >= self._deadline and self._voting:
+        if now < self._deadline:
+            return
+        if self._voting or self._cluster_has_forgotten():
             self._campaign()
+        else:
+            # Cannot vote, and no evidence yet that the cluster has lost its
+            # voters. Ask, rather than campaign: see the section above.
+            self._probe_for_forgotten_peers()
 
     # -- elections -------------------------------------------------------
+    #
+    # When every voter has forgotten
+    # ------------------------------
+    # A member that restarts comes back with an empty log and must not vote:
+    # an empty log considers every candidate up to date, so its vote would
+    # defeat the §5.4.1 check that keeps a candidate missing committed entries
+    # from winning. It is promoted back to voting by a leader, once caught up.
+    #
+    # That is safe and it deadlocks, because only a leader can promote. Once a
+    # quorum's worth of members are non-voting, no election can succeed, so no
+    # leader exists, so nobody is ever promoted. Restarting a whole cluster --
+    # an upgrade, a power cycle -- reaches that state on the second boot and
+    # never leaves it.
+    #
+    # The way out rests on one observation: **a guarantee that has already been
+    # destroyed cannot be protected.** A committed entry lived on a quorum's
+    # memory and nowhere else. If a quorum's worth of members have lost their
+    # logs, then for any entry either some member that held it still has it, or
+    # no copy exists anywhere. So:
+    #
+    #   * refuse to escalate while a quorum of voters is still *possible* --
+    #     there, the ordinary rules protect real data and must not be relaxed;
+    #   * once a voting quorum is provably impossible, let members that have
+    #     forgotten vote again, but only for a candidate approved by **every**
+    #     member not known to have forgotten.
+    #
+    # The second clause is what makes it sound rather than merely convenient.
+    # Any entry that survives does so on a member that still has its log; that
+    # member applies the ordinary up-to-dateness check and refuses a candidate
+    # lacking the entry; and since its approval is required, such a candidate
+    # cannot win. Entries held only by members that forgot are gone either way.
+    #
+    # Worked through on five members with three forgetful ones, where a
+    # committed entry survives on one of the two remaining: the candidate that
+    # lacks it needs that member's approval and is refused, so the candidate
+    # that has it is the only one that can win. See
+    # ``TestForgottenQuorumRecovery`` in ``test_consensus.py``.
+
+    def _cluster_has_forgotten(self, also: set[int] | None = None) -> bool:
+        """Is a quorum of voters provably impossible?
+
+        Counts only members *known* to have forgotten -- this member if it has,
+        plus peers observed saying so, plus ``also`` when evaluating a
+        candidate's claim. Everything else counts as a voter, including members
+        nobody has heard from, because an unreachable member is not evidence of
+        anything and treating it as one is how a partition turns into a
+        cluster that elects itself a second leader.
+        """
+        forgotten = set(self._observed_amnesiac)
+        forgotten |= also or set()
+        if not self._voting:
+            forgotten.add(self._layout.local.index)
+        forgotten &= {member.index for member in self._layout.members}
+        return self._layout.size - len(forgotten) < self._layout.quorum
+
+    def _leader_lease_holds(self) -> bool:
+        """Is this member currently being served by a leader it believes in?
+
+        ``election_min`` rather than the randomised timeout, so the lease is
+        always shorter than the shortest interval after which any member would
+        legitimately start an election. A lease that could outlast a real
+        election window would refuse votes to a candidate the cluster needs.
+
+        A leader does not hold a lease against anyone: it answers on its own
+        terms, and a higher term is how it learns it has been replaced.
+        """
+        if self._role is Role.LEADER or self._leader is None:
+            return False
+        elapsed = (
+            asyncio.get_running_loop().time() - self._heard_from_leader_at
+        )
+        return elapsed < self._timing.election_min
+
+    def _probe_for_forgotten_peers(self) -> None:
+        """Ask every peer whether it can vote, without standing for election.
+
+        A member that has forgotten cannot campaign until it knows how many
+        others have too, and cannot learn that without asking. Asking by
+        campaigning would raise the term on every attempt while never
+        succeeding -- which is precisely the runaway this replaces.
+
+        Sent at the current term and granting nothing, so it disturbs neither
+        an election in progress nor a healthy leader.
+        """
+        request = RequestVote(
+            term=self._term, candidate=self._layout.local.index,
+            last_log_index=self._log.last_index,
+            last_log_term=self._log.last_term,
+            probe=True,
+        )
+        for peer in self._peers:
+            self._transport.send(peer, request)
+        self._reset_election_timer()
 
     def _reset_election_timer(self) -> None:
         self._deadline = (
@@ -484,7 +595,7 @@ class RaftNode:
             self._layout.local.name, self._term,
         )
 
-        if len(self._votes) >= self._layout.quorum:
+        if self._won():
             self._become_leader()
             return
 
@@ -492,16 +603,59 @@ class RaftNode:
             term=self._term, candidate=self._layout.local.index,
             last_log_index=self._log.last_index,
             last_log_term=self._log.last_term,
+            # The evidence travels with the request so a voter that has
+            # forgotten can re-do the arithmetic itself rather than take this
+            # candidate's word for the state of the cluster.
+            amnesiac=tuple(sorted(self._observed_amnesiac)),
         )
         for peer in self._peers:
             self._transport.send(peer, request)
 
     def on_request_vote(self, peer: int, message: RequestVote) -> RequestVoteReply:
+        if message.probe:
+            # A question, not a request. Answered at whatever term we hold, and
+            # deliberately without adopting the asker's term or touching the
+            # election timer: a probe must be able to survey a cluster without
+            # changing it.
+            return RequestVoteReply(
+                term=self._term, granted=False, voting=self._voting,
+            )
+
+        if self._leader_lease_holds():
+            # Raft §6's disruption problem, and the reason etcd's check-quorum
+            # tests assert "votes are rejected when there is a current
+            # leader". This member is being served right now, so a candidate
+            # asking it to help depose that leader is answered no -- and
+            # crucially **without adopting the candidate's term**, because
+            # adopting it is itself the disruption: it clears the leader and
+            # the vote, and the cluster holds an election it had no reason to.
+            #
+            # The quorum gate on ``_campaign`` already stops a *partitioned*
+            # member from doing this. It does not stop one whose event loop
+            # stalled long enough to miss its heartbeats -- which in Python,
+            # under load, is the likelier cause of the two.
+            #
+            # Costs at most one election timeout when a leader really does
+            # die: the lease expires and the next request is answered
+            # normally.
+            return RequestVoteReply(
+                term=self._term, granted=False, voting=self._voting,
+            )
+
         if message.term > self._term:
             self._step_down(message.term)
 
+        # A member that has forgotten its log normally refuses. It votes only
+        # once the candidate's evidence, together with its own condition,
+        # proves no quorum of voters can exist -- at which point no committed
+        # entry can still be protected by refusing. The arithmetic is re-done
+        # here rather than trusted, so a candidate cannot talk a voter into it.
+        may_vote = self._voting or self._cluster_has_forgotten(
+            set(message.amnesiac),
+        )
+
         granted = False
-        if message.term == self._term and self._voting:
+        if message.term == self._term and may_vote:
             already = self._voted_for
             free = already is None or already == message.candidate
             current = self._log.is_at_least_as_current_as(
@@ -524,19 +678,60 @@ class RaftNode:
         if message.term > self._term:
             self._step_down(message.term)
             return
+
+        # Recorded before anything else, and for probes too: this is the only
+        # way a member learns which of its peers have forgotten, and a reply
+        # that arrives after the election it belonged to is still evidence.
+        if message.voting:
+            self._observed_amnesiac.discard(peer)
+        else:
+            self._observed_amnesiac.add(peer)
+
         if self._role is not Role.CANDIDATE or message.term != self._term:
-            return
-        if not message.voting:
-            # A member still catching up. Its vote is not a vote.
             return
         if message.granted:
             self._votes.add(peer)
-            if len(self._votes) >= self._layout.quorum:
+            if self._won():
                 self._become_leader()
+
+    def _won(self) -> bool:
+        """Has this candidate collected enough of the right votes?
+
+        Ordinarily a quorum, unchanged. Once a quorum of voters is impossible,
+        a quorum of votes is necessary but no longer sufficient: every member
+        not known to have forgotten must also have granted, because those are
+        the only members whose up-to-dateness check still means anything and
+        the surviving copy of a committed entry can only be on one of them.
+
+        Members nobody has heard from count among those, and they cannot have
+        granted -- so a partitioned cluster never satisfies this, which is the
+        intended answer.
+        """
+        if len(self._votes) < self._layout.quorum:
+            return False
+        if not self._cluster_has_forgotten():
+            return True
+        forgotten = set(self._observed_amnesiac)
+        if not self._voting:
+            forgotten.add(self._layout.local.index)
+        remembering = {
+            member.index for member in self._layout.members
+        } - forgotten
+        return remembering <= self._votes
 
     def _become_leader(self) -> None:
         self._role = Role.LEADER
         self._leader = self._layout.local.index
+        # A leader is by definition a voter: if this member won through the
+        # recovery path above it was not one a moment ago, and leaving it
+        # non-voting would leave it unable to vote in the next election it
+        # takes part in -- for no reason, since it is now the member the others
+        # are being caught up *from*.
+        self._voting = True
+        # Whatever was observed about who had forgotten belonged to the
+        # election just concluded. Keeping it would let a cluster that has
+        # since recovered still believe its voters were gone.
+        self._observed_amnesiac.clear()
         next_index = self._log.last_index + 1
         for peer in self._peers.values():
             peer.next_index = next_index
@@ -615,6 +810,11 @@ class RaftNode:
         self._role = Role.FOLLOWER
         self._leader = message.leader
         self._reset_election_timer()
+        self._heard_from_leader_at = asyncio.get_running_loop().time()
+        # There is a leader, so a quorum of voters existed. Any evidence to the
+        # contrary is out of date, and stale evidence is the one thing that
+        # could justify the recovery path above when it is not warranted.
+        self._observed_amnesiac.clear()
 
         if not self._log.matches(message.prev_log_index, message.prev_log_term):
             conflict_index, conflict_term = self._log.find_conflict(

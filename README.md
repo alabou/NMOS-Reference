@@ -440,6 +440,8 @@ different trade-offs, and the choice is one flag.
 | Log | in memory, quorum-replicated | on disk, fsynced (WAL) |
 | Survives losing **every** member at once | no — the state is gone | yes |
 | Survives losing up to `f` members | yes | yes |
+| Restart a member | free | free |
+| Restart the **next** member | wait for the first to be caught up | free |
 | Resize a live cluster | no — rolling restart | yes |
 | Native Windows | yes | **no** — client only (etcd rates it Tier 3) |
 | Round trips per registration | **1** | 2–3 |
@@ -451,9 +453,20 @@ of the fsync and of the read-before-write from the mutation path. Only
 `{term, voted_for, incarnation}` reaches the disk — about 24 bytes, written when
 the election term changes.
 
+**Rolling restarts must pause between members.** A restarted member comes back
+having forgotten what it had acknowledged, and it rejoins non-voting until the
+leader has caught it up. An entry is committed once a quorum holds it — so if a
+quorum's worth of members forget, however far apart in time, that entry is gone.
+The constraint is therefore not "`f` members at once" but "`f` members *not yet
+caught up* at once": restart one, wait for the cluster to report it healthy,
+then restart the next. Going faster does not deadlock the cluster — it recovers
+and elects — but it can drop registrations that had been acknowledged, which the
+Nodes will then re-register within the GC interval.
+
 Pick `etcd` when a deployment genuinely needs the registry's state to survive
-total cluster loss without waiting for the Nodes to come back, or needs to add
-and remove members without restarting. Pick `raft` — the default — otherwise.
+total cluster loss without waiting for the Nodes to come back, needs to restart
+members faster than they can be caught up, or needs to add and remove members
+without restarting. Pick `raft` — the default — otherwise.
 
 Flags are named for their backend and are **refused, never reinterpreted**, when
 the other one is selected: passing `--etcdEndpoints` without

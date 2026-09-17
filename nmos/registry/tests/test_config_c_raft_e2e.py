@@ -144,6 +144,24 @@ def secured_cluster(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
 
 
 def _await_every_member(processes: list[subprocess.Popen[str]]) -> None:
+    """Wait until every member *accepts a write*, not merely until it answers.
+
+    A listener answering ``GET /x-nmos/registration/v1.3/`` is not a ready
+    distributed registry. The API is up as soon as the HTTP server binds, while
+    ``accepts_mutations`` stays false until this member knows a leader -- so a
+    registration issued in between gets a correct, specified **503**. On an idle
+    machine that window is about 50 ms and a fixture that ignored it passed; on a
+    loaded one the election takes longer and it does not.
+
+    So readiness is probed with the operation that has to work: a throwaway
+    registration at *every* member, since only one of them is the leader and a
+    follower that has not yet been told who that is refuses too. 503 means "not
+    yet", exactly as it does for a Node, and a Node's answer to it is to retry.
+
+    The throwaway Nodes are never heartbeated, so they expire on their own
+    within the garbage-collection interval; nothing here asserts on the store
+    being empty.
+    """
     deadline = time.monotonic() + 90.0
     pending = set(range(MEMBERS))
     while pending and time.monotonic() < deadline:
@@ -153,17 +171,17 @@ def _await_every_member(processes: list[subprocess.Popen[str]]) -> None:
                 output = process.stdout.read() if process.stdout else ""
                 pytest.skip(f"member {index} exited: {output}")
             try:
-                _get(
-                    f"https://{HOSTS[index]}:{REGISTRATION_PORTS[index]}"
-                    f"/x-nmos/registration/v1.3/",
-                )
-                pending.discard(index)
+                if _register(index, "node", make_node(str(uuid.uuid4()))) == 201:
+                    pending.discard(index)
+            except urllib.error.HTTPError as exc:
+                if exc.code != 503:
+                    raise
             except (urllib.error.URLError, ssl.SSLError, OSError):
                 pass
         if pending:
-            time.sleep(1.0)
+            time.sleep(0.25)
     if pending:
-        pytest.skip(f"members {sorted(pending)} did not become ready")
+        pytest.skip(f"members {sorted(pending)} never accepted a write")
 
 
 # ---------------------------------------------------------------------------

@@ -40,13 +40,37 @@ What this package does differently
 * **Batches.** Everything proposed within one event-loop tick commits in a
   single quorum round, whether that is one registration or five hundred.
 
+What a volatile log actually costs, stated precisely
+----------------------------------------------------
+A restarted member comes back having forgotten everything it acknowledged, so
+it rejoins **non-voting** until a leader has caught it up and promoted it --
+without that, a single restart can break election safety, because an empty log
+considers every candidate up to date. ``node.py`` has the full argument.
+
+The limit that follows is easy to state too loosely. It is **not** "``f``
+simultaneous failures are survivable": the window is *promotion*, not downtime.
+An entry is committed once a quorum holds it, so if a quorum's worth of members
+forget -- however far apart in time -- that entry is gone. Restarting one
+member, waiting for it to be promoted, then restarting the next is safe.
+Restarting the next one first is not, and no consensus algorithm can make it
+so from a volatile log.
+
+When a quorum has forgotten, the cluster still recovers rather than
+deadlocking: members that have forgotten may vote again, but only once a quorum
+of voters is provably impossible, and only for a candidate approved by every
+member that has *not* forgotten. That preserves every entry that still exists
+anywhere -- the ones that do not are already beyond saving. The argument, and
+the five-member case that makes the second clause necessary, are in ``node.py``
+under "when every voter has forgotten".
+
 What is deliberately not implemented
 ------------------------------------
 **Dynamic cluster membership change.** The member set is static, derived on
 every member from the same list by ``nmos/cluster/layout.py``, and resizing is
-a rolling restart with a new list. Live reconfiguration is genuinely hard to
-get right, it is the feature etcd is kept for, and a registry does not need to
-be resized while running.
+a rolling restart with a new list -- pausing between members for promotion, per
+the paragraph above. Live reconfiguration is genuinely hard to get right, it is
+the feature etcd is kept for, and a registry does not need to be resized while
+running.
 
 The wire format is a specification
 ----------------------------------

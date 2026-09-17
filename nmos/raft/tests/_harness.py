@@ -22,6 +22,7 @@ Underscore-prefixed so pytest does not collect it, matching
 from __future__ import annotations
 
 import asyncio
+import random
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +53,32 @@ FAST = RaftTiming(
 
 
 class MemoryNetwork:
-    """Routes messages between in-process members, subject to partitions."""
+    """Routes messages between in-process members, subject to partitions.
+
+    The fault model is deliberately the one our transport can actually suffer
+    -------------------------------------------------------------------------
+    ``transport.py`` runs **TCP**, two connections per peer. TCP does not lose,
+    duplicate or reorder within a connection: it delivers in order or it
+    breaks. So injecting per-message loss or reordering inside one stream would
+    test a network we do not have, and would report failures against an
+    implementation that is entitled to assume per-link FIFO.
+
+    What this network therefore models, and all it models:
+
+    * **link break** -- ``stop``/``partition``/``block`` make a link
+      unreachable, and anything in flight on it is lost, exactly as a dropped
+      connection loses its send buffer;
+    * **one-way reachability** -- ``block`` is directional, because a firewall
+      or a half-open connection really can let A reach B while B cannot reach
+      A. This is the case ``check-quorum`` exists for;
+    * **delay, FIFO within a stream** -- a slow link holds messages back
+      without shuffling them;
+    * **reordering across streams** -- CONTROL and BULK are separate
+      connections, so they have no ordering relationship with each other.
+
+    Every knob defaults to inert, so a test that sets none of them sees exactly
+    the immediate, lossless, symmetric behaviour the suite had before.
+    """
 
     def __init__(self) -> None:
         self._handlers: dict[int, PeerHandler] = {}
@@ -61,6 +87,19 @@ class MemoryNetwork:
         self._tasks: set[asyncio.Task[None]] = set()
         self.delivered = 0
         self.dropped = 0
+
+        # -- chaos knobs, all inert by default --------------------------
+        self.rng: random.Random | None = None
+        """Set to make delays random. Seeded by the caller, so a failing soak
+        is replayed by its seed rather than by luck."""
+
+        self.max_delay: float = 0.0
+        """Upper bound on per-message delay, in seconds. Zero keeps delivery on
+        the very next loop iteration, as it was."""
+
+        # Per-(source, target, stream) release clock. What keeps a delayed link
+        # FIFO: each message leaves no earlier than the one before it.
+        self._link_clock: dict[tuple[int, int, int], float] = {}
 
     # -- membership -----------------------------------------------------
 
@@ -98,6 +137,22 @@ class MemoryNetwork:
                 for outside in members - group:
                     self._blocked.add((inside, outside))
                     self._blocked.add((outside, inside))
+        self._resync()
+
+    def block(self, source: int, target: int) -> None:
+        """Make ``source -> target`` unreachable, leaving the reverse alone.
+
+        The asymmetric case, which ``partition`` and ``isolate`` cannot express
+        because they are defined in terms of symmetric groups. A leader whose
+        heartbeats still arrive but whose acknowledgements never come back is
+        the scenario check-quorum was written for -- and until this existed,
+        that mechanism had no test that could produce its trigger.
+        """
+        self._blocked.add((source, target))
+        self._resync()
+
+    def unblock(self, source: int, target: int) -> None:
+        self._blocked.discard((source, target))
         self._resync()
 
     def heal(self) -> None:
@@ -153,13 +208,21 @@ class MemoryNetwork:
 
     # -- delivery -------------------------------------------------------
 
-    def deliver(self, source: int, target: int, message: Any) -> None:
+    def deliver(
+        self, source: int, target: int, message: Any,
+        *, stream: Stream = Stream.CONTROL,
+    ) -> None:
         """Hand a message to its recipient, on a later loop iteration.
 
         Via ``call_soon`` rather than directly, for two reasons: a synchronous
         handler must not re-enter the sender mid-update, and scheduling makes
         the delivery order deterministic without being instantaneous, which is
         what lets a test observe an in-between state.
+
+        With ``max_delay`` set the message is instead scheduled at this link's
+        release time, which never moves backwards -- so a slow link stays FIFO
+        while two *different* streams drift apart, matching two TCP
+        connections between the same pair of hosts.
         """
         if not self.reachable(source, target):
             self.dropped += 1
@@ -169,8 +232,20 @@ class MemoryNetwork:
             self.dropped += 1
             return
         self.delivered += 1
-        asyncio.get_running_loop().call_soon(
-            self._dispatch, source, target, message,
+
+        loop = asyncio.get_running_loop()
+        if self.rng is None or self.max_delay <= 0.0:
+            loop.call_soon(self._dispatch, source, target, message)
+            return
+
+        key = (source, target, int(stream))
+        now = loop.time()
+        release = max(
+            self._link_clock.get(key, now), now,
+        ) + self.rng.uniform(0.0, self.max_delay)
+        self._link_clock[key] = release
+        loop.call_later(
+            release - now, self._dispatch, source, target, message,
         )
 
     def _dispatch(self, source: int, target: int, message: Any) -> None:
@@ -204,7 +279,16 @@ class MemoryNetwork:
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
         if reply is not None:
-            self.deliver(target, source, reply)
+            # A snapshot reply travels back on the same connection the chunk
+            # came in on, so it shares BULK's ordering domain rather than
+            # racing along CONTROL beside the heartbeats.
+            self.deliver(
+                target, source, reply,
+                stream=(
+                    Stream.BULK if kind is MessageType.INSTALL_SNAPSHOT
+                    else Stream.CONTROL
+                ),
+            )
 
     async def _propose(self, source: int, target: int, message: Any) -> None:
         handler = self._handlers.get(target)
@@ -237,7 +321,13 @@ class MemoryTransport:
     def send(
         self, peer: int, message: Any, *, stream: Stream = Stream.CONTROL,
     ) -> None:
-        self._network.deliver(self._index, peer, message)
+        # The stream is carried through rather than dropped: CONTROL and BULK
+        # are separate TCP connections in ``transport.py``, so they are
+        # separate ordering domains, and the chaos driver reorders across them
+        # on purpose. A snapshot on BULK overtaking a heartbeat on CONTROL is a
+        # real interleaving, and it is the one that produced the duplicate
+        # snapshot-offset bug this harness now guards against.
+        self._network.deliver(self._index, peer, message, stream=stream)
 
     async def request(
         self, peer: int, message: Any, *, timeout: float | None = None,
