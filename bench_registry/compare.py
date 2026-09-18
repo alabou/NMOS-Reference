@@ -5,6 +5,7 @@
 """Run the load generator across every target and separate the taxes.
 
     python3 bench_registry/compare.py --quiet
+    python3 bench_registry/compare.py --targets cpp,standalone,rust
     python3 bench_registry/compare.py --targets cpp,standalone,dist1,dist3
     python3 bench_registry/compare.py --targets cpp,standalone,raft1,raft3,raft5
 
@@ -26,6 +27,7 @@ Separating the taxes
 A single side-by-side number would conflate unrelated costs::
 
     nmos-cpp    -> Python standalone   the PYTHON tax     (what Rust recovers)
+    standalone  -> rust                how much of it the port actually recovers
     standalone  -> dist1  / raft1      the BACKEND tax    (no quorum involved)
     dist1 -> dist3 / raft1 -> raft3    the CONSENSUS tax  (what resilience costs)
 
@@ -63,6 +65,22 @@ NMOS_CPP = Path(
     os.environ.get(
         "NMOS_CPP_REGISTRY",
         str(REPO.parent / "nmos-registry" / "nmos-cpp-registry"),
+    )
+)
+
+# The Rust registry, which is the whole point of separating the PYTHON tax:
+# ``nmos-cpp -> standalone`` measures what an interpreter costs, and
+# ``standalone -> rust`` measures how much of it a port recovers.
+#
+# **Release, deliberately, with no debug fallback.** A debug build of this
+# workspace runs several times slower, and a benchmark that silently measured
+# one would not be wrong by a little -- it would invert the result this table
+# exists to establish. Overridable for the same reason ``NMOS_CPP_REGISTRY``
+# is: anyone re-checking a number needs to point it at their own binary.
+RUST_REGISTRY = Path(
+    os.environ.get(
+        "NMOS_RUST_REGISTRY",
+        str(REPO / "rust" / "target" / "release" / "nmos-registry"),
     )
 )
 
@@ -330,6 +348,70 @@ def start_python(
 
 
 
+def start_rust(name: str, quiet: bool) -> Target:
+    """Start the Rust registry over plain HTTP.
+
+    Deliberately the same flags ``start_python`` passes, because the comparison
+    is only meaningful if the two are configured identically -- the command line
+    is shared, and ``cli_parity.rs`` is what keeps it so.
+
+    The observability flags are the ones that matter here. ``--logFile ""``
+    silences the file sink, ``--statusInterval 0`` silences the periodic status
+    line, and ``NMOS_LOG_LEVEL`` quietens the console; the Rust registry honours
+    all three exactly as the Python one does. A target that ignored any of them
+    would be measured while writing what the other was not, which is what
+    ``log_bytes`` exists to catch.
+    """
+    if not RUST_REGISTRY.is_file():
+        raise SystemExit(
+            f"rust registry not built at {RUST_REGISTRY}\n"
+            f"  (cd rust && cargo build --release -p nmos-registry-bin)\n"
+            f"  or set NMOS_RUST_REGISTRY to a release binary"
+        )
+
+    registration_port, query_port, ws_port = (
+        _free_port(), _free_port(), _free_port(),
+    )
+    log_file = WORK / f"{name}.log"
+    stdout_path = WORK / f"{name}.out"
+
+    command = [
+        str(RUST_REGISTRY),
+        "--registryDisableTLS",
+        "--registryAddr", "127.0.0.1",
+        "--registrationPort", str(registration_port),
+        "--queryPort", str(query_port),
+        "--queryWebSocketPort", str(ws_port),
+        "--logFile", "" if quiet else str(log_file),
+        "--statusInterval", "0" if quiet else "5",
+    ]
+
+    handle = stdout_path.open("wb")
+    environment = dict(os.environ)
+    if quiet:
+        environment["NMOS_LOG_LEVEL"] = "WARNING"
+    process = subprocess.Popen(
+        command, cwd=str(REPO), stdout=handle, stderr=subprocess.STDOUT,
+        env=environment,
+    )
+
+    registration = f"http://127.0.0.1:{registration_port}"
+    query = f"http://127.0.0.1:{query_port}"
+    if not _wait_http(f"{query}/x-nmos/query/v1.3/", timeout=90.0):
+        process.kill()
+        raise SystemExit(f"{name} did not start; see {stdout_path}")
+
+    return Target(
+        name=name,
+        registration=registration,
+        query=query,
+        websocket=f"ws://127.0.0.1:{ws_port}",
+        process=process,
+        log_paths=[log_file] if not quiet else [],
+        stdout_path=stdout_path,
+    )
+
+
 def _free_pair() -> tuple[int, int]:
     """A free port ``P`` whose neighbour ``P+1`` is free too.
 
@@ -435,6 +517,11 @@ def start_raft(name: str, quiet: bool, *, members: int) -> Target:
 TAXES = [
     ("python tax", "nmos-cpp", "standalone",
      "JSON, generated-type decode, event loop -- what a Rust port recovers"),
+    # Read the same way as every other row: the ratio is the second column
+    # divided by the first, so a value below 1.0 means the Rust registry was
+    # faster. This is the row the whole port exists to move.
+    ("rust recovery", "standalone", "rust",
+     "the same registry in Rust -- multi-threaded, no interpreter"),
     ("etcd tax", "standalone", "dist1",
      "client, serialization and fence overhead, with no quorum involved"),
     ("etcd consensus tax", "dist1", "dist3",
@@ -451,7 +538,8 @@ TAXES = [
 ]
 
 
-def _report(results: dict[str, dict[str, Any]], log_bytes: dict[str, int]) -> None:
+def _report(results: dict[str, dict[str, Any]], log_bytes: dict[str, int],
+            capacities: dict[str, dict[str, Any]] | None = None) -> None:
     print("\n" + "=" * 78)
     print("MATCHED OBSERVABILITY")
     print("=" * 78)
@@ -494,12 +582,48 @@ def _report(results: dict[str, dict[str, Any]], log_bytes: dict[str, int]) -> No
         print(row)
 
     print("\n" + "=" * 78)
+    if capacities:
+        print("\n" + "=" * 78)
+        print("CAPACITY  (heartbeat, offered load from separate client processes)")
+        print("=" * 78)
+        print(
+            "  The phase table above is one client's p50. A single client\n"
+            "  saturates near the rate of the registries it measures, so on the\n"
+            "  cheap endpoints it reports its own limit rather than theirs --\n"
+            "  and the targets come out level or ranked backwards. These two\n"
+            "  points show that directly: `1 client` is the regime above, and\n"
+            "  `nproc` is as much load as this machine can offer without the\n"
+            "  clients taking cores the server needs.\n",
+        )
+        print(f"  {'target':<14} {'1 client':>12} {'nproc':>12} "
+              f"{'hidden':>8} {'CPU/req':>10}")
+        for name, capacity in sorted(capacities.items()):
+            print(
+                f"  {name:<14} {capacity['single_client_rate']:>9.0f}/s "
+                f"{capacity['peak_rate']:>9.0f}/s "
+                f"{capacity['client_ceiling_factor']:>7.1f}x "
+                f"{capacity['cpu_us_per_request']:>8.1f}us",
+            )
+        print(
+            "\n  `hidden` is how much capacity the one-client column was\n"
+            "  concealing. Near 1.0 means the client was not the limit and the\n"
+            "  phase table is trustworthy for that target; a large value means\n"
+            "  it was measuring itself.",
+        )
+
+    print("\n" + "=" * 78)
     print("THE TAXES  (p50 ratio, registration chain)")
     print("=" * 78)
     for label, faster, slower, why in TAXES:
         if faster not in results or slower not in results:
             continue
-        for phase in ("node_online", "cold_sender", "update_churn", "query"):
+        # `amwa_scale` first: it is the published reference workload (2500
+        # Nodes x 6 resources) and the one the CPU argument was always about.
+        # The others are the small-scale chain, where every implementation
+        # looks similar and the tax is easy to talk yourself out of.
+        for phase in (
+            "amwa_scale", "node_online", "cold_sender", "update_churn", "query",
+        ):
             a = results[faster].get(phase)
             b = results[slower].get(phase)
             if not a or not b or a["p50_ms"] <= 0:
@@ -522,6 +646,7 @@ async def main_async(args: argparse.Namespace) -> int:
 
     results: dict[str, dict[str, Any]] = {}
     log_bytes: dict[str, int] = {}
+    capacities: dict[str, dict[str, Any]] = {}
 
     for name in wanted:
         target: Target | None = None
@@ -532,6 +657,9 @@ async def main_async(args: argparse.Namespace) -> int:
             elif name == "standalone":
                 target = start_python("standalone", args.quiet)
                 key = "standalone"
+            elif name == "rust":
+                target = start_rust("rust", args.quiet)
+                key = "rust"
             elif name.startswith("dist"):
                 members = int(name[4:] or "1")
                 target = start_python(name, args.quiet, members=members)
@@ -564,16 +692,39 @@ async def main_async(args: argparse.Namespace) -> int:
             ])
             results[key] = await loadgen.run(phase_args)
             log_bytes[target.name] = target.log_bytes() - before
+
+            # After the phases, deliberately, for two reasons. The probe has to
+            # register a Node of its own to heartbeat, and doing that first
+            # would put an extra resource into every collection the phases then
+            # query. And a registry that has just absorbed the workload is the
+            # more representative thing to measure -- the heartbeat cost is
+            # independent of registry size (1.4us flat from 60 to 15,000
+            # resources), but nothing else about the process is.
+            if args.capacity:
+                from bench_registry import capacity as capacity_probe
+                print(f"\n{target.name}: heartbeat capacity")
+                capacities[key] = capacity_probe.measure(
+                    target.registration,
+                    pid=target.process.pid if target.process else None,
+                )
         finally:
             if target is not None:
                 target.stop()
 
-    _report(results, log_bytes)
+    _report(results, log_bytes, capacities)
 
     if args.json:
         Path(args.json).write_text(
             json.dumps(
-                {"log_bytes": log_bytes, "results": results}, indent=2,
+                {
+                    "log_bytes": log_bytes,
+                    "results": results,
+                    # Recorded whether or not it was measured, so a consumer can
+                    # tell "the probe was skipped" from "the probe found
+                    # nothing" -- an absent key and a zero mean different things.
+                    "capacity": capacities,
+                },
+                indent=2,
             ),
             encoding="utf-8",
         )
@@ -609,6 +760,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-fast-path", action="store_true",
                         help="Force every mutation down the fenced path, to "
                              "measure what the §10.2.1 fast path is worth")
+    parser.add_argument("--capacity", action="store_true", default=True,
+                        help="Also measure heartbeat capacity at 1 and nproc "
+                             "clients, which is what the one-client phase "
+                             "table cannot show")
+    parser.add_argument("--no-capacity", dest="capacity", action="store_false",
+                        help="Skip the capacity probe")
     parser.add_argument("--json", default="")
     return parser
 

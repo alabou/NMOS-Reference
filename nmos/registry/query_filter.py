@@ -50,7 +50,7 @@ from typing import Any, Mapping, Sequence
 from nmos.registry.paging import PAGING_PARAMS
 
 # ``QueryAPI.raml:70`` -- ``^v[0-9]+.[0-9]+$``.
-_API_VERSION_RE = re.compile(r"^v([0-9]+)\.([0-9]+)$")
+_API_VERSION_RE = re.compile(r"^v([0-9]+)\.([0-9]+)\Z")
 
 # The API version this registry serves. Everything about downgrade is
 # relative to it.

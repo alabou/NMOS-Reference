@@ -26,7 +26,7 @@ from nmos.uuid.base62 import (
 
 _NMOS_UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}"
-    r"-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    r"-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z"
 )
 
 

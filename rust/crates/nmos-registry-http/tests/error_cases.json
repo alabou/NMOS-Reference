@@ -1,0 +1,829 @@
+{
+ "cases": [
+  {
+   "body": "{\n  \"code\": 100,\n  \"error\": \"Continue\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 100
+  },
+  {
+   "body": "{\n  \"code\": 101,\n  \"error\": \"Switching Protocols\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 101
+  },
+  {
+   "body": "{\n  \"code\": 102,\n  \"error\": \"Processing\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 102
+  },
+  {
+   "body": "{\n  \"code\": 103,\n  \"error\": \"Early Hints\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 103
+  },
+  {
+   "body": "{\n  \"code\": 200,\n  \"error\": \"OK\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 200
+  },
+  {
+   "body": "{\n  \"code\": 201,\n  \"error\": \"Created\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 201
+  },
+  {
+   "body": "{\n  \"code\": 202,\n  \"error\": \"Accepted\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 202
+  },
+  {
+   "body": "{\n  \"code\": 203,\n  \"error\": \"Non-Authoritative Information\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 203
+  },
+  {
+   "body": "{\n  \"code\": 204,\n  \"error\": \"No Content\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 204
+  },
+  {
+   "body": "{\n  \"code\": 205,\n  \"error\": \"Reset Content\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 205
+  },
+  {
+   "body": "{\n  \"code\": 206,\n  \"error\": \"Partial Content\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 206
+  },
+  {
+   "body": "{\n  \"code\": 207,\n  \"error\": \"Multi-Status\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 207
+  },
+  {
+   "body": "{\n  \"code\": 208,\n  \"error\": \"Already Reported\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 208
+  },
+  {
+   "body": "{\n  \"code\": 226,\n  \"error\": \"IM Used\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 226
+  },
+  {
+   "body": "{\n  \"code\": 300,\n  \"error\": \"Multiple Choices\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 300
+  },
+  {
+   "body": "{\n  \"code\": 301,\n  \"error\": \"Moved Permanently\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 301
+  },
+  {
+   "body": "{\n  \"code\": 302,\n  \"error\": \"Found\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 302
+  },
+  {
+   "body": "{\n  \"code\": 303,\n  \"error\": \"See Other\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 303
+  },
+  {
+   "body": "{\n  \"code\": 304,\n  \"error\": \"Not Modified\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 304
+  },
+  {
+   "body": "{\n  \"code\": 305,\n  \"error\": \"Use Proxy\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 305
+  },
+  {
+   "body": "{\n  \"code\": 307,\n  \"error\": \"Temporary Redirect\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 307
+  },
+  {
+   "body": "{\n  \"code\": 308,\n  \"error\": \"Permanent Redirect\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 308
+  },
+  {
+   "body": "{\n  \"code\": 400,\n  \"error\": \"Bad Request\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 400
+  },
+  {
+   "body": "{\n  \"code\": 401,\n  \"error\": \"Unauthorized\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 401
+  },
+  {
+   "body": "{\n  \"code\": 402,\n  \"error\": \"Payment Required\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 402
+  },
+  {
+   "body": "{\n  \"code\": 403,\n  \"error\": \"Forbidden\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 403
+  },
+  {
+   "body": "{\n  \"code\": 404,\n  \"error\": \"Not Found\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 404
+  },
+  {
+   "body": "{\n  \"code\": 405,\n  \"error\": \"Method Not Allowed\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 405
+  },
+  {
+   "body": "{\n  \"code\": 406,\n  \"error\": \"Not Acceptable\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 406
+  },
+  {
+   "body": "{\n  \"code\": 407,\n  \"error\": \"Proxy Authentication Required\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 407
+  },
+  {
+   "body": "{\n  \"code\": 408,\n  \"error\": \"Request Timeout\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 408
+  },
+  {
+   "body": "{\n  \"code\": 409,\n  \"error\": \"Conflict\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 409
+  },
+  {
+   "body": "{\n  \"code\": 410,\n  \"error\": \"Gone\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 410
+  },
+  {
+   "body": "{\n  \"code\": 411,\n  \"error\": \"Length Required\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 411
+  },
+  {
+   "body": "{\n  \"code\": 412,\n  \"error\": \"Precondition Failed\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 412
+  },
+  {
+   "body": "{\n  \"code\": 413,\n  \"error\": \"Request Entity Too Large\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 413
+  },
+  {
+   "body": "{\n  \"code\": 414,\n  \"error\": \"Request-URI Too Long\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 414
+  },
+  {
+   "body": "{\n  \"code\": 415,\n  \"error\": \"Unsupported Media Type\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 415
+  },
+  {
+   "body": "{\n  \"code\": 416,\n  \"error\": \"Requested Range Not Satisfiable\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 416
+  },
+  {
+   "body": "{\n  \"code\": 417,\n  \"error\": \"Expectation Failed\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 417
+  },
+  {
+   "body": "{\n  \"code\": 418,\n  \"error\": \"I'm a Teapot\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 418
+  },
+  {
+   "body": "{\n  \"code\": 421,\n  \"error\": \"Misdirected Request\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 421
+  },
+  {
+   "body": "{\n  \"code\": 422,\n  \"error\": \"Unprocessable Entity\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 422
+  },
+  {
+   "body": "{\n  \"code\": 423,\n  \"error\": \"Locked\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 423
+  },
+  {
+   "body": "{\n  \"code\": 424,\n  \"error\": \"Failed Dependency\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 424
+  },
+  {
+   "body": "{\n  \"code\": 425,\n  \"error\": \"Too Early\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 425
+  },
+  {
+   "body": "{\n  \"code\": 426,\n  \"error\": \"Upgrade Required\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 426
+  },
+  {
+   "body": "{\n  \"code\": 428,\n  \"error\": \"Precondition Required\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 428
+  },
+  {
+   "body": "{\n  \"code\": 429,\n  \"error\": \"Too Many Requests\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 429
+  },
+  {
+   "body": "{\n  \"code\": 431,\n  \"error\": \"Request Header Fields Too Large\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 431
+  },
+  {
+   "body": "{\n  \"code\": 451,\n  \"error\": \"Unavailable For Legal Reasons\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 451
+  },
+  {
+   "body": "{\n  \"code\": 500,\n  \"error\": \"Internal Server Error\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 500
+  },
+  {
+   "body": "{\n  \"code\": 501,\n  \"error\": \"Not Implemented\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 501
+  },
+  {
+   "body": "{\n  \"code\": 502,\n  \"error\": \"Bad Gateway\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 502
+  },
+  {
+   "body": "{\n  \"code\": 503,\n  \"error\": \"Service Unavailable\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 503
+  },
+  {
+   "body": "{\n  \"code\": 504,\n  \"error\": \"Gateway Timeout\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 504
+  },
+  {
+   "body": "{\n  \"code\": 505,\n  \"error\": \"HTTP Version Not Supported\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 505
+  },
+  {
+   "body": "{\n  \"code\": 506,\n  \"error\": \"Variant Also Negotiates\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 506
+  },
+  {
+   "body": "{\n  \"code\": 507,\n  \"error\": \"Insufficient Storage\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 507
+  },
+  {
+   "body": "{\n  \"code\": 508,\n  \"error\": \"Loop Detected\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 508
+  },
+  {
+   "body": "{\n  \"code\": 510,\n  \"error\": \"Not Extended\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 510
+  },
+  {
+   "body": "{\n  \"code\": 511,\n  \"error\": \"Network Authentication Required\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 511
+  },
+  {
+   "body": "{\n  \"code\": 599,\n  \"error\": \"Unknown Error\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 599
+  },
+  {
+   "body": "{\n  \"code\": 598,\n  \"error\": \"Unknown Error\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 598
+  },
+  {
+   "body": "{\n  \"code\": 209,\n  \"error\": \"Unknown Error\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 209
+  },
+  {
+   "body": "{\n  \"code\": 449,\n  \"error\": \"Unknown Error\",\n  \"debug\": \"x\"\n}",
+   "debug": "x",
+   "status": 449
+  },
+  {
+   "body": "{\n  \"code\": 400,\n  \"error\": \"Bad Request\",\n  \"debug\": \"\"\n}",
+   "debug": "",
+   "status": 400
+  },
+  {
+   "body": "{\n  \"code\": 400,\n  \"error\": \"Bad Request\",\n  \"debug\": \"plain message\"\n}",
+   "debug": "plain message",
+   "status": 400
+  },
+  {
+   "body": "{\n  \"code\": 400,\n  \"error\": \"Bad Request\",\n  \"debug\": \"quote \\\" and \\\\ back\"\n}",
+   "debug": "quote \" and \\ back",
+   "status": 400
+  },
+  {
+   "body": "{\n  \"code\": 400,\n  \"error\": \"Bad Request\",\n  \"debug\": \"caf\u00e9\"\n}",
+   "debug": "caf\u00e9",
+   "status": 400
+  },
+  {
+   "body": "{\n  \"code\": 400,\n  \"error\": \"Bad Request\",\n  \"debug\": \"\u65e5\u672c\u8a9e\"\n}",
+   "debug": "\u65e5\u672c\u8a9e",
+   "status": 400
+  },
+  {
+   "body": "{\n  \"code\": 400,\n  \"error\": \"Bad Request\",\n  \"debug\": \"\ud83d\ude00\"\n}",
+   "debug": "\ud83d\ude00",
+   "status": 400
+  },
+  {
+   "body": "{\n  \"code\": 400,\n  \"error\": \"Bad Request\",\n  \"debug\": \"newline\\nand\\ttab\"\n}",
+   "debug": "newline\nand\ttab",
+   "status": 400
+  },
+  {
+   "body": "{\n  \"code\": 400,\n  \"error\": \"Bad Request\",\n  \"debug\": \"control\\u0000\\u001f\"\n}",
+   "debug": "control\u0000\u001f",
+   "status": 400
+  },
+  {
+   "body": "{\n  \"code\": 400,\n  \"error\": \"Bad Request\",\n  \"debug\": \"invalid TAI timestamp: 'y'\"\n}",
+   "debug": "invalid TAI timestamp: 'y'",
+   "status": 400
+  },
+  {
+   "body": "{\n  \"code\": 400,\n  \"error\": \"Bad Request\",\n  \"debug\": \"resource_path \\\"/it's\\\" is not subscribable\"\n}",
+   "debug": "resource_path \"/it's\" is not subscribable",
+   "status": 400
+  },
+  {
+   "body": "{\n  \"code\": 400,\n  \"error\": \"Bad Request\",\n  \"debug\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n}",
+   "debug": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "status": 400
+  },
+  {
+   "body": "{\n  \"code\": 401,\n  \"error\": \"Unauthorized\",\n  \"debug\": \"\"\n}",
+   "debug": "",
+   "status": 401
+  },
+  {
+   "body": "{\n  \"code\": 401,\n  \"error\": \"Unauthorized\",\n  \"debug\": \"plain message\"\n}",
+   "debug": "plain message",
+   "status": 401
+  },
+  {
+   "body": "{\n  \"code\": 401,\n  \"error\": \"Unauthorized\",\n  \"debug\": \"quote \\\" and \\\\ back\"\n}",
+   "debug": "quote \" and \\ back",
+   "status": 401
+  },
+  {
+   "body": "{\n  \"code\": 401,\n  \"error\": \"Unauthorized\",\n  \"debug\": \"caf\u00e9\"\n}",
+   "debug": "caf\u00e9",
+   "status": 401
+  },
+  {
+   "body": "{\n  \"code\": 401,\n  \"error\": \"Unauthorized\",\n  \"debug\": \"\u65e5\u672c\u8a9e\"\n}",
+   "debug": "\u65e5\u672c\u8a9e",
+   "status": 401
+  },
+  {
+   "body": "{\n  \"code\": 401,\n  \"error\": \"Unauthorized\",\n  \"debug\": \"\ud83d\ude00\"\n}",
+   "debug": "\ud83d\ude00",
+   "status": 401
+  },
+  {
+   "body": "{\n  \"code\": 401,\n  \"error\": \"Unauthorized\",\n  \"debug\": \"newline\\nand\\ttab\"\n}",
+   "debug": "newline\nand\ttab",
+   "status": 401
+  },
+  {
+   "body": "{\n  \"code\": 401,\n  \"error\": \"Unauthorized\",\n  \"debug\": \"control\\u0000\\u001f\"\n}",
+   "debug": "control\u0000\u001f",
+   "status": 401
+  },
+  {
+   "body": "{\n  \"code\": 401,\n  \"error\": \"Unauthorized\",\n  \"debug\": \"invalid TAI timestamp: 'y'\"\n}",
+   "debug": "invalid TAI timestamp: 'y'",
+   "status": 401
+  },
+  {
+   "body": "{\n  \"code\": 401,\n  \"error\": \"Unauthorized\",\n  \"debug\": \"resource_path \\\"/it's\\\" is not subscribable\"\n}",
+   "debug": "resource_path \"/it's\" is not subscribable",
+   "status": 401
+  },
+  {
+   "body": "{\n  \"code\": 401,\n  \"error\": \"Unauthorized\",\n  \"debug\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n}",
+   "debug": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "status": 401
+  },
+  {
+   "body": "{\n  \"code\": 403,\n  \"error\": \"Forbidden\",\n  \"debug\": \"\"\n}",
+   "debug": "",
+   "status": 403
+  },
+  {
+   "body": "{\n  \"code\": 403,\n  \"error\": \"Forbidden\",\n  \"debug\": \"plain message\"\n}",
+   "debug": "plain message",
+   "status": 403
+  },
+  {
+   "body": "{\n  \"code\": 403,\n  \"error\": \"Forbidden\",\n  \"debug\": \"quote \\\" and \\\\ back\"\n}",
+   "debug": "quote \" and \\ back",
+   "status": 403
+  },
+  {
+   "body": "{\n  \"code\": 403,\n  \"error\": \"Forbidden\",\n  \"debug\": \"caf\u00e9\"\n}",
+   "debug": "caf\u00e9",
+   "status": 403
+  },
+  {
+   "body": "{\n  \"code\": 403,\n  \"error\": \"Forbidden\",\n  \"debug\": \"\u65e5\u672c\u8a9e\"\n}",
+   "debug": "\u65e5\u672c\u8a9e",
+   "status": 403
+  },
+  {
+   "body": "{\n  \"code\": 403,\n  \"error\": \"Forbidden\",\n  \"debug\": \"\ud83d\ude00\"\n}",
+   "debug": "\ud83d\ude00",
+   "status": 403
+  },
+  {
+   "body": "{\n  \"code\": 403,\n  \"error\": \"Forbidden\",\n  \"debug\": \"newline\\nand\\ttab\"\n}",
+   "debug": "newline\nand\ttab",
+   "status": 403
+  },
+  {
+   "body": "{\n  \"code\": 403,\n  \"error\": \"Forbidden\",\n  \"debug\": \"control\\u0000\\u001f\"\n}",
+   "debug": "control\u0000\u001f",
+   "status": 403
+  },
+  {
+   "body": "{\n  \"code\": 403,\n  \"error\": \"Forbidden\",\n  \"debug\": \"invalid TAI timestamp: 'y'\"\n}",
+   "debug": "invalid TAI timestamp: 'y'",
+   "status": 403
+  },
+  {
+   "body": "{\n  \"code\": 403,\n  \"error\": \"Forbidden\",\n  \"debug\": \"resource_path \\\"/it's\\\" is not subscribable\"\n}",
+   "debug": "resource_path \"/it's\" is not subscribable",
+   "status": 403
+  },
+  {
+   "body": "{\n  \"code\": 403,\n  \"error\": \"Forbidden\",\n  \"debug\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n}",
+   "debug": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "status": 403
+  },
+  {
+   "body": "{\n  \"code\": 404,\n  \"error\": \"Not Found\",\n  \"debug\": \"\"\n}",
+   "debug": "",
+   "status": 404
+  },
+  {
+   "body": "{\n  \"code\": 404,\n  \"error\": \"Not Found\",\n  \"debug\": \"plain message\"\n}",
+   "debug": "plain message",
+   "status": 404
+  },
+  {
+   "body": "{\n  \"code\": 404,\n  \"error\": \"Not Found\",\n  \"debug\": \"quote \\\" and \\\\ back\"\n}",
+   "debug": "quote \" and \\ back",
+   "status": 404
+  },
+  {
+   "body": "{\n  \"code\": 404,\n  \"error\": \"Not Found\",\n  \"debug\": \"caf\u00e9\"\n}",
+   "debug": "caf\u00e9",
+   "status": 404
+  },
+  {
+   "body": "{\n  \"code\": 404,\n  \"error\": \"Not Found\",\n  \"debug\": \"\u65e5\u672c\u8a9e\"\n}",
+   "debug": "\u65e5\u672c\u8a9e",
+   "status": 404
+  },
+  {
+   "body": "{\n  \"code\": 404,\n  \"error\": \"Not Found\",\n  \"debug\": \"\ud83d\ude00\"\n}",
+   "debug": "\ud83d\ude00",
+   "status": 404
+  },
+  {
+   "body": "{\n  \"code\": 404,\n  \"error\": \"Not Found\",\n  \"debug\": \"newline\\nand\\ttab\"\n}",
+   "debug": "newline\nand\ttab",
+   "status": 404
+  },
+  {
+   "body": "{\n  \"code\": 404,\n  \"error\": \"Not Found\",\n  \"debug\": \"control\\u0000\\u001f\"\n}",
+   "debug": "control\u0000\u001f",
+   "status": 404
+  },
+  {
+   "body": "{\n  \"code\": 404,\n  \"error\": \"Not Found\",\n  \"debug\": \"invalid TAI timestamp: 'y'\"\n}",
+   "debug": "invalid TAI timestamp: 'y'",
+   "status": 404
+  },
+  {
+   "body": "{\n  \"code\": 404,\n  \"error\": \"Not Found\",\n  \"debug\": \"resource_path \\\"/it's\\\" is not subscribable\"\n}",
+   "debug": "resource_path \"/it's\" is not subscribable",
+   "status": 404
+  },
+  {
+   "body": "{\n  \"code\": 404,\n  \"error\": \"Not Found\",\n  \"debug\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n}",
+   "debug": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "status": 404
+  },
+  {
+   "body": "{\n  \"code\": 405,\n  \"error\": \"Method Not Allowed\",\n  \"debug\": \"\"\n}",
+   "debug": "",
+   "status": 405
+  },
+  {
+   "body": "{\n  \"code\": 405,\n  \"error\": \"Method Not Allowed\",\n  \"debug\": \"plain message\"\n}",
+   "debug": "plain message",
+   "status": 405
+  },
+  {
+   "body": "{\n  \"code\": 405,\n  \"error\": \"Method Not Allowed\",\n  \"debug\": \"quote \\\" and \\\\ back\"\n}",
+   "debug": "quote \" and \\ back",
+   "status": 405
+  },
+  {
+   "body": "{\n  \"code\": 405,\n  \"error\": \"Method Not Allowed\",\n  \"debug\": \"caf\u00e9\"\n}",
+   "debug": "caf\u00e9",
+   "status": 405
+  },
+  {
+   "body": "{\n  \"code\": 405,\n  \"error\": \"Method Not Allowed\",\n  \"debug\": \"\u65e5\u672c\u8a9e\"\n}",
+   "debug": "\u65e5\u672c\u8a9e",
+   "status": 405
+  },
+  {
+   "body": "{\n  \"code\": 405,\n  \"error\": \"Method Not Allowed\",\n  \"debug\": \"\ud83d\ude00\"\n}",
+   "debug": "\ud83d\ude00",
+   "status": 405
+  },
+  {
+   "body": "{\n  \"code\": 405,\n  \"error\": \"Method Not Allowed\",\n  \"debug\": \"newline\\nand\\ttab\"\n}",
+   "debug": "newline\nand\ttab",
+   "status": 405
+  },
+  {
+   "body": "{\n  \"code\": 405,\n  \"error\": \"Method Not Allowed\",\n  \"debug\": \"control\\u0000\\u001f\"\n}",
+   "debug": "control\u0000\u001f",
+   "status": 405
+  },
+  {
+   "body": "{\n  \"code\": 405,\n  \"error\": \"Method Not Allowed\",\n  \"debug\": \"invalid TAI timestamp: 'y'\"\n}",
+   "debug": "invalid TAI timestamp: 'y'",
+   "status": 405
+  },
+  {
+   "body": "{\n  \"code\": 405,\n  \"error\": \"Method Not Allowed\",\n  \"debug\": \"resource_path \\\"/it's\\\" is not subscribable\"\n}",
+   "debug": "resource_path \"/it's\" is not subscribable",
+   "status": 405
+  },
+  {
+   "body": "{\n  \"code\": 405,\n  \"error\": \"Method Not Allowed\",\n  \"debug\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n}",
+   "debug": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "status": 405
+  },
+  {
+   "body": "{\n  \"code\": 409,\n  \"error\": \"Conflict\",\n  \"debug\": \"\"\n}",
+   "debug": "",
+   "status": 409
+  },
+  {
+   "body": "{\n  \"code\": 409,\n  \"error\": \"Conflict\",\n  \"debug\": \"plain message\"\n}",
+   "debug": "plain message",
+   "status": 409
+  },
+  {
+   "body": "{\n  \"code\": 409,\n  \"error\": \"Conflict\",\n  \"debug\": \"quote \\\" and \\\\ back\"\n}",
+   "debug": "quote \" and \\ back",
+   "status": 409
+  },
+  {
+   "body": "{\n  \"code\": 409,\n  \"error\": \"Conflict\",\n  \"debug\": \"caf\u00e9\"\n}",
+   "debug": "caf\u00e9",
+   "status": 409
+  },
+  {
+   "body": "{\n  \"code\": 409,\n  \"error\": \"Conflict\",\n  \"debug\": \"\u65e5\u672c\u8a9e\"\n}",
+   "debug": "\u65e5\u672c\u8a9e",
+   "status": 409
+  },
+  {
+   "body": "{\n  \"code\": 409,\n  \"error\": \"Conflict\",\n  \"debug\": \"\ud83d\ude00\"\n}",
+   "debug": "\ud83d\ude00",
+   "status": 409
+  },
+  {
+   "body": "{\n  \"code\": 409,\n  \"error\": \"Conflict\",\n  \"debug\": \"newline\\nand\\ttab\"\n}",
+   "debug": "newline\nand\ttab",
+   "status": 409
+  },
+  {
+   "body": "{\n  \"code\": 409,\n  \"error\": \"Conflict\",\n  \"debug\": \"control\\u0000\\u001f\"\n}",
+   "debug": "control\u0000\u001f",
+   "status": 409
+  },
+  {
+   "body": "{\n  \"code\": 409,\n  \"error\": \"Conflict\",\n  \"debug\": \"invalid TAI timestamp: 'y'\"\n}",
+   "debug": "invalid TAI timestamp: 'y'",
+   "status": 409
+  },
+  {
+   "body": "{\n  \"code\": 409,\n  \"error\": \"Conflict\",\n  \"debug\": \"resource_path \\\"/it's\\\" is not subscribable\"\n}",
+   "debug": "resource_path \"/it's\" is not subscribable",
+   "status": 409
+  },
+  {
+   "body": "{\n  \"code\": 409,\n  \"error\": \"Conflict\",\n  \"debug\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n}",
+   "debug": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "status": 409
+  },
+  {
+   "body": "{\n  \"code\": 500,\n  \"error\": \"Internal Server Error\",\n  \"debug\": \"\"\n}",
+   "debug": "",
+   "status": 500
+  },
+  {
+   "body": "{\n  \"code\": 500,\n  \"error\": \"Internal Server Error\",\n  \"debug\": \"plain message\"\n}",
+   "debug": "plain message",
+   "status": 500
+  },
+  {
+   "body": "{\n  \"code\": 500,\n  \"error\": \"Internal Server Error\",\n  \"debug\": \"quote \\\" and \\\\ back\"\n}",
+   "debug": "quote \" and \\ back",
+   "status": 500
+  },
+  {
+   "body": "{\n  \"code\": 500,\n  \"error\": \"Internal Server Error\",\n  \"debug\": \"caf\u00e9\"\n}",
+   "debug": "caf\u00e9",
+   "status": 500
+  },
+  {
+   "body": "{\n  \"code\": 500,\n  \"error\": \"Internal Server Error\",\n  \"debug\": \"\u65e5\u672c\u8a9e\"\n}",
+   "debug": "\u65e5\u672c\u8a9e",
+   "status": 500
+  },
+  {
+   "body": "{\n  \"code\": 500,\n  \"error\": \"Internal Server Error\",\n  \"debug\": \"\ud83d\ude00\"\n}",
+   "debug": "\ud83d\ude00",
+   "status": 500
+  },
+  {
+   "body": "{\n  \"code\": 500,\n  \"error\": \"Internal Server Error\",\n  \"debug\": \"newline\\nand\\ttab\"\n}",
+   "debug": "newline\nand\ttab",
+   "status": 500
+  },
+  {
+   "body": "{\n  \"code\": 500,\n  \"error\": \"Internal Server Error\",\n  \"debug\": \"control\\u0000\\u001f\"\n}",
+   "debug": "control\u0000\u001f",
+   "status": 500
+  },
+  {
+   "body": "{\n  \"code\": 500,\n  \"error\": \"Internal Server Error\",\n  \"debug\": \"invalid TAI timestamp: 'y'\"\n}",
+   "debug": "invalid TAI timestamp: 'y'",
+   "status": 500
+  },
+  {
+   "body": "{\n  \"code\": 500,\n  \"error\": \"Internal Server Error\",\n  \"debug\": \"resource_path \\\"/it's\\\" is not subscribable\"\n}",
+   "debug": "resource_path \"/it's\" is not subscribable",
+   "status": 500
+  },
+  {
+   "body": "{\n  \"code\": 500,\n  \"error\": \"Internal Server Error\",\n  \"debug\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n}",
+   "debug": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "status": 500
+  },
+  {
+   "body": "{\n  \"code\": 501,\n  \"error\": \"Not Implemented\",\n  \"debug\": \"\"\n}",
+   "debug": "",
+   "status": 501
+  },
+  {
+   "body": "{\n  \"code\": 501,\n  \"error\": \"Not Implemented\",\n  \"debug\": \"plain message\"\n}",
+   "debug": "plain message",
+   "status": 501
+  },
+  {
+   "body": "{\n  \"code\": 501,\n  \"error\": \"Not Implemented\",\n  \"debug\": \"quote \\\" and \\\\ back\"\n}",
+   "debug": "quote \" and \\ back",
+   "status": 501
+  },
+  {
+   "body": "{\n  \"code\": 501,\n  \"error\": \"Not Implemented\",\n  \"debug\": \"caf\u00e9\"\n}",
+   "debug": "caf\u00e9",
+   "status": 501
+  },
+  {
+   "body": "{\n  \"code\": 501,\n  \"error\": \"Not Implemented\",\n  \"debug\": \"\u65e5\u672c\u8a9e\"\n}",
+   "debug": "\u65e5\u672c\u8a9e",
+   "status": 501
+  },
+  {
+   "body": "{\n  \"code\": 501,\n  \"error\": \"Not Implemented\",\n  \"debug\": \"\ud83d\ude00\"\n}",
+   "debug": "\ud83d\ude00",
+   "status": 501
+  },
+  {
+   "body": "{\n  \"code\": 501,\n  \"error\": \"Not Implemented\",\n  \"debug\": \"newline\\nand\\ttab\"\n}",
+   "debug": "newline\nand\ttab",
+   "status": 501
+  },
+  {
+   "body": "{\n  \"code\": 501,\n  \"error\": \"Not Implemented\",\n  \"debug\": \"control\\u0000\\u001f\"\n}",
+   "debug": "control\u0000\u001f",
+   "status": 501
+  },
+  {
+   "body": "{\n  \"code\": 501,\n  \"error\": \"Not Implemented\",\n  \"debug\": \"invalid TAI timestamp: 'y'\"\n}",
+   "debug": "invalid TAI timestamp: 'y'",
+   "status": 501
+  },
+  {
+   "body": "{\n  \"code\": 501,\n  \"error\": \"Not Implemented\",\n  \"debug\": \"resource_path \\\"/it's\\\" is not subscribable\"\n}",
+   "debug": "resource_path \"/it's\" is not subscribable",
+   "status": 501
+  },
+  {
+   "body": "{\n  \"code\": 501,\n  \"error\": \"Not Implemented\",\n  \"debug\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n}",
+   "debug": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "status": 501
+  },
+  {
+   "body": "{\n  \"code\": 503,\n  \"error\": \"Service Unavailable\",\n  \"debug\": \"\"\n}",
+   "debug": "",
+   "status": 503
+  },
+  {
+   "body": "{\n  \"code\": 503,\n  \"error\": \"Service Unavailable\",\n  \"debug\": \"plain message\"\n}",
+   "debug": "plain message",
+   "status": 503
+  },
+  {
+   "body": "{\n  \"code\": 503,\n  \"error\": \"Service Unavailable\",\n  \"debug\": \"quote \\\" and \\\\ back\"\n}",
+   "debug": "quote \" and \\ back",
+   "status": 503
+  },
+  {
+   "body": "{\n  \"code\": 503,\n  \"error\": \"Service Unavailable\",\n  \"debug\": \"caf\u00e9\"\n}",
+   "debug": "caf\u00e9",
+   "status": 503
+  },
+  {
+   "body": "{\n  \"code\": 503,\n  \"error\": \"Service Unavailable\",\n  \"debug\": \"\u65e5\u672c\u8a9e\"\n}",
+   "debug": "\u65e5\u672c\u8a9e",
+   "status": 503
+  },
+  {
+   "body": "{\n  \"code\": 503,\n  \"error\": \"Service Unavailable\",\n  \"debug\": \"\ud83d\ude00\"\n}",
+   "debug": "\ud83d\ude00",
+   "status": 503
+  },
+  {
+   "body": "{\n  \"code\": 503,\n  \"error\": \"Service Unavailable\",\n  \"debug\": \"newline\\nand\\ttab\"\n}",
+   "debug": "newline\nand\ttab",
+   "status": 503
+  },
+  {
+   "body": "{\n  \"code\": 503,\n  \"error\": \"Service Unavailable\",\n  \"debug\": \"control\\u0000\\u001f\"\n}",
+   "debug": "control\u0000\u001f",
+   "status": 503
+  },
+  {
+   "body": "{\n  \"code\": 503,\n  \"error\": \"Service Unavailable\",\n  \"debug\": \"invalid TAI timestamp: 'y'\"\n}",
+   "debug": "invalid TAI timestamp: 'y'",
+   "status": 503
+  },
+  {
+   "body": "{\n  \"code\": 503,\n  \"error\": \"Service Unavailable\",\n  \"debug\": \"resource_path \\\"/it's\\\" is not subscribable\"\n}",
+   "debug": "resource_path \"/it's\" is not subscribable",
+   "status": 503
+  },
+  {
+   "body": "{\n  \"code\": 503,\n  \"error\": \"Service Unavailable\",\n  \"debug\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n}",
+   "debug": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "status": 503
+  }
+ ]
+}

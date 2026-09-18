@@ -1,0 +1,33 @@
+[package]
+name = "nmos-types"
+description = "NMOS types generated from nmos/codegen/definitions, plus the few hand-written ones"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+nmos-json = { path = "../nmos-json" }
+serde.workspace = true
+serde_json.workspace = true
+indexmap.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[features]
+# The registry needs IS-04 only. The rest is emitted so the generator has one
+# input and one output -- a closure-filtered generator would depend on the
+# consumer's import list, making the drift fingerprint ambiguous -- but it is
+# gated so the registry binary and the dev loop stay small.
+default = ["is04"]
+is04 = []
+is05 = []
+is11 = []
+is12 = []
+matrox = []
+
+[lints]
+workspace = true

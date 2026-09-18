@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Callable
 
 import pytest
 
@@ -56,6 +57,49 @@ def registry() -> Registry:
     return registry
 
 
+async def until(
+    predicate: Callable[[], bool], what: str, *, timeout: float = 10.0,
+) -> None:
+    """Wait for ``predicate`` to hold, then return. Fail saying what did not.
+
+    Why these tests do not sleep for a fixed span
+    ---------------------------------------------
+    They used to: ``await asyncio.sleep(1.4)  # one tick`` against a 1.0 s
+    ``GC_TICK_S``, which is a 400 ms budget for the event loop to get around to
+    the timer. That is generous on an idle machine and not generous at all
+    inside the full suite, where these tests run alongside TLS handshakes and
+    process-spawning rigs competing for the same loop. Measured on this machine:
+    **2 failures in 60 isolated runs, about 3.3%**, with nothing wrong in the
+    code under test. The status-line test was tighter still -- 0.5 s for two
+    0.2 s ticks, a 100 ms budget.
+
+    A fixed sleep encodes a guess about scheduling latency into a test about
+    garbage collection. Polling for the postcondition instead asserts the same
+    thing, gets there sooner in the common case (the first tick, not the first
+    tick plus the margin), and only takes the long timeout on a machine slow
+    enough that failing would have been a lie.
+
+    The timeout is deliberately far larger than any plausible tick, because its
+    job is to turn a hang into a readable failure -- not to bound the wait.
+    ``what`` is interpolated into that failure, so a timeout names the condition
+    that never came true rather than pointing at a bare sleep.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        if predicate():
+            return
+        await asyncio.sleep(0.02)
+    raise AssertionError(f"timed out after {timeout}s waiting for {what}")
+
+
+async def stop(dg: FakeDispatchGroup, task: asyncio.Task[None]) -> None:
+    """Cancel a background task and wait for it to actually finish."""
+    dg.cancel()
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
 def seed_tree(registry: Registry) -> None:
     for resource_type, raw in (
         (ResourceType.NODE, make_node()),
@@ -87,23 +131,51 @@ class TestGarbageCollectionTask:
 
         dg = FakeDispatchGroup()
         task = asyncio.create_task(run_garbage_collection(dg, registry))
-        await asyncio.sleep(1.4)  # one tick
-        dg.cancel()
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+        try:
+            await until(
+                lambda: all(
+                    registry.store.count_extant(rt) == 0 for rt in ResourceType
+                ),
+                "the collector to erase the expired Node and its subtree",
+            )
+        finally:
+            await stop(dg, task)
 
         for resource_type in ResourceType:
             assert registry.store.count_extant(resource_type) == 0
 
-    async def test_leaves_a_healthy_node_alone(self, registry: Registry) -> None:
+    async def test_leaves_a_healthy_node_alone(
+        self, registry: Registry, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A healthy Node survives collection -- and a pass really did run.
+
+        The passes are counted rather than slept through, because this is the
+        one test here whose assertion is a *negative*. A starved event loop
+        that never reached the first tick would satisfy "the Node is still
+        there" while proving nothing at all, and would look exactly like
+        success. Waiting for a pass to have happened is what makes the
+        assertion mean something.
+        """
         seed_tree(registry)
+
+        passes = {"count": 0}
+        original = RegistryStore.collect_garbage
+
+        def counted(self: RegistryStore) -> list:  # type: ignore[type-arg]
+            passes["count"] += 1
+            return original(self)
+
+        monkeypatch.setattr(RegistryStore, "collect_garbage", counted)
 
         dg = FakeDispatchGroup()
         task = asyncio.create_task(run_garbage_collection(dg, registry))
-        await asyncio.sleep(1.4)
-        dg.cancel()
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+        try:
+            await until(
+                lambda: passes["count"] >= 1,
+                "the collector to complete a pass",
+            )
+        finally:
+            await stop(dg, task)
 
         assert registry.store.count_extant(ResourceType.NODE) == 1
 
@@ -164,10 +236,13 @@ class TestGarbageCollectionTask:
 
         dg = FakeDispatchGroup()
         task = asyncio.create_task(run_garbage_collection(dg, registry))
-        await asyncio.sleep(2.4)  # two ticks
-        dg.cancel()
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+        try:
+            await until(
+                lambda: calls["count"] >= 2,
+                "a second pass after the first one raised",
+            )
+        finally:
+            await stop(dg, task)
 
         assert calls["count"] >= 2, "collector stopped after the failure"
 
@@ -195,10 +270,18 @@ class TestStatusReporting:
             task = asyncio.create_task(
                 run_status_reporting(dg, registry, interval=0.2),
             )
-            await asyncio.sleep(0.5)
-            dg.cancel()
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+            try:
+                # The tightest margin in this file before it was polled: 0.5 s
+                # of sleep for two 0.2 s ticks left 100 ms for the scheduler.
+                await until(
+                    lambda: any(
+                        "the registry contains" in r.getMessage()
+                        for r in caplog.records
+                    ),
+                    "a status line to be emitted",
+                )
+            finally:
+                await stop(dg, task)
 
         lines = [r.getMessage() for r in caplog.records]
         assert any("the registry contains" in line for line in lines), lines

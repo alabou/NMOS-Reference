@@ -695,6 +695,94 @@ class TestSnapshotScenariosFromOpenraft:
         finally:
             await cluster.close()
 
+    async def test_a_snapshot_is_labelled_with_the_state_it_actually_holds(
+        self, tmp_path: Path,
+    ) -> None:
+        """A snapshot's index must describe its payload, not a wish.
+
+        The payload is serialised by walking the **live store**, so it is the
+        state at ``last_applied``. Labelling it with anything lower produces a
+        snapshot that claims an index its contents have already moved past, and
+        the copy-on-write pinning cannot compensate: that mechanism photographs
+        a record before apply mutates it, so it covers changes made *during*
+        the capture and nothing about changes made before it opened.
+
+        The consequence is not a lost update, it is a permanently diverged
+        member. A follower installs the snapshot, sets ``last_applied`` to the
+        claimed index over a store that already holds later entries' effects,
+        replays those entries, computes ``creates=False`` where the proposer
+        said ``True``, and raises ``DivergenceDetected``. It then stops
+        applying for good -- committed at 14, applied stuck at 11 -- serving a
+        private view of the registry that further replication never repairs.
+
+        # Why the peer state is set by hand
+
+        The gap only opens while a follower is **reachable but behind**: a
+        member that is down is excluded from the bound entirely, so the two
+        quantities coincide and nothing can go wrong. In a live run that is a
+        transient worth about one soak run in thirty. Arranging it directly
+        makes the test deterministic and, more importantly, makes it *fail*
+        when the bug is reintroduced -- a version of this written as a churn
+        scenario passed ten times out of ten against the unfixed code.
+        """
+        # Compaction is disabled while the entries accumulate, then enabled
+        # for one explicit call. Racing the background compactor instead was
+        # tried and is not deterministic: it keeps `held` below the threshold,
+        # so the manual call returns early and the assertion reads a snapshot
+        # taken minutes of simulated time earlier -- which is exactly how the
+        # first version of this test failed against correct code.
+        cluster = Cluster(3, tmp_path, timing=dataclasses.replace(
+            FAST, compaction_threshold=10_000,
+        ))
+        await cluster.start()
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            node = leader.node
+
+            for tag in range(80, 90):
+                await asyncio.wait_for(
+                    leader.node.propose(_register(_node_id(tag), leader)),
+                    timeout=5.0,
+                )
+            await cluster.settle(30)
+
+            applied = leader.machine.last_applied
+            assert applied > 2, "nothing was applied, so this proves nothing"
+            assert node._snapshot_meta is None, (
+                "the cluster compacted on its own, so what follows would be "
+                "testing a race rather than the decision"
+            )
+
+            # One follower reachable but one entry behind. This is the state
+            # that separates "what may be discarded" from "what the snapshot
+            # contains", and it is the only state in which they differ: a
+            # member that is *down* is excluded from the bound entirely.
+            lagging = next(p for p in node._peers if p != node.index)
+            for other, state in node._peers.items():
+                state.up = True
+                state.match_index = applied - 1 if other == lagging else applied
+
+            node._timing = dataclasses.replace(
+                node._timing, compaction_threshold=2,
+            )
+            await node._maybe_compact()
+
+            meta = node._snapshot_meta
+            assert meta is not None, "no snapshot was taken"
+            assert meta.last_index == applied, (
+                f"the snapshot claims index {meta.last_index} but its payload "
+                f"was walked from a store at applied {applied}; a follower "
+                f"installing it would replay entries it already contains"
+            )
+            # And the bound still does its real job: the entry the lagging
+            # follower has not confirmed is still in the log for it.
+            assert node.log.first_index <= applied, (
+                "the log was discarded past the slowest follower, which "
+                "strands it on replication"
+            )
+        finally:
+            await cluster.close()
+
     async def test_installing_a_snapshot_discards_conflicting_entries(
         self, tmp_path: Path,
     ) -> None:

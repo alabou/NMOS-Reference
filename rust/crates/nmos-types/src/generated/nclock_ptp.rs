@@ -1,0 +1,107 @@
+//! Generated NMOS type: `NClockPtp`. DO NOT EDIT.
+//!
+//! Rendered from `nmos/codegen/definitions/` by
+//! `nmos/codegen/templates/type.rs.jinja2`. The descriptors are the source of
+//! truth and the Python tree in `nmos/types/generated/` is rendered from the
+//! same ones, so the two describe one model by construction.
+//!
+//! Regenerate with: `python -m nmos.codegen.generate`
+
+#[allow(unused_imports)]
+use nmos_json::error::{Error, Result};
+#[allow(unused_imports)]
+use nmos_json::{EnumId, Hyperlink, Nullable, RawJson, Tags, Tai, decode, validators};
+use serde::Serialize;
+#[allow(unused_imports)]
+use serde_json::Value;
+
+/// `NClockPtp`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NClockPtp {
+    /// `name`. Required.
+    #[serde(rename = "name")]
+    pub name: String,
+    /// `ref_type`. Required.
+    #[serde(rename = "ref_type")]
+    pub ref_type: EnumId,
+    /// `traceable`. Required.
+    #[serde(rename = "traceable")]
+    pub traceable: bool,
+    /// `version`. Required.
+    #[serde(rename = "version")]
+    pub version: EnumId,
+    /// `gmid`. Required.
+    #[serde(rename = "gmid")]
+    pub gmid: String,
+    /// `locked`. Required.
+    #[serde(rename = "locked")]
+    pub locked: bool,
+}
+
+impl NClockPtp {
+    /// Decode from a JSON value, in the order the descriptor declares.
+    ///
+    /// Members are read in declaration order regardless of how the document
+    /// orders its keys, then required presence is checked for every member,
+    /// then the assertions run. Two bodies differing only in key order must
+    /// therefore produce the same error.
+    #[allow(clippy::too_many_lines, unused_variables)]
+    pub fn decode(src: &Value) -> Result<Self> {
+        let Some(doc) = src.as_object() else {
+            return Err(Error::invalid_data("expected JSON object for NClockPtp"));
+        };
+
+        let name = match doc.get("name") {
+            Some(v) => decode::string(v)?,
+            None => None,
+        };
+        let ref_type = match doc.get("ref_type") {
+            Some(v) => Some(decode::enum_id(v)?),
+            None => None,
+        };
+        let traceable = match doc.get("traceable") {
+            Some(v) => Some(decode::bool(v)?),
+            None => None,
+        };
+        let version = match doc.get("version") {
+            Some(v) => Some(decode::enum_id(v)?),
+            None => None,
+        };
+        let gmid = match doc.get("gmid") {
+            Some(v) => decode::string(v)?,
+            None => None,
+        };
+        let locked = match doc.get("locked") {
+            Some(v) => Some(decode::bool(v)?),
+            None => None,
+        };
+
+        // Required presence, for every member, before any assertion runs.
+        let name = name.ok_or_else(|| Error::invalid_object("missing required member Name"))?;
+        let ref_type =
+            ref_type.ok_or_else(|| Error::invalid_object("missing required member RefType"))?;
+        let traceable =
+            traceable.ok_or_else(|| Error::invalid_object("missing required member Traceable"))?;
+        let version =
+            version.ok_or_else(|| Error::invalid_object("missing required member Version"))?;
+        let gmid = gmid.ok_or_else(|| Error::invalid_object("missing required member Gmid"))?;
+        let locked =
+            locked.ok_or_else(|| Error::invalid_object("missing required member Locked"))?;
+
+        // Assertions, in descriptor order, after every required-presence check.
+        // Python runs them in exactly this position: a body missing a required
+        // member reports that, not an assertion failure on a member that is
+        // present.
+        validators::check_clock_name_string(&name)?;
+        validators::check_clock_gmid_string(&gmid)?;
+
+        Ok(Self {
+            name,
+            ref_type,
+            traceable,
+            version,
+            gmid,
+            locked,
+        })
+    }
+}

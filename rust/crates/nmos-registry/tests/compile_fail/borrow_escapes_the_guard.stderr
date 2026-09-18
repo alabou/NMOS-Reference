@@ -1,0 +1,8 @@
+error: lifetime may not live long enough
+  --> tests/compile_fail/borrow_escapes_the_guard.rs:20:50
+   |
+20 |     let escaped: &str = locked.with_read(|value| value.as_str());
+   |                                           ------ ^^^^^^^^^^^^^^ returning this value requires that `'1` must outlive `'2`
+   |                                           |    |
+   |                                           |    return type of closure is &'2 str
+   |                                           has type `&'1 String`

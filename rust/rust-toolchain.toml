@@ -1,0 +1,12 @@
+# Pinned so every checkout builds with the same compiler, and so `cargo`
+# invoked anywhere under rust/ installs and selects it without a manual step.
+#
+# clippy is not optional here. The concurrency model in the port plan is
+# enforced in four layers, and two of them live in this toolchain: the
+# `!Send` guard types that make awaiting under the store lock a compile error,
+# and the clippy lints in Cargo.toml that catch the cases the type system
+# cannot. A `minimal` profile would silently drop the second layer.
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]
+profile = "default"

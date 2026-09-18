@@ -1,0 +1,5658 @@
+[
+  {
+    "ok": true,
+    "spans": [],
+    "source": "{}",
+    "origin": "well_formed"
+  },
+  {
+    "ok": true,
+    "spans": [],
+    "source": "  {  }  ",
+    "origin": "well_formed"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ]
+    ],
+    "source": "{\"a\": 1}",
+    "origin": "well_formed"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "b",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": 1, \"b\": 2}",
+    "origin": "well_formed"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "type",
+        "\"node\""
+      ],
+      [
+        "data",
+        "{\"x\": 1e3}"
+      ]
+    ],
+    "source": "{\"type\": \"node\", \"data\": {\"x\": 1e3}}",
+    "origin": "well_formed"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "x",
+        "1e3"
+      ],
+      [
+        "y",
+        "1000.0"
+      ],
+      [
+        "z",
+        "1E+3"
+      ],
+      [
+        "w",
+        "-0.0"
+      ]
+    ],
+    "source": "{\"x\": 1e3, \"y\": 1000.0, \"z\": 1E+3, \"w\": -0.0}",
+    "origin": "well_formed"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"caf\\u00e9\""
+      ],
+      [
+        "t",
+        "\"caf\u00e9\""
+      ]
+    ],
+    "source": "{\"s\": \"caf\\u00e9\", \"t\": \"caf\u00e9\"}",
+    "origin": "well_formed"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"quote \\\" backslash \\\\ newline \\n tab \\t\""
+      ]
+    ],
+    "source": "{\"s\": \"quote \\\" backslash \\\\ newline \\n tab \\t\"}",
+    "origin": "well_formed"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "nested",
+        "{\"a\": [1, 2, {\"b\": null}]}"
+      ],
+      [
+        "after",
+        "true"
+      ]
+    ],
+    "source": "{\"nested\": {\"a\": [1, 2, {\"b\": null}]}, \"after\": true}",
+    "origin": "well_formed"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "empty_obj",
+        "{}"
+      ],
+      [
+        "empty_arr",
+        "[]"
+      ],
+      [
+        "empty_str",
+        "\"\""
+      ]
+    ],
+    "source": "{\"empty_obj\": {}, \"empty_arr\": [], \"empty_str\": \"\"}",
+    "origin": "well_formed"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "NaN"
+      ]
+    ],
+    "source": "{\"a\": NaN}",
+    "origin": "well_formed"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "Infinity"
+      ]
+    ],
+    "source": "{\"a\": Infinity}",
+    "origin": "well_formed"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "-Infinity"
+      ]
+    ],
+    "source": "{\"a\": -Infinity}",
+    "origin": "well_formed"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "[NaN, Infinity]"
+      ]
+    ],
+    "source": "{\"a\": [NaN, Infinity]}",
+    "origin": "well_formed"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": 1, \"a\": 2}",
+    "origin": "well_formed"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "3"
+      ]
+    ],
+    "source": "{\"a\": {\"a\": 1}, \"a\": 3}",
+    "origin": "well_formed"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "{\"data\": 1}"
+      ],
+      [
+        "data",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": {\"data\": 1}, \"data\": 2}",
+    "origin": "well_formed"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "b",
+        "[ 1 , 2 ]"
+      ]
+    ],
+    "source": "{\n  \"a\"  :  1 ,\n  \"b\" : [ 1 , 2 ]\n}",
+    "origin": "well_formed"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "b",
+        "2"
+      ]
+    ],
+    "source": "{\"a\":1,\"b\":2}",
+    "origin": "well_formed"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "-1"
+      ],
+      [
+        "b",
+        "0"
+      ],
+      [
+        "c",
+        "1e308"
+      ],
+      [
+        "d",
+        "5e-324"
+      ],
+      [
+        "e",
+        "1.5E-7"
+      ]
+    ],
+    "source": "{\"a\": -1, \"b\": 0, \"c\": 1e308, \"d\": 5e-324, \"e\": 1.5E-7}",
+    "origin": "well_formed"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "caf\u00e9",
+        "1"
+      ],
+      [
+        "b",
+        "2"
+      ]
+    ],
+    "source": "{\"caf\u00e9\": 1, \"b\": 2}",
+    "origin": "well_formed"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "\u00e9",
+        "1"
+      ]
+    ],
+    "source": "{\"\\u00e9\": 1}",
+    "origin": "well_formed"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "{\"b\": {\"c\": {\"d\": {\"e\": [1, [2, [3]]]}}}}"
+      ]
+    ],
+    "source": "{\"a\": {\"b\": {\"c\": {\"d\": {\"e\": [1, [2, [3]]]}}}}}",
+    "origin": "well_formed"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' but the text ended",
+    "source": "",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' but the text ended",
+    "source": "   ",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found '['",
+    "source": "[1,2]",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found 'n'",
+    "source": "null",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found '\"'",
+    "source": "\"a string\"",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' but the text ended",
+    "source": "{",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' but the text ended",
+    "source": "{\"a\"",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 5: Expecting value: line 1 column 6 (char 5)",
+    "source": "{\"a\":",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "object ended without '}'",
+    "source": "{\"a\": 1",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 5, found '1'",
+    "source": "{\"a\" 1}",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found 'a'",
+    "source": "{a: 1}",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found \"'\"",
+    "source": "{'a': 1}",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 8, found '}'",
+    "source": "{\"a\": 1,}",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 8, found '2'",
+    "source": "{\"a\": 1 2}",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": xyz}",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": True}",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": -}",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 7, found '1'",
+    "source": "{\"a\": 01}",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Unterminated string starting at: line 1 column 7 (char 6)",
+    "source": "{\"a\": \"abc}",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Invalid \\escape: line 1 column 9 (char 8)",
+    "source": "{\"a\": \"a\\qb\"}",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Invalid control character at: line 1 column 9 (char 8)",
+    "source": "{\"a\": \"x\ty\"}",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting ':' delimiter: line 1 column 12 (char 11)",
+    "source": "{\"a\": {\"b\" 1}}",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting ',' delimiter: line 1 column 10 (char 9)",
+    "source": "{\"a\": [1 2]}",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting property name enclosed in double quotes: line 1 column 8 (char 7)",
+    "source": "{\"a\": {b: 1}}",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "bad member name at offset 1: Unterminated string starting at: line 1 column 2 (char 1)",
+    "source": "{\"abc",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 11, found '2'",
+    "source": "{\"caf\u00e9\": 1 2}",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'caf\u00e9' at offset 9: Expecting value: line 1 column 10 (char 9)",
+    "source": "{\"caf\u00e9\": xyz}",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting ',' delimiter: line 1 column 12 (char 11)",
+    "source": "{\"a\": [1, 2",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting ',' delimiter: line 1 column 14 (char 13)",
+    "source": "{\"a\": {\"b\": 1",
+    "origin": "malformed"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found 'u'",
+    "source": "u}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [],
+    "source": "{}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found '}'",
+    "source": "}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found '{'",
+    "source": "{{}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found '9'",
+    "source": "{9",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found ':'",
+    "source": ":}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found '\\\\'",
+    "source": "{\\",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found 'r'",
+    "source": "{r",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found '4'",
+    "source": "4}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found '2'",
+    "source": "{2",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found '8'",
+    "source": "8}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found '1'",
+    "source": "1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [],
+    "source": "  {  } ",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 1, found 't'",
+    "source": " t{  }  ",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [],
+    "source": " {  }  ",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [],
+    "source": "  {\t }  ",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 1, found '5'",
+    "source": " 5{  }  ",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [],
+    "source": "  {  } 9",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found 'b'",
+    "source": "b {  }  ",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [],
+    "source": "   {  }  ",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [],
+    "source": "  {  }   ",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 3, found '{'",
+    "source": "  {{  }  ",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [],
+    "source": "  { }  ",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 5, found '}'",
+    "source": "  \t  }  ",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [],
+    "source": "  {  }\t ",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [],
+    "source": "  {  }}  ",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 4, found 'b'",
+    "source": "  { b}  ",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 3, found '1'",
+    "source": "  {1 }  ",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [],
+    "source": "  {   }  ",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 4, found '9'",
+    "source": "  { 9}  ",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 2, found '1'",
+    "source": "  1  }  ",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 5, found '\\\\'",
+    "source": "  {  \\  ",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [],
+    "source": "  {  } t",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 3, found '9'",
+    "source": "  {9 }  ",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 4, found '\"'",
+    "source": "{\"a\"\": 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": }",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found 'a'",
+    "source": "{a\": 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 5: Expecting value: line 1 column 6 (char 5)",
+    "source": "{\"a\":: 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad member name at offset 1: Unterminated string starting at: line 1 column 2 (char 1)",
+    "source": "{\"a: 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "object ended without '}'",
+    "source": "{\"a\": 1\n",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "11"
+      ]
+    ],
+    "source": "{\"a\": 11}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "",
+        "1"
+      ]
+    ],
+    "source": "{\"\": 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ]
+    ],
+    "source": "{\"a\":1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 3, found 'a'",
+    "source": "{\"\"a\": 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "aa",
+        "1"
+      ]
+    ],
+    "source": "{\"aa\": 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 5: Expecting value: line 1 column 6 (char 5)",
+    "source": "{\"a\":n1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found ']'",
+    "source": "]\"a\": 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found 't'",
+    "source": "{ta\": 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found '{'",
+    "source": "{{\"a\": 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found '\"'",
+    "source": "\"a\": 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found '7'",
+    "source": "{7a\": 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad member name at offset 1: Unterminated string starting at: line 1 column 2 (char 1)",
+    "source": "{\"a0: 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "91"
+      ]
+    ],
+    "source": "{\"a\":91}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 7, found 'c'",
+    "source": "{\"a\": 1c",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 1, found '\"'",
+    "source": "\t\"a\": 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ]
+    ],
+    "source": "{\"a\": 1}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found ':'",
+    "source": ":\"a\": 1, \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 8, found '\"'",
+    "source": "{\"a\": 1 \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found 'a'",
+    "source": "{a\": 1, \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 7, found ']'",
+    "source": "{\"a\": 1] \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "b",
+        "2"
+      ]
+    ],
+    "source": "{\"a\":  1, \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "bb",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": 1, \"bb\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "",
+        "1"
+      ],
+      [
+        "b",
+        "2"
+      ]
+    ],
+    "source": "{\"\": 1, \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 8, found '8'",
+    "source": "{\"a\": 1,8\"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 12, found '2'",
+    "source": "{\"a\": 1, \"b\"2 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'b' at offset 13: Expecting value: line 1 column 14 (char 13)",
+    "source": "{\"a\": 1, \"b\":a2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "11"
+      ],
+      [
+        "b",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": 11, \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "b",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": 1, \"b\": 2}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 4, found '\"'",
+    "source": "{\"a\"\": 1, \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 12, found '\"'",
+    "source": "{\"a\": 1, \"b\"\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'b' at offset 13: Expecting value: line 1 column 14 (char 13)",
+    "source": "{\"a\": 1, \"b\":: 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found '{'",
+    "source": "{{\"a\": 1, \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 4, found 'e'",
+    "source": "{\"a\"e 1, \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found '0'",
+    "source": "{0a\": 1, \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 4, found '\\\\'",
+    "source": "{\"a\"\\ 1, \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "{",
+        "1"
+      ],
+      [
+        "b",
+        "2"
+      ]
+    ],
+    "source": "{\"{\": 1, \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found '\"'",
+    "source": "\"a\": 1, \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'b' at offset 14: Expecting value: line 1 column 16 (char 15)",
+    "source": "{\"a\": 1, \"b\": [}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "tye",
+        "\"node\""
+      ],
+      [
+        "data",
+        "{\"x\": 1e3}"
+      ]
+    ],
+    "source": "{\"tye\": \"node\", \"data\": {\"x\": 1e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'type' at offset 9: Invalid \\escape: line 1 column 12 (char 11)",
+    "source": "{\"type\": \"n\\de\", \"data\": {\"x\": 1e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "type",
+        "\"node\""
+      ],
+      [
+        "data",
+        "{\"x\": 1e33}"
+      ]
+    ],
+    "source": "{\"type\": \"node\", \"data\": {\"x\": 1e33}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "object ended without '}'",
+    "source": "{\"type\": \"node\", \"data\": {\"x\": 1e3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "type",
+        "\"node\""
+      ],
+      [
+        "data",
+        "{\"x\": 11e3}"
+      ]
+    ],
+    "source": "{\"type\": \"node\", \"data\": {\"x\": 11e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 7, found '7'",
+    "source": "{\"type\"7 \"node\", \"data\": {\"x\": 1e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 26, found 'x'",
+    "source": "{\"type\": \"node\", \"data: {\"x\": 1e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "type",
+        "\"node\""
+      ],
+      [
+        "data",
+        "{\"x\": 1e3}"
+      ]
+    ],
+    "source": "{\"type\": \"node\", \"data\":{\"x\": 1e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "type",
+        "\"node\""
+      ],
+      [
+        "data",
+        "{\"x\": 1e8}"
+      ]
+    ],
+    "source": "{\"type\": \"node\", \"data\": {\"x\": 1e8}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'data' at offset 25: Expecting value: line 1 column 32 (char 31)",
+    "source": "{\"type\": \"node\", \"data\": {\"x\": e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "9ype",
+        "\"node\""
+      ],
+      [
+        "data",
+        "{\"x\": 1e3}"
+      ]
+    ],
+    "source": "{\"9ype\": \"node\", \"data\": {\"x\": 1e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 15, found '['",
+    "source": "{\"type\": \"node\"[ \"data\": {\"x\": 1e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "type",
+        "\"node\""
+      ],
+      [
+        "data",
+        "{\"6\": 1e3}"
+      ]
+    ],
+    "source": "{\"type\": \"node\", \"data\": {\"6\": 1e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "type",
+        "\"node\""
+      ],
+      [
+        "ddata",
+        "{\"x\": 1e3}"
+      ]
+    ],
+    "source": "{\"type\": \"node\", \"ddata\": {\"x\": 1e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found 't'",
+    "source": "{type\": \"node\", \"data\": {\"x\": 1e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "type",
+        "\"nde\""
+      ],
+      [
+        "data",
+        "{\"x\": 1e3}"
+      ]
+    ],
+    "source": "{\"type\": \"nde\", \"data\": {\"x\": 1e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'data' at offset 25: Expecting property name enclosed in double quotes: line 1 column 27 (char 26)",
+    "source": "{\"type\": \"node\", \"data\": {x\": 1e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "type",
+        "\"node\""
+      ],
+      [
+        "data",
+        "{\"x\": 183}"
+      ]
+    ],
+    "source": "{\"type\": \"node\", \"data\": {\"x\": 183}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "type",
+        "\"node\""
+      ],
+      [
+        "data",
+        "{\"x\": 1e3}"
+      ]
+    ],
+    "source": "{\"type\": \"node\", \"data\":  {\"x\": 1e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 19, found 'd'",
+    "source": "{\"type\": \"node\", \"\"data\": {\"x\": 1e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "type",
+        "\"node\""
+      ],
+      [
+        "data",
+        "{\"x\": 1e3}"
+      ]
+    ],
+    "source": "{\"type\":  \"node\", \"data\": {\"x\": 1e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "typn",
+        "\"node\""
+      ],
+      [
+        "data",
+        "{\"x\": 1e3}"
+      ]
+    ],
+    "source": "{\"typn\": \"node\", \"data\": {\"x\": 1e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 17, found 'd'",
+    "source": "{\"type\": \"node, \"data\": {\"x\": 1e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 16, found ','",
+    "source": "{\"type\": \"node\",, \"data\": {\"x\": 1e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 7, found '\"'",
+    "source": "{\"type\"\": \"node\", \"data\": {\"x\": 1e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "type",
+        "\"nodde\""
+      ],
+      [
+        "data",
+        "{\"x\": 1e3}"
+      ]
+    ],
+    "source": "{\"type\": \"nodde\", \"data\": {\"x\": 1e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 11, found 'n'",
+    "source": "{\"type\": \"\"node\", \"data\": {\"x\": 1e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "type",
+        "\"node\""
+      ],
+      [
+        "ata",
+        "{\"x\": 1e3}"
+      ]
+    ],
+    "source": "{\"type\": \"node\", \"ata\": {\"x\": 1e3}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 30, found 'E'",
+    "source": "{\"x\": 1e3, \"y\": 1000.0, \"z\": 1EE+3, \"w\": -0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "x",
+        "1e3"
+      ],
+      [
+        "y",
+        "1000.0"
+      ],
+      [
+        "]",
+        "1E+3"
+      ],
+      [
+        "w",
+        "-0.0"
+      ]
+    ],
+    "source": "{\"x\": 1e3, \"y\": 1000.0, \"]\": 1E+3, \"w\": -0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 10, found '\"'",
+    "source": "{\"x\": 1e3 \"y\": 1000.0, \"z\": 1E+3, \"w\": -0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "x",
+        "13"
+      ],
+      [
+        "y",
+        "1000.0"
+      ],
+      [
+        "z",
+        "1E+3"
+      ],
+      [
+        "w",
+        "-0.0"
+      ]
+    ],
+    "source": "{\"x\": 13, \"y\": 1000.0, \"z\": 1E+3, \"w\": -0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 39, found '-'",
+    "source": "{\"x\": 1e3, \"y\": 1000.0, \"z\": 1E+3, \"w\" -0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "x",
+        "1e3"
+      ],
+      [
+        "y",
+        "1000.0"
+      ],
+      [
+        "z",
+        "1E+3"
+      ],
+      [
+        "w",
+        "-0.0"
+      ]
+    ],
+    "source": "{\"x\": 1e3, \"y\": 1000.0, \"z\": 1E+3,  \"w\": -0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 7, found ':'",
+    "source": "{\"x\": 1:3, \"y\": 1000.0, \"z\": 1E+3, \"w\": -0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "x",
+        "1e3"
+      ],
+      [
+        "y",
+        "1000.0"
+      ],
+      [
+        "z",
+        "1E+3"
+      ],
+      [
+        "w",
+        "-0.0"
+      ]
+    ],
+    "source": "{\"x\": 1e3, \"y\":1000.0, \"z\": 1E+3, \"w\": -0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "x",
+        "1e3"
+      ],
+      [
+        "y",
+        "1000.0"
+      ],
+      [
+        "z",
+        "1E+3"
+      ],
+      [
+        "w",
+        "-0.0"
+      ]
+    ],
+    "source": "{\"x\": 1e3, \"y\": 1000.0, \"z\": 1E+3, \"w\":  -0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "x",
+        "1e3"
+      ],
+      [
+        "y",
+        "1000.0"
+      ],
+      [
+        "z",
+        "1E+3"
+      ],
+      [
+        "w",
+        "-0.00"
+      ]
+    ],
+    "source": "{\"x\": 1e3, \"y\": 1000.0, \"z\": 1E+3, \"w\": -0.00}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'w' at offset 40: Unterminated string starting at: line 1 column 41 (char 40)",
+    "source": "{\"x\": 1e3, \"y\": 1000.0, \"z\": 1E+3, \"w\": \"0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "x",
+        "1e3"
+      ],
+      [
+        "y",
+        "1000.0"
+      ],
+      [
+        "1",
+        "1E+3"
+      ],
+      [
+        "w",
+        "-0.0"
+      ]
+    ],
+    "source": "{\"x\": 1e3, \"y\": 1000.0, \"1\": 1E+3, \"w\": -0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'w' at offset 40: Expecting value: line 1 column 41 (char 40)",
+    "source": "{\"x\": 1e3, \"y\": 1000.0, \"z\": 1E+3, \"w\": u0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "x",
+        "1e3"
+      ],
+      [
+        "y",
+        "1000.0"
+      ],
+      [
+        "z",
+        "1E+3"
+      ],
+      [
+        "w",
+        "-0.0"
+      ]
+    ],
+    "source": "{\"x\":1e3, \"y\": 1000.0, \"z\": 1E+3, \"w\": -0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 18, found '0'",
+    "source": "{\"x\": 1e3, \"y\": 1\t00.0, \"z\": 1E+3, \"w\": -0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 24, found 'z'",
+    "source": "{\"x\": 1e3, \"y\": 1000.0, z\": 1E+3, \"w\": -0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 13, found 'y'",
+    "source": "{\"x\": 1e3, \"\"y\": 1000.0, \"z\": 1E+3, \"w\": -0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 42, found '0'",
+    "source": "{\"x\": 1e3, \"y\": 1000.0, \"z\": 1E+3, \"w\": -00.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 40, found '-'",
+    "source": "{\"x\": 1e3, \"y\": 1000.0, \"z\": 1E+3, \"w\":8-0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "x",
+        "1e3"
+      ],
+      [
+        "e",
+        "1000.0"
+      ],
+      [
+        "z",
+        "1E+3"
+      ],
+      [
+        "w",
+        "-0.0"
+      ]
+    ],
+    "source": "{\"x\": 1e3, \"e\": 1000.0, \"z\": 1E+3, \"w\": -0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "x",
+        "11e3"
+      ],
+      [
+        "y",
+        "1000.0"
+      ],
+      [
+        "z",
+        "1E+3"
+      ],
+      [
+        "w",
+        "-0.0"
+      ]
+    ],
+    "source": "{\"x\": 11e3, \"y\": 1000.0, \"z\": 1E+3, \"w\": -0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 42, found '0'",
+    "source": "{\"x\": 1e3, \"y\": 1000.0, \"z\": 1E+3, \"w\": -00}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'w' at offset 40: Expecting value: line 1 column 41 (char 40)",
+    "source": "{\"x\": 1e3, \"y\": 1000.0, \"z\": 1E+3, \"w\": --0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 20, found 't'",
+    "source": "{\"x\": 1e3, \"y\": 1000t0, \"z\": 1E+3, \"w\": -0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "x",
+        "1e3"
+      ],
+      [
+        "y",
+        "1000.0"
+      ],
+      [
+        "z",
+        "1E+3"
+      ],
+      [
+        "w",
+        "0.0"
+      ]
+    ],
+    "source": "{\"x\": 1e3, \"y\": 1000.0, \"z\": 1E+3, \"w\": 0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 29, found '1'",
+    "source": "{\"x\": 1e3, \"y\": 1000.0, \"z\"\n 1E+3, \"w\": -0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 20, found '.'",
+    "source": "{\"x\": 1e3, \"y\": 1000., \"z\": 1E+3, \"w\": -0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'y' at offset 16: Expecting value: line 1 column 17 (char 16)",
+    "source": "{\"x\": 1e3, \"y\": e000.0, \"z\": 1E+3, \"w\": -0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 30, found 'E'",
+    "source": "{\"x\": 1e3, \"y\": 1000.0, \"z\": 1E+, \"w\": -0.0}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"caf\\u00e9\""
+      ],
+      [
+        "t",
+        "\"cbf\u00e9\""
+      ]
+    ],
+    "source": "{\"s\": \"caf\\u00e9\", \"t\": \"cbf\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"caf\\u00e9\""
+      ],
+      [
+        "",
+        "\"caf\u00e9\""
+      ]
+    ],
+    "source": "{\"s\": \"caf\\u00e9\", \"\": \"caf\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 's' at offset 6: Invalid \\uXXXX escape: line 1 column 12 (char 11)",
+    "source": "{\"s\": \"caf\\u0e9\", \"t\": \"caf\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "ss",
+        "\"caf\\u00e9\""
+      ],
+      [
+        "t",
+        "\"caf\u00e9\""
+      ]
+    ],
+    "source": "{\"ss\": \"caf\\u00e9\", \"t\": \"caf\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"caf\\u00e9\""
+      ],
+      [
+        "t",
+        "\"ca,\u00e9\""
+      ]
+    ],
+    "source": "{\"s\": \"caf\\u00e9\", \"t\": \"ca,\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"caf\\\\u00e9\""
+      ],
+      [
+        "t",
+        "\"caf\u00e9\""
+      ]
+    ],
+    "source": "{\"s\": \"caf\\\\u00e9\", \"t\": \"caf\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 24, found 'c'",
+    "source": "{\"s\": \"caf\\u00e9\", \"t: \"caf\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"caf\\u00e9\""
+      ],
+      [
+        "t",
+        "\"caf\u00e9\""
+      ]
+    ],
+    "source": "{\"s\": \"caf\\u00e9\", \"t\": \"caf\u00e9\"}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"caf\\u00e9\""
+      ],
+      [
+        "t",
+        "\"caf\u00e9\""
+      ]
+    ],
+    "source": "{\"s\": \"caf\\u00e9\",\"t\": \"caf\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 't' at offset 24: Unterminated string starting at: line 1 column 25 (char 24)",
+    "source": "{\"s\": \"caf\\u00e9\", \"t\": \"caf\u00e9e}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"caf\\u00e9\""
+      ],
+      [
+        "tt",
+        "\"caf\u00e9\""
+      ]
+    ],
+    "source": "{\"s\": \"caf\\u00e9\", \"tt\": \"caf\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 't' at offset 24: Expecting property name enclosed in double quotes: line 1 column 26 (char 25)",
+    "source": "{\"s\": \"caf\\u00e9\", \"t\": {caf\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"crf\\u00e9\""
+      ],
+      [
+        "t",
+        "\"caf\u00e9\""
+      ]
+    ],
+    "source": "{\"s\": \"crf\\u00e9\", \"t\": \"caf\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"c\\f\\u00e9\""
+      ],
+      [
+        "t",
+        "\"caf\u00e9\""
+      ]
+    ],
+    "source": "{\"s\": \"c\\f\\u00e9\", \"t\": \"caf\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 't' at offset 24: Invalid \\escape: line 1 column 30 (char 29)",
+    "source": "{\"s\": \"caf\\u00e9\", \"t\": \"caf\u00e9\\}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 't' at offset 23: Expecting value: line 1 column 24 (char 23)",
+    "source": "{\"s\": \"caf\\u00e9\", \"t\":]\"caf\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 23, found '\"'",
+    "source": "{\"s\": \"caf\\u00e9\", \"t\" \"caf\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "",
+        "\"caf\\u00e9\""
+      ],
+      [
+        "t",
+        "\"caf\u00e9\""
+      ]
+    ],
+    "source": "{\"\": \"caf\\u00e9\", \"t\": \"caf\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"caf\\u00ee9\""
+      ],
+      [
+        "t",
+        "\"caf\u00e9\""
+      ]
+    ],
+    "source": "{\"s\": \"caf\\u00ee9\", \"t\": \"caf\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"caf\\u00e9\""
+      ],
+      [
+        "t",
+        "\"caff\u00e9\""
+      ]
+    ],
+    "source": "{\"s\": \"caf\\u00e9\", \"t\": \"caff\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 19, found '9'",
+    "source": "{\"s\": \"caf\\u00e9\", 9t\": \"caf\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"caf\\u00e9\""
+      ],
+      [
+        "t",
+        "\"2af\u00e9\""
+      ]
+    ],
+    "source": "{\"s\": \"caf\\u00e9\", \"t\": \"2af\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"caf\\u00e9\""
+      ],
+      [
+        "t",
+        "\"cf\u00e9\""
+      ]
+    ],
+    "source": "{\"s\": \"caf\\u00e9\", \"t\": \"cf\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 22, found '['",
+    "source": "{\"s\": \"caf\\u00e9\", \"t\"[ \"caf\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"caf\\u000e9\""
+      ],
+      [
+        "t",
+        "\"caf\u00e9\""
+      ]
+    ],
+    "source": "{\"s\": \"caf\\u000e9\", \"t\": \"caf\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found 's'",
+    "source": "{s\": \"caf\\u00e9\", \"t\": \"caf\u00e9\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"quote \\\" backslsh \\\\ newline \\n tab \\t\""
+      ]
+    ],
+    "source": "{\"s\": \"quote \\\" backslsh \\\\ newline \\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"quote \\\" bacckslash \\\\ newline \\n tab \\t\""
+      ]
+    ],
+    "source": "{\"s\": \"quote \\\" bacckslash \\\\ newline \\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"quote \\\" backslasa \\\\ newline \\n tab \\t\""
+      ]
+    ],
+    "source": "{\"s\": \"quote \\\" backslasa \\\\ newline \\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found 's'",
+    "source": "{s\": \"quote \\\" backslash \\\\ newline \\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"quote \\\" bacslash \\\\ newline \\n tab \\t\""
+      ]
+    ],
+    "source": "{\"s\": \"quote \\\" bacslash \\\\ newline \\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"quote \\\" backslash \\\\ newlline \\n tab \\t\""
+      ]
+    ],
+    "source": "{\"s\": \"quote \\\" backslash \\\\ newlline \\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"quote \\\" backslash \\\\ newline \\n tab \\t\""
+      ]
+    ],
+    "source": "{\"s\":  \"quote \\\" backslash \\\\ newline \\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 7, found 'q'",
+    "source": "{\"s2: \"quote \\\" backslash \\\\ newline \\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "ss",
+        "\"quote \\\" backslash \\\\ newline \\n tab \\t\""
+      ]
+    ],
+    "source": "{\"ss\": \"quote \\\" backslash \\\\ newline \\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"quote \\\" backslashh \\\\ newline \\n tab \\t\""
+      ]
+    ],
+    "source": "{\"s\": \"quote \\\" backslashh \\\\ newline \\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"quote \\\" backslash \\\\ newlin \\n tab \\t\""
+      ]
+    ],
+    "source": "{\"s\": \"quote \\\" backslash \\\\ newlin \\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"quote \\\" backslah \\\\ newline \\n tab \\t\""
+      ]
+    ],
+    "source": "{\"s\": \"quote \\\" backslah \\\\ newline \\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "object ended without '}'",
+    "source": "{\"s\": \"quote \\\" backslash \\\\ newline \\n tab \\t\"",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 15, found 'b'",
+    "source": "{\"s\": \"quote \" backslash \\\\ newline \\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 's' at offset 6: Invalid \\escape: line 1 column 38 (char 37)",
+    "source": "{\"s\": \"quote \\\" backslash \\\\ newline \\6 tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"quote \\\" backslash[\\\\ newline \\n tab \\t\""
+      ]
+    ],
+    "source": "{\"s\": \"quote \\\" backslash[\\\\ newline \\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"quote \\\" backsslash \\\\ newline \\n tab \\t\""
+      ]
+    ],
+    "source": "{\"s\": \"quote \\\" backsslash \\\\ newline \\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 's' at offset 6: Unterminated string starting at: line 1 column 7 (char 6)",
+    "source": "{\"s\": \"quote \\\" backslash \\\\ newline \\n tab \\\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"quote \\\" backslash \\\\ newliine \\n tab \\t\""
+      ]
+    ],
+    "source": "{\"s\": \"quote \\\" backslash \\\\ newliine \\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"quote \\\" backslash \\\\ newline \\n tab}\\t\""
+      ]
+    ],
+    "source": "{\"s\": \"quote \\\" backslash \\\\ newline \\n tab}\\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 's' at offset 6: Invalid \\escape: line 1 column 27 (char 26)",
+    "source": "{\"s\": \"quote \\\" backslash \\3 newline \\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 's' at offset 6: Unterminated string starting at: line 1 column 7 (char 6)",
+    "source": "{\"s\": \"quote \\\" backslash \\\\ newline \\n tab \\t}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 's' at offset 5: Expecting value: line 1 column 6 (char 5)",
+    "source": "{\"s\":: \"quote \\\" backslash \\\\ newline \\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 's' at offset 6: Invalid control character at: line 1 column 37 (char 36)",
+    "source": "{\"s\": \"quote \\\" backslash \\\\ newline\t\\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"quote \\\" backslash \\\\ newlinne \\n tab \\t\""
+      ]
+    ],
+    "source": "{\"s\": \"quote \\\" backslash \\\\ newlinne \\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"quote \\\"backslash \\\\ newline \\n tab \\t\""
+      ]
+    ],
+    "source": "{\"s\": \"quote \\\"backslash \\\\ newline \\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "s",
+        "\"quuote \\\" backslash \\\\ newline \\n tab \\t\""
+      ]
+    ],
+    "source": "{\"s\": \"quuote \\\" backslash \\\\ newline \\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 's' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"s\": quote \\\" backslash \\\\ newline \\n tab \\t\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "nested",
+        "{\"a\": [1, 2, {\"b\":  null}]}"
+      ],
+      [
+        "after",
+        "true"
+      ]
+    ],
+    "source": "{\"nested\": {\"a\": [1, 2, {\"b\":  null}]}, \"after\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "nested",
+        "{\"a\": [1,2, {\"b\": null}]}"
+      ],
+      [
+        "after",
+        "true"
+      ]
+    ],
+    "source": "{\"nested\": {\"a\": [1,2, {\"b\": null}]}, \"after\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "nested",
+        "{\"a\": [1, 22, {\"b\": null}]}"
+      ],
+      [
+        "after",
+        "true"
+      ]
+    ],
+    "source": "{\"nested\": {\"a\": [1, 22, {\"b\": null}]}, \"after\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "neested",
+        "{\"a\": [1, 2, {\"b\": null}]}"
+      ],
+      [
+        "after",
+        "true"
+      ]
+    ],
+    "source": "{\"neested\": {\"a\": [1, 2, {\"b\": null}]}, \"after\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'nested' at offset 11: Expecting ':' delimiter: line 1 column 29 (char 28)",
+    "source": "{\"nested\": {\"a\": [1, 2, {\"b\"\": null}]}, \"after\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "ne ted",
+        "{\"a\": [1, 2, {\"b\": null}]}"
+      ],
+      [
+        "after",
+        "true"
+      ]
+    ],
+    "source": "{\"ne ted\": {\"a\": [1, 2, {\"b\": null}]}, \"after\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'nested' at offset 11: Expecting ',' delimiter: line 1 column 35 (char 34)",
+    "source": "{\"nested\": {\"a\": [1, 2, {\"b\": nulll}]}, \"after\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'after' at offset 48: Expecting value: line 1 column 49 (char 48)",
+    "source": "{\"nested\": {\"a\": [1, 2, {\"b\": null}]}, \"after\": rue}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 39, found 'c'",
+    "source": "{\"nested\": {\"a\": [1, 2, {\"b\": null}]}, cafter\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 10, found '{'",
+    "source": "{\"nested\" {\"a\": [1, 2, {\"b\": null}]}, \"after\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "nestud",
+        "{\"a\": [1, 2, {\"b\": null}]}"
+      ],
+      [
+        "after",
+        "true"
+      ]
+    ],
+    "source": "{\"nestud\": {\"a\": [1, 2, {\"b\": null}]}, \"after\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "nested",
+        "{\"a\": [1, 2, {\"b\": null}]}"
+      ],
+      [
+        "aft3r",
+        "true"
+      ]
+    ],
+    "source": "{\"nested\": {\"a\": [1, 2, {\"b\": null}]}, \"aft3r\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'nested' at offset 11: Expecting ':' delimiter: line 1 column 41 (char 40)",
+    "source": "{\"nested\": {\"a\": [1, 2, {\"b0: null}]}, \"after\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'nested' at offset 11: Expecting ',' delimiter: line 1 column 35 (char 34)",
+    "source": "{\"nested\": {\"a\": [1, 2, {\"b\": null]}, \"after\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "nested",
+        "{\"a\": [1,62, {\"b\": null}]}"
+      ],
+      [
+        "after",
+        "true"
+      ]
+    ],
+    "source": "{\"nested\": {\"a\": [1,62, {\"b\": null}]}, \"after\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'nested' at offset 11: Expecting property name enclosed in double quotes: line 1 column 26 (char 25)",
+    "source": "{\"nested\": {\"a\": [1, 2, {b\": null}]}, \"after\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'nested' at offset 11: Expecting ',' delimiter: line 1 column 37 (char 36)",
+    "source": "{\"nested\": {\"a\": [1, 2, {\"b\": null} }, \"after\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "nestec",
+        "{\"a\": [1, 2, {\"b\": null}]}"
+      ],
+      [
+        "after",
+        "true"
+      ]
+    ],
+    "source": "{\"nestec\": {\"a\": [1, 2, {\"b\": null}]}, \"after\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'nested' at offset 11: Expecting value: line 1 column 31 (char 30)",
+    "source": "{\"nested\": {\"a\": [1, 2, {\"b\": nul}]}, \"after\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "nested",
+        "{\"a\": [1, 2, {\"b\": null}]}"
+      ],
+      [
+        "aftter",
+        "true"
+      ]
+    ],
+    "source": "{\"nested\": {\"a\": [1, 2, {\"b\": null}]}, \"aftter\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 46, found '\"'",
+    "source": "{\"nested\": {\"a\": [1, 2, {\"b\": null}]}, \"after\"\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 2, found 'n'",
+    "source": "{ nested\": {\"a\": [1, 2, {\"b\": null}]}, \"after\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "nested",
+        "{\"a\": [1, 2, {\"b\": null}]}"
+      ],
+      [
+        "0fter",
+        "true"
+      ]
+    ],
+    "source": "{\"nested\": {\"a\": [1, 2, {\"b\": null}]}, \"0fter\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'nested' at offset 11: Expecting ',' delimiter: line 1 column 25 (char 24)",
+    "source": "{\"nested\": {\"a\": [1, 2,2{\"b\": null}]}, \"after\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "nested",
+        "{\"a\": [1, 2, {\"b\": null}]}"
+      ],
+      [
+        "aafter",
+        "true"
+      ]
+    ],
+    "source": "{\"nested\": {\"a\": [1, 2, {\"b\": null}]}, \"aafter\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'nested' at offset 11: Expecting ',' delimiter: line 1 column 20 (char 19)",
+    "source": "{\"nested\": {\"a\": [1a 2, {\"b\": null}]}, \"after\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'nested' at offset 11: Expecting property name enclosed in double quotes: line 1 column 26 (char 25)",
+    "source": "{\"nested\": {\"a\": [1, 2, {{\"b\": null}]}, \"after\": true}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'after' at offset 48: Expecting value: line 1 column 49 (char 48)",
+    "source": "{\"nested\": {\"a\": [1, 2, {\"b\": null}]}, \"after\": tue}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "empty_obj",
+        "{}"
+      ],
+      [
+        "empty_arr",
+        "[]"
+      ],
+      [
+        "empty_\tr",
+        "\"\""
+      ]
+    ],
+    "source": "{\"empty_obj\": {}, \"empty_arr\": [], \"empty_\\tr\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "emp9y_obj",
+        "{}"
+      ],
+      [
+        "empty_arr",
+        "[]"
+      ],
+      [
+        "empty_str",
+        "\"\""
+      ]
+    ],
+    "source": "{\"emp9y_obj\": {}, \"empty_arr\": [], \"empty_str\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "empty_obj",
+        "{}"
+      ],
+      [
+        "empty_arr",
+        "[]"
+      ],
+      [
+        "empty_str",
+        "\"\""
+      ]
+    ],
+    "source": "{\"empty_obj\": {},\"empty_arr\": [], \"empty_str\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'empty_obj' at offset 14: Expecting value: line 1 column 15 (char 14)",
+    "source": "{\"empty_obj\": }, \"empty_arr\": [], \"empty_str\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "empty_obj",
+        "{}"
+      ],
+      [
+        "emty_arr",
+        "[]"
+      ],
+      [
+        "empty_str",
+        "\"\""
+      ]
+    ],
+    "source": "{\"empty_obj\": {}, \"emty_arr\": [], \"empty_str\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'empty_str' at offset 48: Unterminated string starting at: line 1 column 49 (char 48)",
+    "source": "{\"empty_obj\": {}, \"empty_arr\": [], \"empty_str\": \"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "empty_obj",
+        "{}"
+      ],
+      [
+        "empty_arr",
+        "[]"
+      ],
+      [
+        "empty__str",
+        "\"\""
+      ]
+    ],
+    "source": "{\"empty_obj\": {}, \"empty_arr\": [], \"empty__str\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 17, found '}'",
+    "source": "{\"empty_obj\": {},}\"empty_arr\": [], \"empty_str\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 29, found '{'",
+    "source": "{\"empty_obj\": {}, \"empty_arr\"{ [], \"empty_str\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "empty_obj",
+        "{}"
+      ],
+      [
+        "empty_arr",
+        "[]"
+      ],
+      [
+        "epty_str",
+        "\"\""
+      ]
+    ],
+    "source": "{\"empty_obj\": {}, \"empty_arr\": [], \"epty_str\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "empty_obj",
+        "{}"
+      ],
+      [
+        "empty_arr",
+        "[]"
+      ],
+      [
+        "emptystr",
+        "\"\""
+      ]
+    ],
+    "source": "{\"empty_obj\": {}, \"empty_arr\": [], \"emptystr\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'empty_str' at offset 47: Expecting value: line 1 column 48 (char 47)",
+    "source": "{\"empty_obj\": {}, \"empty_arr\": [], \"empty_str\":e\"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "empt]_obj",
+        "{}"
+      ],
+      [
+        "empty_arr",
+        "[]"
+      ],
+      [
+        "empty_str",
+        "\"\""
+      ]
+    ],
+    "source": "{\"empt]_obj\": {}, \"empty_arr\": [], \"empty_str\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 34, found '\"'",
+    "source": "{\"empty_obj\": {}, \"empty_arr\": [] \"empty_str\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 29, found '5'",
+    "source": "{\"empty_obj\": {}, \"empty_arr\"5 [], \"empty_str\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "object ended without '}'",
+    "source": "{\"empty_obj\": {}, \"empty_arr\": [], \"empty_str\": \"\" ",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "empty_obj",
+        "{}"
+      ],
+      [
+        "empty_arr",
+        "[]"
+      ],
+      [
+        "eempty_str",
+        "\"\""
+      ]
+    ],
+    "source": "{\"empty_obj\": {}, \"empty_arr\": [], \"eempty_str\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "e}pty_obj",
+        "{}"
+      ],
+      [
+        "empty_arr",
+        "[]"
+      ],
+      [
+        "empty_str",
+        "\"\""
+      ]
+    ],
+    "source": "{\"e}pty_obj\": {}, \"empty_arr\": [], \"empty_str\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "empty_obj",
+        "{}"
+      ],
+      [
+        "empty_arr",
+        "[]"
+      ],
+      [
+        "enpty_str",
+        "\"\""
+      ]
+    ],
+    "source": "{\"empty_obj\": {}, \"empty_arr\": [], \"enpty_str\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'empty_str' at offset 47: Expecting value: line 1 column 48 (char 47)",
+    "source": "{\"empty_obj\": {}, \"empty_arr\": [], \"empty_str\":: \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'empty_obj' at offset 13: Expecting value: line 1 column 14 (char 13)",
+    "source": "{\"empty_obj\":: {}, \"empty_arr\": [], \"empty_str\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "empty_ob5",
+        "{}"
+      ],
+      [
+        "empty_arr",
+        "[]"
+      ],
+      [
+        "empty_str",
+        "\"\""
+      ]
+    ],
+    "source": "{\"empty_ob5\": {}, \"empty_arr\": [], \"empty_str\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "empty_obj",
+        "{}"
+      ],
+      [
+        "empty_arr",
+        "[]"
+      ],
+      [
+        "empty_str",
+        "\"\""
+      ]
+    ],
+    "source": "{\"empty_obj\": {}, \"empty_arr\":  [], \"empty_str\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "empty_obj",
+        "{}"
+      ],
+      [
+        "empty_arr",
+        "[]"
+      ],
+      [
+        "em[ty_str",
+        "\"\""
+      ]
+    ],
+    "source": "{\"empty_obj\": {}, \"empty_arr\": [], \"em[ty_str\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 41, found '_'",
+    "source": "{\"empty_obj\": {}, \"empty_arr\": [], \"empt\"_str\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "emppty_obj",
+        "{}"
+      ],
+      [
+        "empty_arr",
+        "[]"
+      ],
+      [
+        "empty_str",
+        "\"\""
+      ]
+    ],
+    "source": "{\"emppty_obj\": {}, \"empty_arr\": [], \"empty_str\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "empty_obj",
+        "{}"
+      ],
+      [
+        "empty_arr",
+        "[]"
+      ],
+      [
+        "emptyy_str",
+        "\"\""
+      ]
+    ],
+    "source": "{\"empty_obj\": {}, \"empty_arr\": [], \"emptyy_str\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 17, found ','",
+    "source": "{\"empty_obj\": {},,\"empty_arr\": [], \"empty_str\": \"\"}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "NaN"
+      ]
+    ],
+    "source": "{\"a\":  NaN}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 5: Expecting value: line 1 column 6 (char 5)",
+    "source": "{\"a\":: NaN}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "NaN"
+      ]
+    ],
+    "source": "{\"a\": NaN}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": Na}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": NNaN}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 9, found 'u'",
+    "source": "{\"a\": NaNu",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "object ended without '}'",
+    "source": "{\"a\": NaN",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 5, found 'N'",
+    "source": "{\"a\" NaN}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 3, found 'a'",
+    "source": "{\"\"a\": NaN}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "2",
+        "NaN"
+      ]
+    ],
+    "source": "{\"2\": NaN}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 9, found 'N'",
+    "source": "{\"a\": NaNN}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": NN}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 4, found 'a'",
+    "source": "{\"a\"a NaN}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": aN}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 6, found 'N'",
+    "source": "{\"a\":1NaN}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "NaN"
+      ]
+    ],
+    "source": "{\"a\":NaN}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found '\"'",
+    "source": "\"a\": NaN}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 4, found '\"'",
+    "source": "{\"a\"\": NaN}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found 'a'",
+    "source": "{a\": NaN}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "aa",
+        "NaN"
+      ]
+    ],
+    "source": "{\"aa\": NaN}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "aa",
+        "Infinity"
+      ]
+    ],
+    "source": "{\"aa\": Infinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": Infinuty}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": Infanity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 5: Expecting value: line 1 column 6 (char 5)",
+    "source": "{\"a\":: Infinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": Infin\nty}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": Infinnity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": Infiity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": Infinitty}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": Infiniity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": In,inity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": Infnity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": I9finity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": Infiinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "",
+        "Infinity"
+      ]
+    ],
+    "source": "{\"\": Infinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": Infrnity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "Infinity"
+      ]
+    ],
+    "source": "{\"a\":  Infinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 14, found 'y'",
+    "source": "{\"a\": Infinityy}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 4, found 't'",
+    "source": "{\"a\"t Infinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad member name at offset 1: Unterminated string starting at: line 1 column 2 (char 1)",
+    "source": "{\"a: Infinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": Infini5y}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 5: Expecting value: line 1 column 6 (char 5)",
+    "source": "{\"a\":]Infinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found 'a'",
+    "source": "{a\": Infinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": Infi0ity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 14, found '\"'",
+    "source": "{\"a\": Infinity\"",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "Infinity"
+      ]
+    ],
+    "source": "{\"a\":Infinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": Infi6ity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": In\tinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "r",
+        "Infinity"
+      ]
+    ],
+    "source": "{\"r\": Infinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 4, found '\"'",
+    "source": "{\"a\"\": -Infinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": -Inffinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": -Infinit[}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 5, found '-'",
+    "source": "{\"a\" -Infinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": -Infi,ity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": -Infiniy}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "-Infinity"
+      ]
+    ],
+    "source": "{\"a\": -Infinity}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": -Ininity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad member name at offset 1: Unterminated string starting at: line 1 column 2 (char 1)",
+    "source": "{\"an: -Infinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": -Infiniity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": -Infiniay}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": -Inf4nity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found '{'",
+    "source": "{{\"a\": -Infinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": -Infinty}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "-Infinity"
+      ]
+    ],
+    "source": "{\"a\":-Infinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": -Infiinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 15, found 'a'",
+    "source": "{\"a\": -Infinitya",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found ':'",
+    "source": ":\"a\": -Infinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": -Infinnity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad member name at offset 1: Unterminated string starting at: line 1 column 2 (char 1)",
+    "source": "{\"a: -Infinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": --Infinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found 'n'",
+    "source": "n\"a\": -Infinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": -Infinitty}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "object ended without '}'",
+    "source": "{\"a\": -Infinity",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found ']'",
+    "source": "]\"a\": -Infinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": -Infinit}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad member name at offset 1: Unterminated string starting at: line 1 column 2 (char 1)",
+    "source": "{\"a5: -Infinity}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 13 (char 12)",
+    "source": "{\"a\": [NaN, Innfinity]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 13 (char 12)",
+    "source": "{\"a\": [NaN, In7inity]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 6, found '['",
+    "source": "{\"a\":6[NaN, Infinity]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "[NaN, Infinity]"
+      ]
+    ],
+    "source": "{\"a\":  [NaN, Infinity]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 13 (char 12)",
+    "source": "{\"a\": [NaN, IInfinity]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 13 (char 12)",
+    "source": "{\"a\": [NaN, Infinnity]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 13 (char 12)",
+    "source": "{\"a\": [NaN, Ininity]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting ',' delimiter: line 1 column 11 (char 10)",
+    "source": "{\"a\": [NaNa Infinity]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 21, found ']'",
+    "source": "{\"a\": [NaN, Infinity]]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 12, found 'I'",
+    "source": "{\"a\":  NaN, Infinity]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "[NaN,Infinity]"
+      ]
+    ],
+    "source": "{\"a\": [NaN,Infinity]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 13 (char 12)",
+    "source": "{\"a\": [NaN, nfinity]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "[NaN, Infinity]"
+      ]
+    ],
+    "source": "{\"a\":[NaN, Infinity]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 13 (char 12)",
+    "source": "{\"a\": [NaN, Infiinity]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 3, found 'a'",
+    "source": "{\"\"a\": [NaN, Infinity]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 13 (char 12)",
+    "source": "{\"a\": [NaN, Infinit]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "aa",
+        "[NaN, Infinity]"
+      ]
+    ],
+    "source": "{\"aa\": [NaN, Infinity]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting ',' delimiter: line 1 column 11 (char 10)",
+    "source": "{\"a\": [NaNN, Infinity]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 13 (char 12)",
+    "source": "{\"a\": [NaN, Infinty]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found 'a'",
+    "source": "{a\": [NaN, Infinity]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 13 (char 12)",
+    "source": "{\"a\": [NaN, Infiity]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 8 (char 7)",
+    "source": "{\"a\": [Na7, Infinity]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 8 (char 7)",
+    "source": "{\"a\": [Na,, Infinity]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 12 (char 11)",
+    "source": "{\"a\": [NaN,}Infinity]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 13 (char 12)",
+    "source": "{\"a\": [NaN, Infinit5]}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 3, found 'a'",
+    "source": "{\"\"a\": 1, \"a\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 8, found 'u'",
+    "source": "{\"a\": 1,u\"a\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 12, found '\"'",
+    "source": "{\"a\": 1, \"a\"\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 4, found '\"'",
+    "source": "{\"a\"\": 1, \"a\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "]",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": 1, \"]\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": }, \"a\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "object ended without '}'",
+    "source": "{\"a\": 1, \"a\": 2",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 14: Expecting value: line 1 column 15 (char 14)",
+    "source": "{\"a\": 1, \"a\": a}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 11, found 'a'",
+    "source": "{\"a\": 1, \"\"a\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 5: Expecting value: line 1 column 6 (char 5)",
+    "source": "{\"a\":: 1, \"a\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 12, found 'a'",
+    "source": "{\"a\": 1, \"a\"a 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad member name at offset 9: Unterminated string starting at: line 1 column 10 (char 9)",
+    "source": "{\"a\": 1, \"at: 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 10, found 'a'",
+    "source": "{\"a5: 1, \"a\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 8, found '\"'",
+    "source": "{\"a\": 1 \"a\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "aa",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": 1, \"aa\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "aa",
+        "1"
+      ],
+      [
+        "a",
+        "2"
+      ]
+    ],
+    "source": "{\"aa\": 1, \"a\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": 1, \"a\":  2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "b",
+        "1"
+      ],
+      [
+        "a",
+        "2"
+      ]
+    ],
+    "source": "{\"b\": 1, \"a\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 4, found '8'",
+    "source": "{\"a\"8 1, \"a\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "92"
+      ]
+    ],
+    "source": "{\"a\": 1, \"a\":92}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "7",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": 1, \"7\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 7: Expecting value: line 1 column 8 (char 7)",
+    "source": "{\"a\": \t, \"a\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found '{'",
+    "source": "{{\"a\": 1, \"a\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 9, found '3'",
+    "source": "{\"a\": 1, 3a\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": 1,\"a\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 19, found '\"'",
+    "source": "{\"a\": {\"a\": 1}, \"a\"\": 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 7, found 'a'",
+    "source": "{\"a: {\"a\": 1}, \"a\": 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad member name at offset 16: Unterminated string starting at: line 1 column 17 (char 16)",
+    "source": "{\"a\": {\"a\": 1}, \"a: 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "{\"a\": 1}"
+      ],
+      [
+        "aa",
+        "3"
+      ]
+    ],
+    "source": "{\"a\": {\"a\": 1}, \"aa\": 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 21: Expecting value: line 1 column 22 (char 21)",
+    "source": "{\"a\": {\"a\": 1}, \"a\": }",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 20: Expecting value: line 1 column 21 (char 20)",
+    "source": "{\"a\": {\"a\": 1}, \"a\":n3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "3"
+      ]
+    ],
+    "source": "{\"a\": {\"a\":81}, \"a\": 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "3"
+      ]
+    ],
+    "source": "{\"a\": {\"a\": 1},  \"a\": 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "{\"a\": 1}"
+      ]
+    ],
+    "source": "{\"a\": {\"a\": 1}}, \"a\": 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 3, found 'a'",
+    "source": "{\"\"a\": {\"a\": 1}, \"a\": 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 5, found '{'",
+    "source": "{\"a\" {\"a\": 1}, \"a\": 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "object ended without '}'",
+    "source": "{\"a\": {\"a\": 14, \"a\": 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 20: Expecting value: line 1 column 21 (char 20)",
+    "source": "{\"a\": {\"a\": 1}, \"a\":: 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "3"
+      ]
+    ],
+    "source": "{\"a\": {\"aa\": 1}, \"a\": 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 16, found 'a'",
+    "source": "{\"a\": {\"a\": 1}, a\": 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "object ended without '}'",
+    "source": "{\"a\": {\"a\": 1, \"a\": 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 7, found '\"'",
+    "source": "{\"a\": 5\"a\": 1}, \"a\": 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found 'a'",
+    "source": "{a\": {\"a\": 1}, \"a\": 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting ':' delimiter: line 1 column 18 (char 17)",
+    "source": "{\"a\": {\"ae: 1}, \"a\": 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 15, found '\"'",
+    "source": "{\"a\": {\"a\": 1} \"a\": 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 5: Expecting value: line 1 column 6 (char 5)",
+    "source": "{\"a\":t{\"a\": 1}, \"a\": 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting ':' delimiter: line 1 column 17 (char 16)",
+    "source": "{\"a\": {\"a: 1}, \"a\": 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 4, found '}'",
+    "source": "{\"a\"} {\"a\": 1}, \"a\": 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found '\"'",
+    "source": "\"a\": {\"a\": 1}, \"a\": 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting ':' delimiter: line 1 column 11 (char 10)",
+    "source": "{\"a\": {\"a\"\": 1}, \"a\": 3}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "{\"data\": 11}"
+      ],
+      [
+        "data",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": {\"data\": 11}, \"data\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "{\"dat0\": 1}"
+      ],
+      [
+        "data",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": {\"dat0\": 1}, \"data\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 5, found '{'",
+    "source": "{\"a\" {\"data\": 1}, \"data\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "{\"data\": 1}"
+      ],
+      [
+        "data",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": {\"data\": 1}, \"data\":  2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "{\"data\": 1}"
+      ],
+      [
+        "da1a",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": {\"data\": 1}, \"da1a\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        ":",
+        "{\"data\": 1}"
+      ],
+      [
+        "data",
+        "2"
+      ]
+    ],
+    "source": "{\":\": {\"data\": 1}, \"data\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 19, found 'd'",
+    "source": "{\"a\": {\"data\": 1}, data\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting property name enclosed in double quotes: line 1 column 8 (char 7)",
+    "source": "{\"a\": {data\": 1}, \"data\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 5: Expecting value: line 1 column 6 (char 5)",
+    "source": "{\"a\":: {\"data\": 1}, \"data\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "{\" ata\": 1}"
+      ],
+      [
+        "data",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": {\" ata\": 1}, \"data\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting ':' delimiter: line 1 column 10 (char 9)",
+    "source": "{\"a\": {\"\"data\": 1}, \"data\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found '\"'",
+    "source": "\"a\": {\"data\": 1}, \"data\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "{\"data\": 1}"
+      ],
+      [
+        "ddata",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": {\"data\": 1}, \"ddata\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "object ended without '}'",
+    "source": "{\"a\": {\"data\": 1}, \"data\": 2",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "object ended without '}'",
+    "source": "{\"a\": {\"data\": 1 , \"data\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 18, found ','",
+    "source": "{\"a\": {\"data\": 1},, \"data\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 3, found 'a'",
+    "source": "{\"\"a\": {\"data\": 1}, \"data\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting ':' delimiter: line 1 column 15 (char 14)",
+    "source": "{\"a\": {\"data\" 1}, \"data\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "{\",ata\": 1}"
+      ],
+      [
+        "data",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": {\",ata\": 1}, \"data\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "{\"dataa\": 1}"
+      ],
+      [
+        "data",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": {\"dataa\": 1}, \"data\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "{\"data\": 1}"
+      ],
+      [
+        "da]a",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": {\"data\": 1}, \"da]a\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "{\"data\": 1}"
+      ],
+      [
+        "dataa",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": {\"data\": 1}, \"dataa\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "{\"datta\": 1}"
+      ],
+      [
+        "data",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": {\"datta\": 1}, \"data\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting ':' delimiter: line 1 column 14 (char 13)",
+    "source": "{\"a\": {\"data\"\": 1}, \"data\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "{\"ata\": 1}"
+      ],
+      [
+        "data",
+        "2"
+      ]
+    ],
+    "source": "{\"a\": {\"ata\": 1}, \"data\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found 'a'",
+    "source": "{a\": {\"data\": 1}, \"data\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 13, found '['",
+    "source": "{\n  \"a\"  :  1[,\n  \"b\" : [ 1 , 2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'b' at offset 24: Expecting ',' delimiter: line 4 column 1 (char 34)",
+    "source": "{\n  \"a\"  :  1 ,\n  \"b\" : [ 1 , 2  \n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "b",
+        "[ 1 , 2 ]"
+      ]
+    ],
+    "source": "{\n  \"a\"  :  1 ,\n  \"b\" : [ 1 , 2 ]\n}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "b",
+        "[ 6 , 2 ]"
+      ]
+    ],
+    "source": "{\n  \"a\"  :  1 ,\n  \"b\" : [ 6 , 2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 15, found '8'",
+    "source": "{\n  \"a\"  :  1 ,8  \"b\" : [ 1 , 2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'b' at offset 24: Expecting value: line 3 column 14 (char 29)",
+    "source": "{\n  \"a\"  :  1 ,\n  \"b\" : [ 1 ,, 2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 10: Expecting value: line 2 column 9 (char 10)",
+    "source": "{\n  \"a\"  ::  1 ,\n  \"b\" : [ 1 , 2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 15, found ','",
+    "source": "{\n  \"a\"  :  1 ,,\n  \"b\" : [ 1 , 2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 14: Expecting value: line 2 column 13 (char 14)",
+    "source": "{\n  \"a\"  :  \t ,\n  \"b\" : [ 1 , 2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 2, found 'a'",
+    "source": "{\na \"a\"  :  1 ,\n  \"b\" : [ 1 , 2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'b' at offset 23: Expecting value: line 3 column 8 (char 23)",
+    "source": "{\n  \"a\"  :  1 ,\n  \"b\" :: [ 1 , 2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 33, found '9'",
+    "source": "{\n  \"a\"  :  1 ,\n  \"b\" : [ 1 , 2 ]9}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 3, found '\"'",
+    "source": "\n  \"a\"  :  1 ,\n  \"b\" : [ 1 , 2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "b",
+        "[ 1 , 2 ]"
+      ]
+    ],
+    "source": "{\n  \"a\"  :  1 ,  \"b\" : [ 1 , 2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "b",
+        "[ 1 , 23]"
+      ]
+    ],
+    "source": "{\n  \"a\"  :  1 ,\n  \"b\" : [ 1 , 23]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "b",
+        "[1 , 2 ]"
+      ]
+    ],
+    "source": "{\n  \"a\"  :  1 ,\n  \"b\" : [1 , 2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "b",
+        "[ 1 , 2 ]"
+      ]
+    ],
+    "source": "{\n  \"a\"  :  1 ,\n\t \"b\" : [ 1 , 2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 17, found '\"'",
+    "source": "{\n  \"a\"  :  1 \n  \"b\" : [ 1 , 2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "b",
+        "[  1 , 2 ]"
+      ]
+    ],
+    "source": "{\n  \"a\"  :  1 ,\n  \"b\" : [  1 , 2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 7, found '}'",
+    "source": "{\n  \"a\"} :  1 ,\n  \"b\" : [ 1 , 2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "b",
+        "[ 1 ,  2 ]"
+      ]
+    ],
+    "source": "{\n  \"a\"  :  1 ,\n  \"b\" : [ 1 ,  2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found '1'",
+    "source": "{1  \"a\"  :  1 ,\n  \"b\" : [ 1 , 2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "b",
+        "[ 1 , 2 ]"
+      ]
+    ],
+    "source": "{\n\n  \"a\"  :  1 ,\n  \"b\" : [ 1 , 2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "b",
+        "[ 1 , 2 ]"
+      ]
+    ],
+    "source": "{\n \"a\"  :  1 ,\n  \"b\" : [ 1 , 2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 33, found 't'",
+    "source": "{\n  \"a\"  :  1 ,\n  \"b\" : [ 1 , 2 ]t}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 6, found 'a'",
+    "source": "{\n  \"\"a\"  :  1 ,\n  \"b\" : [ 1 , 2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "b",
+        "[ 1 , 2 ]"
+      ]
+    ],
+    "source": "{\n  \"a\"  :  1  ,\n  \"b\" : [ 1 , 2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "b",
+        "[ 1 , 2 ]"
+      ]
+    ],
+    "source": "{\n  \"a\"  :  1 ,\n   \"b\" : [ 1 , 2 ]\n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 10, found '4'",
+    "source": "{\"a\":1,\"b\"42}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'b' at offset 11: Expecting value: line 1 column 12 (char 11)",
+    "source": "{\"a\":1,\"b\":b}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 6, found ']'",
+    "source": "{\"a\":1]\"b\":2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 8, found 'b'",
+    "source": "{\"a8:1,\"b\":2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "b",
+        "22"
+      ]
+    ],
+    "source": "{\"a\":1,\"b\":22}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'b' at offset 11: Expecting value: line 1 column 12 (char 11)",
+    "source": "{\"a\":1,\"b\":}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 9, found 'b'",
+    "source": "{\"a\":1,\"\"b\":2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 3, found 'a'",
+    "source": "{\"\"a\":1,\"b\":2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 4, found 'b'",
+    "source": "{\"a\"b1,\"b\":2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found '\"'",
+    "source": "\"a\":1,\"b\":2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found '{'",
+    "source": "{{\"a\":1,\"b\":2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad member name at offset 7: Unterminated string starting at: line 1 column 8 (char 7)",
+    "source": "{\"a\":1,\"b2:2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad member name at offset 7: Invalid \\escape: line 1 column 10 (char 9)",
+    "source": "{\"a\":1,\"b\\:2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 12, found ']'",
+    "source": "{\"a\":1,\"b\":2]",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 12, found 'n'",
+    "source": "{\"a\":1,\"b\":2n",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 7, found ','",
+    "source": "{\"a\":1,,\"b\":2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 4, found '1'",
+    "source": "{\"a\"1,\"b\":2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 7, found '\"'",
+    "source": "{\"a\":1\t\"b\":2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "11"
+      ],
+      [
+        "b",
+        "2"
+      ]
+    ],
+    "source": "{\"a\":11,\"b\":2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "",
+        "2"
+      ]
+    ],
+    "source": "{\"a\":1,\"\":2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 5: Expecting value: line 1 column 6 (char 5)",
+    "source": "{\"a\":,\"b\":2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 7, found 'b'",
+    "source": "{\"a\":1,b\":2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 12, found 'c'",
+    "source": "{\"a\":1,\"b\":2c",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found 'b'",
+    "source": "{ba\":1,\"b\":2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 7, found '3'",
+    "source": "{\"a\":1,3b\":2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "aa",
+        "1"
+      ],
+      [
+        "b",
+        "2"
+      ]
+    ],
+    "source": "{\"aa\":1,\"b\":2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'b' at offset 11: Expecting value: line 1 column 12 (char 11)",
+    "source": "{\"a\":1,\"b\"::2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 23, found '1'",
+    "source": "{\"a\": -1, \"b\": 0, \"c\":01e308, \"d\": 5e-324, \"e\": 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 43, found 'e'",
+    "source": "{\"a\": -1, \"b\": 0, \"c\": 1e308, \"d: 5e-324, \"e\": 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "1"
+      ],
+      [
+        "b",
+        "0"
+      ],
+      [
+        "c",
+        "1e308"
+      ],
+      [
+        "d",
+        "5e-324"
+      ],
+      [
+        "e",
+        "1.5E-7"
+      ]
+    ],
+    "source": "{\"a\": 1, \"b\": 0, \"c\": 1e308, \"d\": 5e-324, \"e\": 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 4, found '\"'",
+    "source": "{\"a\"\": -1, \"b\": 0, \"c\": 1e308, \"d\": 5e-324, \"e\": 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "-1"
+      ],
+      [
+        "b",
+        "0"
+      ],
+      [
+        "c",
+        "1e308"
+      ],
+      [
+        "d",
+        "5e-324"
+      ],
+      [
+        "e",
+        "1.5E-7"
+      ]
+    ],
+    "source": "{\"a\": -1, \"b\": 0, \"c\": 1e308,  \"d\": 5e-324, \"e\": 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 48, found '1'",
+    "source": "{\"a\": -1, \"b\": 0, \"c\": 1e308, \"d\": 5e-324, \"e\"\t 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found 'a'",
+    "source": "{a\": -1, \"b\": 0, \"c\": 1e308, \"d\": 5e-324, \"e\": 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'c' at offset 23: Expecting value: line 1 column 24 (char 23)",
+    "source": "{\"a\": -1, \"b\": 0, \"c\": ne308, \"d\": 5e-324, \"e\": 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 32, found '\"'",
+    "source": "{\"a\": -1, \"b\": 0, \"c\": 1e308, \"\"\": 5e-324, \"e\": 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "-1"
+      ],
+      [
+        "b",
+        "0"
+      ],
+      [
+        "c",
+        "1e308"
+      ],
+      [
+        "d",
+        "5e-324"
+      ],
+      [
+        "",
+        "1.5E-7"
+      ]
+    ],
+    "source": "{\"a\": -1, \"b\": 0, \"c\": 1e308, \"d\": 5e-324, \"\": 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 18, found 'c'",
+    "source": "{\"a\": -1, \"b: 0, \"c\": 1e308, \"d\": 5e-324, \"e\": 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'e' at offset 48: Expecting value: line 1 column 49 (char 48)",
+    "source": "{\"a\": -1, \"b\": 0, \"c\": 1e308, \"d\": 5e-324, \"e\": .5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 36, found '-'",
+    "source": "{\"a\": -1, \"b\": 0, \"c\": 1e308, \"d\": 5-324, \"e\": 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "-1"
+      ],
+      [
+        "b",
+        "0"
+      ],
+      [
+        "c",
+        "1e308"
+      ],
+      [
+        "d",
+        "5e-324"
+      ],
+      [
+        "e",
+        "1.5E-7"
+      ]
+    ],
+    "source": "{\"a\": -1,  \"b\": 0, \"c\": 1e308, \"d\": 5e-324, \"e\": 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "-1"
+      ],
+      [
+        "b",
+        "0"
+      ],
+      [
+        "c",
+        "11e308"
+      ],
+      [
+        "d",
+        "5e-324"
+      ],
+      [
+        "e",
+        "1.5E-7"
+      ]
+    ],
+    "source": "{\"a\": -1, \"b\": 0, \"c\": 11e308, \"d\": 5e-324, \"e\": 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "-1"
+      ],
+      [
+        "b",
+        "0"
+      ],
+      [
+        "c",
+        "1e308"
+      ],
+      [
+        "",
+        "5e-324"
+      ],
+      [
+        "e",
+        "1.5E-7"
+      ]
+    ],
+    "source": "{\"a\": -1, \"b\": 0, \"c\": 1e308, \"\": 5e-324, \"e\": 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 51, found '-'",
+    "source": "{\"a\": -1, \"b\": 0, \"c\": 1e308, \"d\": 5e-324, \"e\": 1.5-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": -, \"b\": 0, \"c\": 1e308, \"d\": 5e-324, \"e\": 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'c' at offset 23: Expecting value: line 1 column 24 (char 23)",
+    "source": "{\"a\": -1, \"b\": 0, \"c\": }e308, \"d\": 5e-324, \"e\": 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "-1"
+      ],
+      [
+        "b",
+        "0"
+      ],
+      [
+        "c",
+        "1e308"
+      ],
+      [
+        "d",
+        "5e-324"
+      ],
+      [
+        "e",
+        "1.5E-7"
+      ]
+    ],
+    "source": "{\"a\": -1,\"b\": 0, \"c\": 1e308, \"d\": 5e-324, \"e\": 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "-1"
+      ],
+      [
+        "b",
+        "0"
+      ],
+      [
+        "cc",
+        "1e308"
+      ],
+      [
+        "d",
+        "5e-324"
+      ],
+      [
+        "e",
+        "1.5E-7"
+      ]
+    ],
+    "source": "{\"a\": -1, \"b\": 0, \"cc\": 1e308, \"d\": 5e-324, \"e\": 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'b' at offset 15: Expecting value: line 1 column 16 (char 15)",
+    "source": "{\"a\": -1, \"b\": , \"c\": 1e308, \"d\": 5e-324, \"e\": 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'e' at offset 47: Expecting value: line 1 column 48 (char 47)",
+    "source": "{\"a\": -1, \"b\": 0, \"c\": 1e308, \"d\": 5e-324, \"e\":: 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 49, found '.'",
+    "source": "{\"a\": -1, \"b\": 0, \"c\": 1e308, \"d\": 5e-324, \"e\": 1.E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'c' at offset 22: Expecting value: line 1 column 23 (char 22)",
+    "source": "{\"a\": -1, \"b\": 0, \"c\":: 1e308, \"d\": 5e-324, \"e\": 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 18, found 'c'",
+    "source": "{\"a\": -1, \"b\": 0, c\": 1e308, \"d\": 5e-324, \"e\": 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found '\"'",
+    "source": "\"a\": -1, \"b\": 0, \"c\": 1e308, \"d\": 5e-324, \"e\": 1.5E-7}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 11, found '\"'",
+    "source": "{\"caf\u00e9\": 1 \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "c3f\u00e9",
+        "1"
+      ],
+      [
+        "b",
+        "2"
+      ]
+    ],
+    "source": "{\"c3f\u00e9\": 1, \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad member name at offset 12: Unterminated string starting at: line 1 column 13 (char 12)",
+    "source": "{\"caf\u00e9\": 1, \"bn: 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "object ended without '}'",
+    "source": "{\"caf\u00e9\": 1, \"b\": 2",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 7, found '\"'",
+    "source": "{\"caf\u00e9\"\": 1, \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'caf\u00e9' at offset 8: Expecting value: line 1 column 9 (char 8)",
+    "source": "{\"caf\u00e9\":: 1, \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad member name at offset 12: Unterminated string starting at: line 1 column 13 (char 12)",
+    "source": "{\"caf\u00e9\": 1, \"b: 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "caf\u00e9",
+        "1"
+      ],
+      [
+        "b",
+        "2"
+      ]
+    ],
+    "source": "{\"caf\u00e9\": 1,\"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "caf\u00e9",
+        "1"
+      ],
+      [
+        "bb",
+        "2"
+      ]
+    ],
+    "source": "{\"caf\u00e9\": 1, \"bb\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'b' at offset 17: Expecting value: line 1 column 18 (char 17)",
+    "source": "{\"caf\u00e9\": 1, \"b\": n}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'b' at offset 17: Expecting value: line 1 column 18 (char 17)",
+    "source": "{\"caf\u00e9\": 1, \"b\": }",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "caf\u00e9\u00e9",
+        "1"
+      ],
+      [
+        "b",
+        "2"
+      ]
+    ],
+    "source": "{\"caf\u00e9\u00e9\": 1, \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 12, found 'b'",
+    "source": "{\"caf\u00e9: 1, \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "caf\u00e9",
+        "1"
+      ],
+      [
+        "b",
+        "2"
+      ]
+    ],
+    "source": "{\"caf\u00e9\": 1,  \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "cf\u00e9",
+        "1"
+      ],
+      [
+        "b",
+        "2"
+      ]
+    ],
+    "source": "{\"cf\u00e9\": 1, \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 1, found '{'",
+    "source": "{{\"caf\u00e9\": 1, \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "caaf\u00e9",
+        "1"
+      ],
+      [
+        "b",
+        "2"
+      ]
+    ],
+    "source": "{\"caaf\u00e9\": 1, \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '\"' at offset 11, found ','",
+    "source": "{\"caf\u00e9\": 1,, \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 15, found '\"'",
+    "source": "{\"caf\u00e9\": 1, \"b\"\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 15, found ']'",
+    "source": "{\"caf\u00e9\": 1, \"b\"] 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'b' at offset 16: Expecting value: line 1 column 17 (char 16)",
+    "source": "{\"caf\u00e9\": 1, \"b\":: 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "caf\u00e9",
+        "1"
+      ],
+      [
+        "",
+        "2"
+      ]
+    ],
+    "source": "{\"caf\u00e9\": 1, \"\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 15, found '7'",
+    "source": "{\"caf\u00e9\": 1, \"b\"7 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 16, found '2'",
+    "source": "{\"caf\u00e9\": 1, \"b\" 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "caf\u00e9",
+        "1"
+      ],
+      [
+        "b",
+        "2"
+      ]
+    ],
+    "source": "{\"caf\u00e9\": 1, \"b\":  2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "caf\u00e9",
+        "1"
+      ],
+      [
+        "b",
+        "4"
+      ]
+    ],
+    "source": "{\"caf\u00e9\": 1, \"b\": 4}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "caf\u00e9",
+        "11"
+      ],
+      [
+        "b",
+        "2"
+      ]
+    ],
+    "source": "{\"caf\u00e9\": 11, \"b\": 2}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad member name at offset 1: Unterminated string starting at: line 1 column 2 (char 1)",
+    "source": "{\"\\u00e9n: 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "\u00ee9",
+        "1"
+      ]
+    ],
+    "source": "{\"\\u00ee9\": 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 9, found '4'",
+    "source": "{\"\\u00e9\"4 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "u00e9",
+        "1"
+      ]
+    ],
+    "source": "{\"u00e9\": 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "object ended without '}'",
+    "source": "{\"\\u00e9\": 1",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "\u00e99",
+        "1"
+      ]
+    ],
+    "source": "{\"\\u00e99\": 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 1, found '\"'",
+    "source": " \"\\u00e9\": 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "\u00e9",
+        "1"
+      ]
+    ],
+    "source": "{\"\\u00e9\": 1}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "\u00e9",
+        "1"
+      ]
+    ],
+    "source": "{\"\\u00e9\":1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found '\"'",
+    "source": "\"\\u00e9\": 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "object ended without '}'",
+    "source": "{\"\\u00e9\": 16",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad member name at offset 1: Invalid \\uXXXX escape: line 1 column 4 (char 3)",
+    "source": "{\"\\u009\": 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad member name at offset 1: Invalid \\uXXXX escape: line 1 column 4 (char 3)",
+    "source": "{\"\\u}0e9\": 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for '\u00e9' at offset 10: Expecting value: line 1 column 11 (char 10)",
+    "source": "{\"\\u00e9\":: 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for '\u00e9' at offset 11: Expecting value: line 1 column 12 (char 11)",
+    "source": "{\"\\u00e9\": }}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found '0'",
+    "source": "0\"\\u00e9\": 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 3, found '\\\\'",
+    "source": "{\"\"\\u00e9\": 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad member name at offset 1: Unterminated string starting at: line 1 column 2 (char 1)",
+    "source": "{\"\\u00e9: 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad member name at offset 1: Unterminated string starting at: line 1 column 2 (char 1)",
+    "source": "{\"\\u00e9e: 1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for '\u00e9' at offset 11: Expecting value: line 1 column 12 (char 11)",
+    "source": "{\"\\u00e9\": }",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for '\u00e9' at offset 10: Unterminated string starting at: line 1 column 11 (char 10)",
+    "source": "{\"\\u00e9\":\"1}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 32 (char 31)",
+    "source": "{\"a\": {\"b\": {\"c\": {\"d\": {\"e\": [b, [2, [3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting property name enclosed in double quotes: line 1 column 26 (char 25)",
+    "source": "{\"a\": {\"b\": {\"c\": {\"d\": {0e\": [1, [2, [3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "{\"b\": {\"c\": {\"d\": {\"e\":[1, [2, [3]]]}}}}"
+      ]
+    ],
+    "source": "{\"a\": {\"b\": {\"c\": {\"d\": {\"e\":[1, [2, [3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "{\"\": {\"c\": {\"d\": {\"e\": [1, [2, [3]]]}}}}"
+      ]
+    ],
+    "source": "{\"a\": {\"\": {\"c\": {\"d\": {\"e\": [1, [2, [3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "{\"b\": {\"c\": {\"d\": {\"e\": [1, [2,[3]]]}}}}"
+      ]
+    ],
+    "source": "{\"a\": {\"b\": {\"c\": {\"d\": {\"e\": [1, [2,[3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting ':' delimiter: line 1 column 26 (char 25)",
+    "source": "{\"a\": {\"b\": {\"c\": {\"d: {\"e\": [1, [2, [3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 38 (char 37)",
+    "source": "{\"a\": {\"b\": {\"c\": {\"d\": {\"e\": [1, [2,, [3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 30 (char 29)",
+    "source": "{\"a\": {\"b\": {\"c\": {\"d\": {\"e\":: [1, [2, [3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting ':' delimiter: line 1 column 18 (char 17)",
+    "source": "{\"a\": {\"b\": {\"c\" {\"d\": {\"e\": [1, [2, [3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting ',' delimiter: line 1 column 42 (char 41)",
+    "source": "{\"a\": {\"b\": {\"c\": {\"d\": {\"e\": [1, 2, [3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 7 (char 6)",
+    "source": "{\"a\": }\"b\": {\"c\": {\"d\": {\"e\": [1, [2, [3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting value: line 1 column 34 (char 33)",
+    "source": "{\"a\": {\"b\": {\"c\": {\"d\": {\"e\": [1,, [2, [3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting ',' delimiter: line 1 column 44 (char 43)",
+    "source": "{\"a\": {\"b\": {\"c\": {\"d\": {\"e\": [1, [2, [3]]]6}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting property name enclosed in double quotes: line 1 column 8 (char 7)",
+    "source": "{\"a\": {{\"b\": {\"c\": {\"d\": {\"e\": [1, [2, [3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "object ended without '}'",
+    "source": "{\"a\": {\"b\": {\"c\": {\"d\": {\"e\": [1, [2, [3]]]}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting ':' delimiter: line 1 column 27 (char 26)",
+    "source": "{\"a\": {\"b\": {\"c\": {\"d]: {\"e\": [1, [2, [3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "{\"b\":  {\"c\": {\"d\": {\"e\": [1, [2, [3]]]}}}}"
+      ]
+    ],
+    "source": "{\"a\": {\"b\":  {\"c\": {\"d\": {\"e\": [1, [2, [3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "{\"b\": {\"c\": {\"d\": {\"ee\": [1, [2, [3]]]}}}}"
+      ]
+    ],
+    "source": "{\"a\": {\"b\": {\"c\": {\"d\": {\"ee\": [1, [2, [3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 8, found 'b'",
+    "source": "{\"an: {\"b\": {\"c\": {\"d\": {\"e\": [1, [2, [3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 4, found '\"'",
+    "source": "{\"a\"\": {\"b\": {\"c\": {\"d\": {\"e\": [1, [2, [3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting property name enclosed in double quotes: line 1 column 20 (char 19)",
+    "source": "{\"a\": {\"b\": {\"c\": {{\"d\": {\"e\": [1, [2, [3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting property name enclosed in double quotes: line 1 column 14 (char 13)",
+    "source": "{\"a\": {\"b\": {c\": {\"d\": {\"e\": [1, [2, [3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ',' or '}' at offset 9, found ':'",
+    "source": "{\"a\": \"b\": {\"c\": {\"d\": {\"e\": [1, [2, [3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected ':' at offset 3, found 'a'",
+    "source": "{\"\"a\": {\"b\": {\"c\": {\"d\": {\"e\": [1, [2, [3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": true,
+    "spans": [
+      [
+        "a",
+        "{\"b\": {\"c\": {\"d\": {\"e\": [1,  [2, [3]]]}}}}"
+      ]
+    ],
+    "source": "{\"a\": {\"b\": {\"c\": {\"d\": {\"e\": [1,  [2, [3]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "bad value for 'a' at offset 6: Expecting ',' delimiter: line 1 column 44 (char 43)",
+    "source": "{\"a\": {\"b\": {\"c\": {\"d\": {\"e\": [1, [2, [3]]]]}}}}}",
+    "origin": "fuzz"
+  },
+  {
+    "ok": false,
+    "message": "expected '{' at offset 0, found '\"'",
+    "source": "\"a\": {\"b\": {\"c\": {\"d\": {\"e\": [1, [2, [3]]]}}}}}",
+    "origin": "fuzz"
+  }
+]

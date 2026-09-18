@@ -20,7 +20,7 @@ from nmos.json.engine import JsonEngine
 
 import re as _re
 
-_UUID_RE = _re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_UUID_RE = _re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 
 # Map JSON field names to their IS-04 collection paths.
 # When a UUID value appears under one of these keys, it becomes a clickable

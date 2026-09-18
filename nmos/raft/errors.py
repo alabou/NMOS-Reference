@@ -67,6 +67,32 @@ class RaftLogCompacted(RaftError):
     """
 
 
+class RaftInvariantViolated(RaftError):
+    """A member's own state contradicts something Raft guarantees.
+
+    Raised only for conditions that **cannot** arise from anything a peer
+    sends, a disk does, or an operator types: the log and the state machine are
+    held in memory and rebuilt from the leader on every restart, and nothing
+    applied is persisted. So this means a defect in this implementation, not a
+    hostile message or a corrupt file.
+
+    That is why it is not recovered from anywhere. ``go.etcd.io/raft`` takes
+    the same position and states it more bluntly -- 32 ``Panicf`` sites, no
+    ``recover()`` in the library at all -- on the reasoning that continuing
+    from a state you have proven impossible can only spread the damage. The
+    difference in our favour is the recovery: etcd has to replay a persisted
+    WAL, while a member here comes back with nothing and is caught up by the
+    leader as a **non-voting** learner, so it cannot even vote until it is
+    whole again.
+
+    Distinct from every other error in this module because it must not be
+    swallowed. ``_apply_forever`` catches ``Exception`` and logs it so that one
+    bad apply cannot kill a member; this class is re-raised past that handler,
+    because an invariant that is broken stays broken and a loop that logs it
+    once per wake-up is a silent failure wearing the costume of a handled one.
+    """
+
+
 class RaftNotLeader(RaftError):
     """This member cannot append; someone else is the leader.
 

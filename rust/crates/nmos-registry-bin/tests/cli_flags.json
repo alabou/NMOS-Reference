@@ -1,0 +1,612 @@
+{
+ "flags": [
+  {
+   "choices": null,
+   "default": false,
+   "dest": "distributed",
+   "group": "Distributed Registry",
+   "kind": "flag",
+   "options": [
+    "--distributed"
+   ]
+  },
+  {
+   "choices": [
+    "etcd",
+    "raft"
+   ],
+   "default": "raft",
+   "dest": "distributedBackend",
+   "group": "Distributed Registry",
+   "kind": "value",
+   "options": [
+    "--distributedBackend"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "",
+   "dest": "etcdBinary",
+   "group": "Distributed Registry (etcd)",
+   "kind": "value",
+   "options": [
+    "--etcdBinary"
+   ]
+  },
+  {
+   "choices": null,
+   "default": false,
+   "dest": "etcdBootstrap",
+   "group": "Distributed Registry (etcd)",
+   "kind": "flag",
+   "options": [
+    "--etcdBootstrap"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "",
+   "dest": "etcdCertificate",
+   "group": "Distributed Registry (etcd)",
+   "kind": "value",
+   "options": [
+    "--etcdCertificate"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "Example.Company.Device.Etcd.ABC.example.com",
+   "dest": "etcdCertificateName",
+   "group": "Distributed Registry (etcd)",
+   "kind": "value",
+   "options": [
+    "--etcdCertificateName"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "",
+   "dest": "etcdClientCrlFile",
+   "group": "Distributed Registry (etcd)",
+   "kind": "value",
+   "options": [
+    "--etcdClientCrlFile"
+   ]
+  },
+  {
+   "choices": null,
+   "default": 2381,
+   "dest": "etcdClientPort",
+   "group": "Distributed Registry (etcd)",
+   "kind": "value",
+   "options": [
+    "--etcdClientPort"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "/var/lib/nmos-registry/etcd",
+   "dest": "etcdDataDir",
+   "group": "Distributed Registry (etcd)",
+   "kind": "value",
+   "options": [
+    "--etcdDataDir"
+   ]
+  },
+  {
+   "choices": null,
+   "default": false,
+   "dest": "etcdDisableTLS",
+   "group": "Distributed Registry (etcd)",
+   "kind": "flag",
+   "options": [
+    "--etcdDisableTLS"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "",
+   "dest": "etcdEndpoints",
+   "group": "Distributed Registry (etcd)",
+   "kind": "value",
+   "options": [
+    "--etcdEndpoints"
+   ]
+  },
+  {
+   "choices": null,
+   "default": false,
+   "dest": "etcdExternal",
+   "group": "Distributed Registry (etcd)",
+   "kind": "flag",
+   "options": [
+    "--etcdExternal"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "",
+   "dest": "etcdKey",
+   "group": "Distributed Registry (etcd)",
+   "kind": "value",
+   "options": [
+    "--etcdKey"
+   ]
+  },
+  {
+   "choices": null,
+   "default": 7.0,
+   "dest": "etcdMutationTimeout",
+   "group": "Distributed Registry (etcd)",
+   "kind": "value",
+   "options": [
+    "--etcdMutationTimeout"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "/nmos-reference/registry/v1",
+   "dest": "etcdNamespace",
+   "group": "Distributed Registry (etcd)",
+   "kind": "value",
+   "options": [
+    "--etcdNamespace"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "",
+   "dest": "etcdPeerCrlFile",
+   "group": "Distributed Registry (etcd)",
+   "kind": "value",
+   "options": [
+    "--etcdPeerCrlFile"
+   ]
+  },
+  {
+   "choices": null,
+   "default": 2382,
+   "dest": "etcdPeerPort",
+   "group": "Distributed Registry (etcd)",
+   "kind": "value",
+   "options": [
+    "--etcdPeerPort"
+   ]
+  },
+  {
+   "choices": null,
+   "default": 2.0,
+   "dest": "etcdRpcTimeout",
+   "group": "Distributed Registry (etcd)",
+   "kind": "value",
+   "options": [
+    "--etcdRpcTimeout"
+   ]
+  },
+  {
+   "choices": null,
+   "default": null,
+   "dest": "etcdTrustedRootCA",
+   "group": "Distributed Registry (etcd)",
+   "kind": "append",
+   "options": [
+    "--etcdTrustedRootCA"
+   ]
+  },
+  {
+   "choices": null,
+   "default": 60.0,
+   "dest": "forgetInterval",
+   "group": "Registry Behaviour",
+   "kind": "value",
+   "options": [
+    "--forgetInterval"
+   ]
+  },
+  {
+   "choices": null,
+   "default": 12.0,
+   "dest": "garbageCollectionInterval",
+   "group": "Registry Behaviour",
+   "kind": "value",
+   "options": [
+    "--garbageCollectionInterval"
+   ]
+  },
+  {
+   "choices": null,
+   "default": null,
+   "dest": "gcrl",
+   "group": "options",
+   "kind": "value",
+   "options": [
+    "--gcrl"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "/tmp/nmos-registry.log",
+   "dest": "logFile",
+   "group": "Logging",
+   "kind": "value",
+   "options": [
+    "--logFile"
+   ]
+  },
+  {
+   "choices": null,
+   "default": false,
+   "dest": "oauth2",
+   "group": "OAuth2 (Query API only)",
+   "kind": "flag",
+   "options": [
+    "--oauth2"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "realms/TR-10-SEC",
+   "dest": "oauth2ApiSelector",
+   "group": "OAuth2 (Query API only)",
+   "kind": "value",
+   "options": [
+    "--oauth2ApiSelector"
+   ]
+  },
+  {
+   "choices": [
+    "cert",
+    "either",
+    "serial"
+   ],
+   "default": "serial",
+   "dest": "oauth2AudienceMode",
+   "group": "OAuth2 (Query API only)",
+   "kind": "value",
+   "options": [
+    "--oauth2AudienceMode"
+   ]
+  },
+  {
+   "choices": null,
+   "default": false,
+   "dest": "oauth2DisableTLS",
+   "group": "OAuth2 (Query API only)",
+   "kind": "flag",
+   "options": [
+    "--oauth2DisableTLS"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "",
+   "dest": "oauth2Host",
+   "group": "OAuth2 (Query API only)",
+   "kind": "value",
+   "options": [
+    "--oauth2Host"
+   ]
+  },
+  {
+   "choices": null,
+   "default": 4444,
+   "dest": "oauth2Port",
+   "group": "OAuth2 (Query API only)",
+   "kind": "value",
+   "options": [
+    "--oauth2Port"
+   ]
+  },
+  {
+   "choices": null,
+   "default": null,
+   "dest": "oauth2TrustedRootCA",
+   "group": "OAuth2 (Query API only)",
+   "kind": "append",
+   "options": [
+    "--oauth2TrustedRootCA"
+   ]
+  },
+  {
+   "choices": null,
+   "default": 10,
+   "dest": "pagingLimit",
+   "group": "Registry Behaviour",
+   "kind": "value",
+   "options": [
+    "--pagingLimit"
+   ]
+  },
+  {
+   "choices": null,
+   "default": 100,
+   "dest": "pagingLimitMax",
+   "group": "Registry Behaviour",
+   "kind": "value",
+   "options": [
+    "--pagingLimitMax"
+   ]
+  },
+  {
+   "choices": null,
+   "default": false,
+   "dest": "queryOptionalClientAuth",
+   "group": "Query API",
+   "kind": "flag",
+   "options": [
+    "--queryOptionalClientAuth"
+   ]
+  },
+  {
+   "choices": null,
+   "default": 8446,
+   "dest": "queryPort",
+   "group": "Query API",
+   "kind": "value",
+   "options": [
+    "--queryPort"
+   ]
+  },
+  {
+   "choices": null,
+   "default": null,
+   "dest": "queryTrustedRootCA",
+   "group": "Query API",
+   "kind": "append",
+   "options": [
+    "--queryTrustedRootCA"
+   ]
+  },
+  {
+   "choices": null,
+   "default": 8448,
+   "dest": "queryWebSocketPort",
+   "group": "Query API",
+   "kind": "value",
+   "options": [
+    "--queryWebSocketPort"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "",
+   "dest": "raftCertificate",
+   "group": "Distributed Registry (raft)",
+   "kind": "value",
+   "options": [
+    "--raftCertificate"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "Example.Company.Device.Etcd.ABC.example.com",
+   "dest": "raftCertificateName",
+   "group": "Distributed Registry (raft)",
+   "kind": "value",
+   "options": [
+    "--raftCertificateName"
+   ]
+  },
+  {
+   "choices": null,
+   "default": 2481,
+   "dest": "raftClientPort",
+   "group": "Distributed Registry (raft)",
+   "kind": "value",
+   "options": [
+    "--raftClientPort"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "",
+   "dest": "raftCrlFile",
+   "group": "Distributed Registry (raft)",
+   "kind": "value",
+   "options": [
+    "--raftCrlFile"
+   ]
+  },
+  {
+   "choices": null,
+   "default": false,
+   "dest": "raftDisableTLS",
+   "group": "Distributed Registry (raft)",
+   "kind": "flag",
+   "options": [
+    "--raftDisableTLS"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "",
+   "dest": "raftKey",
+   "group": "Distributed Registry (raft)",
+   "kind": "value",
+   "options": [
+    "--raftKey"
+   ]
+  },
+  {
+   "choices": null,
+   "default": 7.0,
+   "dest": "raftMutationTimeout",
+   "group": "Distributed Registry (raft)",
+   "kind": "value",
+   "options": [
+    "--raftMutationTimeout"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "/nmos-reference/registry/v1",
+   "dest": "raftNamespace",
+   "group": "Distributed Registry (raft)",
+   "kind": "value",
+   "options": [
+    "--raftNamespace"
+   ]
+  },
+  {
+   "choices": null,
+   "default": 2482,
+   "dest": "raftPeerPort",
+   "group": "Distributed Registry (raft)",
+   "kind": "value",
+   "options": [
+    "--raftPeerPort"
+   ]
+  },
+  {
+   "choices": null,
+   "default": 2.0,
+   "dest": "raftRpcTimeout",
+   "group": "Distributed Registry (raft)",
+   "kind": "value",
+   "options": [
+    "--raftRpcTimeout"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "/var/lib/nmos-registry/raft",
+   "dest": "raftStateDir",
+   "group": "Distributed Registry (raft)",
+   "kind": "value",
+   "options": [
+    "--raftStateDir"
+   ]
+  },
+  {
+   "choices": null,
+   "default": null,
+   "dest": "raftTrustedRootCA",
+   "group": "Distributed Registry (raft)",
+   "kind": "append",
+   "options": [
+    "--raftTrustedRootCA"
+   ]
+  },
+  {
+   "choices": null,
+   "default": false,
+   "dest": "registrationOptionalClientAuth",
+   "group": "Registration API",
+   "kind": "flag",
+   "options": [
+    "--registrationOptionalClientAuth"
+   ]
+  },
+  {
+   "choices": null,
+   "default": 8447,
+   "dest": "registrationPort",
+   "group": "Registration API",
+   "kind": "value",
+   "options": [
+    "--registrationPort"
+   ]
+  },
+  {
+   "choices": null,
+   "default": null,
+   "dest": "registrationTrustedRootCA",
+   "group": "Registration API",
+   "kind": "append",
+   "options": [
+    "--registrationTrustedRootCA"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "127.0.0.1",
+   "dest": "registryAddr",
+   "group": "Registry Server",
+   "kind": "value",
+   "options": [
+    "--registryAddr"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "",
+   "dest": "registryAdvertisedHost",
+   "group": "Distributed Registry",
+   "kind": "value",
+   "options": [
+    "--registryAdvertisedHost"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "",
+   "dest": "registryCertificate",
+   "group": "Registry Server",
+   "kind": "value",
+   "options": [
+    "--registryCertificate"
+   ]
+  },
+  {
+   "choices": null,
+   "default": false,
+   "dest": "registryDisableTLS",
+   "group": "Registry Server",
+   "kind": "flag",
+   "options": [
+    "--registryDisableTLS"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "",
+   "dest": "registryKey",
+   "group": "Registry Server",
+   "kind": "value",
+   "options": [
+    "--registryKey"
+   ]
+  },
+  {
+   "choices": null,
+   "default": null,
+   "dest": "registryNeighbour",
+   "group": "Distributed Registry",
+   "kind": "append",
+   "options": [
+    "--registryNeighbour"
+   ]
+  },
+  {
+   "choices": null,
+   "default": "SNR12345",
+   "dest": "registrySerialNumber",
+   "group": "Registry Server",
+   "kind": "value",
+   "options": [
+    "--registrySerialNumber"
+   ]
+  },
+  {
+   "choices": null,
+   "default": 5.0,
+   "dest": "statusInterval",
+   "group": "Registry Behaviour",
+   "kind": "value",
+   "options": [
+    "--statusInterval"
+   ]
+  },
+  {
+   "choices": null,
+   "default": null,
+   "dest": "trustedRootCA",
+   "group": "options",
+   "kind": "append",
+   "options": [
+    "--trustedRootCA"
+   ]
+  }
+ ],
+ "prog": "nmos_registry.py"
+}

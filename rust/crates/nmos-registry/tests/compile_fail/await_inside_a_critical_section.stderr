@@ -1,0 +1,7 @@
+error[E0728]: `await` is only allowed inside `async` functions and blocks
+  --> tests/compile_fail/await_inside_a_critical_section.rs:26:44
+   |
+25 |     locked.with_write(|value| {
+   |                       ------- this is not `async`
+26 |         *value = fetch_the_missing_piece().await;
+   |                                            ^^^^^ only allowed inside `async` functions and blocks

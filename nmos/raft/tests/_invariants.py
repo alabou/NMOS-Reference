@@ -103,6 +103,22 @@ class SafetyMonitor:
     """index -> payload digest, across every member. State Machine Safety is a
     disagreement in this map."""
 
+    applied_by_member: dict[tuple[int, int], str] = field(default_factory=dict)
+    """(member, index) -> payload digest, for what *that* member applied.
+
+    Deliberately separate from ``applied``. A disagreement there says two
+    members applied different things and cannot say which one moved; a
+    disagreement here says one member **rewrote its own applied prefix**, which
+    is a different defect with a different cause.
+
+    The distinction was forced by a real failure: "index 72 applied as term 14
+    by one member and term 12 by member 1" is consistent both with member 1
+    having committed the wrong entry and with member 1 having applied the right
+    one and then had its log replaced underneath -- the shape a snapshot install
+    produces, since `machine.install_snapshot` moves `last_applied` while
+    `log.reset_to_snapshot` is a separate call. Nothing in the report could tell
+    them apart."""
+
     acknowledged: set[str] = field(default_factory=set)
     """Node ids for registrations a client was told succeeded. Only these are
     owed durability -- a refused or timed-out proposal promised nothing."""
@@ -121,6 +137,12 @@ class SafetyMonitor:
     steps: int = 0
     violations: list[str] = field(default_factory=list)
 
+    forensics: Any | None = None
+    """Optional ``_forensics.Forensics``. When present, the monitor records
+    *why* it believes what it believes -- which member first claimed an index
+    was committed, and on what evidence. Off by default: the recording is cheap
+    but not free, and a passing run has no use for it."""
+
     # -- the checks ------------------------------------------------------
 
     def check(self) -> None:
@@ -137,6 +159,8 @@ class SafetyMonitor:
             ("Leader Append-Only", self._leader_append_only),
             ("Log Matching", self._log_matching),
             ("Leader Completeness", self._leader_completeness),
+            ("Local Consistency", self._local_consistency),
+            ("Applied Stability", self._applied_stability),
             ("State Machine Safety", self._state_machine_safety),
             ("Cursor Uniqueness", self._cursor_uniqueness),
         ):
@@ -147,6 +171,36 @@ class SafetyMonitor:
                     f"{name} violated after {self.steps} steps\n  {problem}",
                 )
 
+    def _members_at(self, index: int) -> str:
+        """Every member's position relative to one index, right now.
+
+        Attached to the two violations that name an index, because the
+        accumulated history says *what* diverged and this says *how each member
+        got there*. The first real occurrence reported
+
+            index 72 applied as '14:...' by one member and '12:...' by member 1
+
+        and answering it needed exactly these five numbers per member: a member
+        whose ``last_applied`` sits above a log that no longer holds what it
+        applied is a different defect from one that committed the wrong entry,
+        and the message could not tell them apart.
+        """
+        rows = ["  -- members at this index --"]
+        for member in self.cluster.members:
+            node = member.node
+            try:
+                term_here: object = node.log.term_at(index)
+            except Exception:
+                term_here = "n/a"
+            rows.append(
+                f"    m{node.index}: role={node.role.value} term={node.term} "
+                f"commit={node.commit_index} applied={node.last_applied} "
+                f"log=[{node.log.first_index}..{node.log.last_index}] "
+                f"snapshot={node.log.snapshot_index} "
+                f"term_at({index})={term_here}"
+            )
+        return "\n".join(rows)
+
     def _observe(self) -> None:
         """Fold the current instant into the accumulated history."""
         for member in self.cluster.members:
@@ -156,6 +210,8 @@ class SafetyMonitor:
                 self.leader_logs[(node.index, node.term)] = _LeaderRecord(
                     member=node.index, log_digest=_digest(node),
                 )
+                if self.forensics is not None:
+                    self.forensics.note_leadership(node)
             # A member's commit index is a claim that everything up to it is
             # committed, and committed is permanent -- so the terms recorded
             # here are what every future leader must still carry.
@@ -163,13 +219,22 @@ class SafetyMonitor:
                 max(node.log.first_index, 1), node.commit_index + 1,
             ):
                 try:
-                    self.committed.setdefault(index, node.log.term_at(index))
+                    entry_term = node.log.term_at(index)
                 except Exception:      # compacted out from under us
                     continue
+                if self.forensics is not None:
+                    # Before setdefault, so the witness recorded is the member
+                    # whose claim is the one that stuck.
+                    self.forensics.note_commit(index, node, entry_term)
+                self.committed.setdefault(index, entry_term)
             for index, payload in _applied_digests(node):
                 existing = self.applied.get(index)
                 if existing is None:
                     self.applied[index] = payload
+                # First writer wins here too: the value recorded is what this
+                # member applied, and any later disagreement is this member
+                # contradicting itself.
+                self.applied_by_member.setdefault((node.index, index), payload)
 
     def _election_safety(self) -> str | None:
         """"at most one leader can be elected in a given term." (Figure 3)"""
@@ -268,7 +333,79 @@ class SafetyMonitor:
                     return (
                         f"member {node.index} leads term {node.term} holding "
                         f"term {held.get(index)} at index {index}, which was "
-                        f"committed in term {term}"
+                        f"committed in term {term}\n"
+                        f"{self._members_at(index)}"
+                    )
+        return None
+
+    def _local_consistency(self) -> str | None:
+        """A member's own commit and applied indices must be justifiable.
+
+        Not from Figure 3 -- these are the two assertions ``go.etcd.io/raft``
+        makes about a single member's log, transcribed from the source rather
+        than from memory:
+
+        * ``log.go:322-330``, ``commitTo`` panics when
+          ``lastIndex() < tocommit``, with the message "Was the raft log
+          corrupted, truncated, or lost?";
+        * ``log.go:332-334``, ``appliedTo`` panics when
+          ``committed < i || i < applied``; ``log.go:48`` states the same as an
+          invariant, ``applied <= committed``.
+
+        We have neither, and the difference matters here: a member whose commit
+        index runs past its log, or whose applied index runs past its commit
+        index, is in a state no later observation can explain. Catching it on
+        the step it happens names the mechanism; catching it hundreds of steps
+        later, as a disagreement between two members, does not -- which is
+        exactly how the first occurrence presented.
+
+        Checked first of all, because every other property is downstream of it.
+        """
+        for member in self.cluster.members:
+            node = member.node
+            # A snapshot's contents are not in the log, so the boundary is the
+            # larger of the two -- the etcd equivalent lives behind `restore`,
+            # which moves `committed` and the log together.
+            reachable = max(node.log.last_index, node.log.snapshot_index)
+            if node.commit_index > reachable:
+                return (
+                    f"member {node.index} has commit_index "
+                    f"{node.commit_index} beyond anything it holds: log "
+                    f"[{node.log.first_index}..{node.log.last_index}], "
+                    f"snapshot {node.log.snapshot_index}"
+                )
+            if node.last_applied > node.commit_index:
+                return (
+                    f"member {node.index} applied through "
+                    f"{node.last_applied} but has only committed through "
+                    f"{node.commit_index}"
+                )
+        return None
+
+    def _applied_stability(self) -> str | None:
+        """A member never changes an entry it has already applied.
+
+        Not one of Figure 3's five, but implied by all of them: applying is the
+        point at which an entry becomes state a client can observe, and Raft
+        guarantees an applied entry is committed and a committed entry is
+        permanent. A member that holds a different entry at an index it already
+        applied has either applied something uncommitted or had its log replaced
+        beneath its applied prefix.
+
+        Checked **before** State Machine Safety on purpose, and for the same
+        reason Election Safety is checked before Log Matching: this failure
+        explains that one, so reporting it first names the member that moved
+        instead of the pair that now disagree.
+        """
+        for member in self.cluster.members:
+            node = member.node
+            for index, payload in _applied_digests(node):
+                was = self.applied_by_member.get((node.index, index))
+                if was is not None and was != payload:
+                    return (
+                        f"member {node.index} applied {was!r} at index {index} "
+                        f"and now holds {payload!r} there\n"
+                        f"{self._members_at(index)}"
                     )
         return None
 
@@ -283,7 +420,8 @@ class SafetyMonitor:
                 if known is not None and known != payload:
                     return (
                         f"index {index} applied as {known!r} by one member and "
-                        f"{payload!r} by member {member.index}"
+                        f"{payload!r} by member {member.index}\n"
+                        f"{self._members_at(index)}"
                     )
         return None
 

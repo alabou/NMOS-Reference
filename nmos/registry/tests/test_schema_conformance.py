@@ -22,6 +22,7 @@ PKI-gated TLS suites.
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,7 @@ from nmos.registry.handlers_query import BASE_PATH as QUERY_BASE  # noqa: E402
 from nmos.registry.handlers_registration import BASE_PATH as REG_BASE  # noqa: E402
 from nmos.registry.store import RegistryStore  # noqa: E402
 from nmos.registry.subscriptions import SubscriptionManager, _PendingEvent  # noqa: E402
+from nmos.registry.types import Body  # noqa: E402
 from nmos.registry.tests._fixtures import (  # noqa: E402
     NODE_ID,
     make_device,
@@ -55,27 +57,54 @@ from nmos.registry.tests._fixtures import (  # noqa: E402
 SCHEMAS = Path(__file__).resolve().parents[1] / "specs" / "schemas"
 
 
+@lru_cache(maxsize=1)
+def _schema_registry() -> Any:
+    """Every schema in the directory, addressable the way the others cite it.
+
+    The IS-04 schemas cross-reference each other by bare filename
+    (``resource_core.json``, ``sender.json``, …) rather than by URI, so each
+    document is registered under both spellings: the filename, which is what a
+    ``$ref`` actually says, and the full ``file://`` URI, which is what a
+    relative reference resolves to against the referring schema's base.
+
+    They also predate ``$schema`` being mandatory and several omit it, so the
+    Draft-4 specification is supplied explicitly instead of being sniffed.
+
+    Built once. A validator is constructed per assertion and there are dozens
+    of them, and reloading 47 files each time made the suite's cost the file
+    system rather than the validation.
+    """
+    from referencing import Registry as ReferencingRegistry
+    from referencing import Resource
+    from referencing.jsonschema import DRAFT4
+
+    pairs: list[tuple[str, Any]] = []
+    for path in SCHEMAS.glob("*.json"):
+        resource = Resource.from_contents(
+            json.loads(path.read_text()), default_specification=DRAFT4,
+        )
+        pairs.append((path.name, resource))
+        pairs.append((path.as_uri(), resource))
+    return ReferencingRegistry().with_resources(pairs)
+
+
 def validator_for(name: str) -> Any:
     """Build a Draft-4 validator that resolves sibling ``$ref``s.
 
-    The IS-04 schemas cross-reference each other by bare filename
-    (``resource_core.json``, ``sender.json``, …), so every schema in the
-    directory is preloaded into the resolver store.
+    Uses ``referencing`` rather than ``jsonschema.RefResolver``, which has been
+    deprecated since jsonschema 4.18 and is slated for removal.
     """
-    from jsonschema import Draft4Validator, RefResolver
-
-    store: dict[str, Any] = {}
-    for path in SCHEMAS.glob("*.json"):
-        document = json.loads(path.read_text())
-        store[path.as_uri()] = document
-        store[path.name] = document
+    from jsonschema import Draft4Validator
 
     schema_path = SCHEMAS / name
     schema = json.loads(schema_path.read_text())
-    resolver = RefResolver(
-        base_uri=schema_path.as_uri(), referrer=schema, store=store,
+    return Draft4Validator(
+        schema,
+        registry=_schema_registry().with_resource(
+            schema_path.as_uri(),
+            _schema_registry().get_or_retrieve(schema_path.name).value,
+        ),
     )
-    return Draft4Validator(schema, resolver=resolver)
 
 
 def assert_valid(name: str, document: Any) -> None:
@@ -296,7 +325,7 @@ class TestGrainSchema:
         subscription = self._subscription(registry)
         sender = make_sender()
         grain = registry.subscriptions.build_grain(
-            subscription, [_PendingEvent(sender["id"], None, sender)],
+            subscription, [_PendingEvent(sender["id"], None, Body.from_data(sender))],
         )
         assert_valid("queryapi-subscriptions-websocket.json", json.loads(grain))
 
@@ -304,7 +333,7 @@ class TestGrainSchema:
         subscription = self._subscription(registry)
         sender = make_sender()
         grain = registry.subscriptions.build_grain(
-            subscription, [_PendingEvent(sender["id"], sender, None)],
+            subscription, [_PendingEvent(sender["id"], Body.from_data(sender), None)],
         )
         assert_valid("queryapi-subscriptions-websocket.json", json.loads(grain))
 
@@ -313,7 +342,7 @@ class TestGrainSchema:
         before = make_sender(label="before")
         after = make_sender(label="after")
         grain = registry.subscriptions.build_grain(
-            subscription, [_PendingEvent(before["id"], before, after)],
+            subscription, [_PendingEvent(before["id"], Body.from_data(before), Body.from_data(after))],
         )
         assert_valid("queryapi-subscriptions-websocket.json", json.loads(grain))
 
@@ -321,7 +350,7 @@ class TestGrainSchema:
         subscription = self._subscription(registry)
         sender = make_sender()
         grain = registry.subscriptions.build_grain(
-            subscription, [_PendingEvent(sender["id"], sender, sender)],
+            subscription, [_PendingEvent(sender["id"], Body.from_data(sender), Body.from_data(sender))],
         )
         assert_valid("queryapi-subscriptions-websocket.json", json.loads(grain))
 
@@ -335,8 +364,8 @@ class TestGrainSchema:
         grain = registry.subscriptions.build_grain(
             subscription,
             [
-                _PendingEvent(first["id"], None, first),
-                _PendingEvent(second["id"], None, second),
+                _PendingEvent(first["id"], None, Body.from_data(first)),
+                _PendingEvent(second["id"], None, Body.from_data(second)),
             ],
         )
         document = json.loads(grain)

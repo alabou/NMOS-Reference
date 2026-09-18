@@ -386,9 +386,40 @@ class JsonEngine:
             )
 
     def _write_float_value(self, level: int, value: float) -> None:
-        """Write a floating-point value."""
-        # Use %g formatting: no trailing zeros, no unnecessary decimal
-        s = f"{value:g}"
+        """Write a floating-point value, losslessly.
+
+        ``repr`` is the shortest decimal that reads back as the same double,
+        which is exactly what ``json.dumps`` writes -- so the two ways out of
+        this class, ``encode()`` for typed objects and ``dump_any()`` for
+        synthesised ones, finally agree about floats.
+
+        This used to be ``f"{value:g}"``, chosen (per the comment it replaced)
+        for "no trailing zeros, no unnecessary decimal". ``%g`` does suppress
+        those, but it also imposes **six significant digits**, which was not the
+        intent and silently changed the value:
+
+            12345678.0  ->  1.23457e+07   (12345700, off by 22)
+            1234567890.0 -> 1.23457e+09   (off by 2110)
+            1.0000001   ->  1             (precision gone)
+
+        Measured over a corpus of 811 doubles, 673 came back as a different
+        number. The five float members on the wire are all capability
+        constraints -- ``minimum``/``maximum``/``enum`` on ``NConstraintFloat``
+        and ``NTransportConstraint`` -- so a Sender declaring a bit-rate bound
+        of 12345678 advertised 12345700, and a Receiver could refuse a stream
+        that was genuinely in range.
+
+        The registry was never affected: it stores ``Body.text`` and splices
+        ``RawJson``, so a registered resource round-trips byte-for-byte. The
+        path that mattered is a Node encoding its own resources to register
+        them (``nmos/node/registry.py``) and to serve its own API.
+
+        The cost of the fix is that an integral float now writes as ``1.0``
+        rather than ``1``. That is what ``json.dumps`` has always written on the
+        other path, and it is a correct JSON number; losing 22 bps from a
+        declared constraint is not.
+        """
+        s = repr(value)
         if not self.generate_html:
             self._append_to_level(level, s)
         else:

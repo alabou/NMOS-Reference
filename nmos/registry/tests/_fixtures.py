@@ -33,13 +33,45 @@ SENDER_ID = "171d5c80-7fff-4c23-9383-46503eb1c63e"
 RECEIVER_ID = "3350d113-1593-4271-a7f5-f4974415bb8e"
 
 
+# The wall clock is read ONCE, to anchor these timestamps somewhere realistic;
+# everything after that advances on the monotonic clock.
+#
+# Reading ``time.time()`` per call was a real source of flakiness rather than a
+# theoretical one. IS-04 rejects a registration whose version is earlier than
+# the one already stored (``store.py`` ~:587, ``VERSION_REGRESSION``), so any
+# test that registers the same resource twice depends on the wall clock not
+# going backwards between two calls. Under WSL2 it does: an NTP correction of a
+# second or so is enough, and it produced
+#
+#     version 1789680515:229146719 is earlier than the registered
+#     version 1789680516:396116257
+#
+# in a test that had simply built two Nodes in a row. Nothing was wrong with
+# the registry, the test, or the ordering -- only with the clock.
+#
+# ``time.monotonic()`` is guaranteed never to go backwards, so anchoring once
+# and advancing by monotonic elapsed time removes the failure mode entirely
+# while keeping the values indistinguishable from wall-clock timestamps: the
+# two clocks tick at the same rate, so a derived version stays aligned with
+# ``health_now()`` for the life of the process.
+_ANCHOR_WALL = time.time()
+_ANCHOR_MONOTONIC = time.monotonic()
+
+
 def tai_version(offset: float = 0.0) -> str:
     """A ``"<seconds>:<nanoseconds>"`` version string, optionally shifted.
 
     ``offset`` lets a test express "older than" / "newer than" without
-    hard-coding an epoch.
+    hard-coding an epoch, and still means seconds relative to now -- the anchor
+    changes where "now" is measured from, not what an offset means.
+
+    Successive calls never go backwards. They may return the *same* value if
+    two calls land within one monotonic tick, which is fine: the registry
+    rejects a version that is strictly earlier (``new_cursor < old_cursor``),
+    not one that is equal.
     """
-    seconds, nanoseconds = utc_to_tai(time.time() + offset)
+    elapsed = time.monotonic() - _ANCHOR_MONOTONIC
+    seconds, nanoseconds = utc_to_tai(_ANCHOR_WALL + elapsed + offset)
     return f"{seconds}:{nanoseconds}"
 
 

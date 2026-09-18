@@ -91,6 +91,7 @@ import asyncio
 import json
 import os
 import random
+import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -103,6 +104,7 @@ import pytest
 from nmos.raft.errors import RaftError
 from nmos.raft.operations import ProposalId, RegisterOp, UnregisterOp
 from nmos.raft.tests._harness import FAST, Cluster
+from nmos.raft.tests._forensics import Forensics
 from nmos.raft.tests._invariants import InvariantViolation, SafetyMonitor
 from nmos.raft.tests._sockets import SOCKET_TIMING, SocketCluster
 from nmos.registry.tests._fixtures import make_node
@@ -157,6 +159,28 @@ WEIGHTS: dict[Event, int] = {
     Event.HEAL: 8,
     Event.IDLE: 15,
 }
+
+
+def _disputed(message: str) -> tuple[int | None, int | None]:
+    """The log index and term a violation names, if it names any.
+
+    The invariant messages are written for a human and each says which index
+    and which term it is unhappy about -- "index 7 applied as ...", "member 2
+    leads term 7 holding ... at index 11". Reading them back is what lets the
+    forensic report be *filtered* to the handful of records that bear on the
+    failure instead of dumping thousands.
+
+    Parsing our own prose is a seam, so it fails soft: no match means an
+    unfiltered report, never an exception on top of an exception. The messages
+    and this are both in ``nmos/raft/tests/``, and ``test_forensics.py`` pins
+    the pairing.
+    """
+    index = re.search(r"\bindex (\d+)", message)
+    term = re.search(r"\bterm (\d+)", message)
+    return (
+        int(index.group(1)) if index else None,
+        int(term.group(1)) if term else None,
+    )
 
 
 @dataclass
@@ -218,7 +242,11 @@ class ChurnDriver:
     def __init__(self, cluster: ChurnTarget, seed: int, *, max_delay: float) -> None:
         self.cluster = cluster
         self.rng = random.Random(seed)
-        self.monitor = SafetyMonitor(cluster=cluster)
+        # Recording is unconditional here rather than behind a flag: a soak
+        # failure is rare and not replayable from its seed, so a run that
+        # failed without the evidence is a run that has to be waited for again.
+        self.forensics = Forensics()
+        self.monitor = SafetyMonitor(cluster=cluster, forensics=self.forensics)
         self.trace = _Trace(seed=seed, lines=[])
         self.down: set[int] = set()
         self.blocked: list[tuple[int, int]] = []
@@ -228,6 +256,39 @@ class ChurnDriver:
         # what a run's shape depends on rather than a source of silent drift.
         cluster.network.rng = self.rng
         cluster.network.max_delay = max_delay
+        self._record_votes()
+
+    def _record_votes(self) -> None:
+        """Have every member report its vote decisions to the forensics.
+
+        Wrapped on the node rather than on the network, because there are two
+        transports and only one of them has a dispatch loop to hook: over real
+        sockets a ``RequestVote`` arrives through ``RaftTransport`` and never
+        passes through the harness at all. A network-level hook therefore
+        recorded nothing for exactly the runs the socket soak exists to
+        cover -- and did it silently, which is the failure mode
+        ``test_forensics.py`` was written to make impossible.
+
+        The voter's log is read inside the wrapper, after ``on_request_vote``
+        has decided but before anything else can run, so the logs recorded are
+        the ones the decision was made on.
+        """
+        for member in self.cluster.members:
+            node = member.node
+            original = node.on_request_vote
+
+            def watched(
+                peer: int, message: Any, *, _node: Any = node, _original: Any = original,
+            ) -> Any:
+                reply = _original(peer, message)
+                # Probes are questions, not votes: they never grant and never
+                # touch the voter, so recording them would bury the real
+                # decisions in noise.
+                if not getattr(message, "probe", False):
+                    self.forensics.note_vote(_node, message, bool(reply.granted))
+                return reply
+
+            node.on_request_vote = watched
 
     @property
     def budget(self) -> int:
@@ -246,6 +307,7 @@ class ChurnDriver:
 
     async def run(self, steps: int) -> None:
         for step in range(steps):
+            self.forensics.step = step
             event = self._choose()
             await self._apply(step, event)
             # One settle tick per step: enough for a message to cross a link,
@@ -255,8 +317,11 @@ class ChurnDriver:
             try:
                 self.monitor.check()
             except InvariantViolation as violation:
+                index, term = _disputed(str(violation))
                 raise InvariantViolation(
-                    f"{violation}\n\nTrace:\n{self.trace.render()}",
+                    f"{violation}\n\n"
+                    f"{self.forensics.render(index=index, term=term)}\n\n"
+                    f"Trace:\n{self.trace.render()}",
                 ) from violation
 
     def _choose(self) -> Event:
@@ -301,6 +366,11 @@ class ChurnDriver:
             # scenario the non-voting rejoin exists for, now arriving at a
             # moment nobody chose.
             victim = self.rng.choice(live)
+            # Read before the restart: afterwards the log is gone, and what it
+            # held is exactly the thing an amnesia argument turns on.
+            self.forensics.note_restart(
+                next(m.node for m in self.cluster.members if m.index == victim),
+            )
             await self.cluster.restart(victim)
             self.trace.record(step, event, f"member {victim}")
 
@@ -429,7 +499,29 @@ class ChurnDriver:
         # snapshot transfer, and this is a correctness check, not a timing one.
         for _ in range(60):
             await self.cluster.settle(10)
-            self.monitor.check()
+            try:
+                self.monitor.check()
+            except InvariantViolation as violation:
+                # The same treatment `run` gives its own checks, and for the
+                # same reason. Without it a safety violation found while the
+                # cluster is healing reports *what* broke and nothing about
+                # *why*: a full-gate run failed here with only "member 2 leads
+                # term 10 holding term 10 at index 21, which was committed in
+                # term 6", while the record naming the member that first
+                # claimed index 21 -- and the votes that elected term 10 -- sat
+                # unread in `self.forensics`.
+                #
+                # Converge is the *likelier* place to need it, not the less
+                # likely: it is where members that spent the run partitioned
+                # rejoin, which is exactly when a completeness failure would
+                # surface.
+                disputed_index, disputed_term = _disputed(str(violation))
+                raise InvariantViolation(
+                    f"{violation}\n\n"
+                    f"{self.forensics.render(index=disputed_index, term=disputed_term)}\n\n"
+                    f"{self.state()}\n\n"
+                    f"Trace:\n{self.trace.render()}",
+                ) from violation
             if self._converged():
                 return
         raise InvariantViolation(

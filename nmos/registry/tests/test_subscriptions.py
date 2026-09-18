@@ -26,7 +26,12 @@ from nmos.registry import (
 from nmos.registry.decode import decode_resource
 from nmos.registry.handlers_query import BASE_PATH
 from nmos.registry.store import RegistryStore
-from nmos.registry.subscriptions import SubscriptionManager
+from nmos.registry.subscriptions import (
+    Subscription,
+    SubscriptionConnection,
+    SubscriptionManager,
+    _PendingEvent,
+)
 from nmos.registry.tests._fixtures import (
     DEVICE_ID,
     NODE_ID,
@@ -39,7 +44,7 @@ from nmos.registry.tests._fixtures import (
     make_source,
     tai_version,
 )
-from nmos.registry.types import Body, ResourceType
+from nmos.registry.types import Body, ResourceType, TaiCursor
 
 SUBSCRIPTIONS = f"{BASE_PATH}/subscriptions"
 
@@ -445,6 +450,90 @@ class TestRateLimiting:
             seed(registry, ResourceType.NODE, make_node())
             grain = await read_grain(socket)
             assert entries(grain)[0]["path"] == NODE_ID
+
+
+class TestBufferPrivacy:
+    """One connection's buffer must not be writable by another's traffic.
+
+    ``publish`` classifies once per subscription and hands the *same*
+    ``_PendingEvent`` to every connection on it, and ``merge`` mutates in
+    place. Two connections to one subscription therefore used to share a single
+    mutable object.
+
+    These are unit tests rather than WebSocket tests on purpose: the defect was
+    real but not reachable through the listener, because ``_send_grains`` runs
+    ``drain()`` and ``build_grain()`` with no ``await`` between them, so a grain
+    is serialised in the same uninterrupted step that takes it. Driving it over
+    a socket would therefore prove nothing, and the day someone adds an ``await``
+    there -- or a second consumer of drained lists -- is the day it starts
+    corrupting grains. This pins the property directly instead.
+    """
+
+    def _connections(self) -> tuple[Any, Any]:
+        subscription = Subscription(
+            id="sub", ws_href="ws://host/sub", resource_path="/nodes",
+            resource_type=ResourceType.NODE, params={}, max_update_rate_ms=0,
+            persist=True, secure=False, authorization=False,
+            created=TaiCursor.now(), host="host",
+        )
+        return (
+            SubscriptionConnection(subscription),
+            SubscriptionConnection(subscription),
+        )
+
+    def test_a_drained_event_is_not_rewritten_by_another_connection(self) -> None:
+        first, second = self._connections()
+
+        # What publish() does: classify once, enqueue the same object on each.
+        shared = _PendingEvent(path="r1", pre=Body('{"v":0}'), post=Body('{"v":1}'))
+        first.enqueue(shared)
+        second.enqueue(shared)
+
+        drained = first.drain()
+        assert drained[0].post is not None
+        assert drained[0].post.text == '{"v":1}'
+
+        # A later change reaching only the second connection.
+        second.enqueue(
+            _PendingEvent(path="r1", pre=Body('{"v":1}'), post=Body('{"v":2}')),
+        )
+
+        assert drained[0].post is not None
+        assert drained[0].post.text == '{"v":1}', (
+            "the second connection's traffic rewrote an event the first had "
+            "already drained"
+        )
+
+    def test_two_connections_coalesce_independently(self) -> None:
+        first, second = self._connections()
+
+        shared = _PendingEvent(path="r1", pre=Body('{"v":0}'), post=Body('{"v":1}'))
+        first.enqueue(shared)
+        second.enqueue(shared)
+        second.enqueue(
+            _PendingEvent(path="r1", pre=Body('{"v":1}'), post=Body('{"v":2}')),
+        )
+
+        first_post = first.drain()[0].post
+        second_post = second.drain()[0].post
+        assert first_post is not None and second_post is not None
+        assert first_post.text == '{"v":1}', "a slow connection saw a change early"
+        assert second_post.text == '{"v":2}'
+
+    def test_the_caller_s_event_is_not_captured_by_the_buffer(self) -> None:
+        """Coalescing must not reach back into what the caller handed over."""
+        first, _second = self._connections()
+
+        original = _PendingEvent(path="r1", pre=Body('{"v":0}'), post=Body('{"v":1}'))
+        first.enqueue(original)
+        first.enqueue(
+            _PendingEvent(path="r1", pre=Body('{"v":1}'), post=Body('{"v":2}')),
+        )
+
+        assert original.post is not None
+        assert original.post.text == '{"v":1}', (
+            "the buffer mutated an object it does not own"
+        )
 
 
 # ---------------------------------------------------------------------------

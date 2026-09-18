@@ -1,0 +1,238 @@
+//! Generated NMOS type: `NSrtReceiverTransportParams`. DO NOT EDIT.
+//!
+//! Rendered from `nmos/codegen/definitions/` by
+//! `nmos/codegen/templates/type.rs.jinja2`. The descriptors are the source of
+//! truth and the Python tree in `nmos/types/generated/` is rendered from the
+//! same ones, so the two describe one model by construction.
+//!
+//! Regenerate with: `python -m nmos.codegen.generate`
+
+#[allow(unused_imports)]
+use nmos_json::error::{Error, Result};
+#[allow(unused_imports)]
+use nmos_json::{EnumId, Hyperlink, Nullable, RawJson, Tags, Tai, decode, validators};
+use serde::Serialize;
+#[allow(unused_imports)]
+use serde_json::Value;
+
+/// `NSrtReceiverTransportParams`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NSrtReceiverTransportParams {
+    /// `source_ip`. Optional, so absent means the member was not present.
+    #[serde(rename = "source_ip", skip_serializing_if = "Option::is_none")]
+    pub source_ip: Option<Nullable<String>>,
+    /// `source_port`. Optional, so absent means the member was not present.
+    #[serde(rename = "source_port", skip_serializing_if = "Option::is_none")]
+    pub source_port: Option<Nullable<Value>>,
+    /// `destination_ip`. Optional, so absent means the member was not present.
+    #[serde(rename = "destination_ip", skip_serializing_if = "Option::is_none")]
+    pub destination_ip: Option<String>,
+    /// `destination_port`. Optional, so absent means the member was not present.
+    #[serde(rename = "destination_port", skip_serializing_if = "Option::is_none")]
+    pub destination_port: Option<Nullable<Value>>,
+    /// `protocol`. Optional, so absent means the member was not present.
+    #[serde(rename = "protocol", skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<EnumId>,
+    /// `latency`. Optional, so absent means the member was not present.
+    #[serde(rename = "latency", skip_serializing_if = "Option::is_none")]
+    pub latency: Option<i64>,
+    /// `stream_id`. Optional, so absent means the member was not present.
+    #[serde(rename = "stream_id", skip_serializing_if = "Option::is_none")]
+    pub stream_id: Option<Nullable<String>>,
+    /// `ext_privacy_protocol`. Optional, so absent means the member was not present.
+    #[serde(
+        rename = "ext_privacy_protocol",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ext_privacy_protocol: Option<EnumId>,
+    /// `ext_privacy_mode`. Optional, so absent means the member was not present.
+    #[serde(rename = "ext_privacy_mode", skip_serializing_if = "Option::is_none")]
+    pub ext_privacy_mode: Option<EnumId>,
+    /// `ext_privacy_iv`. Optional, so absent means the member was not present.
+    #[serde(rename = "ext_privacy_iv", skip_serializing_if = "Option::is_none")]
+    pub ext_privacy_iv: Option<String>,
+    /// `ext_privacy_key_generator`. Optional, so absent means the member was not present.
+    #[serde(
+        rename = "ext_privacy_key_generator",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ext_privacy_key_generator: Option<String>,
+    /// `ext_privacy_key_id`. Optional, so absent means the member was not present.
+    #[serde(rename = "ext_privacy_key_id", skip_serializing_if = "Option::is_none")]
+    pub ext_privacy_key_id: Option<String>,
+    /// `ext_privacy_key_version`. Optional, so absent means the member was not present.
+    #[serde(
+        rename = "ext_privacy_key_version",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ext_privacy_key_version: Option<String>,
+    /// `ext_privacy_ecdh_sender_public_key`. Optional, so absent means the member was not present.
+    #[serde(
+        rename = "ext_privacy_ecdh_sender_public_key",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ext_privacy_ecdh_sender_public_key: Option<String>,
+    /// `ext_privacy_ecdh_receiver_public_key`. Optional, so absent means the member was not present.
+    #[serde(
+        rename = "ext_privacy_ecdh_receiver_public_key",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ext_privacy_ecdh_receiver_public_key: Option<String>,
+    /// `ext_privacy_ecdh_curve`. Optional, so absent means the member was not present.
+    #[serde(
+        rename = "ext_privacy_ecdh_curve",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ext_privacy_ecdh_curve: Option<EnumId>,
+    /// `ext_audio_layers_mapping`. Optional, so absent means the member was not present.
+    #[serde(
+        rename = "ext_audio_layers_mapping",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ext_audio_layers_mapping: Option<String>,
+    /// `ext_video_layers_mapping`. Optional, so absent means the member was not present.
+    #[serde(
+        rename = "ext_video_layers_mapping",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ext_video_layers_mapping: Option<String>,
+    /// `ext_data_layers_mapping`. Optional, so absent means the member was not present.
+    #[serde(
+        rename = "ext_data_layers_mapping",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ext_data_layers_mapping: Option<String>,
+}
+
+impl NSrtReceiverTransportParams {
+    /// Decode from a JSON value, in the order the descriptor declares.
+    ///
+    /// Members are read in declaration order regardless of how the document
+    /// orders its keys, then required presence is checked for every member,
+    /// then the assertions run. Two bodies differing only in key order must
+    /// therefore produce the same error.
+    #[allow(clippy::too_many_lines, unused_variables)]
+    pub fn decode(src: &Value) -> Result<Self> {
+        let Some(doc) = src.as_object() else {
+            return Err(Error::invalid_data(
+                "expected JSON object for NSrtReceiverTransportParams",
+            ));
+        };
+
+        let source_ip = match doc.get("source_ip") {
+            Some(v) => Some(decode::nullable_string(v)?),
+            None => None,
+        };
+        let source_port = doc.get("source_port").map(decode::null_value);
+        let destination_ip = match doc.get("destination_ip") {
+            Some(v) => decode::string(v)?,
+            None => None,
+        };
+        let destination_port = doc.get("destination_port").map(decode::null_value);
+        let protocol = match doc.get("protocol") {
+            Some(v) => Some(decode::enum_id(v)?),
+            None => None,
+        };
+        let latency = match doc.get("latency") {
+            Some(v) => Some(decode::int(v)?),
+            None => None,
+        };
+        let stream_id = match doc.get("stream_id") {
+            Some(v) => Some(decode::nullable_string(v)?),
+            None => None,
+        };
+        let ext_privacy_protocol = match doc.get("ext_privacy_protocol") {
+            Some(v) => Some(decode::enum_id(v)?),
+            None => None,
+        };
+        let ext_privacy_mode = match doc.get("ext_privacy_mode") {
+            Some(v) => Some(decode::enum_id(v)?),
+            None => None,
+        };
+        let ext_privacy_iv = match doc.get("ext_privacy_iv") {
+            Some(v) => decode::string(v)?,
+            None => None,
+        };
+        let ext_privacy_key_generator = match doc.get("ext_privacy_key_generator") {
+            Some(v) => decode::string(v)?,
+            None => None,
+        };
+        let ext_privacy_key_id = match doc.get("ext_privacy_key_id") {
+            Some(v) => decode::string(v)?,
+            None => None,
+        };
+        let ext_privacy_key_version = match doc.get("ext_privacy_key_version") {
+            Some(v) => decode::string(v)?,
+            None => None,
+        };
+        let ext_privacy_ecdh_sender_public_key = match doc.get("ext_privacy_ecdh_sender_public_key")
+        {
+            Some(v) => decode::string(v)?,
+            None => None,
+        };
+        let ext_privacy_ecdh_receiver_public_key =
+            match doc.get("ext_privacy_ecdh_receiver_public_key") {
+                Some(v) => decode::string(v)?,
+                None => None,
+            };
+        let ext_privacy_ecdh_curve = match doc.get("ext_privacy_ecdh_curve") {
+            Some(v) => Some(decode::enum_id(v)?),
+            None => None,
+        };
+        let ext_audio_layers_mapping = match doc.get("ext_audio_layers_mapping") {
+            Some(v) => decode::string(v)?,
+            None => None,
+        };
+        let ext_video_layers_mapping = match doc.get("ext_video_layers_mapping") {
+            Some(v) => decode::string(v)?,
+            None => None,
+        };
+        let ext_data_layers_mapping = match doc.get("ext_data_layers_mapping") {
+            Some(v) => decode::string(v)?,
+            None => None,
+        };
+
+        // Optional defaults, applied between decode and the required check --
+        // Python's `set_optional_to_default()`, in the same position.
+        //
+        // The rule is `optional AND default`, and it is narrower than the
+        // descriptors read: of 27 members carrying a default, 14 are NOT
+        // optional and their default is therefore inert -- a body omitting one
+        // is REJECTED, not filled in. `#[serde(default)]` would have quietly
+        // accepted all 27, so this step is written rather than derived.
+        let stream_id = stream_id.or(Some(Nullable::Null));
+
+        // Assertions, in descriptor order, after every required-presence check.
+        // Python runs them in exactly this position: a body missing a required
+        // member reports that, not an assertion failure on a member that is
+        // present.
+        if let Some(v) = &source_port {
+            validators::check_auto_port(v.as_json())?;
+        }
+        if let Some(v) = &destination_port {
+            validators::check_null_auto_port(v.as_json())?;
+        }
+
+        Ok(Self {
+            source_ip,
+            source_port,
+            destination_ip,
+            destination_port,
+            protocol,
+            latency,
+            stream_id,
+            ext_privacy_protocol,
+            ext_privacy_mode,
+            ext_privacy_iv,
+            ext_privacy_key_generator,
+            ext_privacy_key_id,
+            ext_privacy_key_version,
+            ext_privacy_ecdh_sender_public_key,
+            ext_privacy_ecdh_receiver_public_key,
+            ext_privacy_ecdh_curve,
+            ext_audio_layers_mapping,
+            ext_video_layers_mapping,
+            ext_data_layers_mapping,
+        })
+    }
+}

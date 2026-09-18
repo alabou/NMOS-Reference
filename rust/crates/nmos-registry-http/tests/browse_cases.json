@@ -1,0 +1,446 @@
+{
+ "api_base": "/x-nmos/query/v1.3",
+ "cases": [
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{}</span>\n</body>\n</html>",
+   "json": "{}",
+   "name": "empty_object",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"array\">[]</span>\n</body>\n</html>",
+   "json": "[]",
+   "name": "empty_array",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"object\">{}</span>,</li><li><span class=\"name\">&quot;b&quot;</span>: <span class=\"array\">[]</span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":{},\"b\":[]}",
+   "name": "empty_nested",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;s&quot;</span>: <span class=\"value\"><span class=\"string\">&quot;x&quot;</span></span>,</li><li><span class=\"name\">&quot;i&quot;</span>: <span class=\"value\"><span class=\"number\">1</span></span>,</li><li><span class=\"name\">&quot;f&quot;</span>: <span class=\"value\"><span class=\"number\">1.5</span></span>,</li><li><span class=\"name\">&quot;t&quot;</span>: <span class=\"value\"><span class=\"boolean\">true</span></span>,</li><li><span class=\"name\">&quot;f2&quot;</span>: <span class=\"value\"><span class=\"boolean\">false</span></span>,</li><li><span class=\"name\">&quot;n&quot;</span>: <span class=\"value\"><span class=\"null\">null</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"s\":\"x\",\"i\":1,\"f\":1.5,\"t\":true,\"f2\":false,\"n\":null}",
+   "name": "scalars",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;zulu&quot;</span>: <span class=\"value\"><span class=\"number\">1</span></span>,</li><li><span class=\"name\">&quot;mike&quot;</span>: <span class=\"value\"><span class=\"number\">2</span></span>,</li><li><span class=\"name\">&quot;alpha&quot;</span>: <span class=\"value\"><span class=\"number\">3</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"zulu\":1,\"mike\":2,\"alpha\":3}",
+   "name": "key_order_reversed",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"object\">{<ol><li><span class=\"name\">&quot;b&quot;</span>: <span class=\"object\">{<ol><li><span class=\"name\">&quot;c&quot;</span>: <span class=\"array\">[<ol><li><span class=\"value\"><span class=\"number\">1</span></span>,</li><li><span class=\"array\">[<ol><li><span class=\"value\"><span class=\"number\">2</span></span>,</li><li><span class=\"array\">[<ol><li><span class=\"value\"><span class=\"number\">3</span></span></li></ol>]</span></li></ol>]</span></li></ol>]</span></li></ol>}</span></li></ol>}</span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":{\"b\":{\"c\":[1,[2,[3]]]}}}",
+   "name": "nested_deep",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3/senders/</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3/senders/</h2>\n<span class=\"array\">[<ol><li><span class=\"object\">{<ol><li><span class=\"name\">&quot;id&quot;</span>: <span class=\"value\"><span class=\"string\">&quot;a&quot;</span></span></li></ol>}</span>,</li><li><span class=\"object\">{<ol><li><span class=\"name\">&quot;id&quot;</span>: <span class=\"value\"><span class=\"string\">&quot;b&quot;</span></span></li></ol>}</span></li></ol>]</span>\n</body>\n</html>",
+   "json": "[{\"id\":\"a\"},{\"id\":\"b\"}]",
+   "name": "array_of_objects",
+   "path": "/x-nmos/query/v1.3/senders/",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;only&quot;</span>: <span class=\"value\"><span class=\"number\">1</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"only\":1}",
+   "name": "single_entry_no_comma",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;port&quot;</span>: <span class=\"value\"><span class=\"number\">8080</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"port\":8080}",
+   "name": "int_stays_int",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"value\"><span class=\"number\">1.0</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":1.0}",
+   "name": "float_keeps_point",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"value\"><span class=\"number\">1e-05</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":1e-05}",
+   "name": "float_exponent_small",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"value\"><span class=\"number\">1e+20</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":1e+20}",
+   "name": "float_exponent_large",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"value\"><span class=\"number\">1234567.8</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":1234567.8}",
+   "name": "float_six_sig_digits",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"value\"><span class=\"number\">-1</span></span>,</li><li><span class=\"name\">&quot;b&quot;</span>: <span class=\"value\"><span class=\"number\">0</span></span>,</li><li><span class=\"name\">&quot;c&quot;</span>: <span class=\"value\"><span class=\"number\">-0.5</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":-1,\"b\":0,\"c\":-0.5}",
+   "name": "negative_and_zero",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"value\"><span class=\"number\">9007199254740993</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":9007199254740993}",
+   "name": "big_integer",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"value\"><span class=\"string\">&quot;&lt;script&gt;alert(1)&lt;/script&gt;&quot;</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":\"<script>alert(1)</script>\"}",
+   "name": "markup_in_value",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;&lt;k&gt;&quot;</span>: <span class=\"value\"><span class=\"string\">&quot;v&quot;</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"<k>\":\"v\"}",
+   "name": "markup_in_key",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"value\"><span class=\"string\">&quot;it&#x27;s&quot;</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":\"it's\"}",
+   "name": "apostrophe",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"value\"><span class=\"string\">&quot;a&amp;b&quot;</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":\"a&b\"}",
+   "name": "ampersand",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"value\"><span class=\"string\">&quot;say \\&quot;hi\\&quot;&quot;</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":\"say \\\"hi\\\"\"}",
+   "name": "quotes_in_value",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"value\"><span class=\"string\">&quot;a\\\\b&quot;</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":\"a\\\\b\"}",
+   "name": "backslash",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;label&quot;</span>: <span class=\"value\"><span class=\"string\">&quot;caf\u00e9&quot;</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"label\":\"caf\\u00e9\"}",
+   "name": "non_ascii",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;label&quot;</span>: <span class=\"value\"><span class=\"string\">&quot;caf\u00e9&quot;</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"label\":\"caf\u00e9\"}",
+   "name": "non_ascii_literal",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;label&quot;</span>: <span class=\"value\"><span class=\"string\">&quot;\u65e5\u672c\u8a9e&quot;</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"label\":\"\u65e5\u672c\u8a9e\"}",
+   "name": "cjk",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;label&quot;</span>: <span class=\"value\"><span class=\"string\">&quot;\ud83d\ude00&quot;</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"label\":\"\ud83d\ude00\"}",
+   "name": "emoji",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"value\"><span class=\"string\">&quot;x\\ny\\tz&quot;</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":\"x\\ny\\tz\"}",
+   "name": "control_chars",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/&lt;script&gt;</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/&lt;script&gt;</h2>\n<span class=\"object\">{}</span>\n</body>\n</html>",
+   "json": "{}",
+   "name": "markup_in_path",
+   "path": "/x-nmos/<script>",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/it&#x27;s</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/it&#x27;s</h2>\n<span class=\"object\">{}</span>\n</body>\n</html>",
+   "json": "{}",
+   "name": "apostrophe_in_path",
+   "path": "/x-nmos/it's",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3/senders/</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3/senders/</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;href&quot;</span>: <span class=\"value\"><a href=\"http://example.test/a\"><span class=\"string\">&quot;http://example.test/a&quot;</span></a></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"href\":\"http://example.test/a\"}",
+   "name": "absolute_http",
+   "path": "/x-nmos/query/v1.3/senders/",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3/senders/</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3/senders/</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;href&quot;</span>: <span class=\"value\"><a href=\"https://example.test/a\"><span class=\"string\">&quot;https://example.test/a&quot;</span></a></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"href\":\"https://example.test/a\"}",
+   "name": "absolute_https",
+   "path": "/x-nmos/query/v1.3/senders/",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3/senders/</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3/senders/</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;href&quot;</span>: <span class=\"value\"><a href=\"ws://example.test/x\"><span class=\"string\">&quot;ws://example.test/x&quot;</span></a></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"href\":\"ws://example.test/x\"}",
+   "name": "absolute_ws",
+   "path": "/x-nmos/query/v1.3/senders/",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3/senders/</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3/senders/</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;href&quot;</span>: <span class=\"value\"><a href=\"https://e.test/a?b=c&amp;d=e\"><span class=\"string\">&quot;https://e.test/a?b=c&amp;d=e&quot;</span></a></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"href\":\"https://e.test/a?b=c&d=e\"}",
+   "name": "absolute_with_query",
+   "path": "/x-nmos/query/v1.3/senders/",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3/senders/</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3/senders/</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;href&quot;</span>: <span class=\"value\"><a href=\"a+b://e.test/\"><span class=\"string\">&quot;a+b://e.test/&quot;</span></a></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"href\":\"a+b://e.test/\"}",
+   "name": "absolute_plus_scheme",
+   "path": "/x-nmos/query/v1.3/senders/",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3/senders/</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3/senders/</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;id&quot;</span>: <span class=\"value\"><a href=\"/x-nmos/query/v1.3/senders/3b8be755-08ff-452b-b217-c9151eb21193\"><span class=\"string\">&quot;3b8be755-08ff-452b-b217-c9151eb21193&quot;</span></a></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"id\":\"3b8be755-08ff-452b-b217-c9151eb21193\"}",
+   "name": "uuid_in_collection",
+   "path": "/x-nmos/query/v1.3/senders/",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3/senders/3b8be755-08ff-452b-b217-c9151eb21193</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3/senders/3b8be755-08ff-452b-b217-c9151eb21193</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;id&quot;</span>: <span class=\"value\"><a href=\"/x-nmos/query/v1.3/senders/3b8be755-08ff-452b-b217-c9151eb21193\"><span class=\"string\">&quot;3b8be755-08ff-452b-b217-c9151eb21193&quot;</span></a></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"id\":\"3b8be755-08ff-452b-b217-c9151eb21193\"}",
+   "name": "uuid_under_a_resource_page",
+   "path": "/x-nmos/query/v1.3/senders/3b8be755-08ff-452b-b217-c9151eb21193",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3/senders/</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3/senders/</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;id&quot;</span>: <span class=\"value\"><a href=\"/x-nmos/query/v1.3/senders/3b8be755-08ff-452b-b217-c9151eb21193/\"><span class=\"string\">&quot;3b8be755-08ff-452b-b217-c9151eb21193/&quot;</span></a></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"id\":\"3b8be755-08ff-452b-b217-c9151eb21193/\"}",
+   "name": "uuid_with_trailing_slash",
+   "path": "/x-nmos/query/v1.3/senders/",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3/senders/</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3/senders/</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;id&quot;</span>: <span class=\"value\"><a href=\"/x-nmos/query/v1.3/senders/3B8BE755-08FF-452B-B217-C9151EB21193\"><span class=\"string\">&quot;3B8BE755-08FF-452B-B217-C9151EB21193&quot;</span></a></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"id\":\"3B8BE755-08FF-452B-B217-C9151EB21193\"}",
+   "name": "uuid_uppercase",
+   "path": "/x-nmos/query/v1.3/senders/",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3/sources/</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3/sources/</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;parents&quot;</span>: <span class=\"array\">[<ol><li><span class=\"value\"><a href=\"/x-nmos/query/v1.3/sources/3b8be755-08ff-452b-b217-c9151eb21193\"><span class=\"string\">&quot;3b8be755-08ff-452b-b217-c9151eb21193&quot;</span></a></span>,</li><li><span class=\"value\"><a href=\"/x-nmos/query/v1.3/sources/58f6b536-ca4c-43fd-880a-9df2501fc125\"><span class=\"string\">&quot;58f6b536-ca4c-43fd-880a-9df2501fc125&quot;</span></a></span></li></ol>]</span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"parents\":[\"3b8be755-08ff-452b-b217-c9151eb21193\",\"58f6b536-ca4c-43fd-880a-9df2501fc125\"]}",
+   "name": "uuid_array_inherits_key",
+   "path": "/x-nmos/query/v1.3/sources/",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3/senders/</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3/senders/</h2>\n<span class=\"array\">[<ol><li><span class=\"value\"><a href=\"/x-nmos/query/v1.3/senders/3b8be755-08ff-452b-b217-c9151eb21193\"><span class=\"string\">&quot;3b8be755-08ff-452b-b217-c9151eb21193&quot;</span></a></span></li></ol>]</span>\n</body>\n</html>",
+   "json": "[\"3b8be755-08ff-452b-b217-c9151eb21193\"]",
+   "name": "uuid_at_document_root",
+   "path": "/x-nmos/query/v1.3/senders/",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3/senders/</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3/senders/</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;id&quot;</span>: <span class=\"value\"><span class=\"string\">&quot;3b8be755-08ff-452b-b217-c9151eb2119&quot;</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"id\":\"3b8be755-08ff-452b-b217-c9151eb2119\"}",
+   "name": "not_quite_a_uuid",
+   "path": "/x-nmos/query/v1.3/senders/",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"value\"><a href=\"/x-nmos/query/v1.3/nodes/\"><span class=\"string\">&quot;nodes/&quot;</span></a></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":\"nodes/\"}",
+   "name": "relative_collection",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"value\"><a href=\"/x-nmos/query/v1.3/nodes/senders/\"><span class=\"string\">&quot;nodes/senders/&quot;</span></a></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":\"nodes/senders/\"}",
+   "name": "relative_nested",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3/nodes/</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3/nodes/</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;versions&quot;</span>: <span class=\"array\">[<ol><li><span class=\"value\"><span class=\"string\">&quot;v1.3&quot;</span></span>,</li><li><span class=\"value\"><span class=\"string\">&quot;v1.2&quot;</span></span></li></ol>]</span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"versions\":[\"v1.3\",\"v1.2\"]}",
+   "name": "bare_version_is_data",
+   "path": "/x-nmos/query/v1.3/nodes/",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"value\"><a href=\"/x-nmos/query/v1.3/\"><span class=\"string\">&quot;v1.3/&quot;</span></a></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":\"v1.3/\"}",
+   "name": "version_index_is_a_link",
+   "path": "/x-nmos/query",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"value\"><span class=\"string\">&quot;nodes/wat/&quot;</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":\"nodes/wat/\"}",
+   "name": "unknown_segment_is_not_linked",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"value\"><a href=\"/x-nmos/query/v1.3/\"><span class=\"string\">&quot;/x-nmos/query/v1.3/&quot;</span></a></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":\"/x-nmos/query/v1.3/\"}",
+   "name": "root_relative_x_nmos",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"value\"><a href=\"/x-manufacturer/exclusive/\"><span class=\"string\">&quot;/x-manufacturer/exclusive/&quot;</span></a></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":\"/x-manufacturer/exclusive/\"}",
+   "name": "root_relative_x_manufacturer",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"value\"><span class=\"string\">&quot;/etc/passwd&quot;</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":\"/etc/passwd\"}",
+   "name": "root_relative_other_is_not_linked",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3/senders/</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3/senders/</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;label&quot;</span>: <span class=\"value\"><span class=\"string\">&quot;my sender&quot;</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"label\":\"my sender\"}",
+   "name": "plain_label_is_not_linked",
+   "path": "/x-nmos/query/v1.3/senders/",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"value\"><a href=\"/x-nmos/registration/\"><span class=\"string\">&quot;registration/&quot;</span></a></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":\"registration/\"}",
+   "name": "registration_ladder",
+   "path": "/x-nmos",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3/senders/</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3/senders/</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;flow_id&quot;</span>: <span class=\"value\"><a href=\"/x-nmos/query/v1.3/flows/3b8be755-08ff-452b-b217-c9151eb21193\"><span class=\"string\">&quot;3b8be755-08ff-452b-b217-c9151eb21193&quot;</span></a></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"flow_id\":\"3b8be755-08ff-452b-b217-c9151eb21193\"}",
+   "name": "resolver_maps_flow_id",
+   "path": "/x-nmos/query/v1.3/senders/",
+   "resolver": true
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3/senders/</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3/senders/</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;device_id&quot;</span>: <span class=\"value\"><a href=\"/x-nmos/query/v1.3/devices/3b8be755-08ff-452b-b217-c9151eb21193\"><span class=\"string\">&quot;3b8be755-08ff-452b-b217-c9151eb21193&quot;</span></a></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"device_id\":\"3b8be755-08ff-452b-b217-c9151eb21193\"}",
+   "name": "resolver_maps_device_id",
+   "path": "/x-nmos/query/v1.3/senders/",
+   "resolver": true
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3/sources/</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3/sources/</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;monitor_sibling_id&quot;</span>: <span class=\"value\"><span class=\"string\">&quot;3b8be755-08ff-452b-b217-c9151eb21193&quot;</span></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"monitor_sibling_id\":\"3b8be755-08ff-452b-b217-c9151eb21193\"}",
+   "name": "resolver_declines_unknown_reference",
+   "path": "/x-nmos/query/v1.3/sources/",
+   "resolver": true
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3/senders/</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3/senders/</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;href&quot;</span>: <span class=\"value\"><a href=\"https://e.test/\"><span class=\"string\">&quot;https://e.test/&quot;</span></a></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"href\":\"https://e.test/\"}",
+   "name": "resolver_does_not_shadow_absolute",
+   "path": "/x-nmos/query/v1.3/senders/",
+   "resolver": true
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3/senders/</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3/senders/</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;id&quot;</span>: <span class=\"value\"><a href=\"/x-nmos/query/v1.3/senders/3b8be755-08ff-452b-b217-c9151eb21193\"><span class=\"string\">&quot;3b8be755-08ff-452b-b217-c9151eb21193&quot;</span></a></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"id\":\"3b8be755-08ff-452b-b217-c9151eb21193\"}",
+   "name": "resolver_with_own_id",
+   "path": "/x-nmos/query/v1.3/senders/",
+   "resolver": true
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<pre>not json at all &lt;b&gt;</pre>\n</body>\n</html>",
+   "json": "not json at all <b>",
+   "name": "not_json",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<pre>{&quot;a&quot;:</pre>\n</body>\n</html>",
+   "json": "{\"a\":",
+   "name": "truncated_json",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"value\"><span class=\"string\">&quot;hello&quot;</span></span>\n</body>\n</html>",
+   "json": "\"hello\"",
+   "name": "bare_string_document",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"value\"><span class=\"number\">42</span></span>\n</body>\n</html>",
+   "json": "42",
+   "name": "bare_number_document",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"value\"><span class=\"null\">null</span></span>\n</body>\n</html>",
+   "json": "null",
+   "name": "bare_null_document",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;id&quot;</span>: <span class=\"value\"><a href=\"/x-nmos/query/v1.3/3b8be755-08ff-452b-b217-c9151eb21193\"><span class=\"string\">&quot;3b8be755-08ff-452b-b217-c9151eb21193&quot;</span></a></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"id\":\"3b8be755-08ff-452b-b217-c9151eb21193\"}",
+   "name": "path_without_trailing_slash",
+   "path": "/x-nmos/query/v1.3",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /x-nmos/query/v1.3//</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/x-nmos/query/v1.3//</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"value\"><a href=\"/x-nmos/query/v1.3/nodes/\"><span class=\"string\">&quot;nodes/&quot;</span></a></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":\"nodes/\"}",
+   "name": "path_with_double_slash",
+   "path": "/x-nmos/query/v1.3//",
+   "resolver": false
+  },
+  {
+   "html": "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>NMOS API - /</title>\n<style>\nbody { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; margin: 0; }\na { color: #569cd6; text-decoration: none; }\na:hover { text-decoration: underline; }\nh2 { color: #9cdcfe; font-size: 16px; margin-bottom: 10px; }\nol { list-style: none; padding-left: 20px; margin: 0; }\nli { line-height: 1.4; }\n.object, .array { }\n.name { color: #9cdcfe; }\n.value { }\n.string { color: #ce9178; }\n.number { color: #b5cea8; }\n.null { color: #569cd6; }\n.bool { color: #569cd6; }\n.boolean { color: #569cd6; }\npre { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; line-height: 1.5; }\n</style>\n</head>\n<body>\n<h2>/</h2>\n<span class=\"object\">{<ol><li><span class=\"name\">&quot;a&quot;</span>: <span class=\"value\"><a href=\"/x-nmos/\"><span class=\"string\">&quot;x-nmos/&quot;</span></a></span></li></ol>}</span>\n</body>\n</html>",
+   "json": "{\"a\":\"x-nmos/\"}",
+   "name": "path_root",
+   "path": "/",
+   "resolver": false
+  }
+ ]
+}

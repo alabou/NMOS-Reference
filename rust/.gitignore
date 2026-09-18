@@ -1,0 +1,5 @@
+# Build output. Disposable, like __pycache__/ and .mypy_cache/ elsewhere in
+# this repo. Generated *code* is the exception and IS committed -- see the Code
+# Generation section of CLAUDE.md -- so crates/nmos-types/src/generated/ is
+# deliberately not listed here.
+/target

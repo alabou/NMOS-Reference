@@ -1,0 +1,40 @@
+[package]
+name = "nmos-registry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "The locked registry: the store behind an RwLock, subscriptions and grains."
+
+[dependencies]
+nmos-registry-core = { path = "../nmos-registry-core" }
+nmos-json = { path = "../nmos-json" }
+nmos-types = { path = "../nmos-types" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# `parking_lot`, NOT `tokio::sync`, and the choice is the whole concurrency
+# model -- see `src/lock.rs`. Its guards are `!Send`, which is what makes
+# awaiting inside a critical section a compile error rather than a convention.
+parking_lot = "0.12"
+uuid = { workspace = true }
+# `sync` only, and only for `Notify`. The wake signal has to live with the
+# buffer it wakes: a WebSocket task in another crate cannot be told "there may
+# be work" by a structure that has no way to say so. The store itself stays on
+# `parking_lot` -- see `lock.rs` for why that choice is the concurrency model.
+tokio = { version = "1", default-features = false, features = ["sync"] }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+# The runtime, timers and macros the async tests need. Kept out of the library
+# dependency on purpose: the crate itself needs only `Notify`, and pulling the
+# whole runtime in would let a future edit await inside a critical section by
+# accident.
+tokio = { workspace = true }
+# The compile-fail test that makes the invariant executable. A comment saying
+# "do not await here" is a request; this is the thing that refuses.
+trybuild = "1"
+
+[lints]
+workspace = true

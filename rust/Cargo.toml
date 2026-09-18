@@ -1,0 +1,127 @@
+# Rust port of the NMOS registry.
+#
+# Lives inside the Python repository on purpose. The peer wire format and the
+# type model are specified by the Python side, and a mixed Python/Rust cluster
+# is the strongest conformance test available for "these two implementations
+# agree" -- which only works if both are in one checkout, at one commit. Split
+# across two repositories, a wire change becomes a coordinated pair of commits
+# and a skewed pair fails quietly rather than loudly, because the frame decoder
+# tolerates a higher minor version by design.
+#
+# Nothing here is required to run the Python registry. A checkout without a
+# Rust toolchain behaves exactly as it always has, the same way `nmos/etcd/`
+# needs protoc and a Go binary and `nmos/agentui/` needs a browser.
+
+[workspace]
+resolver = "3"
+members = [
+    "crates/nmos-json",
+    "crates/nmos-types",
+    "crates/nmos-registry-core",
+    "crates/nmos-registry",
+    "crates/nmos-registry-http",
+    "crates/nmos-registry-bin",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "Apache-2.0"
+authors = ["Alain Bouchard"]
+repository = "https://github.com/alabou/NMOS-Reference"
+
+[workspace.dependencies]
+# Pinned at the workspace so two crates can never disagree about the shape of a
+# type that crosses between them.
+serde = { version = "1", features = ["derive"] }
+# `raw_value` gives `Box<RawValue>`, which is how a registered body keeps its
+# original bytes -- the byte-fidelity guarantee depends on it.
+#
+# `preserve_order` is deliberately NOT enabled. It makes `Value`'s object an
+# IndexMap instead of a BTreeMap, which costs **25% on every parse** (3616 vs
+# 2891 ns measured) and 25% on every key lookup -- and parse dominates the
+# decode path. Nothing in the registry needs it: decode looks members up by
+# name and never cares about order, stored bodies are served back as their
+# original text, and grains splice `RawValue`. The one consumer that genuinely
+# needs document order is the HTML browsing view, which can parse into an
+# ordered map locally rather than taxing every parse in the workspace.
+serde_json = { version = "1", features = ["raw_value"] }
+indexmap = { version = "2", features = ["serde"] }
+regex = "1"
+# axum, not raw hyper. `nmos/registry/__init__.py` is *the* route table -- every
+# route registered there, nowhere else -- and axum's `Router` preserves that
+# structurally. The hyper performance argument does not survive the benchmark,
+# whose costs are the store, the lock and JSON.
+axum = { version = "0.8", features = ["ws", "macros"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+http = "1"
+bytes = "1"
+percent-encoding = "2"
+# The registry's log. `bench_registry/compare.py --verify-log-volume` fails a
+# run when two targets' log bytes differ by more than an order of magnitude, so
+# matching the Python's `log.info` sites is a benchmarking requirement and not
+# only a diagnostic nicety.
+# The command line. `derive` so the flags live beside the struct that holds
+# them, and the Python parser's camelCase names are given explicitly -- clap
+# would otherwise kebab-case them and the two CLIs would diverge on every flag.
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Dev-only: a real WebSocket client, so the listener tests speak real frames
+# over a real socket rather than calling the handler.
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+# Subscription ids. `nmos/registry/subscriptions.py:300` mints them with
+# `uuid.uuid4()`, so v4 is the requirement, not a preference: the id is echoed
+# into `ws_href` and validated against the UUID pattern like any other id.
+uuid = { version = "1", features = ["v4"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+# --- Concurrency: the invariant the port plan turns into a compile error ------
+#
+# The registry store sits behind one lock and nothing inside the critical
+# section may await. Three layers enforce that; these lints are the third.
+#
+# The first layer is structural: the lock is private and reachable only through
+# `with_read`/`with_write`, which take NON-ASYNC closures, so an await inside
+# one is not expressible. The second is the type system: `parking_lot` guards
+# are `!Send`, and on a multi-threaded runtime every handler future must be
+# `Send`, so holding a guard across an await fails to compile.
+#
+# `tokio::sync::RwLock` would defeat both -- its guards ARE `Send`, so awaiting
+# under the lock compiles cleanly and the atomicity argument dies silently.
+# That is the exact failure `nmos/registry/store.py:29-35` was written to
+# prevent, so reaching for it to "make the borrow checker happy" is always the
+# wrong fix. Restructure to prepare -> drop -> await -> apply instead.
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+# `match core.read().foo() { .. }` holds the guard across every arm, including
+# the ones that await. A real deadlock source and invisible on review.
+significant_drop_in_scrutinee = "deny"
+significant_drop_tightening = "warn"
+mut_mutex_lock = "deny"
+
+# --- Correctness --------------------------------------------------------------
+# `parking_lot` locks do not poison, so a panic mid-mutation would leave a
+# half-applied store where `std`'s poisoning would at least have reported it
+# afterwards. The trade is deliberate: rather than detect the corruption after
+# the fact, make the write path panic-free by construction. These are set to
+# "warn" here and raised to "deny" in the crates that hold the lock.
+unwrap_used = "warn"
+expect_used = "warn"
+indexing_slicing = "warn"
+panic = "warn"
+arithmetic_side_effects = "warn"
+
+[profile.release]
+# The port exists to recover CPU. Whole-program optimisation and a single
+# codegen unit are worth the longer build on a binary that is measured against
+# nmos-cpp.
+lto = "thin"
+codegen-units = 1

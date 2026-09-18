@@ -464,10 +464,22 @@ class RegistryStore:
             resource_id, pre_parent=pre_parent, new_parent=prepared.parent_id,
         )
         # A revived id may still be listed as a parent of resources that were
-        # erased alongside it. Those children are non-extant and on their own
-        # forget timer; the fresh record must not adopt them, or a later
-        # cascade delete would resurrect-then-re-erase records the client was
-        # already told were gone.
+        # erased alongside it, and the fresh record should not inherit them.
+        #
+        # Defensive rather than load-bearing, and the distinction is worth
+        # recording because the comment here used to claim otherwise. A later
+        # cascade would NOT resurrect those children: ``_erase_subtree``
+        # resolves each child through ``find_any``, which hides non-extant
+        # records, so a tombstoned child is skipped whether or not it is still
+        # listed. Nor does the entry leak -- ``_forget`` removes a resource
+        # from its parent's child set as it drops it.
+        #
+        # Measured: removing this line leaves all 527 registry tests passing on
+        # the Python side and every test passing on the Rust side, including a
+        # 400-step differential fuzz that checks the parent/child graph for
+        # dangling references after every operation. It is kept because
+        # inheriting a stale child list is meaningless in any case, not because
+        # anything downstream depends on it.
         if prepared.reviving:
             self._children.pop(resource_id, None)
 
@@ -642,9 +654,24 @@ class RegistryStore:
         the events in order never sees a parent disappear while its children
         are still present — the mirror image of the registration ordering
         rule at ``Behaviour - Registration.md:57-64``.
+
+        Siblings are erased in id order, for the reason ``subtree`` already
+        gives: ``_children`` holds a ``set``, and "its iteration order differs
+        between members". Without the sort this emitted sibling removal grains
+        in *hash* order, so two cluster members deleting the same Node
+        published them in different orders — and so did one member across a
+        restart, because ``PYTHONHASHSEED`` is randomised by default.
+
+        Measured before the fix, on one recorded sequence: seed 2 produced
+        ``[...64, ...69]`` and seeds 1, 3 and 4 produced ``[...69, ...64]``.
+        Only children-before-parent is required by the protocol, so this was
+        never a correctness failure for a single client — but it made the grain
+        stream unreproducible, which is exactly what ``subtree`` sorts to
+        avoid, and it is the kind of difference a mixed-implementation cluster
+        test would report as a phantom.
         """
         events: list[ResourceEvent] = []
-        for child_id in list(self._children.get(resource.id, ())):
+        for child_id in sorted(self._children.get(resource.id, ())):
             child = self.find_any(child_id)
             if child is not None:
                 events.extend(self._erase_subtree(child))

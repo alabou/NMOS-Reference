@@ -1,0 +1,14 @@
+//! Generated NMOS types. DO NOT EDIT.
+//!
+//! Rust has no implicit package namespace: a file that is not declared here is
+//! not part of the crate at all, and nothing reports it -- the type simply
+//! does not exist. So this index is written by the same run that writes the
+//! modules, from the list of types that actually rendered.
+//!
+//! Regenerate with: `python -m nmos.codegen.generate`
+
+pub mod fingerprint;
+
+{% for module in modules %}
+pub mod {{ module }};
+{% endfor %}

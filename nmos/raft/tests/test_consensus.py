@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from nmos.raft.errors import RaftUnavailable
-from nmos.raft.messages import AppendEntries, WireEntry
+from nmos.raft.messages import AppendEntries, AppendEntriesReply, WireEntry
 from nmos.raft.node import Role
 from nmos.raft.operations import (
     ProposalId,
@@ -661,6 +661,148 @@ class TestProposalIdentityAcrossRestarts:
             await cluster.close()
 
 
+class TestALeaderReinitialisesWhatItKnowsAboutItsFollowers:
+    """Figure 2: nextIndex and matchIndex are "reinitialized after election".
+
+    This implementation tracks more per follower than the paper does, and every
+    one of those fields describes *this leader's* relationship with the peer,
+    so all of them have the same lifetime. Carrying any of them across a term
+    is a leader acting on something a previous leadership observed.
+
+    One of them was a safety bug, and it is the reason this class exists.
+    ``promote_through`` -- the index a restarted member must reach before its
+    vote counts again -- is only ever assigned on a False-to-True transition of
+    ``catching_up``. A stale ``catching_up=True`` therefore means a new leader
+    never re-decides the bar, and promotes the member back into the electorate
+    at whatever index some earlier term happened to be at.
+
+    A voter that is missing committed entries can grant a vote the election
+    restriction exists to refuse, and the next leader is then elected without
+    an entry that was committed. That is Leader Completeness, and the chaos
+    soak reported exactly it.
+    """
+
+    async def test_a_new_term_re_decides_how_far_a_peer_must_catch_up(
+        self, tmp_path: Path,
+    ) -> None:
+        cluster = await _cluster(3, tmp_path)
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            node = leader.node
+            peer = next(p for p in node._peers if p != node.index)
+
+            for tag in range(5):
+                await asyncio.wait_for(
+                    node.propose(_register(_stale_id(tag), 0)), timeout=5.0,
+                )
+            await cluster.settle(20)
+            committed = node.commit_index
+            assert committed > 1, "nothing was committed, so this proves nothing"
+
+            # What a previous leadership would have left behind: this peer was
+            # catching up then, and the bar was set against that term's commit
+            # index rather than this one's.
+            state = node._peers[peer]
+            state.catching_up = True
+            state.promote_through = 1
+
+            node._become_leader()
+
+            assert state.catching_up is False, (
+                "a new leader inherited 'catching up' from an earlier term, so "
+                "the promotion bar below can never be re-decided"
+            )
+
+            # The peer reports it is catching up, as a restarted member does.
+            node.on_append_entries_reply(peer, AppendEntriesReply(
+                term=node.term, success=True, match_index=2,
+                conflict_index=0, conflict_term=0,
+                catching_up=True, request_id=0,
+            ))
+
+            assert state.promote_through == committed, (
+                f"this peer will be promoted back to voting at index "
+                f"{state.promote_through}, but this leader has committed "
+                f"through {committed} -- it would rejoin the electorate "
+                f"missing committed entries"
+            )
+        finally:
+            await cluster.close()
+
+    async def test_in_flight_bookkeeping_does_not_survive_the_term(
+        self, tmp_path: Path,
+    ) -> None:
+        """Not safety, but the same lifetime mistake.
+
+        A correlation id from an append this member sent while previously
+        leader makes ``_carrying_entries_would_repeat_them`` report an outstanding request that
+        no longer exists, which suppresses replication to that peer until the
+        ``election_min`` backstop expires. A snapshot offset carried over is
+        worse in kind: the leader resumes a stream the peer is not expecting.
+        """
+        cluster = await _cluster(3, tmp_path)
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            node = leader.node
+            peer = next(p for p in node._peers if p != node.index)
+
+            state = node._peers[peer]
+            state.pending_request = 4242
+            state.pending_through = 99
+            state.pending_since = 1.0
+            state.snapshot_offset = 512
+            state.snapshot_in_flight = True
+
+            node._become_leader()
+
+            # Asserted as "not the stale value" rather than "zero", because
+            # becoming leader replicates immediately and legitimately arms a
+            # *new* append before this line runs. Zero would be testing the
+            # instant between the reset and the first send, which is not an
+            # instant any caller observes.
+            assert state.pending_request != 4242, (
+                "a correlation id from an earlier leadership survived; "
+                "_carrying_entries_would_repeat_them would suppress replication to this peer "
+                "until the election_min backstop expires"
+            )
+            assert state.pending_through != 99
+            assert state.pending_since != 1.0
+            assert state.snapshot_offset == 0, (
+                "a snapshot offset from an earlier term survived, so this "
+                "leader would resume a stream the peer is not expecting"
+            )
+            assert state.snapshot_in_flight is False
+        finally:
+            await cluster.close()
+
+    async def test_what_is_about_the_peer_rather_than_the_term_is_kept(
+        self, tmp_path: Path,
+    ) -> None:
+        """The other half of the rule, so the reset does not become "clear all".
+
+        ``up`` and ``incarnation`` are observations about the peer itself, not
+        about this leadership. Clearing them would make a healthy cluster look
+        down for a tick and would lose the boot identity that tells a leader a
+        peer has restarted.
+        """
+        cluster = await _cluster(3, tmp_path)
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            node = leader.node
+            peer = next(p for p in node._peers if p != node.index)
+
+            state = node._peers[peer]
+            state.up = True
+            state.incarnation = 7
+
+            node._become_leader()
+
+            assert state.up is True, "liveness is not a property of the term"
+            assert state.incarnation == 7, "the peer did not reboot on our election"
+        finally:
+            await cluster.close()
+
+
 class TestTheFollowerCommitRule:
     """Figure 2, AppendEntries receiver rule 5, and the word that matters.
 
@@ -756,6 +898,78 @@ class TestTheFollowerCommitRule:
             ))
             assert follower.node.commit_index == committed, (
                 "a short heartbeat pulled the commit index backwards"
+            )
+        finally:
+            await cluster.close()
+
+    async def test_a_follower_vouches_only_for_what_the_leader_sent(
+        self, tmp_path: Path,
+    ) -> None:
+        """The same window, seen from the reply rather than from the commit.
+
+        Rule 5 stops this follower committing entries the message said nothing
+        about. It does not stop it *telling the leader it has them*, and that
+        is a second way into the same violation -- through the other member's
+        log rather than through this one's.
+
+        Figure 2 has the leader set ``matchIndex = prevLogIndex +
+        entries.length`` from what it sent. This implementation has the
+        follower compute that quantity and return it, which is equivalent so
+        long as the follower returns the same number. Returning its own
+        ``log.last_index`` instead overstates by exactly the stale suffix, and
+        ``on_append_entries_reply`` stores the answer verbatim, so
+        ``_advance_commit`` then counts a member toward the quorum at an index
+        where it holds something else entirely.
+
+        Found by ``test_churn_over_real_sockets`` as index 7 applied at term 2
+        by one member and at term 3 by another, about one run in ten.
+        """
+        cluster = await _cluster(3, tmp_path)
+        try:
+            follower = cluster.members[1]
+            term = follower.node.term or 1
+
+            entries = tuple(
+                WireEntry(
+                    term=term, index=index,
+                    payload=encode_operation(_register(_stale_id(index), 0)),
+                )
+                for index in (1, 2, 3)
+            )
+            first = follower.node.on_append_entries(0, AppendEntries(
+                term=term, leader=0, prev_log_index=0, prev_log_term=0,
+                leader_commit=0, request_id=0, entries=entries,
+            ))
+            assert first.success
+            assert first.match_index == 3, (
+                "an append that delivered three entries matches at three"
+            )
+            assert follower.node.log.last_index == 3
+
+            # A heartbeat vouching only for index 1. Entries 2 and 3 are this
+            # follower's own, uncommitted, and unknown to this leader.
+            second = follower.node.on_append_entries(0, AppendEntries(
+                term=term, leader=0, prev_log_index=1, prev_log_term=term,
+                leader_commit=1, request_id=0, entries=(),
+            ))
+            assert second.success
+            assert second.match_index == 1, (
+                f"claimed to match at {second.match_index} on a heartbeat that "
+                f"vouched only for index 1; the leader stores this verbatim and "
+                f"counts it toward the commit quorum"
+            )
+
+            # And it must still be exact when entries ride along with a
+            # prev_log_index behind the follower's tail -- the retry case,
+            # where the leader resends what it already sent.
+            third = follower.node.on_append_entries(0, AppendEntries(
+                term=term, leader=0, prev_log_index=1, prev_log_term=term,
+                leader_commit=1, request_id=0, entries=entries[1:2],
+            ))
+            assert third.success
+            assert third.match_index == 2, (
+                f"a resend of one entry from index 1 matches at 2, not "
+                f"{third.match_index}"
             )
         finally:
             await cluster.close()

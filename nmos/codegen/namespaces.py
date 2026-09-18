@@ -4,12 +4,37 @@
 """Namespace configuration for the Python NMOS implementation.
 
 Each constant selects between standard (urn:x-nmos:) and private (urn:x-matrox:)
-namespaces for a feature area. Changing a value here and regenerating types
-(python -m nmos.codegen.generate) switches the namespace for all affected
-JSON keys, enums, and capabilities.
+namespaces for a feature area.
 
 The alternate namespace is always accepted on decode (dual-namespace tolerance),
 but only the configured namespace is used for encode.
+
+Changing a value here is a THREE-PLACE edit, not a one-line one
+----------------------------------------------------------------
+This file is live only for the code that imports it at run time --
+``node/config``'s coercion table and ``controller/compat.py``. It is **not** an
+input to code generation: ``generate.py`` and ``generator.py`` never import it,
+so regenerating does not re-apply it. (An earlier version of this docstring said
+it did. It does not, and following that advice silently split the two halves
+apart -- see below.)
+
+The same decision is therefore recorded in three places, all of which must move
+together:
+
+1. **Here** -- read at run time.
+2. **``nmos/codegen/definitions/*.py``** -- frozen into ``json_key`` literals
+   such as ``"urn:x-matrox:info_block"``. Applied once by ``go_parser.py`` when
+   the descriptors were lifted out of Go, and never re-applied since. Editing
+   these is what actually changes the wire format.
+3. **``caps/MatroxCCF.py``** -- see the warning below.
+
+Why this is worth the ceremony: a mismatch does not raise. ``alternate_namespaces``
+accepts every variant on decode, so a split shows up only as one half encoding a
+form the other half does not consider configured -- which is the quiet failure
+mode namespace mixing has produced here before.
+
+``nmos/codegen/tests/test_namespace_consistency.py`` now checks all three agree,
+so a partial edit fails the suite rather than shipping.
 """
 
 # ---------------------------------------------------------------------------

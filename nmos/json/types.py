@@ -1121,7 +1121,7 @@ class NTime:
     TAI_UTC_OFFSET: int = 37
 
     # Validation regex: "seconds:nanoseconds"
-    _VALID_TAI = _re.compile(r"^([0-9]+):([0-9]+)$")
+    _VALID_TAI = _re.compile(r"^([0-9]+):([0-9]+)\Z")
 
     def __init__(self) -> None:
         self._defined: bool = False

@@ -161,7 +161,16 @@ testpaths = [
     # samples into rates is cheap to test and has been wrong before.
     "bench_registry/tests",
 ]
-addopts = "-m \"not e2e and not slow\""
+# ``--tb=short -rf`` is not a preference. The chaos soak
+# (``nmos/raft/tests/test_chaos_soak.py``) cannot be replayed from its seed --
+# the driver branches on ``await`` outcomes that depend on the real clock -- so
+# it attaches the cluster state and the full trace to ``InvariantViolation``
+# instead. Running the suite with only ``-q`` discards exactly that, leaving a
+# bare "FAILED" for the one rig that has found most of the real consensus bugs,
+# and a re-run is unlikely to reproduce the interleaving. The traceback has to
+# be captured the first time or it is gone. ``-rf`` repeats the failure list
+# after the run so it survives a long scroll.
+addopts = "-m \"not e2e and not slow\" --tb=short -rf"
 markers = [
     "integration: in-process integration tests that exercise multiple modules but remain in the default gate",
     "e2e: end-to-end tests that exercise full protocol/application flows and are excluded from the default gate",

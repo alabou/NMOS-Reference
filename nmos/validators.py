@@ -17,50 +17,73 @@ from nmos.errors import InvalidObject
 # ---------------------------------------------------------------------------
 # Compiled regex patterns (module-level constants)
 # ---------------------------------------------------------------------------
+#
+# Anchored with ``\Z``, never ``$``, and the difference is not cosmetic.
+#
+# Python's ``$`` matches at the end of the string **or immediately before a
+# single trailing newline**, so ``^...{12}$`` accepted
+# ``"3b8be755-...-c9151eb21193\n"`` as a valid resource id. That was never
+# intended: the AMWA schemas write these same patterns in ECMA-262, where ``$``
+# without the ``m`` flag means end-of-input, so ``re``'s reading was *more
+# permissive than the normative schema* rather than differently strict.
+#
+# It was also reachable rather than theoretical. ``handle_post_resource``
+# builds the 201 ``Location`` header out of the resource id, so a trailing
+# newline travelled from a registration body into a response header.
+#
+# ``\Z`` is Python's true end-of-string anchor and has no newline exception.
+# Every alternative inside a pattern needs its own -- a ``$`` left in one arm
+# of an alternation reopens the hole for the inputs that take that arm.
+#
+# Three patterns below (``_TRANSPORT``, ``_DEVICE_TYPE``, ``_SERVICE_TYPE``)
+# carry no end anchor at all. Those are deliberate prefix tests, not oversights:
+# a transport or device URN is namespaced by its prefix and may carry any
+# vendor-defined suffix. Do not "fix" them by adding an anchor.
 
 _RESOURCE_ID = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z"
 )
 
-_CLOCK_NAME = re.compile(r"^clk[0-9]+$")
+_CLOCK_NAME = re.compile(r"^clk[0-9]+\Z")
 
 _CLOCK_GMID = re.compile(
     r"^[0-9a-f]{2}-[0-9a-f]{2}-[0-9a-f]{2}-[0-9a-f]{2}"
-    r"-[0-9a-f]{2}-[0-9a-f]{2}-[0-9a-f]{2}-[0-9a-f]{2}$"
+    r"-[0-9a-f]{2}-[0-9a-f]{2}-[0-9a-f]{2}-[0-9a-f]{2}\Z"
 )
 
 _TRANSPORT = re.compile(r"^urn:x-nmos:transport:|^urn:x-[a-z]+:transport:")
 
 _FORMAT = re.compile(
-    r"^urn:x-nmos:format:video$|^urn:x-nmos:format:audio$"
-    r"|^urn:x-nmos:format:data$|^urn:x-nmos:format:mux$"
+    r"^urn:x-nmos:format:video\Z|^urn:x-nmos:format:audio\Z"
+    r"|^urn:x-nmos:format:data\Z|^urn:x-nmos:format:mux\Z"
 )
 
 _DEVICE_TYPE = re.compile(r"^urn:x-nmos:device:|^urn:x-[a-z]+:device:")
 
 _SERVICE_TYPE = re.compile(r"^urn:x-")
 
-_DID = re.compile(r"^0x[0-9a-fA-F]{2}$")
-_SDID = re.compile(r"^0x[0-9a-fA-F]{2}$")
+_DID = re.compile(r"^0x[0-9a-fA-F]{2}\Z")
+_SDID = re.compile(r"^0x[0-9a-fA-F]{2}\Z")
 
-_CHASSIS_ID = re.compile(r"^([0-9a-f]{2}-){5}([0-9a-f]{2})$|^.+$")
+_CHASSIS_ID = re.compile(r"^([0-9a-f]{2}-){5}([0-9a-f]{2})\Z|^.+\Z")
 
-_PORT_ID = re.compile(r"^([0-9a-f]{2}-){5}([0-9a-f]{2})$")
+_PORT_ID = re.compile(r"^([0-9a-f]{2}-){5}([0-9a-f]{2})\Z")
 
-_NODE_API_VERSION = re.compile(r"^v[0-9]+\.[0-9]+$")
+_NODE_API_VERSION = re.compile(r"^v[0-9]+\.[0-9]+\Z")
 
 # registrationapi-health-response.json constrains ``health`` to
 # {"type": "string", "pattern": "^[0-9]+$"} -- the heartbeat time in TAI
-# seconds carried as a decimal STRING, not as a JSON number.
-_HEALTH = re.compile(r"^[0-9]+$")
+# seconds carried as a decimal STRING, not as a JSON number. The schema's ``$``
+# is ECMA-262 end-of-input; ``\Z`` is its faithful Python equivalent.
+_HEALTH = re.compile(r"^[0-9]+\Z")
 
-_VIDEO_MEDIA_TYPE = re.compile(r"^video/[^\s/]+$")
-_AUDIO_MEDIA_TYPE = re.compile(r"^audio/[^\s/]+$")
-_DATA_MEDIA_TYPE = re.compile(r"^[^\s/]+/[^\s/]+$")
-_MUX_MEDIA_TYPE = re.compile(r"^[^\s/]+/[^\s/]+$")
+_VIDEO_MEDIA_TYPE = re.compile(r"^video/[^\s/]+\Z")
+_AUDIO_MEDIA_TYPE = re.compile(r"^audio/[^\s/]+\Z")
+_DATA_MEDIA_TYPE = re.compile(r"^[^\s/]+/[^\s/]+\Z")
+_MUX_MEDIA_TYPE = re.compile(r"^[^\s/]+/[^\s/]+\Z")
 
 _AUDIO_CHANNEL_SYMBOL = re.compile(
-    r"^NSC(0[0-9][0-9]|1[0-1][0-9]|12[0-8])$|^U(0[1-9]|[1-5][0-9]|6[0-4])$"
+    r"^NSC(0[0-9][0-9]|1[0-1][0-9]|12[0-8])\Z|^U(0[1-9]|[1-5][0-9]|6[0-4])\Z"
 )
 
 # ---------------------------------------------------------------------------

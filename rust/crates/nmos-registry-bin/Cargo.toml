@@ -1,0 +1,46 @@
+[package]
+name = "nmos-registry-bin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "The registry's command line, TLS configuration and process wiring."
+
+[lib]
+name = "nmos_registry_bin"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nmos-registry"
+path = "src/main.rs"
+
+[dependencies]
+nmos-registry = { path = "../nmos-registry" }
+nmos-registry-core = { path = "../nmos-registry-core" }
+nmos-registry-http = { path = "../nmos-registry-http" }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+# TLS is OpenSSL, not rustls -- deliberately, so that both this registry and
+# the Python one sit on one `libssl.so.3` and a FIPS-validated provider can
+# later serve both from a single certification boundary. See
+# plans/20260918T175734Z-rust-tls-openssl-decision.md.
+openssl = "0.10.81"
+tokio-openssl = "0.6.5"
+hyper = { version = "1.11.1", features = ["client", "http1", "server"] }
+hyper-util = { version = "0.1.20", features = ["server-auto", "tokio"] }
+tower.workspace = true
+axum.workspace = true
+http-body-util = "0.1.5"
+serde_json = { workspace = true }
+
+[dev-dependencies]
+serde = { workspace = true }
+tokio-tungstenite = "0.24"
+
+[lints]
+workspace = true

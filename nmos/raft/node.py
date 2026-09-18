@@ -63,7 +63,11 @@ from typing import Any, Sequence
 from nmos.raft.batcher import Pending, ProposalBatcher
 from nmos.raft.cluster import RaftLayout
 from nmos.raft.cursors import CursorAllocator
-from nmos.raft.errors import RaftLogCompacted, RaftUnavailable
+from nmos.raft.errors import (
+    RaftInvariantViolated,
+    RaftLogCompacted,
+    RaftUnavailable,
+)
 from nmos.raft.log import Entry, RaftLog
 from nmos.raft.machine import Outcome, StateMachine
 from nmos.raft.messages import (
@@ -911,10 +915,49 @@ class RaftNode:
         # election just concluded. Keeping it would let a cluster that has
         # since recovered still believe its voters were gone.
         self._observed_amnesiac.clear()
+        # Figure 2: nextIndex and matchIndex are "reinitialized after
+        # election". Everything below describes *this leader's* relationship
+        # with the peer, so it has the same lifetime and is reset with them.
+        #
+        # `catching_up` and `promote_through` in particular. They are a pair,
+        # and keeping them was a safety bug: `promote_through` is only ever
+        # assigned on a False->True transition of `catching_up`, so a stale
+        # True means a new leader never re-decides the bar. Measured -- a
+        # leader that had led before, committed through index 6, and saw the
+        # peer report catching-up again kept `promote_through` at 1 from the
+        # earlier term, and would have promoted that member back into the
+        # electorate holding none of indices 2..6.
+        #
+        # A member promoted while still missing committed entries is a voter
+        # that can grant a vote Raft's election restriction exists to refuse,
+        # which is how a later leader ends up without a committed entry --
+        # Leader Completeness, exactly as the chaos soak reported it.
+        #
+        # Nothing is lost by resetting: `catching_up` is authoritative from the
+        # peer's own reply and arrives on the very next one, and that reply now
+        # sets `promote_through` against *this* leader's commit index.
+        #
+        # `up` and `incarnation` are deliberately kept. They are observations
+        # about the peer itself rather than about this leadership, and
+        # forgetting them would make a healthy cluster look down for a tick.
         next_index = self._log.last_index + 1
         for peer in self._peers.values():
             peer.next_index = next_index
             peer.match_index = 0
+            peer.catching_up = False
+            peer.promote_through = 0
+            # In-flight bookkeeping for appends this member sent while it was
+            # previously leader. A stale correlation id makes `_carrying_entries_would_repeat_them`
+            # report an outstanding request that no longer exists, which
+            # suppresses replication until the `election_min` backstop expires.
+            peer.pending_through = 0
+            peer.pending_request = 0
+            peer.pending_since = 0.0
+            # Likewise a snapshot this member was sending in an earlier term:
+            # the new transfer starts from zero, and a carried-over offset
+            # would have the leader resume a stream the peer is not expecting.
+            peer.snapshot_offset = 0
+            peer.snapshot_in_flight = False
         log.info(
             "raft: %s is leader for term %d",
             self._layout.local.name, self._term,
@@ -1072,8 +1115,30 @@ class RaftNode:
             self._commit_index = advanced
             self._schedule_apply()
 
+        # ``vouched_for`` again, and for the same reason: Figure 2 has the
+        # leader set ``matchIndex = prevLogIndex + entries.length`` from what it
+        # SENT. Reporting ``self._log.last_index`` instead overstates whenever
+        # this follower is holding stale uncommitted entries beyond the window
+        # the message covered -- entries from a previous term that this leader
+        # has never seen and does not have.
+        #
+        # The leader stores the number verbatim (``on_append_entries_reply``)
+        # and ``_advance_commit`` counts it toward the quorum, so an overstated
+        # match lets a leader commit an index that a majority does not actually
+        # hold. That is Leader Completeness broken, and State Machine Safety
+        # falls with it: the chaos soak observed one member applying a term-2
+        # entry at index 7 while another applied a term-3 entry there.
+        #
+        # Reported by ``test_churn_over_real_sockets`` at roughly one run in
+        # ten, which is why it survived -- a heartbeat has to arrive while the
+        # follower's log runs ahead of the leader's knowledge of it, and that is
+        # a narrow window outside a partition.
+        #
+        # This is the same quantity the commit rule above uses, and that is the
+        # point: a follower vouches for exactly the range it would allow itself
+        # to commit, and never for more.
         return AppendEntriesReply(
-            term=self._term, success=True, match_index=self._log.last_index,
+            term=self._term, success=True, match_index=vouched_for,
             conflict_index=0, conflict_term=0,
             catching_up=not self._voting, request_id=message.request_id,
         )
@@ -1217,6 +1282,41 @@ class RaftNode:
         """
         self._apply_wake.set()
 
+    def _check_applied_within_committed(self) -> None:
+        """The two invariants ``go.etcd.io/raft`` asserts about one member.
+
+        Transcribed from the source rather than from memory: ``log.go:48``
+        states ``applied <= committed`` outright, ``log.go:332-334`` panics in
+        ``appliedTo`` when ``committed < i``, and ``log.go:322-330`` panics in
+        ``commitTo`` when ``lastIndex() < tocommit`` -- "Was the raft log
+        corrupted, truncated, or lost?".
+
+        Checked once per wake-up rather than per entry: two comparisons against
+        the cost of a batch of applies is not worth measuring, and every path
+        that could break either one runs between wake-ups.
+
+        This is a **bug detector**, and deliberately not a safeguard against
+        anything else. Nothing a peer sends can reach these numbers except
+        through logic in this file, and nothing applied survives a restart, so
+        a violation means a defect here. The one that prompted it applied an
+        uncommitted tail because the apply batch was bounded by size and not by
+        the commit index, and it went unnoticed for as long as it did precisely
+        because nothing ever looked.
+        """
+        applied = self._machine.last_applied
+        if applied > self._commit_index:
+            raise RaftInvariantViolated(
+                f"applied through {applied} but committed only through "
+                f"{self._commit_index}",
+            )
+        reachable = max(self._log.last_index, self._log.snapshot_index)
+        if self._commit_index > reachable:
+            raise RaftInvariantViolated(
+                f"committed through {self._commit_index} but holds only "
+                f"[{self._log.first_index}..{self._log.last_index}] with "
+                f"snapshot {self._log.snapshot_index}",
+            )
+
     async def _apply_forever(self) -> None:
         while not self._closing:
             await self._apply_wake.wait()
@@ -1224,6 +1324,13 @@ class RaftNode:
             try:
                 await self._apply_committed()
             except asyncio.CancelledError:
+                raise
+            except RaftInvariantViolated:
+                # Past the catch-all below, deliberately. That handler exists
+                # so one bad apply cannot kill a member, and it is right for
+                # everything transient -- but an invariant that is broken stays
+                # broken, and logging it once per wake-up would be a silent
+                # failure wearing the costume of a handled one.
                 raise
             except Exception:
                 log.exception("raft: applying committed entries failed")
@@ -1235,10 +1342,36 @@ class RaftNode:
         must not be interrupted mid-mutation, and the loop must not hold the
         event loop for a whole catch-up.
         """
+        self._check_applied_within_committed()
         while self._machine.last_applied < self._commit_index:
             start = self._machine.last_applied + 1
+            # Bounded by the commit index, not merely by the batch size.
+            #
+            # `slice` clamps to `last_index`, which is the *log*, and a
+            # follower's log routinely runs ahead of what is committed -- that
+            # is what replication looks like in flight. Asking for
+            # `max_apply_batch` entries from `start` therefore applied
+            # uncommitted ones whenever the tail was longer than the gap, which
+            # breaks Raft in two ways at once:
+            #
+            #   * the state machine reflects operations that may never commit;
+            #   * `last_applied` advances past them, so when a new leader
+            #     overwrites those indices the applier -- which resumes at
+            #     `last_applied + 1` -- never applies the entries that replaced
+            #     them. The member is then permanently wrong at those indices
+            #     and no later message repairs it.
+            #
+            # Observed as "index 72 applied as term 14 by one member and term
+            # 12 by member 1" some four hundred steps after the fact, which is
+            # why `go.etcd.io/raft` asserts the invariant at the moment it
+            # would break instead: `log.go:332-334`, `appliedTo` panics when
+            # `committed < i`, and `log.go:48` states it outright as
+            # `applied <= committed`.
+            wanted = min(
+                self._timing.max_apply_batch, self._commit_index - start + 1,
+            )
             try:
-                entries = self._log.slice(start, self._timing.max_apply_batch)
+                entries = self._log.slice(start, wanted)
             except RaftLogCompacted:
                 return
             if not entries:
@@ -1363,13 +1496,20 @@ class RaftNode:
         every member holds all of it in memory. Compaction is therefore not an
         optimisation here; it is what makes an in-memory log viable at all.
 
-        The safety condition is what the ``min(matchIndex)`` is for: discarding
-        an entry a follower has not yet received strands that follower on
-        replication and forces a whole snapshot transfer instead. So in the
-        normal case the leader compacts only as far as its slowest *reachable*
-        follower has confirmed.
+        Two decisions, not one, and they take different answers:
 
-        ``max_log_entries`` overrides that, deliberately. One unreachable
+        * **what the snapshot describes** -- always ``last_applied``, because
+          the payload is serialised from the live store and that is the state
+          it holds. This is not a choice;
+        * **how much of the log may be discarded** -- bounded by the slowest
+          *reachable* follower's ``match_index``, because discarding an entry a
+          follower has not yet received strands it on replication and forces a
+          whole snapshot transfer instead.
+
+        They were one quantity until a chaos run showed what that costs; the
+        body says what happened.
+
+        ``max_log_entries`` overrides the second, deliberately. One unreachable
         member must not be able to make the log grow without bound -- a partial
         outage turning into an out-of-memory failure is a worse outcome than
         that member needing a snapshot when it returns.
@@ -1383,23 +1523,50 @@ class RaftNode:
         if self._snapshots.capture is not None:
             return
 
-        through = applied
+        # These are two different quantities and conflating them was a bug.
+        #
+        # A snapshot's payload is serialised from the *live store*, so it
+        # describes the state at ``last_applied`` -- whatever index is written
+        # on it. Labelling it with the slowest follower's ``match_index``
+        # therefore produces a snapshot that claims an index its contents have
+        # already moved past, and the copy-on-write pinning cannot rescue it:
+        # that mechanism photographs a record *before* apply mutates it, so it
+        # covers changes made while the capture is open and can do nothing
+        # about ones made before it opened.
+        #
+        # Measured, on the run that found this. The leader captured with
+        # ``index=11`` while its machine was at ``applied=12``, pinning zero
+        # pre-images because nothing changed during the walk -- and the
+        # resulting payload was byte-identical to a peer's snapshot labelled
+        # 12. A follower installing it set ``last_applied = 11`` over a store
+        # that already held entry 12's registration, replayed 12, computed
+        # ``creates=False`` where the proposer had said ``True``, and raised
+        # ``DivergenceDetected``. That member then stops applying for good:
+        # committed at 14, applied stuck at 11, a private view of the registry
+        # that no amount of further replication repairs.
+        #
+        # So the snapshot is labelled ``applied``, always, because that is what
+        # it contains. The ``min(matchIndex)`` bound keeps its real job --
+        # deciding how much of the log may be *discarded* -- where discarding
+        # an entry a follower has not yet received is what strands it.
+        if applied <= self._log.snapshot_index:
+            return
+
+        discard_to = applied
         if self._role is Role.LEADER and held < self._timing.max_log_entries:
             confirmed = [
                 state.match_index for state in self._peers.values() if state.up
             ]
             if confirmed:
-                through = min(applied, min(confirmed))
-        if through <= self._log.snapshot_index:
-            return
+                discard_to = min(applied, min(confirmed))
 
         try:
-            term = self._log.term_at(through)
+            term = self._log.term_at(applied)
         except RaftLogCompacted:
             return
 
         capture = self._snapshots.begin(
-            index=through, term=term, ownership=self._machine.ownership,
+            index=applied, term=term, ownership=self._machine.ownership,
         )
         try:
             payload = await self._snapshots.finish(capture)
@@ -1410,12 +1577,29 @@ class RaftNode:
 
         self._snapshot = payload
         self._snapshot_meta = SnapshotMeta(
-            last_index=through, last_term=term, resources=0,
+            last_index=applied, last_term=term, resources=0,
         )
-        freed = self._log.discard_through(through, term)
+
+        # Discarding is now the separate, bounded step. The snapshot covers at
+        # least as much as this drops, so a follower too far behind to be
+        # served from the log is still served from the snapshot, and one that
+        # is merely a little behind keeps being served entries.
+        if discard_to <= self._log.snapshot_index:
+            log.debug(
+                "raft: %s snapshotted through index %d but discarded nothing; "
+                "a follower is still behind at %d",
+                self._layout.local.name, applied, discard_to,
+            )
+            return
+        try:
+            discard_term = self._log.term_at(discard_to)
+        except RaftLogCompacted:
+            return
+        freed = self._log.discard_through(discard_to, discard_term)
         log.info(
-            "raft: %s compacted through index %d, freeing %d entries",
-            self._layout.local.name, through, freed,
+            "raft: %s snapshotted through index %d and compacted through %d, "
+            "freeing %d entries",
+            self._layout.local.name, applied, discard_to, freed,
         )
 
     # -- snapshot transfer -----------------------------------------------

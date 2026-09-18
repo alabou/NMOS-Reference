@@ -1,0 +1,1188 @@
+[
+  {
+    "input": "3b8be755-08ff-452b-b217-c9151eb21193",
+    "label": "canonical",
+    "ok": true,
+    "validator": "CheckResourceIdString"
+  },
+  {
+    "input": "3B8BE755-08FF-452B-B217-C9151EB21193",
+    "kind": "InvalidObject",
+    "label": "uppercase",
+    "message": "invalid resource id",
+    "ok": false,
+    "validator": "CheckResourceIdString"
+  },
+  {
+    "input": "3b8be755-08ff-452b-b217-c9151eb21193\n",
+    "kind": "InvalidObject",
+    "label": "trailing_newline",
+    "message": "invalid resource id",
+    "ok": false,
+    "validator": "CheckResourceIdString"
+  },
+  {
+    "input": "nope",
+    "kind": "InvalidObject",
+    "label": "garbage",
+    "message": "invalid resource id",
+    "ok": false,
+    "validator": "CheckResourceIdString"
+  },
+  {
+    "input": "",
+    "kind": "InvalidObject",
+    "label": "empty",
+    "message": "invalid resource id",
+    "ok": false,
+    "validator": "CheckResourceIdString"
+  },
+  {
+    "input": "1600000000",
+    "label": "digits",
+    "ok": true,
+    "validator": "CheckHealthString"
+  },
+  {
+    "input": "1600000000\n",
+    "kind": "InvalidObject",
+    "label": "trailing_newline",
+    "message": "invalid health value",
+    "ok": false,
+    "validator": "CheckHealthString"
+  },
+  {
+    "input": "12a",
+    "kind": "InvalidObject",
+    "label": "not_digits",
+    "message": "invalid health value",
+    "ok": false,
+    "validator": "CheckHealthString"
+  },
+  {
+    "input": "clk0",
+    "label": "valid",
+    "ok": true,
+    "validator": "CheckClockNameString"
+  },
+  {
+    "input": "clock0",
+    "kind": "InvalidObject",
+    "label": "invalid",
+    "message": "invalid clock name",
+    "ok": false,
+    "validator": "CheckClockNameString"
+  },
+  {
+    "input": "08-00-11-ff-fe-22-04-00",
+    "label": "valid",
+    "ok": true,
+    "validator": "CheckClockGmidString"
+  },
+  {
+    "input": "08-00-11-ff-fe-22-04",
+    "kind": "InvalidObject",
+    "label": "short",
+    "message": "invalid clock gmid",
+    "ok": false,
+    "validator": "CheckClockGmidString"
+  },
+  {
+    "input": "0x60",
+    "label": "valid",
+    "ok": true,
+    "validator": "CheckDid"
+  },
+  {
+    "input": "60",
+    "kind": "InvalidObject",
+    "label": "no_prefix",
+    "message": "invalid DID value",
+    "ok": false,
+    "validator": "CheckDid"
+  },
+  {
+    "input": "0xAB",
+    "label": "valid",
+    "ok": true,
+    "validator": "CheckSdid"
+  },
+  {
+    "input": "08-00-11-ff-fe-22",
+    "label": "valid",
+    "ok": true,
+    "validator": "CheckPortIdString"
+  },
+  {
+    "input": "zz",
+    "kind": "InvalidObject",
+    "label": "invalid_carries_value",
+    "message": "invalid port id zz",
+    "ok": false,
+    "validator": "CheckPortIdString"
+  },
+  {
+    "input": "http",
+    "label": "http",
+    "ok": true,
+    "validator": "CheckEndpointProtocol"
+  },
+  {
+    "input": "https",
+    "label": "https",
+    "ok": true,
+    "validator": "CheckEndpointProtocol"
+  },
+  {
+    "input": "ftp",
+    "kind": "InvalidObject",
+    "label": "ftp",
+    "message": "invalid endpoint protocol",
+    "ok": false,
+    "validator": "CheckEndpointProtocol"
+  },
+  {
+    "input": 0,
+    "label": "low",
+    "ok": true,
+    "validator": "CheckEndpointPort"
+  },
+  {
+    "input": 65535,
+    "label": "high",
+    "ok": true,
+    "validator": "CheckEndpointPort"
+  },
+  {
+    "input": 65536,
+    "kind": "InvalidObject",
+    "label": "too_high",
+    "message": "invalid endpoint port number",
+    "ok": false,
+    "validator": "CheckEndpointPort"
+  },
+  {
+    "input": -1,
+    "kind": "InvalidObject",
+    "label": "negative",
+    "message": "invalid endpoint port number",
+    "ok": false,
+    "validator": "CheckEndpointPort"
+  },
+  {
+    "input": "192.168.1.1",
+    "label": "ipv4",
+    "ok": true,
+    "validator": "CheckEndpointHostString"
+  },
+  {
+    "input": "::1",
+    "label": "ipv6",
+    "ok": true,
+    "validator": "CheckEndpointHostString"
+  },
+  {
+    "input": "example.com",
+    "label": "hostname",
+    "ok": true,
+    "validator": "CheckEndpointHostString"
+  },
+  {
+    "input": "",
+    "kind": "InvalidObject",
+    "label": "empty",
+    "message": "invalid endpoint host",
+    "ok": false,
+    "validator": "CheckEndpointHostString"
+  },
+  {
+    "input": "example.com/x",
+    "label": "with_slash",
+    "ok": true,
+    "validator": "CheckEndpointHostString"
+  },
+  {
+    "input": "exa mple.com",
+    "label": "with_space",
+    "ok": true,
+    "validator": "CheckEndpointHostString"
+  },
+  {
+    "input": "a@b",
+    "label": "userinfo",
+    "ok": true,
+    "validator": "CheckEndpointHostString"
+  },
+  {
+    "input": "@",
+    "kind": "InvalidObject",
+    "label": "bare_at",
+    "message": "invalid endpoint host",
+    "ok": false,
+    "validator": "CheckEndpointHostString"
+  },
+  {
+    "input": "host:99",
+    "label": "with_port",
+    "ok": true,
+    "validator": "CheckEndpointHostString"
+  },
+  {
+    "input": "[::1]",
+    "label": "ipv6_bracketed",
+    "ok": true,
+    "validator": "CheckEndpointHostString"
+  },
+  {
+    "input": "/x",
+    "kind": "InvalidObject",
+    "label": "leading_slash",
+    "message": "invalid endpoint host",
+    "ok": false,
+    "validator": "CheckEndpointHostString"
+  },
+  {
+    "input": ":8080",
+    "kind": "InvalidObject",
+    "label": "leading_colon",
+    "message": "invalid endpoint host",
+    "ok": false,
+    "validator": "CheckEndpointHostString"
+  },
+  {
+    "input": "a?b",
+    "label": "query",
+    "ok": true,
+    "validator": "CheckEndpointHostString"
+  },
+  {
+    "input": "a#b",
+    "label": "fragment",
+    "ok": true,
+    "validator": "CheckEndpointHostString"
+  },
+  {
+    "input": "a\nb",
+    "label": "embedded_newline",
+    "ok": true,
+    "validator": "CheckEndpointHostString"
+  },
+  {
+    "input": "..",
+    "label": "dots",
+    "ok": true,
+    "validator": "CheckEndpointHostString"
+  },
+  {
+    "input": "-",
+    "label": "dash",
+    "ok": true,
+    "validator": "CheckEndpointHostString"
+  },
+  {
+    "input": "urn:x-nmos:transport:rtp",
+    "label": "nmos_rtp",
+    "ok": true,
+    "validator": "CheckTransport"
+  },
+  {
+    "input": "urn:x-matrox:transport:srt",
+    "label": "vendor",
+    "ok": true,
+    "validator": "CheckTransport"
+  },
+  {
+    "input": "rtp",
+    "kind": "InvalidObject",
+    "label": "not_a_urn",
+    "message": "invalid transport",
+    "ok": false,
+    "validator": "CheckTransport"
+  },
+  {
+    "input": "urn:x-nmos:format:video",
+    "label": "video",
+    "ok": true,
+    "validator": "CheckFormat"
+  },
+  {
+    "input": "urn:x-nmos:format:mux",
+    "label": "mux",
+    "ok": true,
+    "validator": "CheckFormat"
+  },
+  {
+    "input": "urn:x-nmos:format:video\n",
+    "kind": "InvalidObject",
+    "label": "trailing_newline",
+    "message": "invalid format",
+    "ok": false,
+    "validator": "CheckFormat"
+  },
+  {
+    "input": "urn:x-nmos:format:smell",
+    "kind": "InvalidObject",
+    "label": "unknown",
+    "message": "invalid format",
+    "ok": false,
+    "validator": "CheckFormat"
+  },
+  {
+    "input": "urn:x-nmos:device:generic",
+    "label": "generic",
+    "ok": true,
+    "validator": "CheckDeviceType"
+  },
+  {
+    "input": "generic",
+    "kind": "InvalidObject",
+    "label": "bad",
+    "message": "invalid device type",
+    "ok": false,
+    "validator": "CheckDeviceType"
+  },
+  {
+    "input": "urn:x-manufacturer:service:thing",
+    "label": "valid",
+    "ok": true,
+    "validator": "CheckServiceType"
+  },
+  {
+    "input": "nope",
+    "kind": "InvalidObject",
+    "label": "invalid_carries_value",
+    "message": "invalid service type nope",
+    "ok": false,
+    "validator": "CheckServiceType"
+  },
+  {
+    "input": "BT709",
+    "label": "BT709",
+    "ok": true,
+    "validator": "CheckColorspace"
+  },
+  {
+    "input": "BT9999",
+    "kind": "InvalidObject",
+    "label": "unknown",
+    "message": "invalid colorspace",
+    "ok": false,
+    "validator": "CheckColorspace"
+  },
+  {
+    "input": "progressive",
+    "label": "progressive",
+    "ok": true,
+    "validator": "CheckInterlaceMode"
+  },
+  {
+    "input": "weave",
+    "kind": "InvalidObject",
+    "label": "unknown",
+    "message": "invalid interlace_mode",
+    "ok": false,
+    "validator": "CheckInterlaceMode"
+  },
+  {
+    "input": "SDR",
+    "label": "SDR",
+    "ok": true,
+    "validator": "CheckTransferCharacteristic"
+  },
+  {
+    "input": "LOG",
+    "kind": "InvalidObject",
+    "label": "unknown",
+    "message": "invalid transfer_characteristic",
+    "ok": false,
+    "validator": "CheckTransferCharacteristic"
+  },
+  {
+    "input": "signal_present",
+    "label": "valid",
+    "ok": true,
+    "validator": "CheckInputStatusState"
+  },
+  {
+    "input": "awaiting_signal",
+    "kind": "InvalidObject",
+    "label": "invalid",
+    "message": "invalid output status state",
+    "ok": false,
+    "validator": "CheckOutputStatusState"
+  },
+  {
+    "input": "no_essence",
+    "label": "valid",
+    "ok": true,
+    "validator": "CheckSenderStatusState"
+  },
+  {
+    "input": "compliant_stream",
+    "label": "valid",
+    "ok": true,
+    "validator": "CheckReceiverStatusState"
+  },
+  {
+    "input": 1,
+    "label": "one",
+    "ok": true,
+    "validator": "CheckPositiveInteger"
+  },
+  {
+    "input": 0,
+    "kind": "InvalidObject",
+    "label": "zero",
+    "message": "invalid positive integer",
+    "ok": false,
+    "validator": "CheckPositiveInteger"
+  },
+  {
+    "input": -5,
+    "kind": "InvalidObject",
+    "label": "negative",
+    "message": "invalid positive integer",
+    "ok": false,
+    "validator": "CheckPositiveInteger"
+  },
+  {
+    "input": 1,
+    "label": "one",
+    "ok": true,
+    "validator": "CheckPositiveUint16"
+  },
+  {
+    "input": 0,
+    "kind": "InvalidObject",
+    "label": "zero",
+    "message": "invalid positive 16 bit unsigned integer",
+    "ok": false,
+    "validator": "CheckPositiveUint16"
+  },
+  {
+    "input": 65535,
+    "label": "max",
+    "ok": true,
+    "validator": "CheckPositiveUint16"
+  },
+  {
+    "input": 65536,
+    "kind": "InvalidObject",
+    "label": "over",
+    "message": "invalid positive 16 bit unsigned integer",
+    "ok": false,
+    "validator": "CheckPositiveUint16"
+  },
+  {
+    "input": 0,
+    "label": "zero",
+    "ok": true,
+    "validator": "CheckUint16"
+  },
+  {
+    "input": 65536,
+    "kind": "InvalidObject",
+    "label": "over",
+    "message": "invalid 16 bit unsigned integer",
+    "ok": false,
+    "validator": "CheckUint16"
+  },
+  {
+    "input": 400,
+    "label": "400",
+    "ok": true,
+    "validator": "CheckErrorCode"
+  },
+  {
+    "input": 599,
+    "label": "599",
+    "ok": true,
+    "validator": "CheckErrorCode"
+  },
+  {
+    "input": 399,
+    "kind": "InvalidObject",
+    "label": "399",
+    "message": "invalid error code",
+    "ok": false,
+    "validator": "CheckErrorCode"
+  },
+  {
+    "input": 600,
+    "kind": "InvalidObject",
+    "label": "600",
+    "message": "invalid error code",
+    "ok": false,
+    "validator": "CheckErrorCode"
+  },
+  {
+    "input": 0,
+    "label": "zero",
+    "ok": true,
+    "validator": "CheckConstraintSetPreference"
+  },
+  {
+    "input": -100,
+    "label": "min",
+    "ok": true,
+    "validator": "CheckConstraintSetPreference"
+  },
+  {
+    "input": 100,
+    "label": "max",
+    "ok": true,
+    "validator": "CheckConstraintSetPreference"
+  },
+  {
+    "input": 101,
+    "kind": "InvalidObject",
+    "label": "over",
+    "message": "invalid constraint set preference",
+    "ok": false,
+    "validator": "CheckConstraintSetPreference"
+  },
+  {
+    "input": null,
+    "label": "null",
+    "ok": true,
+    "validator": "CheckNullInteger"
+  },
+  {
+    "input": 5,
+    "label": "int",
+    "ok": true,
+    "validator": "CheckNullInteger"
+  },
+  {
+    "input": true,
+    "label": "bool_is_an_int_in_python",
+    "ok": true,
+    "validator": "CheckNullInteger"
+  },
+  {
+    "input": "8080",
+    "kind": "InvalidObject",
+    "label": "string",
+    "message": "invalid null integer",
+    "ok": false,
+    "validator": "CheckNullInteger"
+  },
+  {
+    "input": 1.5,
+    "kind": "InvalidObject",
+    "label": "float",
+    "message": "invalid null integer",
+    "ok": false,
+    "validator": "CheckNullInteger"
+  },
+  {
+    "input": {
+      "a": 1
+    },
+    "kind": "InvalidObject",
+    "label": "object",
+    "message": "invalid null integer",
+    "ok": false,
+    "validator": "CheckNullInteger"
+  },
+  {
+    "input": [
+      1
+    ],
+    "kind": "InvalidObject",
+    "label": "array",
+    "message": "invalid null integer",
+    "ok": false,
+    "validator": "CheckNullInteger"
+  },
+  {
+    "input": null,
+    "label": "null",
+    "ok": true,
+    "validator": "CheckNullPositiveInteger"
+  },
+  {
+    "input": 0,
+    "label": "zero",
+    "ok": true,
+    "validator": "CheckNullPositiveInteger"
+  },
+  {
+    "input": -1,
+    "kind": "InvalidObject",
+    "label": "negative",
+    "message": "invalid null integer",
+    "ok": false,
+    "validator": "CheckNullPositiveInteger"
+  },
+  {
+    "input": "8080",
+    "kind": "InvalidObject",
+    "label": "string",
+    "message": "invalid null integer",
+    "ok": false,
+    "validator": "CheckNullPositiveInteger"
+  },
+  {
+    "input": 1.5,
+    "kind": "InvalidObject",
+    "label": "float",
+    "message": "invalid null integer",
+    "ok": false,
+    "validator": "CheckNullPositiveInteger"
+  },
+  {
+    "input": {
+      "a": 1
+    },
+    "kind": "InvalidObject",
+    "label": "object",
+    "message": "invalid null integer",
+    "ok": false,
+    "validator": "CheckNullPositiveInteger"
+  },
+  {
+    "input": [
+      1
+    ],
+    "kind": "InvalidObject",
+    "label": "array",
+    "message": "invalid null integer",
+    "ok": false,
+    "validator": "CheckNullPositiveInteger"
+  },
+  {
+    "input": true,
+    "label": "bool_is_an_int_in_python",
+    "ok": true,
+    "validator": "CheckNullPositiveInteger"
+  },
+  {
+    "input": "auto",
+    "label": "auto",
+    "ok": true,
+    "validator": "CheckAutoBool"
+  },
+  {
+    "input": true,
+    "label": "bool",
+    "ok": true,
+    "validator": "CheckAutoBool"
+  },
+  {
+    "input": "yes",
+    "kind": "InvalidObject",
+    "label": "other_string",
+    "message": "invalid string value",
+    "ok": false,
+    "validator": "CheckAutoBool"
+  },
+  {
+    "input": "auto",
+    "label": "auto",
+    "ok": true,
+    "validator": "CheckAutoPort"
+  },
+  {
+    "input": 8080,
+    "label": "port",
+    "ok": true,
+    "validator": "CheckAutoPort"
+  },
+  {
+    "input": 70000,
+    "kind": "InvalidObject",
+    "label": "over",
+    "message": "invalid port value",
+    "ok": false,
+    "validator": "CheckAutoPort"
+  },
+  {
+    "input": "nope",
+    "kind": "InvalidObject",
+    "label": "other_string",
+    "message": "invalid string value",
+    "ok": false,
+    "validator": "CheckAutoPort"
+  },
+  {
+    "input": null,
+    "label": "null",
+    "ok": true,
+    "validator": "CheckNullPort"
+  },
+  {
+    "input": 8080,
+    "label": "port",
+    "ok": true,
+    "validator": "CheckNullPort"
+  },
+  {
+    "input": 70000,
+    "kind": "InvalidObject",
+    "label": "over",
+    "message": "invalid port value",
+    "ok": false,
+    "validator": "CheckNullPort"
+  },
+  {
+    "input": null,
+    "label": "null",
+    "ok": true,
+    "validator": "CheckNullAutoPort"
+  },
+  {
+    "input": "auto",
+    "label": "auto",
+    "ok": true,
+    "validator": "CheckNullAutoPort"
+  },
+  {
+    "input": 8080,
+    "label": "port",
+    "ok": true,
+    "validator": "CheckNullAutoPort"
+  },
+  {
+    "input": null,
+    "label": "null",
+    "ok": true,
+    "validator": "CheckActivationMode"
+  },
+  {
+    "input": "activate_immediate",
+    "label": "immediate",
+    "ok": true,
+    "validator": "CheckActivationMode"
+  },
+  {
+    "input": "activate_whenever",
+    "kind": "InvalidObject",
+    "label": "unknown",
+    "message": "invalid activation mode",
+    "ok": false,
+    "validator": "CheckActivationMode"
+  },
+  {
+    "input": [
+      "v1.3"
+    ],
+    "label": "one",
+    "ok": true,
+    "validator": "CheckNodeApiVersions"
+  },
+  {
+    "input": [],
+    "kind": "InvalidObject",
+    "label": "empty",
+    "message": "invalid empty node api versions",
+    "ok": false,
+    "validator": "CheckNodeApiVersions"
+  },
+  {
+    "input": [
+      "1.3"
+    ],
+    "kind": "InvalidObject",
+    "label": "bad_version",
+    "message": "invalid node api version",
+    "ok": false,
+    "validator": "CheckNodeApiVersions"
+  },
+  {
+    "input": [
+      "video/raw"
+    ],
+    "label": "valid",
+    "ok": true,
+    "validator": "CheckVideoMediaTypes"
+  },
+  {
+    "input": [
+      "audio/L24"
+    ],
+    "kind": "InvalidObject",
+    "label": "invalid_carries_value",
+    "message": "invalid video media type audio/L24",
+    "ok": false,
+    "validator": "CheckVideoMediaTypes"
+  },
+  {
+    "input": [
+      "audio/L24"
+    ],
+    "label": "valid",
+    "ok": true,
+    "validator": "CheckAudioMediaTypes"
+  },
+  {
+    "input": [
+      "video/raw"
+    ],
+    "kind": "InvalidObject",
+    "label": "invalid",
+    "message": "invalid audio media type",
+    "ok": false,
+    "validator": "CheckAudioMediaTypes"
+  },
+  {
+    "input": [
+      "application/json"
+    ],
+    "label": "valid",
+    "ok": true,
+    "validator": "CheckDataMediaTypes"
+  },
+  {
+    "input": [
+      "video/MP2T"
+    ],
+    "label": "valid",
+    "ok": true,
+    "validator": "CheckMuxMediaTypes"
+  },
+  {
+    "input": [
+      "boolean"
+    ],
+    "label": "one",
+    "ok": true,
+    "validator": "CheckDataEventTypes"
+  },
+  {
+    "input": [],
+    "kind": "InvalidObject",
+    "label": "empty",
+    "message": "invalid empty data event types array",
+    "ok": false,
+    "validator": "CheckDataEventTypes"
+  },
+  {
+    "input": {
+      "a": 1
+    },
+    "label": "one",
+    "ok": true,
+    "validator": "CheckConstraintsLength"
+  },
+  {
+    "input": {},
+    "kind": "InvalidObject",
+    "label": "empty",
+    "message": "invalid empty constraint set",
+    "ok": false,
+    "validator": "CheckConstraintsLength"
+  },
+  {
+    "input": [
+      "a"
+    ],
+    "label": "one",
+    "ok": true,
+    "validator": "CheckTransportConstraintEnumLength"
+  },
+  {
+    "input": [],
+    "kind": "InvalidObject",
+    "label": "empty",
+    "message": "invalid empty transport constraint enum",
+    "ok": false,
+    "validator": "CheckTransportConstraintEnumLength"
+  },
+  {
+    "input": {
+      "a": 1
+    },
+    "label": "object",
+    "ok": true,
+    "validator": "CheckGenericObject"
+  },
+  {
+    "input": null,
+    "kind": "InvalidObject",
+    "label": "null",
+    "message": "invalid generic object",
+    "ok": false,
+    "validator": "CheckGenericObject"
+  },
+  {
+    "input": [
+      1
+    ],
+    "kind": "InvalidObject",
+    "label": "list",
+    "message": "invalid generic object",
+    "ok": false,
+    "validator": "CheckGenericObject"
+  },
+  {
+    "input": [
+      "3b8be755-08ff-452b-b217-c9151eb21193"
+    ],
+    "label": "valid",
+    "ok": true,
+    "validator": "CheckArrayOfResourceIdString"
+  },
+  {
+    "input": [
+      "3b8be755-08ff-452b-b217-c9151eb21193",
+      "nope"
+    ],
+    "kind": "InvalidObject",
+    "label": "invalid",
+    "message": "invalid resource id",
+    "ok": false,
+    "validator": "CheckArrayOfResourceIdString"
+  },
+  {
+    "input": null,
+    "label": "null",
+    "ok": true,
+    "validator": "CheckResourceIdNullableString"
+  },
+  {
+    "input": "3b8be755-08ff-452b-b217-c9151eb21193",
+    "label": "valid",
+    "ok": true,
+    "validator": "CheckResourceIdNullableString"
+  },
+  {
+    "input": "nope",
+    "kind": "InvalidObject",
+    "label": "invalid",
+    "message": "invalid resource id",
+    "ok": false,
+    "validator": "CheckResourceIdNullableString"
+  },
+  {
+    "input": null,
+    "label": "null",
+    "ok": true,
+    "validator": "CheckClockNameNullableString"
+  },
+  {
+    "input": "clk1",
+    "label": "valid",
+    "ok": true,
+    "validator": "CheckClockNameNullableString"
+  },
+  {
+    "input": null,
+    "label": "null",
+    "ok": true,
+    "validator": "CheckChassisIdNullableString"
+  },
+  {
+    "input": "08-00-11-ff-fe-22",
+    "label": "mac",
+    "ok": true,
+    "validator": "CheckChassisIdNullableString"
+  },
+  {
+    "input": "any chassis",
+    "label": "free_text",
+    "ok": true,
+    "validator": "CheckChassisIdNullableString"
+  },
+  {
+    "input": "any chassis\n",
+    "kind": "InvalidObject",
+    "label": "trailing_newline",
+    "message": "invalid chassis_id",
+    "ok": false,
+    "validator": "CheckChassisIdNullableString"
+  },
+  {
+    "input": [],
+    "kind": "InvalidObject",
+    "label": "empty",
+    "message": "invalid empty video components array",
+    "ok": false,
+    "validator": "CheckVideoComponents"
+  },
+  {
+    "input": {
+      "rtp_enabled": 1,
+      "source_ip": 1
+    },
+    "label": "ok",
+    "ok": true,
+    "validator": "CheckRtpTransportConstraints"
+  },
+  {
+    "input": {
+      "ext_x": 1,
+      "rtp_enabled": 1
+    },
+    "label": "ext_key",
+    "ok": true,
+    "validator": "CheckRtpTransportConstraints"
+  },
+  {
+    "input": {
+      "source_ip": 1
+    },
+    "kind": "InvalidObject",
+    "label": "missing_required",
+    "message": "invalid RTP transport constraints, missing required constraints",
+    "ok": false,
+    "validator": "CheckRtpTransportConstraints"
+  },
+  {
+    "input": {
+      "bogus": 1,
+      "rtp_enabled": 1
+    },
+    "kind": "InvalidObject",
+    "label": "bad_property",
+    "message": "invalid RTP transport constraints, invalid property",
+    "ok": false,
+    "validator": "CheckRtpTransportConstraints"
+  },
+  {
+    "input": {
+      "source_ip": 1
+    },
+    "kind": "InvalidObject",
+    "label": "missing_required",
+    "message": "invalid RTP transport constraints, missing required constraints",
+    "ok": false,
+    "validator": "CheckRtpTcpTransportConstraints"
+  },
+  {
+    "input": {
+      "broker_topic": 1
+    },
+    "label": "ok",
+    "ok": true,
+    "validator": "CheckMqttTransportConstraints"
+  },
+  {
+    "input": {
+      "nope": 1
+    },
+    "kind": "InvalidObject",
+    "label": "bad",
+    "message": "invalid MQTT transport constraints, invalid property",
+    "ok": false,
+    "validator": "CheckMqttTransportConstraints"
+  },
+  {
+    "input": {
+      "connection_uri": 1
+    },
+    "label": "ok",
+    "ok": true,
+    "validator": "CheckWebSocketTransportConstraints"
+  },
+  {
+    "input": {
+      "source_name": 1
+    },
+    "label": "ok",
+    "ok": true,
+    "validator": "CheckNdiTransportConstraints"
+  },
+  {
+    "input": {
+      "latency": 1
+    },
+    "label": "ok",
+    "ok": true,
+    "validator": "CheckSrtTransportConstraints"
+  },
+  {
+    "input": {
+      "source_ip": 1
+    },
+    "label": "ok",
+    "ok": true,
+    "validator": "CheckUsbTransportConstraints"
+  },
+  {
+    "input": {
+      "source_ip": 1
+    },
+    "label": "ok",
+    "ok": true,
+    "validator": "CheckRtspTransportConstraints"
+  },
+  {
+    "input": {
+      "multicast_ip": 1
+    },
+    "label": "ok",
+    "ok": true,
+    "validator": "CheckUdpTransportConstraints"
+  },
+  {
+    "input": "<structured>",
+    "label": "both_valid",
+    "ok": true,
+    "validator": "CheckDidSdid"
+  },
+  {
+    "input": "<structured>",
+    "kind": "InvalidObject",
+    "label": "bad_did",
+    "message": "invalid DID value",
+    "ok": false,
+    "validator": "CheckDidSdid"
+  },
+  {
+    "input": "<structured>",
+    "kind": "InvalidObject",
+    "label": "bad_sdid",
+    "message": "invalid SDID value",
+    "ok": false,
+    "validator": "CheckDidSdid"
+  },
+  {
+    "input": "<structured>",
+    "label": "absent",
+    "ok": true,
+    "validator": "CheckDidSdid"
+  },
+  {
+    "input": "<structured>",
+    "label": "known",
+    "ok": true,
+    "validator": "CheckAudioChannels"
+  },
+  {
+    "input": "<structured>",
+    "label": "numbered",
+    "ok": true,
+    "validator": "CheckAudioChannels"
+  },
+  {
+    "input": "<structured>",
+    "kind": "InvalidObject",
+    "label": "unknown",
+    "message": "invalid audio channel symbol",
+    "ok": false,
+    "validator": "CheckAudioChannels"
+  },
+  {
+    "input": "<structured>",
+    "kind": "InvalidObject",
+    "label": "empty",
+    "message": "invalid empty audio channels label array",
+    "ok": false,
+    "validator": "CheckAudioChannels"
+  },
+  {
+    "input": "<structured>",
+    "label": "known",
+    "ok": true,
+    "validator": "CheckVideoComponents"
+  },
+  {
+    "input": "<structured>",
+    "kind": "InvalidObject",
+    "label": "unknown",
+    "message": "invalid video component name",
+    "ok": false,
+    "validator": "CheckVideoComponents"
+  }
+]

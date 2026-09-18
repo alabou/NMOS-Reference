@@ -1,0 +1,163 @@
+[
+  {
+    "label": "discovery_ladder",
+    "value": [
+      "x-nmos/"
+    ],
+    "dumped": "[\"x-nmos/\"]"
+  },
+  {
+    "label": "versions",
+    "value": [
+      "v1.3/"
+    ],
+    "dumped": "[\"v1.3/\"]"
+  },
+  {
+    "label": "query_base",
+    "value": [
+      "nodes/",
+      "devices/",
+      "sources/",
+      "flows/",
+      "senders/",
+      "receivers/",
+      "subscriptions/"
+    ],
+    "dumped": "[\"nodes/\", \"devices/\", \"sources/\", \"flows/\", \"senders/\", \"receivers/\", \"subscriptions/\"]"
+  },
+  {
+    "label": "health",
+    "value": {
+      "health": "1600000000"
+    },
+    "dumped": "{\"health\": \"1600000000\"}"
+  },
+  {
+    "label": "error_body",
+    "value": {
+      "code": 400,
+      "error": "bad request",
+      "debug": null
+    },
+    "dumped": "{\"code\": 400, \"error\": \"bad request\", \"debug\": null}"
+  },
+  {
+    "label": "subscription",
+    "value": {
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "ws_href": "ws://example.com:8448/x-nmos/query/v1.3/subscriptions/x",
+      "max_update_rate_ms": 100,
+      "persist": true,
+      "secure": false,
+      "resource_path": "/senders",
+      "params": {}
+    },
+    "dumped": "{\"id\": \"3b8be755-08ff-452b-b217-c9151eb21193\", \"ws_href\": \"ws://example.com:8448/x-nmos/query/v1.3/subscriptions/x\", \"max_update_rate_ms\": 100, \"persist\": true, \"secure\": false, \"resource_path\": \"/senders\", \"params\": {}}"
+  },
+  {
+    "label": "empty_object",
+    "value": {},
+    "dumped": "{}"
+  },
+  {
+    "label": "empty_array",
+    "value": [],
+    "dumped": "[]"
+  },
+  {
+    "label": "nested",
+    "value": {
+      "a": [
+        1,
+        2,
+        {
+          "b": [
+            3,
+            {}
+          ]
+        }
+      ],
+      "c": {
+        "d": []
+      }
+    },
+    "dumped": "{\"a\": [1, 2, {\"b\": [3, {}]}], \"c\": {\"d\": []}}"
+  },
+  {
+    "label": "unicode",
+    "value": {
+      "label": "caf\u00e9 \u2014 \ud83d\ude00"
+    },
+    "dumped": "{\"label\": \"caf\u00e9 \u2014 \ud83d\ude00\"}"
+  },
+  {
+    "label": "escapes",
+    "value": {
+      "s": "quote \" backslash \\ newline \n tab \t"
+    },
+    "dumped": "{\"s\": \"quote \\\" backslash \\\\ newline \\n tab \\t\"}"
+  },
+  {
+    "label": "control_chars",
+    "value": {
+      "s": "\u0000\u001f\u007f"
+    },
+    "dumped": "{\"s\": \"\\u0000\\u001f\u007f\"}"
+  },
+  {
+    "label": "numbers",
+    "value": {
+      "i": 0,
+      "neg": -1,
+      "big": 9007199254740992,
+      "f": 1.5,
+      "small": 1e-05
+    },
+    "dumped": "{\"i\": 0, \"neg\": -1, \"big\": 9007199254740992, \"f\": 1.5, \"small\": 1e-05}"
+  },
+  {
+    "label": "bools_and_null",
+    "value": {
+      "t": true,
+      "f": false,
+      "n": null
+    },
+    "dumped": "{\"t\": true, \"f\": false, \"n\": null}"
+  },
+  {
+    "label": "array_of_objects",
+    "value": [
+      {
+        "a": 1
+      },
+      {
+        "b": 2
+      }
+    ],
+    "dumped": "[{\"a\": 1}, {\"b\": 2}]"
+  },
+  {
+    "label": "deep",
+    "value": {
+      "a": {
+        "b": {
+          "c": {
+            "d": {
+              "e": [
+                1,
+                [
+                  2,
+                  [
+                    3
+                  ]
+                ]
+              ]
+            }
+          }
+        }
+      }
+    },
+    "dumped": "{\"a\": {\"b\": {\"c\": {\"d\": {\"e\": [1, [2, [3]]]}}}}}"
+  }
+]

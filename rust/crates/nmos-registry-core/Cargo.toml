@@ -1,0 +1,26 @@
+[package]
+name = "nmos-registry-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "The registry's pure core: resources, cursors, the store, paging and filters."
+
+# No tokio, and that is the single most load-bearing line in this manifest.
+#
+# The Python store's invariant is "no method awaits, which is why there are no
+# locks". This port keeps the equivalent by construction rather than by
+# convention: a crate that cannot name an async runtime cannot await inside a
+# critical section, so the rule is not merely linted, it is unavailable.
+#
+# It also makes the pure logic -- ordering, paging arithmetic, filter
+# evaluation -- testable with no runtime at all, which is most of what M3 is.
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+nmos-json = { path = "../nmos-json" }
+
+[lints]
+workspace = true

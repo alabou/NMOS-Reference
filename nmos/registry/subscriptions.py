@@ -53,7 +53,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 from nmos.json.engine import JsonEngine
@@ -198,10 +198,21 @@ class SubscriptionConnection:
         await self._shutdown.wait()
 
     def enqueue(self, event: _PendingEvent) -> None:
-        """Buffer one event, coalescing with any pending change to the same id."""
+        """Buffer one event, coalescing with any pending change to the same id.
+
+        The event is **copied** before it is stored, and that copy is what makes
+        the buffer private. ``publish`` classifies once per subscription and
+        hands the *same* ``_PendingEvent`` to every connection on it, while
+        ``merge`` mutates in place -- so without the copy two connections would
+        share one mutable object, and a later change arriving on one of them
+        would rewrite an event the other had already drained. The copy is
+        shallow on purpose: ``Body`` is immutable and shared deliberately, so
+        fanning one change out to fifty connections still copies fifty small
+        records rather than fifty JSON documents.
+        """
         existing = self._pending.get(event.path)
         if existing is None:
-            self._pending[event.path] = event
+            self._pending[event.path] = replace(event)
         else:
             existing.merge(event)
         self._wake.set()

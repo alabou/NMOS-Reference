@@ -1,0 +1,1342 @@
+[
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3b8be755-08ff-452b-b217-c9151eb21193\",\"version\":\"1700000000:123456789\",\"label\":\"test-node\",\"description\":\"registry test node\",\"tags\":{},\"href\":\"http://192.0.2.1:8080/\",\"caps\":{},\"api\":{\"versions\":[\"v1.3\"],\"endpoints\":[{\"host\":\"192.0.2.1\",\"port\":8080,\"protocol\":\"http\",\"authorization\":false}]},\"services\":[],\"clocks\":[],\"interfaces\":[]}",
+    "label": "node",
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"version\":\"1700000000:123456789\",\"label\":\"test-device\",\"description\":\"registry test device\",\"tags\":{},\"type\":\"urn:x-nmos:device:generic\",\"node_id\":\"3b8be755-08ff-452b-b217-c9151eb21193\",\"senders\":[],\"receivers\":[],\"controls\":[]}",
+    "label": "device",
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"c23c6a65-8e91-4f6c-a484-046363dbca29\",\"version\":\"1700000000:123456789\",\"label\":\"test-source\",\"description\":\"registry test source\",\"tags\":{},\"caps\":{},\"urn:x-matrox:receiver_id\":null,\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"parents\":[],\"clock_name\":null,\"grain_rate\":{\"numerator\":25,\"denominator\":1},\"format\":\"urn:x-nmos:format:video\"}",
+    "label": "source",
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"b3bb5be7-9fe9-4324-a5bb-4c70e1084449\",\"version\":\"1700000000:123456789\",\"label\":\"test-flow\",\"description\":\"registry test flow\",\"tags\":{},\"source_id\":\"c23c6a65-8e91-4f6c-a484-046363dbca29\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"parents\":[],\"grain_rate\":{\"numerator\":25,\"denominator\":1},\"format\":\"urn:x-nmos:format:video\",\"media_type\":\"video/raw\",\"frame_width\":1920,\"frame_height\":1080,\"colorspace\":\"BT709\",\"interlace_mode\":\"progressive\",\"transfer_characteristic\":\"SDR\",\"components\":[{\"name\":\"Y\",\"width\":1920,\"height\":1080,\"bit_depth\":10},{\"name\":\"Cb\",\"width\":960,\"height\":1080,\"bit_depth\":10},{\"name\":\"Cr\",\"width\":960,\"height\":1080,\"bit_depth\":10}]}",
+    "label": "flow",
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"171d5c80-7fff-4c23-9383-46503eb1c63e\",\"version\":\"1700000000:123456789\",\"label\":\"test-sender\",\"description\":\"registry test sender\",\"tags\":{},\"flow_id\":\"b3bb5be7-9fe9-4324-a5bb-4c70e1084449\",\"transport\":\"urn:x-nmos:transport:rtp.mcast\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"manifest_href\":\"http://192.0.2.1:8080/sender.sdp\",\"interface_bindings\":[\"eth0\"],\"subscription\":{\"receiver_id\":null,\"active\":false},\"caps\":{}}",
+    "label": "sender",
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {
+        "media_types": [
+          "video/raw"
+        ]
+      },
+      "description": "registry test receiver",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "id": "3350d113-1593-4271-a7f5-f4974415bb8e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-receiver",
+      "subscription": {
+        "active": false,
+        "sender_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3350d113-1593-4271-a7f5-f4974415bb8e\",\"version\":\"1700000000:123456789\",\"label\":\"test-receiver\",\"description\":\"registry test receiver\",\"tags\":{},\"transport\":\"urn:x-nmos:transport:rtp.mcast\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"interface_bindings\":[\"eth0\"],\"subscription\":{\"sender_id\":null,\"active\":false},\"format\":\"urn:x-nmos:format:video\",\"caps\":{\"media_types\":[\"video/raw\"]}}",
+    "label": "receiver",
+    "resource_type": "receiver"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [
+        {
+          "name": "clk0",
+          "ref_type": "internal"
+        }
+      ],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [
+        {
+          "chassis_id": "74-26-96-b4-b8-40",
+          "name": "eth0",
+          "port_id": "74-26-96-b4-b8-41"
+        }
+      ],
+      "label": "test-node",
+      "services": [
+        {
+          "href": "http://192.0.2.1:8080/x/",
+          "type": "urn:x-nmos:service:x"
+        }
+      ],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3b8be755-08ff-452b-b217-c9151eb21193\",\"version\":\"1700000000:123456789\",\"label\":\"test-node\",\"description\":\"registry test node\",\"tags\":{},\"href\":\"http://192.0.2.1:8080/\",\"caps\":{},\"api\":{\"versions\":[\"v1.3\"],\"endpoints\":[{\"host\":\"192.0.2.1\",\"port\":8080,\"protocol\":\"http\",\"authorization\":false}]},\"services\":[{\"href\":\"http://192.0.2.1:8080/x/\",\"type\":\"urn:x-nmos:service:x\",\"authorization\":false}],\"clocks\":[{\"name\":\"clk0\",\"ref_type\":\"internal\"}],\"interfaces\":[{\"chassis_id\":\"74-26-96-b4-b8-40\",\"port_id\":\"74-26-96-b4-b8-41\",\"name\":\"eth0\"}]}",
+    "label": "node_with_services_and_clocks",
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {
+        "urn:x-nmos:tag:grouphint/v1.0": [
+          "group",
+          "role"
+        ]
+      },
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3b8be755-08ff-452b-b217-c9151eb21193\",\"version\":\"1700000000:123456789\",\"label\":\"test-node\",\"description\":\"registry test node\",\"tags\":{\"urn:x-nmos:tag:grouphint/v1.0\":[\"group\",\"role\"]},\"href\":\"http://192.0.2.1:8080/\",\"caps\":{},\"api\":{\"versions\":[\"v1.3\"],\"endpoints\":[{\"host\":\"192.0.2.1\",\"port\":8080,\"protocol\":\"http\",\"authorization\":false}]},\"services\":[],\"clocks\":[],\"interfaces\":[]}",
+    "label": "node_with_tags",
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {
+        "urn:x-nmos:tag:grouphint/v1.0": []
+      },
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3b8be755-08ff-452b-b217-c9151eb21193\",\"version\":\"1700000000:123456789\",\"label\":\"test-node\",\"description\":\"registry test node\",\"tags\":{\"urn:x-nmos:tag:grouphint/v1.0\":[]},\"href\":\"http://192.0.2.1:8080/\",\"caps\":{},\"api\":{\"versions\":[\"v1.3\"],\"endpoints\":[{\"host\":\"192.0.2.1\",\"port\":8080,\"protocol\":\"http\",\"authorization\":false}]},\"services\":[],\"clocks\":[],\"interfaces\":[]}",
+    "label": "node_with_empty_tag_list",
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "bit_depth": 10,
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"b3bb5be7-9fe9-4324-a5bb-4c70e1084449\",\"version\":\"1700000000:123456789\",\"label\":\"test-flow\",\"description\":\"registry test flow\",\"tags\":{},\"source_id\":\"c23c6a65-8e91-4f6c-a484-046363dbca29\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"parents\":[],\"grain_rate\":{\"numerator\":25,\"denominator\":1},\"format\":\"urn:x-nmos:format:video\",\"media_type\":\"video/raw\",\"frame_width\":1920,\"frame_height\":1080,\"colorspace\":\"BT709\",\"interlace_mode\":\"progressive\",\"transfer_characteristic\":\"SDR\",\"components\":[{\"name\":\"Y\",\"width\":1920,\"height\":1080,\"bit_depth\":10},{\"name\":\"Cb\",\"width\":960,\"height\":1080,\"bit_depth\":10},{\"name\":\"Cr\",\"width\":960,\"height\":1080,\"bit_depth\":10}]}",
+    "label": "flow_with_bit_depth",
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "bit_rate": 25000,
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "level": "4.1",
+      "media_type": "video/H264",
+      "parents": [],
+      "profile": "High",
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"b3bb5be7-9fe9-4324-a5bb-4c70e1084449\",\"version\":\"1700000000:123456789\",\"label\":\"test-flow\",\"description\":\"registry test flow\",\"tags\":{},\"source_id\":\"c23c6a65-8e91-4f6c-a484-046363dbca29\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"parents\":[],\"grain_rate\":{\"numerator\":25,\"denominator\":1},\"format\":\"urn:x-nmos:format:video\",\"media_type\":\"video/H264\",\"frame_width\":1920,\"frame_height\":1080,\"colorspace\":\"BT709\",\"interlace_mode\":\"progressive\",\"transfer_characteristic\":\"SDR\",\"components\":[{\"name\":\"Y\",\"width\":1920,\"height\":1080,\"bit_depth\":10},{\"name\":\"Cb\",\"width\":960,\"height\":1080,\"bit_depth\":10},{\"name\":\"Cr\",\"width\":960,\"height\":1080,\"bit_depth\":10}],\"profile\":\"High\",\"level\":\"4.1\",\"bit_rate\":25000}",
+    "label": "flow_coded",
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "caps": {},
+      "channels": [
+        {
+          "label": "Left",
+          "symbol": "L"
+        },
+        {
+          "label": "Right",
+          "symbol": "R"
+        }
+      ],
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:audio",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"c23c6a65-8e91-4f6c-a484-046363dbca29\",\"version\":\"1700000000:123456789\",\"label\":\"test-source\",\"description\":\"registry test source\",\"tags\":{},\"caps\":{},\"urn:x-matrox:receiver_id\":null,\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"parents\":[],\"clock_name\":null,\"grain_rate\":{\"numerator\":25,\"denominator\":1},\"format\":\"urn:x-nmos:format:audio\",\"channels\":[{\"label\":\"Left\",\"symbol\":\"L\"},{\"label\":\"Right\",\"symbol\":\"R\"}]}",
+    "label": "source_audio_channels",
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": true,
+        "receiver_id": "8a4d1c0e-6f3b-4a1e-9a2c-1f5b7d3e9c02"
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"171d5c80-7fff-4c23-9383-46503eb1c63e\",\"version\":\"1700000000:123456789\",\"label\":\"test-sender\",\"description\":\"registry test sender\",\"tags\":{},\"flow_id\":\"b3bb5be7-9fe9-4324-a5bb-4c70e1084449\",\"transport\":\"urn:x-nmos:transport:rtp.mcast\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"manifest_href\":\"http://192.0.2.1:8080/sender.sdp\",\"interface_bindings\":[\"eth0\"],\"subscription\":{\"receiver_id\":\"8a4d1c0e-6f3b-4a1e-9a2c-1f5b7d3e9c02\",\"active\":true},\"caps\":{}}",
+    "label": "sender_active_subscription",
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {
+        "constraint_sets": [
+          {
+            "urn:x-nmos:cap:format:frame_width": {
+              "enum": [
+                1920
+              ]
+            },
+            "urn:x-nmos:cap:format:grain_rate": {
+              "enum": [
+                {
+                  "denominator": 1,
+                  "numerator": 25
+                }
+              ]
+            },
+            "urn:x-nmos:cap:meta:label": "1080i50"
+          }
+        ],
+        "media_types": [
+          "video/raw",
+          "video/H264"
+        ]
+      },
+      "description": "registry test receiver",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "id": "3350d113-1593-4271-a7f5-f4974415bb8e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-receiver",
+      "subscription": {
+        "active": false,
+        "sender_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3350d113-1593-4271-a7f5-f4974415bb8e\",\"version\":\"1700000000:123456789\",\"label\":\"test-receiver\",\"description\":\"registry test receiver\",\"tags\":{},\"transport\":\"urn:x-nmos:transport:rtp.mcast\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"interface_bindings\":[\"eth0\"],\"subscription\":{\"sender_id\":null,\"active\":false},\"format\":\"urn:x-nmos:format:video\",\"caps\":{\"media_types\":[\"video/raw\",\"video/H264\"],\"constraint_sets\":[{\"urn:x-nmos:cap:meta:label\":\"1080i50\",\"urn:x-nmos:cap:meta:enabled\":true,\"urn:x-nmos:cap:meta:preference\":0,\"urn:x-nmos:cap:format:grain_rate\":{\"enum\":[{\"numerator\":25,\"denominator\":1}]},\"urn:x-nmos:cap:format:frame_width\":{\"enum\":[1920]}}]}}",
+    "label": "receiver_constraint_sets",
+    "resource_type": "receiver"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"c23c6a65-8e91-4f6c-a484-046363dbca29\",\"version\":\"1700000000:123456789\",\"label\":\"test-source\",\"description\":\"registry test source\",\"tags\":{},\"caps\":{},\"urn:x-matrox:receiver_id\":null,\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"parents\":[],\"clock_name\":null,\"grain_rate\":{\"numerator\":25,\"denominator\":1},\"format\":\"urn:x-nmos:format:video\"}",
+    "label": "source_null_clock_name",
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"171d5c80-7fff-4c23-9383-46503eb1c63e\",\"version\":\"1700000000:123456789\",\"label\":\"test-sender\",\"description\":\"registry test sender\",\"tags\":{},\"flow_id\":\"b3bb5be7-9fe9-4324-a5bb-4c70e1084449\",\"transport\":\"urn:x-nmos:transport:rtp.mcast\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"manifest_href\":\"http://192.0.2.1:8080/sender.sdp\",\"interface_bindings\":[\"eth0\"],\"subscription\":{\"receiver_id\":null,\"active\":false},\"caps\":{}}",
+    "label": "sender_null_receiver_id",
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "plain",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3b8be755-08ff-452b-b217-c9151eb21193\",\"version\":\"1700000000:123456789\",\"label\":\"plain\",\"description\":\"registry test node\",\"tags\":{},\"href\":\"http://192.0.2.1:8080/\",\"caps\":{},\"api\":{\"versions\":[\"v1.3\"],\"endpoints\":[{\"host\":\"192.0.2.1\",\"port\":8080,\"protocol\":\"http\",\"authorization\":false}]},\"services\":[],\"clocks\":[],\"interfaces\":[]}",
+    "label": "node_label_ascii",
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "caf\u00e9",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3b8be755-08ff-452b-b217-c9151eb21193\",\"version\":\"1700000000:123456789\",\"label\":\"caf\u00e9\",\"description\":\"registry test node\",\"tags\":{},\"href\":\"http://192.0.2.1:8080/\",\"caps\":{},\"api\":{\"versions\":[\"v1.3\"],\"endpoints\":[{\"host\":\"192.0.2.1\",\"port\":8080,\"protocol\":\"http\",\"authorization\":false}]},\"services\":[],\"clocks\":[],\"interfaces\":[]}",
+    "label": "node_label_accented",
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "caf\u00e9 \ud83d\ude00",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3b8be755-08ff-452b-b217-c9151eb21193\",\"version\":\"1700000000:123456789\",\"label\":\"caf\u00e9 \ud83d\ude00\",\"description\":\"registry test node\",\"tags\":{},\"href\":\"http://192.0.2.1:8080/\",\"caps\":{},\"api\":{\"versions\":[\"v1.3\"],\"endpoints\":[{\"host\":\"192.0.2.1\",\"port\":8080,\"protocol\":\"http\",\"authorization\":false}]},\"services\":[],\"clocks\":[],\"interfaces\":[]}",
+    "label": "node_label_emoji",
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "a \"quoted\" label",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3b8be755-08ff-452b-b217-c9151eb21193\",\"version\":\"1700000000:123456789\",\"label\":\"a \\\"quoted\\\" label\",\"description\":\"registry test node\",\"tags\":{},\"href\":\"http://192.0.2.1:8080/\",\"caps\":{},\"api\":{\"versions\":[\"v1.3\"],\"endpoints\":[{\"host\":\"192.0.2.1\",\"port\":8080,\"protocol\":\"http\",\"authorization\":false}]},\"services\":[],\"clocks\":[],\"interfaces\":[]}",
+    "label": "node_label_quote",
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "a\\b",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3b8be755-08ff-452b-b217-c9151eb21193\",\"version\":\"1700000000:123456789\",\"label\":\"a\\\\b\",\"description\":\"registry test node\",\"tags\":{},\"href\":\"http://192.0.2.1:8080/\",\"caps\":{},\"api\":{\"versions\":[\"v1.3\"],\"endpoints\":[{\"host\":\"192.0.2.1\",\"port\":8080,\"protocol\":\"http\",\"authorization\":false}]},\"services\":[],\"clocks\":[],\"interfaces\":[]}",
+    "label": "node_label_backslash",
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "line\nbreak\ttab",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3b8be755-08ff-452b-b217-c9151eb21193\",\"version\":\"1700000000:123456789\",\"label\":\"line\\nbreak\\ttab\",\"description\":\"registry test node\",\"tags\":{},\"href\":\"http://192.0.2.1:8080/\",\"caps\":{},\"api\":{\"versions\":[\"v1.3\"],\"endpoints\":[{\"host\":\"192.0.2.1\",\"port\":8080,\"protocol\":\"http\",\"authorization\":false}]},\"services\":[],\"clocks\":[],\"interfaces\":[]}",
+    "label": "node_label_control",
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "a/b",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3b8be755-08ff-452b-b217-c9151eb21193\",\"version\":\"1700000000:123456789\",\"label\":\"a/b\",\"description\":\"registry test node\",\"tags\":{},\"href\":\"http://192.0.2.1:8080/\",\"caps\":{},\"api\":{\"versions\":[\"v1.3\"],\"endpoints\":[{\"host\":\"192.0.2.1\",\"port\":8080,\"protocol\":\"http\",\"authorization\":false}]},\"services\":[],\"clocks\":[],\"interfaces\":[]}",
+    "label": "node_label_solidus",
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "\u007f\u0080\u07ff\u0800\uffff",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3b8be755-08ff-452b-b217-c9151eb21193\",\"version\":\"1700000000:123456789\",\"label\":\"\u007f\u0080\u07ff\u0800\uffff\",\"description\":\"registry test node\",\"tags\":{},\"href\":\"http://192.0.2.1:8080/\",\"caps\":{},\"api\":{\"versions\":[\"v1.3\"],\"endpoints\":[{\"host\":\"192.0.2.1\",\"port\":8080,\"protocol\":\"http\",\"authorization\":false}]},\"services\":[],\"clocks\":[],\"interfaces\":[]}",
+    "label": "node_label_bmp_edge",
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "caps": {
+        "constraint_sets": [
+          {
+            "urn:x-nmos:cap:transport:bit_rate": {
+              "maximum": 0.0,
+              "minimum": 0.0
+            }
+          }
+        ],
+        "media_types": [
+          "video/raw"
+        ]
+      },
+      "description": "registry test receiver",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "id": "3350d113-1593-4271-a7f5-f4974415bb8e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-receiver",
+      "subscription": {
+        "active": false,
+        "sender_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3350d113-1593-4271-a7f5-f4974415bb8e\",\"version\":\"1700000000:123456789\",\"label\":\"test-receiver\",\"description\":\"registry test receiver\",\"tags\":{},\"transport\":\"urn:x-nmos:transport:rtp.mcast\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"interface_bindings\":[\"eth0\"],\"subscription\":{\"sender_id\":null,\"active\":false},\"format\":\"urn:x-nmos:format:video\",\"caps\":{\"media_types\":[\"video/raw\"],\"constraint_sets\":[{\"urn:x-nmos:cap:meta:enabled\":true,\"urn:x-nmos:cap:meta:preference\":0,\"urn:x-nmos:cap:transport:bit_rate\":{\"minimum\":0.0,\"maximum\":0.0}}]}}",
+    "label": "receiver_float_0.0",
+    "resource_type": "receiver"
+  },
+  {
+    "body": {
+      "caps": {
+        "constraint_sets": [
+          {
+            "urn:x-nmos:cap:transport:bit_rate": {
+              "maximum": 1.0,
+              "minimum": 1.0
+            }
+          }
+        ],
+        "media_types": [
+          "video/raw"
+        ]
+      },
+      "description": "registry test receiver",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "id": "3350d113-1593-4271-a7f5-f4974415bb8e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-receiver",
+      "subscription": {
+        "active": false,
+        "sender_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3350d113-1593-4271-a7f5-f4974415bb8e\",\"version\":\"1700000000:123456789\",\"label\":\"test-receiver\",\"description\":\"registry test receiver\",\"tags\":{},\"transport\":\"urn:x-nmos:transport:rtp.mcast\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"interface_bindings\":[\"eth0\"],\"subscription\":{\"sender_id\":null,\"active\":false},\"format\":\"urn:x-nmos:format:video\",\"caps\":{\"media_types\":[\"video/raw\"],\"constraint_sets\":[{\"urn:x-nmos:cap:meta:enabled\":true,\"urn:x-nmos:cap:meta:preference\":0,\"urn:x-nmos:cap:transport:bit_rate\":{\"minimum\":1.0,\"maximum\":1.0}}]}}",
+    "label": "receiver_float_1.0",
+    "resource_type": "receiver"
+  },
+  {
+    "body": {
+      "caps": {
+        "constraint_sets": [
+          {
+            "urn:x-nmos:cap:transport:bit_rate": {
+              "maximum": 1.5,
+              "minimum": 1.5
+            }
+          }
+        ],
+        "media_types": [
+          "video/raw"
+        ]
+      },
+      "description": "registry test receiver",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "id": "3350d113-1593-4271-a7f5-f4974415bb8e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-receiver",
+      "subscription": {
+        "active": false,
+        "sender_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3350d113-1593-4271-a7f5-f4974415bb8e\",\"version\":\"1700000000:123456789\",\"label\":\"test-receiver\",\"description\":\"registry test receiver\",\"tags\":{},\"transport\":\"urn:x-nmos:transport:rtp.mcast\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"interface_bindings\":[\"eth0\"],\"subscription\":{\"sender_id\":null,\"active\":false},\"format\":\"urn:x-nmos:format:video\",\"caps\":{\"media_types\":[\"video/raw\"],\"constraint_sets\":[{\"urn:x-nmos:cap:meta:enabled\":true,\"urn:x-nmos:cap:meta:preference\":0,\"urn:x-nmos:cap:transport:bit_rate\":{\"minimum\":1.5,\"maximum\":1.5}}]}}",
+    "label": "receiver_float_1.5",
+    "resource_type": "receiver"
+  },
+  {
+    "body": {
+      "caps": {
+        "constraint_sets": [
+          {
+            "urn:x-nmos:cap:transport:bit_rate": {
+              "maximum": 0.1,
+              "minimum": 0.1
+            }
+          }
+        ],
+        "media_types": [
+          "video/raw"
+        ]
+      },
+      "description": "registry test receiver",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "id": "3350d113-1593-4271-a7f5-f4974415bb8e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-receiver",
+      "subscription": {
+        "active": false,
+        "sender_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3350d113-1593-4271-a7f5-f4974415bb8e\",\"version\":\"1700000000:123456789\",\"label\":\"test-receiver\",\"description\":\"registry test receiver\",\"tags\":{},\"transport\":\"urn:x-nmos:transport:rtp.mcast\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"interface_bindings\":[\"eth0\"],\"subscription\":{\"sender_id\":null,\"active\":false},\"format\":\"urn:x-nmos:format:video\",\"caps\":{\"media_types\":[\"video/raw\"],\"constraint_sets\":[{\"urn:x-nmos:cap:meta:enabled\":true,\"urn:x-nmos:cap:meta:preference\":0,\"urn:x-nmos:cap:transport:bit_rate\":{\"minimum\":0.1,\"maximum\":0.1}}]}}",
+    "label": "receiver_float_0.1",
+    "resource_type": "receiver"
+  },
+  {
+    "body": {
+      "caps": {
+        "constraint_sets": [
+          {
+            "urn:x-nmos:cap:transport:bit_rate": {
+              "maximum": 1000000.0,
+              "minimum": 1000000.0
+            }
+          }
+        ],
+        "media_types": [
+          "video/raw"
+        ]
+      },
+      "description": "registry test receiver",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "id": "3350d113-1593-4271-a7f5-f4974415bb8e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-receiver",
+      "subscription": {
+        "active": false,
+        "sender_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3350d113-1593-4271-a7f5-f4974415bb8e\",\"version\":\"1700000000:123456789\",\"label\":\"test-receiver\",\"description\":\"registry test receiver\",\"tags\":{},\"transport\":\"urn:x-nmos:transport:rtp.mcast\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"interface_bindings\":[\"eth0\"],\"subscription\":{\"sender_id\":null,\"active\":false},\"format\":\"urn:x-nmos:format:video\",\"caps\":{\"media_types\":[\"video/raw\"],\"constraint_sets\":[{\"urn:x-nmos:cap:meta:enabled\":true,\"urn:x-nmos:cap:meta:preference\":0,\"urn:x-nmos:cap:transport:bit_rate\":{\"minimum\":1000000.0,\"maximum\":1000000.0}}]}}",
+    "label": "receiver_float_1000000.0",
+    "resource_type": "receiver"
+  },
+  {
+    "body": {
+      "caps": {
+        "constraint_sets": [
+          {
+            "urn:x-nmos:cap:transport:bit_rate": {
+              "maximum": 12345678.0,
+              "minimum": 12345678.0
+            }
+          }
+        ],
+        "media_types": [
+          "video/raw"
+        ]
+      },
+      "description": "registry test receiver",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "id": "3350d113-1593-4271-a7f5-f4974415bb8e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-receiver",
+      "subscription": {
+        "active": false,
+        "sender_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3350d113-1593-4271-a7f5-f4974415bb8e\",\"version\":\"1700000000:123456789\",\"label\":\"test-receiver\",\"description\":\"registry test receiver\",\"tags\":{},\"transport\":\"urn:x-nmos:transport:rtp.mcast\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"interface_bindings\":[\"eth0\"],\"subscription\":{\"sender_id\":null,\"active\":false},\"format\":\"urn:x-nmos:format:video\",\"caps\":{\"media_types\":[\"video/raw\"],\"constraint_sets\":[{\"urn:x-nmos:cap:meta:enabled\":true,\"urn:x-nmos:cap:meta:preference\":0,\"urn:x-nmos:cap:transport:bit_rate\":{\"minimum\":12345678.0,\"maximum\":12345678.0}}]}}",
+    "label": "receiver_float_12345678.0",
+    "resource_type": "receiver"
+  },
+  {
+    "body": {
+      "caps": {
+        "constraint_sets": [
+          {
+            "urn:x-nmos:cap:transport:bit_rate": {
+              "maximum": 1234567890.0,
+              "minimum": 1234567890.0
+            }
+          }
+        ],
+        "media_types": [
+          "video/raw"
+        ]
+      },
+      "description": "registry test receiver",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "id": "3350d113-1593-4271-a7f5-f4974415bb8e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-receiver",
+      "subscription": {
+        "active": false,
+        "sender_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3350d113-1593-4271-a7f5-f4974415bb8e\",\"version\":\"1700000000:123456789\",\"label\":\"test-receiver\",\"description\":\"registry test receiver\",\"tags\":{},\"transport\":\"urn:x-nmos:transport:rtp.mcast\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"interface_bindings\":[\"eth0\"],\"subscription\":{\"sender_id\":null,\"active\":false},\"format\":\"urn:x-nmos:format:video\",\"caps\":{\"media_types\":[\"video/raw\"],\"constraint_sets\":[{\"urn:x-nmos:cap:meta:enabled\":true,\"urn:x-nmos:cap:meta:preference\":0,\"urn:x-nmos:cap:transport:bit_rate\":{\"minimum\":1234567890.0,\"maximum\":1234567890.0}}]}}",
+    "label": "receiver_float_1234567890.0",
+    "resource_type": "receiver"
+  },
+  {
+    "body": {
+      "caps": {
+        "constraint_sets": [
+          {
+            "urn:x-nmos:cap:transport:bit_rate": {
+              "maximum": 3.141592653589793,
+              "minimum": 3.141592653589793
+            }
+          }
+        ],
+        "media_types": [
+          "video/raw"
+        ]
+      },
+      "description": "registry test receiver",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "id": "3350d113-1593-4271-a7f5-f4974415bb8e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-receiver",
+      "subscription": {
+        "active": false,
+        "sender_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3350d113-1593-4271-a7f5-f4974415bb8e\",\"version\":\"1700000000:123456789\",\"label\":\"test-receiver\",\"description\":\"registry test receiver\",\"tags\":{},\"transport\":\"urn:x-nmos:transport:rtp.mcast\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"interface_bindings\":[\"eth0\"],\"subscription\":{\"sender_id\":null,\"active\":false},\"format\":\"urn:x-nmos:format:video\",\"caps\":{\"media_types\":[\"video/raw\"],\"constraint_sets\":[{\"urn:x-nmos:cap:meta:enabled\":true,\"urn:x-nmos:cap:meta:preference\":0,\"urn:x-nmos:cap:transport:bit_rate\":{\"minimum\":3.141592653589793,\"maximum\":3.141592653589793}}]}}",
+    "label": "receiver_float_3.141592653589793",
+    "resource_type": "receiver"
+  },
+  {
+    "body": {
+      "caps": {
+        "constraint_sets": [
+          {
+            "urn:x-nmos:cap:transport:bit_rate": {
+              "maximum": 1000000000000000.0,
+              "minimum": 1000000000000000.0
+            }
+          }
+        ],
+        "media_types": [
+          "video/raw"
+        ]
+      },
+      "description": "registry test receiver",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "id": "3350d113-1593-4271-a7f5-f4974415bb8e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-receiver",
+      "subscription": {
+        "active": false,
+        "sender_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3350d113-1593-4271-a7f5-f4974415bb8e\",\"version\":\"1700000000:123456789\",\"label\":\"test-receiver\",\"description\":\"registry test receiver\",\"tags\":{},\"transport\":\"urn:x-nmos:transport:rtp.mcast\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"interface_bindings\":[\"eth0\"],\"subscription\":{\"sender_id\":null,\"active\":false},\"format\":\"urn:x-nmos:format:video\",\"caps\":{\"media_types\":[\"video/raw\"],\"constraint_sets\":[{\"urn:x-nmos:cap:meta:enabled\":true,\"urn:x-nmos:cap:meta:preference\":0,\"urn:x-nmos:cap:transport:bit_rate\":{\"minimum\":1000000000000000.0,\"maximum\":1000000000000000.0}}]}}",
+    "label": "receiver_float_1000000000000000.0",
+    "resource_type": "receiver"
+  },
+  {
+    "body": {
+      "caps": {
+        "constraint_sets": [
+          {
+            "urn:x-nmos:cap:transport:bit_rate": {
+              "maximum": 1e+16,
+              "minimum": 1e+16
+            }
+          }
+        ],
+        "media_types": [
+          "video/raw"
+        ]
+      },
+      "description": "registry test receiver",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "id": "3350d113-1593-4271-a7f5-f4974415bb8e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-receiver",
+      "subscription": {
+        "active": false,
+        "sender_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3350d113-1593-4271-a7f5-f4974415bb8e\",\"version\":\"1700000000:123456789\",\"label\":\"test-receiver\",\"description\":\"registry test receiver\",\"tags\":{},\"transport\":\"urn:x-nmos:transport:rtp.mcast\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"interface_bindings\":[\"eth0\"],\"subscription\":{\"sender_id\":null,\"active\":false},\"format\":\"urn:x-nmos:format:video\",\"caps\":{\"media_types\":[\"video/raw\"],\"constraint_sets\":[{\"urn:x-nmos:cap:meta:enabled\":true,\"urn:x-nmos:cap:meta:preference\":0,\"urn:x-nmos:cap:transport:bit_rate\":{\"minimum\":1e+16,\"maximum\":1e+16}}]}}",
+    "label": "receiver_float_1e+16",
+    "resource_type": "receiver"
+  },
+  {
+    "body": {
+      "caps": {
+        "constraint_sets": [
+          {
+            "urn:x-nmos:cap:transport:bit_rate": {
+              "maximum": 0.0001,
+              "minimum": 0.0001
+            }
+          }
+        ],
+        "media_types": [
+          "video/raw"
+        ]
+      },
+      "description": "registry test receiver",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "id": "3350d113-1593-4271-a7f5-f4974415bb8e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-receiver",
+      "subscription": {
+        "active": false,
+        "sender_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3350d113-1593-4271-a7f5-f4974415bb8e\",\"version\":\"1700000000:123456789\",\"label\":\"test-receiver\",\"description\":\"registry test receiver\",\"tags\":{},\"transport\":\"urn:x-nmos:transport:rtp.mcast\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"interface_bindings\":[\"eth0\"],\"subscription\":{\"sender_id\":null,\"active\":false},\"format\":\"urn:x-nmos:format:video\",\"caps\":{\"media_types\":[\"video/raw\"],\"constraint_sets\":[{\"urn:x-nmos:cap:meta:enabled\":true,\"urn:x-nmos:cap:meta:preference\":0,\"urn:x-nmos:cap:transport:bit_rate\":{\"minimum\":0.0001,\"maximum\":0.0001}}]}}",
+    "label": "receiver_float_0.0001",
+    "resource_type": "receiver"
+  },
+  {
+    "body": {
+      "caps": {
+        "constraint_sets": [
+          {
+            "urn:x-nmos:cap:transport:bit_rate": {
+              "maximum": 1e-05,
+              "minimum": 1e-05
+            }
+          }
+        ],
+        "media_types": [
+          "video/raw"
+        ]
+      },
+      "description": "registry test receiver",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "id": "3350d113-1593-4271-a7f5-f4974415bb8e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-receiver",
+      "subscription": {
+        "active": false,
+        "sender_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3350d113-1593-4271-a7f5-f4974415bb8e\",\"version\":\"1700000000:123456789\",\"label\":\"test-receiver\",\"description\":\"registry test receiver\",\"tags\":{},\"transport\":\"urn:x-nmos:transport:rtp.mcast\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"interface_bindings\":[\"eth0\"],\"subscription\":{\"sender_id\":null,\"active\":false},\"format\":\"urn:x-nmos:format:video\",\"caps\":{\"media_types\":[\"video/raw\"],\"constraint_sets\":[{\"urn:x-nmos:cap:meta:enabled\":true,\"urn:x-nmos:cap:meta:preference\":0,\"urn:x-nmos:cap:transport:bit_rate\":{\"minimum\":1e-05,\"maximum\":1e-05}}]}}",
+    "label": "receiver_float_1e-05",
+    "resource_type": "receiver"
+  },
+  {
+    "body": {
+      "caps": {
+        "constraint_sets": [
+          {
+            "urn:x-nmos:cap:transport:bit_rate": {
+              "maximum": 1e+20,
+              "minimum": 1e+20
+            }
+          }
+        ],
+        "media_types": [
+          "video/raw"
+        ]
+      },
+      "description": "registry test receiver",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "id": "3350d113-1593-4271-a7f5-f4974415bb8e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-receiver",
+      "subscription": {
+        "active": false,
+        "sender_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3350d113-1593-4271-a7f5-f4974415bb8e\",\"version\":\"1700000000:123456789\",\"label\":\"test-receiver\",\"description\":\"registry test receiver\",\"tags\":{},\"transport\":\"urn:x-nmos:transport:rtp.mcast\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"interface_bindings\":[\"eth0\"],\"subscription\":{\"sender_id\":null,\"active\":false},\"format\":\"urn:x-nmos:format:video\",\"caps\":{\"media_types\":[\"video/raw\"],\"constraint_sets\":[{\"urn:x-nmos:cap:meta:enabled\":true,\"urn:x-nmos:cap:meta:preference\":0,\"urn:x-nmos:cap:transport:bit_rate\":{\"minimum\":1e+20,\"maximum\":1e+20}}]}}",
+    "label": "receiver_float_1e+20",
+    "resource_type": "receiver"
+  },
+  {
+    "body": {
+      "caps": {
+        "constraint_sets": [
+          {
+            "urn:x-nmos:cap:transport:bit_rate": {
+              "maximum": 1e+308,
+              "minimum": 1e+308
+            }
+          }
+        ],
+        "media_types": [
+          "video/raw"
+        ]
+      },
+      "description": "registry test receiver",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "id": "3350d113-1593-4271-a7f5-f4974415bb8e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-receiver",
+      "subscription": {
+        "active": false,
+        "sender_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3350d113-1593-4271-a7f5-f4974415bb8e\",\"version\":\"1700000000:123456789\",\"label\":\"test-receiver\",\"description\":\"registry test receiver\",\"tags\":{},\"transport\":\"urn:x-nmos:transport:rtp.mcast\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"interface_bindings\":[\"eth0\"],\"subscription\":{\"sender_id\":null,\"active\":false},\"format\":\"urn:x-nmos:format:video\",\"caps\":{\"media_types\":[\"video/raw\"],\"constraint_sets\":[{\"urn:x-nmos:cap:meta:enabled\":true,\"urn:x-nmos:cap:meta:preference\":0,\"urn:x-nmos:cap:transport:bit_rate\":{\"minimum\":1e+308,\"maximum\":1e+308}}]}}",
+    "label": "receiver_float_1e+308",
+    "resource_type": "receiver"
+  },
+  {
+    "body": {
+      "caps": {
+        "constraint_sets": [
+          {
+            "urn:x-nmos:cap:transport:bit_rate": {
+              "maximum": 5e-324,
+              "minimum": 5e-324
+            }
+          }
+        ],
+        "media_types": [
+          "video/raw"
+        ]
+      },
+      "description": "registry test receiver",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "id": "3350d113-1593-4271-a7f5-f4974415bb8e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-receiver",
+      "subscription": {
+        "active": false,
+        "sender_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3350d113-1593-4271-a7f5-f4974415bb8e\",\"version\":\"1700000000:123456789\",\"label\":\"test-receiver\",\"description\":\"registry test receiver\",\"tags\":{},\"transport\":\"urn:x-nmos:transport:rtp.mcast\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"interface_bindings\":[\"eth0\"],\"subscription\":{\"sender_id\":null,\"active\":false},\"format\":\"urn:x-nmos:format:video\",\"caps\":{\"media_types\":[\"video/raw\"],\"constraint_sets\":[{\"urn:x-nmos:cap:meta:enabled\":true,\"urn:x-nmos:cap:meta:preference\":0,\"urn:x-nmos:cap:transport:bit_rate\":{\"minimum\":5e-324,\"maximum\":5e-324}}]}}",
+    "label": "receiver_float_5e-324",
+    "resource_type": "receiver"
+  },
+  {
+    "body": {
+      "caps": {
+        "constraint_sets": [
+          {
+            "urn:x-nmos:cap:transport:bit_rate": {
+              "maximum": -2.5,
+              "minimum": -2.5
+            }
+          }
+        ],
+        "media_types": [
+          "video/raw"
+        ]
+      },
+      "description": "registry test receiver",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "id": "3350d113-1593-4271-a7f5-f4974415bb8e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-receiver",
+      "subscription": {
+        "active": false,
+        "sender_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3350d113-1593-4271-a7f5-f4974415bb8e\",\"version\":\"1700000000:123456789\",\"label\":\"test-receiver\",\"description\":\"registry test receiver\",\"tags\":{},\"transport\":\"urn:x-nmos:transport:rtp.mcast\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"interface_bindings\":[\"eth0\"],\"subscription\":{\"sender_id\":null,\"active\":false},\"format\":\"urn:x-nmos:format:video\",\"caps\":{\"media_types\":[\"video/raw\"],\"constraint_sets\":[{\"urn:x-nmos:cap:meta:enabled\":true,\"urn:x-nmos:cap:meta:preference\":0,\"urn:x-nmos:cap:transport:bit_rate\":{\"minimum\":-2.5,\"maximum\":-2.5}}]}}",
+    "label": "receiver_float_-2.5",
+    "resource_type": "receiver"
+  },
+  {
+    "body": {
+      "caps": {
+        "constraint_sets": [
+          {
+            "urn:x-nmos:cap:transport:bit_rate": {
+              "maximum": -0.0,
+              "minimum": -0.0
+            }
+          }
+        ],
+        "media_types": [
+          "video/raw"
+        ]
+      },
+      "description": "registry test receiver",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "id": "3350d113-1593-4271-a7f5-f4974415bb8e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-receiver",
+      "subscription": {
+        "active": false,
+        "sender_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "encoded": "{\"id\":\"3350d113-1593-4271-a7f5-f4974415bb8e\",\"version\":\"1700000000:123456789\",\"label\":\"test-receiver\",\"description\":\"registry test receiver\",\"tags\":{},\"transport\":\"urn:x-nmos:transport:rtp.mcast\",\"device_id\":\"a370d258-69de-4422-860a-ee4cf32ee9f4\",\"interface_bindings\":[\"eth0\"],\"subscription\":{\"sender_id\":null,\"active\":false},\"format\":\"urn:x-nmos:format:video\",\"caps\":{\"media_types\":[\"video/raw\"],\"constraint_sets\":[{\"urn:x-nmos:cap:meta:enabled\":true,\"urn:x-nmos:cap:meta:preference\":0,\"urn:x-nmos:cap:transport:bit_rate\":{\"minimum\":-0.0,\"maximum\":-0.0}}]}}",
+    "label": "receiver_float_-0.0",
+    "resource_type": "receiver"
+  }
+]

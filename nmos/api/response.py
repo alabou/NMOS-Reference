@@ -28,10 +28,10 @@ _UUID_RE = re.compile(
     r"[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-"
-    r"[0-9a-fA-F]{12}$"
+    r"[0-9a-fA-F]{12}\Z"
 )
 _ABS_URL_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://")
-_VERSION_SEGMENT_RE = re.compile(r"^v[0-9]+\.[0-9]+$")
+_VERSION_SEGMENT_RE = re.compile(r"^v[0-9]+\.[0-9]+\Z")
 # Path segments that may appear in a relative API reference. A string value is
 # turned into a hyperlink only when EVERY one of its segments appears here, so
 # a segment that is missing silently renders as plain text -- the index is then

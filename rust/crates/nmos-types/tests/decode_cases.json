@@ -1,0 +1,6213 @@
+[
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "label": "valid",
+    "ok": true,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "label": "keys_reversed",
+    "ok": true,
+    "resource_type": "node"
+  },
+  {
+    "body": "a string",
+    "kind": "DecodeFailure",
+    "label": "not_an_object",
+    "message": "expected a JSON object for node",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {},
+    "kind": "DecodeFailure",
+    "label": "empty_object",
+    "message": "node failed validation: missing required member Id",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_api",
+    "message": "node failed validation: missing required member Api",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": null,
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_api",
+    "message": "node failed validation: expected JSON object for NNodeApi",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": "not-the-right-type",
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_api",
+    "message": "node failed validation: expected JSON object for NNodeApi",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_caps",
+    "message": "node failed validation: missing required member Caps",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": null,
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_caps",
+    "message": "node failed validation: expected JSON object for NEmpty",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": "not-the-right-type",
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_caps",
+    "message": "node failed validation: expected JSON object for NEmpty",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_clocks",
+    "message": "node failed validation: missing required member Clocks",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": null,
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_clocks",
+    "message": "node failed validation: expected array for NArrayOfClock",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": "not-the-right-type",
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_clocks",
+    "message": "node failed validation: expected array for NArrayOfClock",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_description",
+    "message": "node failed validation: missing required member Description",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": null,
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_description",
+    "message": "node failed validation: missing required member Description",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": 12345,
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_description",
+    "message": "node failed validation: expected string, got int",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_href",
+    "message": "node failed validation: missing required member Href",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": null,
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "label": "null_href",
+    "ok": true,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": 12345,
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_href",
+    "message": "node failed validation: expected string for URL, got int",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_id",
+    "message": "node failed validation: missing required member Id",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": null,
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_id",
+    "message": "node failed validation: missing required member Id",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": 12345,
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_id",
+    "message": "node failed validation: expected string, got int",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_interfaces",
+    "message": "node failed validation: missing required member Interfaces",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": null,
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_interfaces",
+    "message": "node failed validation: expected array for NArrayOfNodeInterface",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": "not-the-right-type",
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_interfaces",
+    "message": "node failed validation: expected array for NArrayOfNodeInterface",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_label",
+    "message": "node failed validation: missing required member Label",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": null,
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_label",
+    "message": "node failed validation: missing required member Label",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": 12345,
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_label",
+    "message": "node failed validation: expected string, got int",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_services",
+    "message": "node failed validation: missing required member Services",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": null,
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_services",
+    "message": "node failed validation: expected array for NArrayOfNodeService",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": "not-the-right-type",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_services",
+    "message": "node failed validation: expected array for NArrayOfNodeService",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_tags",
+    "message": "node failed validation: missing required member Tags",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": null,
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_tags",
+    "message": "node failed validation: expected dict for tags, got NoneType",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": "not-the-right-type",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_tags",
+    "message": "node failed validation: expected dict for tags, got str",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {}
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_version",
+    "message": "node failed validation: missing required member Version",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": null
+    },
+    "kind": "DecodeFailure",
+    "label": "null_version",
+    "message": "node failed validation: expected string for time, got NoneType",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "api": {
+        "endpoints": [
+          {
+            "host": "192.0.2.1",
+            "port": 8080,
+            "protocol": "http"
+          }
+        ],
+        "versions": [
+          "v1.3"
+        ]
+      },
+      "caps": {},
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": 12345
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_version",
+    "message": "node failed validation: expected string for time, got int",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "clocks": [],
+      "description": "registry test node",
+      "href": "http://192.0.2.1:8080/",
+      "id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "interfaces": [],
+      "label": "test-node",
+      "services": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_api_and_caps",
+    "message": "node failed validation: missing required member Caps",
+    "ok": false,
+    "resource_type": "node"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "label": "valid",
+    "ok": true,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "label": "keys_reversed",
+    "ok": true,
+    "resource_type": "device"
+  },
+  {
+    "body": "a string",
+    "kind": "DecodeFailure",
+    "label": "not_an_object",
+    "message": "expected a JSON object for device",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {},
+    "kind": "DecodeFailure",
+    "label": "empty_object",
+    "message": "device failed validation: missing required member Id",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_controls",
+    "message": "device failed validation: missing required member Controls",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": null,
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_controls",
+    "message": "device failed validation: expected array for NArrayOfDeviceControl",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": "not-the-right-type",
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_controls",
+    "message": "device failed validation: expected array for NArrayOfDeviceControl",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_description",
+    "message": "device failed validation: missing required member Description",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": null,
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_description",
+    "message": "device failed validation: missing required member Description",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": 12345,
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_description",
+    "message": "device failed validation: expected string, got int",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_id",
+    "message": "device failed validation: missing required member Id",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": null,
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_id",
+    "message": "device failed validation: missing required member Id",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": 12345,
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_id",
+    "message": "device failed validation: expected string, got int",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_label",
+    "message": "device failed validation: missing required member Label",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": null,
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_label",
+    "message": "device failed validation: missing required member Label",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": 12345,
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_label",
+    "message": "device failed validation: expected string, got int",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_node_id",
+    "message": "device failed validation: missing required member NodeId",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": null,
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_node_id",
+    "message": "device failed validation: missing required member NodeId",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": 12345,
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_node_id",
+    "message": "device failed validation: expected string, got int",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_receivers",
+    "message": "device failed validation: missing required member Receivers",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": null,
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_receivers",
+    "message": "device failed validation: expected array, got NoneType",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": "not-the-right-type",
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_receivers",
+    "message": "device failed validation: expected array, got str",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_senders",
+    "message": "device failed validation: missing required member Senders",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": null,
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_senders",
+    "message": "device failed validation: expected array, got NoneType",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": "not-the-right-type",
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_senders",
+    "message": "device failed validation: expected array, got str",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_tags",
+    "message": "device failed validation: missing required member Tags",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": null,
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_tags",
+    "message": "device failed validation: expected dict for tags, got NoneType",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": "not-the-right-type",
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_tags",
+    "message": "device failed validation: expected dict for tags, got str",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_type",
+    "message": "device failed validation: missing required member Type",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": null,
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_type",
+    "message": "device failed validation: expected string for enum, got NoneType",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": 12345,
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_type",
+    "message": "device failed validation: expected string for enum, got int",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_version",
+    "message": "device failed validation: missing required member Version",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": null
+    },
+    "kind": "DecodeFailure",
+    "label": "null_version",
+    "message": "device failed validation: expected string for time, got NoneType",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "controls": [],
+      "description": "registry test device",
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": 12345
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_version",
+    "message": "device failed validation: expected string for time, got int",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "label": "test-device",
+      "node_id": "3b8be755-08ff-452b-b217-c9151eb21193",
+      "receivers": [],
+      "senders": [],
+      "tags": {},
+      "type": "urn:x-nmos:device:generic",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_controls_and_description",
+    "message": "device failed validation: missing required member Description",
+    "ok": false,
+    "resource_type": "device"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "label": "valid",
+    "ok": true,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "label": "keys_reversed",
+    "ok": true,
+    "resource_type": "source"
+  },
+  {
+    "body": "a string",
+    "kind": "DecodeFailure",
+    "label": "not_an_object",
+    "message": "expected a JSON object for source",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {},
+    "kind": "DecodeFailure",
+    "label": "empty_object",
+    "message": "source failed validation: no matching type for polymorphic NSource",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_caps",
+    "message": "source failed validation: missing required member Caps",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": null,
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_caps",
+    "message": "source failed validation: expected JSON object for NSourceCapabilities",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": "not-the-right-type",
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_caps",
+    "message": "source failed validation: expected JSON object for NSourceCapabilities",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_clock_name",
+    "message": "source failed validation: missing required member ClockName",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "label": "null_clock_name",
+    "ok": true,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": "not-the-right-type",
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_clock_name",
+    "message": "source failed validation: invalid clock name",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_description",
+    "message": "source failed validation: missing required member Description",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": null,
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_description",
+    "message": "source failed validation: missing required member Description",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": 12345,
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_description",
+    "message": "source failed validation: expected string, got int",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_device_id",
+    "message": "source failed validation: missing required member DeviceId",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": null,
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_device_id",
+    "message": "source failed validation: missing required member DeviceId",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": 12345,
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_device_id",
+    "message": "source failed validation: expected string, got int",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_format",
+    "message": "source failed validation: no matching type for polymorphic NSource",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": null,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_format",
+    "message": "source failed validation: no matching type for polymorphic NSource",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": 12345,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_format",
+    "message": "source failed validation: no matching type for polymorphic NSource",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "label": "missing_grain_rate",
+    "ok": true,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": null,
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_grain_rate",
+    "message": "source failed validation: expected JSON object for NRational",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": "not-the-right-type",
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_grain_rate",
+    "message": "source failed validation: expected JSON object for NRational",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_id",
+    "message": "source failed validation: missing required member Id",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": null,
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_id",
+    "message": "source failed validation: missing required member Id",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": 12345,
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_id",
+    "message": "source failed validation: expected string, got int",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_label",
+    "message": "source failed validation: missing required member Label",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": null,
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_label",
+    "message": "source failed validation: missing required member Label",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": 12345,
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_label",
+    "message": "source failed validation: expected string, got int",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_parents",
+    "message": "source failed validation: missing required member Parents",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": null,
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_parents",
+    "message": "source failed validation: expected array, got NoneType",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": "not-the-right-type",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_parents",
+    "message": "source failed validation: expected array, got str",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_tags",
+    "message": "source failed validation: missing required member Tags",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": null,
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_tags",
+    "message": "source failed validation: expected dict for tags, got NoneType",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": "not-the-right-type",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_tags",
+    "message": "source failed validation: expected dict for tags, got str",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {}
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_version",
+    "message": "source failed validation: missing required member Version",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": null
+    },
+    "kind": "DecodeFailure",
+    "label": "null_version",
+    "message": "source failed validation: expected string for time, got NoneType",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": 12345
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_version",
+    "message": "source failed validation: expected string for time, got int",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_caps_and_clock_name",
+    "message": "source failed validation: missing required member Caps",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "label": "format_video",
+    "ok": true,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:audio",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "format_audio",
+    "message": "source failed validation: missing required member Channels",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:data",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "label": "format_data",
+    "ok": true,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:mux",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "label": "format_mux",
+    "ok": true,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:smell",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "format_smell",
+    "message": "source failed validation: no matching type for polymorphic NSource",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "caps": {},
+      "clock_name": null,
+      "description": "registry test source",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video\n",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "label": "test-source",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "format_video_newline",
+    "message": "source failed validation: no matching type for polymorphic NSource",
+    "ok": false,
+    "resource_type": "source"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "label": "valid",
+    "ok": true,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "label": "keys_reversed",
+    "ok": true,
+    "resource_type": "flow"
+  },
+  {
+    "body": "a string",
+    "kind": "DecodeFailure",
+    "label": "not_an_object",
+    "message": "expected a JSON object for flow",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {},
+    "kind": "DecodeFailure",
+    "label": "empty_object",
+    "message": "flow failed validation: no matching type for polymorphic NFlow",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_colorspace",
+    "message": "flow failed validation: missing required member Colorspace",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": null,
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_colorspace",
+    "message": "flow failed validation: expected string for enum, got NoneType",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": 12345,
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_colorspace",
+    "message": "flow failed validation: expected string for enum, got int",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_components",
+    "message": "flow failed validation: missing required member Components",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": null,
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_components",
+    "message": "flow failed validation: expected array for NArrayOfVideoComponent",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": "not-the-right-type",
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_components",
+    "message": "flow failed validation: expected array for NArrayOfVideoComponent",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_description",
+    "message": "flow failed validation: missing required member Description",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": null,
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_description",
+    "message": "flow failed validation: missing required member Description",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": 12345,
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_description",
+    "message": "flow failed validation: expected string, got int",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_device_id",
+    "message": "flow failed validation: missing required member DeviceId",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": null,
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_device_id",
+    "message": "flow failed validation: missing required member DeviceId",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": 12345,
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_device_id",
+    "message": "flow failed validation: expected string, got int",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_format",
+    "message": "flow failed validation: no matching type for polymorphic NFlow",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": null,
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_format",
+    "message": "flow failed validation: no matching type for polymorphic NFlow",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": 12345,
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_format",
+    "message": "flow failed validation: no matching type for polymorphic NFlow",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_frame_height",
+    "message": "flow failed validation: missing required member FrameHeight",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": null,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_frame_height",
+    "message": "flow failed validation: expected int, got NoneType",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": "not-the-right-type",
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_frame_height",
+    "message": "flow failed validation: expected int, got str",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_frame_width",
+    "message": "flow failed validation: missing required member FrameWidth",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": null,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_frame_width",
+    "message": "flow failed validation: expected int, got NoneType",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": "not-the-right-type",
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_frame_width",
+    "message": "flow failed validation: expected int, got str",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "label": "missing_grain_rate",
+    "ok": true,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": null,
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_grain_rate",
+    "message": "flow failed validation: expected JSON object for NRational",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": "not-the-right-type",
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_grain_rate",
+    "message": "flow failed validation: expected JSON object for NRational",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_id",
+    "message": "flow failed validation: missing required member Id",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": null,
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_id",
+    "message": "flow failed validation: missing required member Id",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": 12345,
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_id",
+    "message": "flow failed validation: expected string, got int",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "label": "missing_interlace_mode",
+    "ok": true,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": null,
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_interlace_mode",
+    "message": "flow failed validation: expected string for enum, got NoneType",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": 12345,
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_interlace_mode",
+    "message": "flow failed validation: expected string for enum, got int",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_label",
+    "message": "flow failed validation: missing required member Label",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": null,
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_label",
+    "message": "flow failed validation: missing required member Label",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": 12345,
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_label",
+    "message": "flow failed validation: expected string, got int",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_media_type",
+    "message": "flow failed validation: no matching type for polymorphic NFlow",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": null,
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_media_type",
+    "message": "flow failed validation: expected string for enum, got NoneType",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": 12345,
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_media_type",
+    "message": "flow failed validation: expected string for enum, got int",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_parents",
+    "message": "flow failed validation: missing required member Parents",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": null,
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_parents",
+    "message": "flow failed validation: expected array, got NoneType",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": "not-the-right-type",
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_parents",
+    "message": "flow failed validation: expected array, got str",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_source_id",
+    "message": "flow failed validation: missing required member SourceId",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": null,
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_source_id",
+    "message": "flow failed validation: missing required member SourceId",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": 12345,
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_source_id",
+    "message": "flow failed validation: expected string, got int",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_tags",
+    "message": "flow failed validation: missing required member Tags",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": null,
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_tags",
+    "message": "flow failed validation: expected dict for tags, got NoneType",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": "not-the-right-type",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_tags",
+    "message": "flow failed validation: expected dict for tags, got str",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {}
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_version",
+    "message": "flow failed validation: missing required member Version",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": null
+    },
+    "kind": "DecodeFailure",
+    "label": "null_version",
+    "message": "flow failed validation: expected string for time, got NoneType",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": 12345
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_version",
+    "message": "flow failed validation: expected string for time, got int",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_colorspace_and_components",
+    "message": "flow failed validation: missing required member Colorspace",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "label": "format_video",
+    "ok": true,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:audio",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "format_audio",
+    "message": "flow failed validation: missing required member SampleRate",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:data",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "label": "format_data",
+    "ok": true,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:mux",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "label": "format_mux",
+    "ok": true,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:smell",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "format_smell",
+    "message": "flow failed validation: no matching type for polymorphic NFlow",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "colorspace": "BT709",
+      "components": [
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Y",
+          "width": 1920
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cb",
+          "width": 960
+        },
+        {
+          "bit_depth": 10,
+          "height": 1080,
+          "name": "Cr",
+          "width": 960
+        }
+      ],
+      "description": "registry test flow",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "format": "urn:x-nmos:format:video\n",
+      "frame_height": 1080,
+      "frame_width": 1920,
+      "grain_rate": {
+        "denominator": 1,
+        "numerator": 25
+      },
+      "id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interlace_mode": "progressive",
+      "label": "test-flow",
+      "media_type": "video/raw",
+      "parents": [],
+      "source_id": "c23c6a65-8e91-4f6c-a484-046363dbca29",
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "format_video_newline",
+    "message": "flow failed validation: no matching type for polymorphic NFlow",
+    "ok": false,
+    "resource_type": "flow"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "label": "valid",
+    "ok": true,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "label": "keys_reversed",
+    "ok": true,
+    "resource_type": "sender"
+  },
+  {
+    "body": "a string",
+    "kind": "DecodeFailure",
+    "label": "not_an_object",
+    "message": "expected a JSON object for sender",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {},
+    "kind": "DecodeFailure",
+    "label": "empty_object",
+    "message": "sender failed validation: missing required member Id",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "label": "missing_caps",
+    "ok": true,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": null,
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_caps",
+    "message": "sender failed validation: expected JSON object for NSenderCapabilities",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": "not-the-right-type",
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_caps",
+    "message": "sender failed validation: expected JSON object for NSenderCapabilities",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_description",
+    "message": "sender failed validation: missing required member Description",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": null,
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_description",
+    "message": "sender failed validation: missing required member Description",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": 12345,
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_description",
+    "message": "sender failed validation: expected string, got int",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_device_id",
+    "message": "sender failed validation: missing required member DeviceId",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": null,
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_device_id",
+    "message": "sender failed validation: missing required member DeviceId",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": 12345,
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_device_id",
+    "message": "sender failed validation: expected string, got int",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_flow_id",
+    "message": "sender failed validation: missing required member FlowId",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": null,
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "label": "null_flow_id",
+    "ok": true,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": 12345,
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_flow_id",
+    "message": "sender failed validation: expected string or null, got int",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_id",
+    "message": "sender failed validation: missing required member Id",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": null,
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_id",
+    "message": "sender failed validation: missing required member Id",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": 12345,
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_id",
+    "message": "sender failed validation: expected string, got int",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_interface_bindings",
+    "message": "sender failed validation: missing required member InterfaceBindings",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": null,
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_interface_bindings",
+    "message": "sender failed validation: expected array, got NoneType",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": "not-the-right-type",
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_interface_bindings",
+    "message": "sender failed validation: expected array, got str",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_label",
+    "message": "sender failed validation: missing required member Label",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": null,
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_label",
+    "message": "sender failed validation: missing required member Label",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": 12345,
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_label",
+    "message": "sender failed validation: expected string, got int",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_manifest_href",
+    "message": "sender failed validation: missing required member ManifestHref",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": null,
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "label": "null_manifest_href",
+    "ok": true,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": 12345,
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_manifest_href",
+    "message": "sender failed validation: expected string for URL, got int",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_subscription",
+    "message": "sender failed validation: missing required member Subscription",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": null,
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_subscription",
+    "message": "sender failed validation: expected JSON object for NSenderSubscription",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": "not-the-right-type",
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_subscription",
+    "message": "sender failed validation: expected JSON object for NSenderSubscription",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_tags",
+    "message": "sender failed validation: missing required member Tags",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": null,
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_tags",
+    "message": "sender failed validation: expected dict for tags, got NoneType",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": "not-the-right-type",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_tags",
+    "message": "sender failed validation: expected dict for tags, got str",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_transport",
+    "message": "sender failed validation: missing required member Transport",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": null,
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "null_transport",
+    "message": "sender failed validation: expected string for enum, got NoneType",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": 12345,
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_transport",
+    "message": "sender failed validation: expected string for enum, got int",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_version",
+    "message": "sender failed validation: missing required member Version",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": null
+    },
+    "kind": "DecodeFailure",
+    "label": "null_version",
+    "message": "sender failed validation: expected string for time, got NoneType",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "caps": {},
+      "description": "registry test sender",
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": 12345
+    },
+    "kind": "DecodeFailure",
+    "label": "retyped_version",
+    "message": "sender failed validation: expected string for time, got int",
+    "ok": false,
+    "resource_type": "sender"
+  },
+  {
+    "body": {
+      "device_id": "a370d258-69de-4422-860a-ee4cf32ee9f4",
+      "flow_id": "b3bb5be7-9fe9-4324-a5bb-4c70e1084449",
+      "id": "171d5c80-7fff-4c23-9383-46503eb1c63e",
+      "interface_bindings": [
+        "eth0"
+      ],
+      "label": "test-sender",
+      "manifest_href": "http://192.0.2.1:8080/sender.sdp",
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      },
+      "tags": {},
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "version": "1700000000:123456789"
+    },
+    "kind": "DecodeFailure",
+    "label": "missing_caps_and_description",
+    "message": "sender failed validation: missing required member Description",
+    "ok": false,
+    "resource_type": "sender"
+  }
+]

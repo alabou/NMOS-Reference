@@ -1,0 +1,270 @@
+{
+ "cases": [
+  {
+   "name": "valid_node",
+   "ok": true,
+   "source": "{\"type\":\"node\",\"data\":{\"id\": \"3b8be755-08ff-452b-b217-c9151eb21193\", \"version\": \"1600000000:0\", \"label\": \"n\", \"description\": \"\", \"tags\": {}, \"href\": \"http://example.test/\", \"hostname\": \"example\", \"caps\": {}, \"api\": {\"versions\": [\"v1.3\"], \"endpoints\": []}, \"services\": [], \"clocks\": [], \"interfaces\": []}}",
+   "stored": "{\"id\": \"3b8be755-08ff-452b-b217-c9151eb21193\", \"version\": \"1600000000:0\", \"label\": \"n\", \"description\": \"\", \"tags\": {}, \"href\": \"http://example.test/\", \"hostname\": \"example\", \"caps\": {}, \"api\": {\"versions\": [\"v1.3\"], \"endpoints\": []}, \"services\": [], \"clocks\": [], \"interfaces\": []}",
+   "type": "node"
+  },
+  {
+   "name": "valid_device",
+   "ok": true,
+   "source": "{\"type\":\"device\",\"data\":{\"id\": \"58f6b536-ca4c-43fd-880a-9df2501fc125\", \"version\": \"1600000000:0\", \"label\": \"d\", \"description\": \"\", \"tags\": {}, \"type\": \"urn:x-nmos:device:generic\", \"node_id\": \"3b8be755-08ff-452b-b217-c9151eb21193\", \"senders\": [], \"receivers\": [], \"controls\": []}}",
+   "stored": "{\"id\": \"58f6b536-ca4c-43fd-880a-9df2501fc125\", \"version\": \"1600000000:0\", \"label\": \"d\", \"description\": \"\", \"tags\": {}, \"type\": \"urn:x-nmos:device:generic\", \"node_id\": \"3b8be755-08ff-452b-b217-c9151eb21193\", \"senders\": [], \"receivers\": [], \"controls\": []}",
+   "type": "device"
+  },
+  {
+   "name": "members_reordered",
+   "ok": true,
+   "source": "{\"data\":{\"id\": \"3b8be755-08ff-452b-b217-c9151eb21193\", \"version\": \"1600000000:0\", \"label\": \"n\", \"description\": \"\", \"tags\": {}, \"href\": \"http://example.test/\", \"hostname\": \"example\", \"caps\": {}, \"api\": {\"versions\": [\"v1.3\"], \"endpoints\": []}, \"services\": [], \"clocks\": [], \"interfaces\": []},\"type\":\"node\"}",
+   "stored": "{\"id\": \"3b8be755-08ff-452b-b217-c9151eb21193\", \"version\": \"1600000000:0\", \"label\": \"n\", \"description\": \"\", \"tags\": {}, \"href\": \"http://example.test/\", \"hostname\": \"example\", \"caps\": {}, \"api\": {\"versions\": [\"v1.3\"], \"endpoints\": []}, \"services\": [], \"clocks\": [], \"interfaces\": []}",
+   "type": "node"
+  },
+  {
+   "name": "extra_envelope_member",
+   "ok": true,
+   "source": "{\"type\":\"node\",\"data\":{\"id\": \"3b8be755-08ff-452b-b217-c9151eb21193\", \"version\": \"1600000000:0\", \"label\": \"n\", \"description\": \"\", \"tags\": {}, \"href\": \"http://example.test/\", \"hostname\": \"example\", \"caps\": {}, \"api\": {\"versions\": [\"v1.3\"], \"endpoints\": []}, \"services\": [], \"clocks\": [], \"interfaces\": []},\"extra\":1}",
+   "stored": "{\"id\": \"3b8be755-08ff-452b-b217-c9151eb21193\", \"version\": \"1600000000:0\", \"label\": \"n\", \"description\": \"\", \"tags\": {}, \"href\": \"http://example.test/\", \"hostname\": \"example\", \"caps\": {}, \"api\": {\"versions\": [\"v1.3\"], \"endpoints\": []}, \"services\": [], \"clocks\": [], \"interfaces\": []}",
+   "type": "node"
+  },
+  {
+   "name": "whitespace_everywhere",
+   "ok": true,
+   "source": "{ \"type\" : \"node\" , \"data\" : {\"id\": \"3b8be755-08ff-452b-b217-c9151eb21193\", \"version\": \"1600000000:0\", \"label\": \"n\", \"description\": \"\", \"tags\": {}, \"href\": \"http://example.test/\", \"hostname\": \"example\", \"caps\": {}, \"api\": {\"versions\": [\"v1.3\"], \"endpoints\": []}, \"services\": [], \"clocks\": [], \"interfaces\": []} }",
+   "stored": "{\"id\": \"3b8be755-08ff-452b-b217-c9151eb21193\", \"version\": \"1600000000:0\", \"label\": \"n\", \"description\": \"\", \"tags\": {}, \"href\": \"http://example.test/\", \"hostname\": \"example\", \"caps\": {}, \"api\": {\"versions\": [\"v1.3\"], \"endpoints\": []}, \"services\": [], \"clocks\": [], \"interfaces\": []}",
+   "type": "node"
+  },
+  {
+   "name": "escaped_ascii_survives",
+   "ok": true,
+   "source": "{\"type\":\"node\",\"data\":{\"id\": \"3b8be755-08ff-452b-b217-c9151eb21193\", \"version\": \"1600000000:0\", \"label\": \"\\u0041\", \"description\": \"\", \"tags\": {}, \"href\": \"http://example.test/\", \"hostname\": \"example\", \"caps\": {}, \"api\": {\"versions\": [\"v1.3\"], \"endpoints\": []}, \"services\": [], \"clocks\": [], \"interfaces\": []}}",
+   "stored": "{\"id\": \"3b8be755-08ff-452b-b217-c9151eb21193\", \"version\": \"1600000000:0\", \"label\": \"\\u0041\", \"description\": \"\", \"tags\": {}, \"href\": \"http://example.test/\", \"hostname\": \"example\", \"caps\": {}, \"api\": {\"versions\": [\"v1.3\"], \"endpoints\": []}, \"services\": [], \"clocks\": [], \"interfaces\": []}",
+   "type": "node"
+  },
+  {
+   "name": "exponent_survives",
+   "ok": true,
+   "source": "{\"type\":\"node\",\"data\":{\"id\": \"3b8be755-08ff-452b-b217-c9151eb21193\", \"version\": \"1600000000:0\", \"label\": \"n\", \"x-exp\": 1e3, \"description\": \"\", \"tags\": {}, \"href\": \"http://example.test/\", \"hostname\": \"example\", \"caps\": {}, \"api\": {\"versions\": [\"v1.3\"], \"endpoints\": []}, \"services\": [], \"clocks\": [], \"interfaces\": []}}",
+   "stored": "{\"id\": \"3b8be755-08ff-452b-b217-c9151eb21193\", \"version\": \"1600000000:0\", \"label\": \"n\", \"x-exp\": 1e3, \"description\": \"\", \"tags\": {}, \"href\": \"http://example.test/\", \"hostname\": \"example\", \"caps\": {}, \"api\": {\"versions\": [\"v1.3\"], \"endpoints\": []}, \"services\": [], \"clocks\": [], \"interfaces\": []}",
+   "type": "node"
+  },
+  {
+   "name": "non_ascii_survives",
+   "ok": true,
+   "source": "{\"type\":\"node\",\"data\":{\"id\": \"3b8be755-08ff-452b-b217-c9151eb21193\", \"version\": \"1600000000:0\", \"label\": \"caf\u00e9\", \"description\": \"\", \"tags\": {}, \"href\": \"http://example.test/\", \"hostname\": \"example\", \"caps\": {}, \"api\": {\"versions\": [\"v1.3\"], \"endpoints\": []}, \"services\": [], \"clocks\": [], \"interfaces\": []}}",
+   "stored": "{\"id\": \"3b8be755-08ff-452b-b217-c9151eb21193\", \"version\": \"1600000000:0\", \"label\": \"caf\u00e9\", \"description\": \"\", \"tags\": {}, \"href\": \"http://example.test/\", \"hostname\": \"example\", \"caps\": {}, \"api\": {\"versions\": [\"v1.3\"], \"endpoints\": []}, \"services\": [], \"clocks\": [], \"interfaces\": []}",
+   "type": "node"
+  },
+  {
+   "error": "invalid JSON body: expected '{' at offset 0, found 'n'",
+   "name": "not_json",
+   "ok": false,
+   "source": "not json"
+  },
+  {
+   "error": "invalid JSON body: expected '{' but the text ended",
+   "name": "empty_body",
+   "ok": false,
+   "source": ""
+  },
+  {
+   "error": "invalid JSON body: object ended without '}'",
+   "name": "truncated_object",
+   "ok": false,
+   "source": "{\"type\":\"node\""
+  },
+  {
+   "error": "node failed validation: missing required member Id",
+   "name": "trailing_garbage",
+   "ok": false,
+   "source": "{\"type\":\"node\",\"data\":{}} trailing"
+  },
+  {
+   "error": "invalid JSON body: expected '\"' at offset 1, found \"'\"",
+   "name": "single_quotes",
+   "ok": false,
+   "source": "{'type':'node'}"
+  },
+  {
+   "error": "invalid JSON body: bad value for 'data' at offset 22: Expecting ',' delimiter: line 1 column 29 (char 28)",
+   "name": "leading_zero_number",
+   "ok": false,
+   "source": "{\"type\":\"node\",\"data\":{\"a\":01}}"
+  },
+  {
+   "error": "expected a JSON object",
+   "name": "array_document",
+   "ok": false,
+   "source": "[]"
+  },
+  {
+   "error": "expected a JSON object",
+   "name": "string_document",
+   "ok": false,
+   "source": "\"a string\""
+  },
+  {
+   "error": "expected a JSON object",
+   "name": "number_document",
+   "ok": false,
+   "source": "42"
+  },
+  {
+   "error": "expected a JSON object",
+   "name": "null_document",
+   "ok": false,
+   "source": "null"
+  },
+  {
+   "error": "expected a JSON object",
+   "name": "bool_document",
+   "ok": false,
+   "source": "true"
+  },
+  {
+   "error": "missing or non-string 'type' in registration envelope",
+   "name": "type_missing",
+   "ok": false,
+   "source": "{\"data\":{}}"
+  },
+  {
+   "error": "missing or non-string 'type' in registration envelope",
+   "name": "type_is_number",
+   "ok": false,
+   "source": "{\"type\":42,\"data\":{}}"
+  },
+  {
+   "error": "missing or non-string 'type' in registration envelope",
+   "name": "type_is_null",
+   "ok": false,
+   "source": "{\"type\":null,\"data\":{}}"
+  },
+  {
+   "error": "missing or non-string 'type' in registration envelope",
+   "name": "type_is_array",
+   "ok": false,
+   "source": "{\"type\":[\"node\"],\"data\":{}}"
+  },
+  {
+   "error": "missing or non-string 'type' in registration envelope",
+   "name": "type_is_object",
+   "ok": false,
+   "source": "{\"type\":{},\"data\":{}}"
+  },
+  {
+   "error": "unknown resource type 'widget'; expected one of: node, device, source, flow, sender, receiver",
+   "name": "type_unknown",
+   "ok": false,
+   "source": "{\"type\":\"widget\",\"data\":{}}"
+  },
+  {
+   "error": "unknown resource type 'nodes'; expected one of: node, device, source, flow, sender, receiver",
+   "name": "type_plural",
+   "ok": false,
+   "source": "{\"type\":\"nodes\",\"data\":{}}"
+  },
+  {
+   "error": "unknown resource type ''; expected one of: node, device, source, flow, sender, receiver",
+   "name": "type_empty",
+   "ok": false,
+   "source": "{\"type\":\"\",\"data\":{}}"
+  },
+  {
+   "error": "unknown resource type 'Node'; expected one of: node, device, source, flow, sender, receiver",
+   "name": "type_wrong_case",
+   "ok": false,
+   "source": "{\"type\":\"Node\",\"data\":{}}"
+  },
+  {
+   "error": "missing or non-object 'data' in registration envelope",
+   "name": "data_missing",
+   "ok": false,
+   "source": "{\"type\":\"node\"}"
+  },
+  {
+   "error": "missing or non-object 'data' in registration envelope",
+   "name": "data_is_array",
+   "ok": false,
+   "source": "{\"type\":\"node\",\"data\":[]}"
+  },
+  {
+   "error": "missing or non-object 'data' in registration envelope",
+   "name": "data_is_string",
+   "ok": false,
+   "source": "{\"type\":\"node\",\"data\":\"x\"}"
+  },
+  {
+   "error": "missing or non-object 'data' in registration envelope",
+   "name": "data_is_null",
+   "ok": false,
+   "source": "{\"type\":\"node\",\"data\":null}"
+  },
+  {
+   "error": "missing or non-object 'data' in registration envelope",
+   "name": "data_is_number",
+   "ok": false,
+   "source": "{\"type\":\"node\",\"data\":42}"
+  },
+  {
+   "error": "missing or non-object 'data' in registration envelope",
+   "name": "data_is_bool",
+   "ok": false,
+   "source": "{\"type\":\"node\",\"data\":false}"
+  },
+  {
+   "error": "node failed validation: missing required member Id",
+   "name": "node_empty",
+   "ok": false,
+   "source": "{\"type\":\"node\",\"data\":{}}"
+  },
+  {
+   "error": "device failed validation: missing required member Id",
+   "name": "device_empty",
+   "ok": false,
+   "source": "{\"type\":\"device\",\"data\":{}}"
+  },
+  {
+   "error": "source failed validation: no matching type for polymorphic NSource",
+   "name": "source_empty",
+   "ok": false,
+   "source": "{\"type\":\"source\",\"data\":{}}"
+  },
+  {
+   "error": "flow failed validation: no matching type for polymorphic NFlow",
+   "name": "flow_empty",
+   "ok": false,
+   "source": "{\"type\":\"flow\",\"data\":{}}"
+  },
+  {
+   "error": "sender failed validation: missing required member Id",
+   "name": "sender_empty",
+   "ok": false,
+   "source": "{\"type\":\"sender\",\"data\":{}}"
+  },
+  {
+   "error": "receiver failed validation: no matching type for polymorphic NReceiver",
+   "name": "receiver_empty",
+   "ok": false,
+   "source": "{\"type\":\"receiver\",\"data\":{}}"
+  },
+  {
+   "error": "node failed validation: missing required member Version",
+   "name": "node_bad_uuid",
+   "ok": false,
+   "source": "{\"type\":\"node\",\"data\":{\"id\":\"not-a-uuid\"}}"
+  },
+  {
+   "error": "node failed validation: invalid TAI timestamp: 'nope'",
+   "name": "node_bad_version",
+   "ok": false,
+   "source": "{\"type\":\"node\",\"data\":{\"id\":\"3b8be755-08ff-452b-b217-c9151eb21193\",\"version\":\"nope\"}}"
+  },
+  {
+   "error": "node failed validation: missing required member Label",
+   "name": "node_missing_label",
+   "ok": false,
+   "source": "{\"type\":\"node\",\"data\":{\"id\":\"3b8be755-08ff-452b-b217-c9151eb21193\",\"version\":\"1600000000:0\"}}"
+  }
+ ]
+}

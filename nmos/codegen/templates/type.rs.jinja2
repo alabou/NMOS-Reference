@@ -1,0 +1,582 @@
+{#-
+  Rust emitter for one TypeDesc.
+
+  Peer of type.py.jinja2, not a translation of it. The Python template produces
+  two classes per type (NFooValue + NFoo), a `_defined` flag per member and an
+  explicit clone() on every field, because it is emulating Go value semantics in
+  a language with neither Option nor moves. Rust has both, so all of that
+  evaporates: `_defined` IS Option<T>, clone() IS #[derive(Clone)], and the
+  wrapper pair collapses to one struct.
+
+  What does NOT change is behaviour. Decode runs in DESCRIPTOR order -- not
+  document order -- then applies optional defaults, then checks required
+  presence, then runs assertions. That sequence is observable: the decode
+  exception's text goes straight into the HTTP 400 body a Node receives
+  (nmos/registry/handlers_registration.py:158), so a body missing two members
+  must name the same one Python would.
+
+  #[derive(Deserialize)] cannot express it. Derive visits fields in the order
+  the document lists them and fails on the first that will not parse, so
+  {"version":"y","id":"x"} and {"id":"x","version":"y"} would report different
+  errors where Python reports one. Hence a generated decode() rather than a
+  derived one. Serialize IS derived: field order is declaration order is
+  descriptor order, which is exactly the Python encoder's key order.
+-#}
+{#- The last four entries are pure aliases in nmos/json/types.py:
+    NArrayOfNull(NNull), NArrayOfNullString(NNullString), and
+    NArrayOfUrl/NArrayOfTime which both subclass NArrayOfString with `pass`.
+    Their names promise more structure than they carry -- NArrayOfTime is an
+    array of raw strings, never parsed into timestamps -- and that is
+    reproduced here rather than improved on. -#}
+{%- set base_map = {
+  "NString":            ("String",           "decode::string",             "opt"),
+  "NInt":               ("i64",              "decode::int",                "try"),
+  "NFloat":             ("f64",              "decode::float",              "try"),
+  "NBool":              ("bool",             "decode::bool",               "try"),
+  "NEnum":              ("EnumId",           "decode::enum_id",            "try"),
+  "NNull":              ("Nullable<Value>",  "decode::null_value",         "infallible"),
+  "NNullString":        ("Nullable<String>", "decode::nullable_string",    "try"),
+  "NHyperlink":         ("Hyperlink",        "decode::hyperlink",          "try"),
+  "NUrl":               ("String",           "decode::url",                "try"),
+  "NTime":              ("Tai",              "decode::tai",                "try"),
+  "NTags":              ("Tags",             "decode::tags",               "try"),
+  "NGeneric":           ("RawJson",            "decode::raw_json",            "infallible"),
+  "NArrayOfString":     ("Vec<String>",      "decode::array_of_string",    "try"),
+  "NArrayOfInt":        ("Vec<i64>",         "decode::array_of_int",       "try"),
+  "NArrayOfFloat":      ("Vec<f64>",         "decode::array_of_float",     "try"),
+  "NArrayOfBool":       ("Vec<bool>",        "decode::array_of_bool",      "try"),
+  "NArrayOfEnum":       ("Vec<EnumId>",      "decode::array_of_enum",      "try"),
+  "NArrayOfHyperlink":  ("Vec<Hyperlink>",   "decode::array_of_hyperlink", "try"),
+  "NArrayOfGeneric":    ("Vec<Value>",       "decode::array_of_generic",   "try"),
+  "NArrayOfNull":       ("Nullable<Value>",  "decode::null_value",         "infallible"),
+  "NArrayOfNullString": ("Nullable<String>", "decode::nullable_string",    "try"),
+  "NArrayOfUrl":        ("Vec<String>",      "decode::array_of_string",    "try"),
+  "NArrayOfTime":       ("Vec<String>",      "decode::array_of_string",    "try"),
+} -%}
+{#- The two hand-written map types. They consume the parent object's leftover
+    keys rather than one member, which no descriptor can express, so they are
+    written by hand on both sides. -#}
+{%- set handwritten = {
+  "NConstraints":          "NConstraints",
+  "NTransportConstraints": "NTransportConstraints",
+} -%}
+{#- Python emits NFoo and NFooValue from one descriptor; Rust collapses them
+    to one struct, so a member naming the Value half resolves to the struct. -#}
+{%- macro resolve(tn) -%}
+{%- if tn.endswith("Value") and tn[:-5] in known -%}{{ tn[:-5] }}{%- else -%}{{ tn }}{%- endif -%}
+{%- endmacro -%}
+{#- How to hand a member to its Check* function. Derived from the member's
+    base type: a string validator takes &str, an enum one takes &EnumId, an
+    integer one takes i64, and an array one takes an iterator of &str. -#}
+{#- A few validators do not take the member's value at all -- they take its
+    length -- so their call shape follows the FUNCTION, not the member type.
+    Keyed by assertion name, and checked first. -#}
+{#- CheckTransportConstraintEnumLength sits on an NArrayOfNull member, so the
+    value is whatever JSON arrived. Python calls len() on it directly, which
+    raises TypeError for a non-list -- decode.py's except clause turns that
+    crash into a 400. Rust treats a non-list as empty, so it still REJECTS, but
+    with the "invalid empty" message rather than Python's TypeError text. A
+    known message divergence, on input that is already malformed. -#}
+{%- set assert_override = {
+  "CheckDataEventTypes":               "{f}.len()",
+  "CheckConstraintsLength":            "{f}.0.len()",
+  "CheckTransportConstraintEnumLength": "{f}.as_option().and_then(serde_json::Value::as_array).map_or(0, Vec::len)",
+} -%}
+{#- The arrays-of-objects hand their ELEMENTS' checked members to the
+    validator rather than the array itself, so `nmos-json` never has to know a
+    generated element type. Each is a `#[serde(transparent)]` newtype, hence
+    the `.0`. Which member gets read is fixed by the array type, so keying on
+    that type is unambiguous even though the expression names an element
+    field. -#}
+{%- set assert_shape = {
+  "NString":        "&{f}",
+  "NUrl":           "&{f}",
+  "NEnum":          "&{f}",
+  "NInt":           "*{f}",
+  "NFloat":         "*{f} as i64",
+  "NGeneric":       "{f}",
+  "NNull":          "{f}.as_json()",
+  "NNullString":    "{f}.as_option().map(String::as_str)",
+  "NArrayOfString": "{f}.iter().map(String::as_str)",
+  "NArrayOfEnum":   "{f}.iter().map(nmos_json::EnumId::as_str)",
+  "NArrayOfVideoComponent": "{f}.0.iter().map(|e| Some(e.name.as_str()))",
+  "NArrayOfAudioChannel":   "{f}.0.iter().map(|e| e.symbol.as_ref().map(nmos_json::EnumId::as_str))",
+  "NArrayOfDidSdid":        "{f}.0.iter().map(|e| (e.did.as_deref(), e.sdid.as_deref()))",
+} -%}
+{%- set is_polymorphic = t.poly_types | length > 0 -%}
+{%- set is_simple_value = t.is_value and not is_polymorphic and not t.is_array -%}
+{#- Members that never appear in JSON. Python emits them as internal-only
+    fields; here they would be dead struct fields nothing can reach. -#}
+{%- set wire = t.members | rejectattr("json_key", "equalto", "-") | list -%}
+{%- set imports = [] -%}
+{%- set import_src = t.members if (t.is_array or is_simple_value) else wire -%}
+{%- for m in import_src -%}
+  {%- set tn = m.type_name -%}
+  {%- if tn.startswith("list[") -%}
+    {%- set inner = tn[5:-1] -%}
+    {%- if inner not in base_map and inner not in handwritten and inner != "object" and inner not in imports -%}
+      {%- if imports.append(resolve(inner)|string) %}{% endif -%}
+    {%- endif -%}
+  {%- elif tn not in base_map and tn not in handwritten and tn != "object" and tn not in imports -%}
+    {%- if imports.append(resolve(tn)|string) %}{% endif -%}
+  {%- endif -%}
+{%- endfor -%}
+//! Generated NMOS type: `{{ t.name }}`. DO NOT EDIT.
+//!
+//! Rendered from `nmos/codegen/definitions/` by
+//! `nmos/codegen/templates/type.rs.jinja2`. The descriptors are the source of
+//! truth and the Python tree in `nmos/types/generated/` is rendered from the
+//! same ones, so the two describe one model by construction.
+//!
+//! Regenerate with: `python -m nmos.codegen.generate`
+
+#[allow(unused_imports)]
+use nmos_json::error::{Error, Result};
+#[allow(unused_imports)]
+use nmos_json::{decode, validators, EnumId, Hyperlink, Nullable, RawJson, Tags, Tai};
+use serde::Serialize;
+#[allow(unused_imports)]
+use serde_json::Value;
+{% for dep in imports | sort %}
+use crate::generated::{{ dep | to_snake }}::{{ dep }};
+{% endfor %}
+{% for m in wire if m.type_name in handwritten %}
+use crate::handwritten::{{ handwritten[m.type_name] }};
+{% endfor %}
+
+{% if is_polymorphic %}
+{#- Variant names strip the parent's prefix when it is one: NSourceVideo under
+    NSource becomes NSource::Video. Mechanical, and it keeps a match arm
+    readable without inventing names. -#}
+{%- macro variant(pt) -%}
+{%- if pt.startswith(t.name) and pt[t.name|length:] -%}{{ pt[t.name|length:] }}{%- else -%}{{ pt }}{%- endif -%}
+{%- endmacro -%}
+{% for pt in t.poly_types %}
+use crate::generated::{{ pt | to_snake }}::{{ pt }};
+{% endfor %}
+
+/// `{{ t.name }}`: a discriminated union over {{ t.poly_types | length }} concrete types.
+///
+/// # Dispatch is ordered and committal
+///
+/// The variants are tried in the order the model declares them, and the FIRST
+/// whose predicate matches decides the type -- its decode error is the answer,
+/// even when a later variant would have decoded cleanly. Python behaves the
+/// same way, and that is why this is not `#[serde(untagged)]` on the way in:
+/// untagged picks the first variant that *deserialises*, not the first whose
+/// *discriminator* matches, and it backtracks. A body whose `format` says
+/// video but whose components are empty must report the empty components, not
+/// fall through and be mistaken for something else.
+///
+/// Declaration order is load-bearing for a second reason: some predicates only
+/// exclude (`notin`), so a variant declared later may match a superset of an
+/// earlier one. The emitter never sorts these.
+///
+/// `Serialize` IS untagged, which is correct on the way out -- it writes the
+/// inner value with no added tag, exactly as Python's type-switch encode does.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+// Variants differ in size because the concrete NMOS types do. Boxing them to
+// even that out would change the public shape of every match arm, for a type
+// that is decoded once per registration and then dropped.
+#[allow(clippy::large_enum_variant)]
+pub enum {{ t.name }} {
+{% for pt in t.poly_types %}
+    /// `{{ pt }}`.
+    {{ variant(pt) }}({{ pt }}),
+{% endfor %}
+}
+
+{% for pt in t.poly_types %}
+/// Does this object discriminate as `{{ pt }}`?
+{% if pt in t.predicates and t.predicates[pt] %}
+fn is_{{ pt | to_snake }}(doc: &serde_json::Map<String, Value>) -> bool {
+{% for json_key, expected, comparison in t.predicates[pt] %}
+{% if comparison == "eq" %}
+{% if expected.isdigit() or (expected.startswith("-") and expected[1:].isdigit()) %}
+    if doc.get({{ json_key | rust_str }}).and_then(Value::as_f64) != Some({{ expected }}_f64) {
+        return false;
+    }
+{% else %}
+    if doc.get({{ json_key | rust_str }}).and_then(Value::as_str) != Some({{ expected | rust_str }}) {
+        return false;
+    }
+{% endif %}
+{% elif comparison == "neq" %}
+    // Excluding, so the key must be PRESENT and different -- absence fails.
+    if doc.get({{ json_key | rust_str }}).and_then(Value::as_str) == Some({{ expected | rust_str }}) {
+        return false;
+    }
+    if !doc.contains_key({{ json_key | rust_str }}) {
+        return false;
+    }
+{% elif comparison == "in" %}
+    {
+        const ALLOWED: &[&str] = &[
+{% for val in expected.split(",") %}
+            {{ val | rust_str }},
+{% endfor %}
+        ];
+        match doc.get({{ json_key | rust_str }}).and_then(Value::as_str) {
+            Some(v) if ALLOWED.contains(&v) => {}
+            _ => return false,
+        }
+    }
+{% elif comparison == "notin" %}
+    {
+        const EXCLUDED: &[&str] = &[
+{% for val in expected.split(",") %}
+            {{ val | rust_str }},
+{% endfor %}
+        ];
+        if let Some(v) = doc.get({{ json_key | rust_str }}).and_then(Value::as_str)
+            && EXCLUDED.contains(&v)
+        {
+            return false;
+        }
+        // Excluding, so absence fails as well as membership.
+        if !doc.contains_key({{ json_key | rust_str }}) {
+            return false;
+        }
+    }
+{% elif comparison == "type_bool" %}
+    // Hardcoded to "enum", ignoring this predicate's json_key -- Python does
+    // the same, and the difference is not observable because every caller
+    // passes "enum" anyway.
+    match doc.get("enum").and_then(Value::as_array) {
+        Some(items) => match items.first() {
+            Some(first) if first.is_boolean() => {}
+            _ => return false,
+        },
+        None => return false,
+    }
+{% elif comparison == "type_str" %}
+    match doc.get("enum").and_then(Value::as_array) {
+        Some(items) => match items.first() {
+            Some(first) if first.is_string() => {}
+            _ => return false,
+        },
+        None => return false,
+    }
+{% elif comparison == "type_int" or comparison == "type_float" %}
+    {
+        // Python spells this `data.get("enum", data.get("minimum",
+        // data.get("maximum")))`, and evaluates those defaults EAGERLY -- so it
+        // selects on key PRESENCE, taking "enum" even when its value is null.
+        let probe = if doc.contains_key("enum") {
+            doc.get("enum")
+        } else if doc.contains_key("minimum") {
+            doc.get("minimum")
+        } else {
+            doc.get("maximum")
+        };
+        let ok = match probe {
+            Some(Value::Array(items)) if !items.is_empty() => {
+                let Some(first) = items.first() else { return false };
+{% if comparison == "type_int" %}
+                // A bool is excluded: `isinstance(True, int)` is true in
+                // Python, so it says so explicitly. Here the variants are
+                // already distinct and the outcome is the same.
+                first.is_i64() || first.is_u64()
+{% else %}
+                // An int is NOT a float to `isinstance`, so `5` fails here.
+                first.is_f64()
+{% endif %}
+            }
+            Some(Value::Array(_)) => false,
+{% if comparison == "type_int" %}
+            Some(v) => v.is_i64() || v.is_u64(),
+{% else %}
+            Some(v) => v.is_f64(),
+{% endif %}
+            None => false,
+        };
+        if !ok {
+            return false;
+        }
+    }
+{% elif comparison == "fallback" %}
+    // Always matches; declared last so it is the last resort.
+    let _ = doc;
+{% endif %}
+{% endfor %}
+    true
+}
+{% else %}
+fn is_{{ pt | to_snake }}(_doc: &serde_json::Map<String, Value>) -> bool {
+    // No predicate in the model: this variant always matches, so its position
+    // in the declaration order is what stops it shadowing the rest.
+    true
+}
+{% endif %}
+
+{% endfor %}
+impl {{ t.name }} {
+    /// Decode by discriminating on the object's contents.
+    pub fn decode(src: &Value) -> Result<Self> {
+        let Some(doc) = src.as_object() else {
+            return Err(Error::invalid_data(
+                "expected JSON object for polymorphic {{ t.name }}",
+            ));
+        };
+
+{% for pt in t.poly_types %}
+        if is_{{ pt | to_snake }}(doc) {
+            // Committal: this variant's error is the answer.
+            return Ok(Self::{{ variant(pt) }}({{ pt }}::decode(src)?));
+        }
+{% endfor %}
+        Err(Error::invalid_data(
+            "no matching type for polymorphic {{ t.name }}",
+        ))
+    }
+}
+{% elif is_simple_value or t.is_array %}
+{%- set m = t.members[0] -%}
+{%- if m.type_name.startswith("list[") -%}
+  {%- set inner = m.type_name[5:-1] -%}
+  {%- set rust_inner = base_map[inner][0] if inner in base_map else ("Value" if inner == "object" else resolve(inner)|string) -%}
+  {%- set rust_type = "Vec<" ~ rust_inner ~ ">" -%}
+{%- else -%}
+  {%- set rust_inner = base_map[m.type_name][0] if m.type_name in base_map else ("Value" if m.type_name == "object" else resolve(m.type_name)|string) -%}
+  {%- set rust_type = rust_inner -%}
+{%- endif %}
+/// `{{ t.name }}`: a {{ "list" if t.is_array else "single value" }} carried without a wrapping object.
+///
+/// `#[serde(transparent)]` so it encodes as its contents, with no extra nesting,
+/// matching the Python type's encode.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct {{ t.name }}(
+    /// The wrapped value, encoded with no enclosing object.
+    pub {{ rust_type }},
+);
+
+impl {{ t.name }} {
+    /// Decode from a JSON value.
+    pub fn decode(src: &Value) -> Result<Self> {
+{% if t.is_array %}
+        // Named after the TYPE, not the value's type. A generated array says
+        // "expected array for NArrayOfClock" where a base-type array says
+        // "expected array, got str" -- two different messages from two
+        // different places, and both reach an HTTP 400 body.
+        let Value::Array(items) = src else {
+            return Err(Error::invalid_data(
+                "expected array for {{ t.name }}",
+            ));
+        };
+        let mut out = Vec::with_capacity(items.len());
+        for item in items {
+{% if inner in base_map %}
+{% set fn, mode = base_map[inner][1], base_map[inner][2] %}
+{% if mode == "infallible" %}
+            out.push({{ fn }}(item));
+{% elif mode == "opt" %}
+            if let Some(v) = {{ fn }}(item)? {
+                out.push(v);
+            }
+{% else %}
+            out.push({{ fn }}(item)?);
+{% endif %}
+{% elif inner == "object" %}
+            out.push(item.clone());
+{% else %}
+            out.push({{ resolve(inner) }}::decode(item)?);
+{% endif %}
+        }
+        Ok(Self(out))
+{% else %}
+{% if m.type_name in base_map %}
+{% set fn, mode = base_map[m.type_name][1], base_map[m.type_name][2] %}
+{% if mode == "infallible" %}
+        Ok(Self({{ fn }}(src)))
+{% elif mode == "opt" %}
+        Ok(Self({{ fn }}(src)?.unwrap_or_default()))
+{% else %}
+        Ok(Self({{ fn }}(src)?))
+{% endif %}
+{% elif m.type_name == "object" %}
+        // The Python builtin `object`: any JSON value, taken as-is.
+        Ok(Self(decode::generic(src)))
+{% else %}
+        Ok(Self({{ resolve(m.type_name) }}::decode(src)?))
+{% endif %}
+{% endif %}
+    }
+}
+{% else %}
+/// `{{ t.name }}`.
+{% if t.is_sealed %}
+///
+/// Sealed: a property this type does not declare is an error, not something to
+/// ignore. Checked after every member has decoded, at the position the Python
+/// template puts it.
+{% endif %}
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct {{ t.name }} {
+{% for m in wire %}
+{%- set tn = m.type_name -%}
+{%- if tn.startswith("list[") -%}
+  {%- set inner = tn[5:-1] -%}
+  {%- set base = "Vec<" ~ (base_map[inner][0] if inner in base_map else ("Value" if inner == "object" else resolve(inner)|string)) ~ ">" -%}
+{%- elif tn in base_map -%}
+  {%- set base = base_map[tn][0] -%}
+{%- elif tn in handwritten -%}
+  {%- set base = handwritten[tn] -%}
+{%- elif tn == "object" -%}
+  {%- set base = "Value" -%}
+{%- else -%}
+  {%- set base = resolve(tn)|string -%}
+{%- endif %}
+{% if m.embedded %}
+    /// `{{ m.name }}`, flattened into this type's own JSON scope.
+    #[serde(flatten)]
+    pub {{ m.name | rust_ident }}: {{ base }},
+{% elif m.optional %}
+    /// `{{ m.json_key }}`. Optional, so absent means the member was not present.
+    #[serde(rename = {{ m.json_key | rust_str }}, skip_serializing_if = "Option::is_none")]
+    pub {{ m.name | rust_ident }}: Option<{{ base }}>,
+{% else %}
+    /// `{{ m.json_key }}`. Required.
+    #[serde(rename = {{ m.json_key | rust_str }})]
+    pub {{ m.name | rust_ident }}: {{ base }},
+{% endif %}
+{% endfor %}
+}
+
+impl {{ t.name }} {
+    /// Decode from a JSON value, in the order the descriptor declares.
+    ///
+    /// Members are read in declaration order regardless of how the document
+    /// orders its keys, then required presence is checked for every member,
+    /// then the assertions run. Two bodies differing only in key order must
+    /// therefore produce the same error.
+    #[allow(clippy::too_many_lines, unused_variables)]
+    pub fn decode(src: &Value) -> Result<Self> {
+        let Some(doc) = src.as_object() else {
+            return Err(Error::invalid_data(
+                "expected JSON object for {{ t.name }}",
+            ));
+        };
+
+{% for m in wire %}
+{%- set tn = m.type_name -%}
+{%- set field = m.name | rust_ident -%}
+{% if m.embedded %}
+        // Embedded: decoded from the parent's own map, and its required-member
+        // checks fire here, at this position in the member order.
+        let {{ field }} = {{ resolve(tn) }}::decode(src)?;
+{% elif tn.startswith("list[") %}
+{%- set inner = tn[5:-1] %}
+        let {{ field }} = match doc.get({{ m.json_key | rust_str }}) {
+            Some(v) => Some({{ resolve(inner) }}::decode(v)?.0),
+            None => None,
+        };
+{% elif tn in base_map %}
+{%- set fn, mode = base_map[tn][1], base_map[tn][2] %}
+{% if mode == "infallible" %}
+        let {{ field }} = doc.get({{ m.json_key | rust_str }}).map({{ fn }});
+{% elif mode == "opt" %}
+        let {{ field }} = match doc.get({{ m.json_key | rust_str }}) {
+            Some(v) => {{ fn }}(v)?,
+            None => None,
+        };
+{% else %}
+        let {{ field }} = match doc.get({{ m.json_key | rust_str }}) {
+            Some(v) => Some({{ fn }}(v)?),
+            None => None,
+        };
+{% endif %}
+{% elif tn in handwritten %}
+        // Consumes the parent object's leftover keys, so it is handed the whole
+        // map rather than one member's value.
+        let {{ field }} = Some({{ handwritten[tn] }}::decode(src)?);
+{% elif tn == "object" %}
+        let {{ field }} = doc.get({{ m.json_key | rust_str }}).cloned();
+{% else %}
+        let {{ field }} = match doc.get({{ m.json_key | rust_str }}) {
+            Some(v) => Some({{ resolve(tn) }}::decode(v)?),
+            None => None,
+        };
+{% endif %}
+{% endfor %}
+{% if t.is_sealed %}
+
+        // Sealed, so an undeclared property is rejected. Embedded members are
+        // excluded from the known set because their keys live in this scope.
+        const KNOWN: &[&str] = &[
+{% for m in wire if not m.embedded %}
+            {{ m.json_key | rust_str }},
+{% endfor %}
+        ];
+        for prop in doc.keys() {
+            if !KNOWN.contains(&prop.as_str()) {
+                return Err(Error::invalid_data(format!(
+                    "unknown property '{prop}' in sealed type {{ t.name }}"
+                )));
+            }
+        }
+{% endif %}
+
+{% set defaulted = wire | selectattr("optional") | selectattr("default") | list %}
+{% if defaulted %}
+
+        // Optional defaults, applied between decode and the required check --
+        // Python's `set_optional_to_default()`, in the same position.
+        //
+        // The rule is `optional AND default`, and it is narrower than the
+        // descriptors read: of 27 members carrying a default, 14 are NOT
+        // optional and their default is therefore inert -- a body omitting one
+        // is REJECTED, not filled in. `#[serde(default)]` would have quietly
+        // accepted all 27, so this step is written rather than derived.
+{% for m in defaulted %}
+        let {{ m.name | rust_ident }} = {{ m.name | rust_ident }}
+            .or(Some({{ m.default | rust_default(m.type_name) }}));
+{% endfor %}
+{% endif %}
+
+{% set required = wire | rejectattr("optional") | rejectattr("embedded") | list %}
+{% if required %}
+        // Required presence, for every member, before any assertion runs.
+{% for m in required %}
+        let {{ m.name | rust_ident }} = {{ m.name | rust_ident }}.ok_or_else(|| {
+            Error::invalid_object("missing required member {{ m.name }}")
+        })?;
+{% endfor %}
+{% endif %}
+
+{% set asserted = wire | selectattr("assertion") | rejectattr("embedded") | list %}
+{% if asserted %}
+
+        // Assertions, in descriptor order, after every required-presence check.
+        // Python runs them in exactly this position: a body missing a required
+        // member reports that, not an assertion failure on a member that is
+        // present.
+{% for m in asserted %}
+{%- set fname = m.assertion | to_snake -%}
+{%- set arg = assert_override[m.assertion] if m.assertion in assert_override
+             else (assert_shape[m.type_name] if m.type_name in assert_shape else none) -%}
+{%- if arg -%}
+{% if m.optional %}
+        if let Some(v) = &{{ m.name | rust_ident }} {
+            validators::{{ fname }}({{ (arg.replace("*{f}", "*v").replace("{f}", "v")) if arg.startswith("*") else arg.replace("{f}", "v").replace("&v", "v") }})?;
+        }
+{% else %}
+        validators::{{ fname }}({{ arg.replace("*{f}", m.name | rust_ident | string).replace("{f}", m.name | rust_ident | string) }})?;
+{% endif %}
+{% else %}
+        // {{ m.assertion }} on a {{ m.type_name }} member has no call shape in
+        // this emitter yet; it is recorded as an unported assertion rather than
+        // silently dropped. See the decode parity test's allowlist.
+{% endif %}
+{% endfor %}
+{% endif %}
+
+        Ok(Self {
+{% for m in wire %}
+            {{ m.name | rust_ident }},
+{% endfor %}
+        })
+    }
+}
+{% endif %}

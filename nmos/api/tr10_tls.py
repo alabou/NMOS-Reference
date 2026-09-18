@@ -21,22 +21,44 @@ Python ssl-module limitations (as of CPython 3.12 + OpenSSL 3.0):
   - ``SSLContext.set_ciphers()`` restricts the TLS 1.2 cipher list. It is
     used here to enforce the whitelist for TLS 1.2 connections.
   - TLS 1.3 cipher suites are governed by ``SSL_CTX_set_ciphersuites()``
-    in OpenSSL, which Python's ssl module does not expose. OpenSSL 3.0's
-    default TLS 1.3 cipher list is ``TLS_AES_256_GCM_SHA384 :
-    TLS_CHACHA20_POLY1305_SHA256 : TLS_AES_128_GCM_SHA256`` — all three
-    are explicitly allowed by TR-10-SEC §3, so the default is compliant.
-    A ``set_ciphersuites()`` call is wired in defensively for future
-    Python/OpenSSL builds that expose it.
-  - TLS group selection: the server accepts OpenSSL 3.0 defaults,
-    which include all four TR-10-SEC whitelisted groups (X25519,
-    secp256r1, secp521r1, X448). The validator's per-curve probe
-    relaunches the registry proxy + fake AS with OPENSSL_CONF
-    restricting ``Groups`` to one curve at a time, then verifies
-    the DUT's CLIENT successfully handshakes against each — this
-    is the §8-5 positive coverage path. (When Python adds
-    ``SSLContext.set_groups``, this module can pin the whitelist
-    explicitly per-context and close the secp384r1 closed-list
-    side of §8-9 too.)
+    in OpenSSL, which Python's ssl module does not expose. The
+    ``set_ciphersuites()`` call below is wired in defensively and is
+    therefore a no-op on this interpreter, so the TLS 1.3 list stays at
+    OpenSSL 3.0's default of ``TLS_AES_256_GCM_SHA384 :
+    TLS_CHACHA20_POLY1305_SHA256 : TLS_AES_128_GCM_SHA256``. Every one
+    of those is on §3's list, so nothing prohibited is offered and the
+    §8-9 side is satisfied for TLS 1.3. What is *not* satisfied is
+    SEC-8-8's "should support ``TLS_AES_128_CCM_SHA256``": it is absent
+    from that default and cannot be added without the setter. A probe
+    confirms it — a client offering only CCM is refused.
+  - TLS group selection: the server accepts OpenSSL 3.0 defaults, which
+    include all four TR-10-SEC whitelisted groups (X25519, secp256r1,
+    secp521r1, X448), so SEC-8-5 is fully met, ``should``s included.
+    The validator's per-curve probe relaunches the registry proxy +
+    fake AS with OPENSSL_CONF restricting ``Groups`` to one curve at a
+    time, then verifies the DUT's CLIENT successfully handshakes
+    against each — this is the §8-5 positive coverage path.
+
+    SEC-8-9 ("only the cipher suites and key exchange groups listed …
+    shall be used") is **not** met for groups, because those same
+    defaults are wider than the list. Probed against a live listener
+    carrying these restrictions, six unlisted groups are accepted:
+    ``secp384r1`` and the whole finite-field ladder ``ffdhe2048``,
+    ``ffdhe3072``, ``ffdhe4096``, ``ffdhe6144``, ``ffdhe8192``. (It is
+    not simply "everything else" — ``secp256k1`` and the brainpool
+    curves are refused. It is exactly OpenSSL's default group list,
+    which happens to be a superset of §3's.) Closing it needs
+    ``SSL_CTX_set1_groups_list``, which CPython does not wrap; when
+    Python adds ``SSLContext.set_groups`` this module can pin the
+    whitelist per-context and the gap closes.
+
+    Both of these gaps are properties of the ssl-module binding rather
+    than of OpenSSL: the entry points exist in the ``libssl`` this
+    interpreter has already loaded. The Rust registry binds the same
+    library directly and therefore pins both lists explicitly; this
+    module deliberately waits for the stdlib rather than reaching
+    around it, so that the two implementations converge on one
+    mechanism instead of two.
 
 The validator's negative probe — "open a handshake with a prohibited
 cipher and expect refusal" — passes against this implementation for all

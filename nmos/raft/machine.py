@@ -157,10 +157,6 @@ class StateMachine:
         store = self._registry.store
         return store.gc_interval, store.forget_interval
 
-    def reset_to(self, index: int) -> None:
-        """Declare everything through ``index`` applied, after a snapshot install."""
-        self._last_applied = index
-
     def install_snapshot(
         self, store: RegistryStore, ownership: OwnershipTable, index: int,
     ) -> None:
