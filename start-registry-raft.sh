@@ -7,9 +7,24 @@
 #   ./start-registry-raft.sh 1 3            # member 1 of 3
 #   ./start-registry-raft.sh 0 3 --secure   # TLS everywhere, RAP=1
 #   ./start-registry-raft.sh 0 3 2 --secure # ... RAP=2, mutual TLS Registration
+#   ./start-registry-raft.sh 0 3 --rust     # this member runs the Rust build
+#
+#   A MIXED cluster -- member 0 Python, members 1 and 2 Rust:
+#     ./start-registry-raft.sh 0 3            # window 1
+#     ./start-registry-raft.sh 1 3 --rust     # window 2
+#     ./start-registry-raft.sh 2 3 --rust     # window 3
 #
 # Usage:
-#   start-registry-raft.sh <index> [members] [rap] [--secure]
+#   start-registry-raft.sh <index> [members] [rap] [--secure] [--rust]
+#
+#   --rust    Start the Rust registry for THIS member instead of the Python
+#             one. Per-member, deliberately: pass it to some members and not
+#             others and the result is a heterogeneous cluster, which is the
+#             strongest conformance evidence available -- one wire, two
+#             implementations, and any disagreement shows up as a cluster that
+#             will not agree rather than as a test that passes on both sides
+#             separately. Build it first:
+#               cd rust && cargo build --release -p nmos-registry-bin
 #
 #   <index>   Which member this is, 0..members-1.
 #   [members] Cluster size: 1, 3 or 5 (default 3).
@@ -54,6 +69,11 @@
 
 set -Eeuo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/registry-runtime.sh"
+registry_select_runtime "$@"
+set -- "${REGISTRY_ARGS[@]}"
 
 # Positionals stop at the first option, so `... 0 3 --secure` cannot silently
 # land --secure in the RAP slot. Same guard, same reason, as start-registry.sh.
@@ -106,7 +126,6 @@ fi
 PYTHON="./.venv/bin/python"
 [ -x "$PYTHON" ] || PYTHON="$(command -v python3)"
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SERIAL="SNX1000${INDEX}"
 
 # The term/vote file. Repo-local and git-ignored, unlike the production default
@@ -239,7 +258,8 @@ if [ "$MEMBERS" -gt 1 ]; then
 fi
 echo
 
-exec "$PYTHON" nmos_registry.py \
+registry_runtime_command "$PYTHON" nmos_registry.py
+exec "${REGISTRY_CMD[@]}" \
     --registryAddr 127.0.0.1 \
     --registrationPort "$REG_PORT" \
     --queryPort "$QUERY_PORT" \

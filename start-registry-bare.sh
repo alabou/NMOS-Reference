@@ -11,10 +11,15 @@
 # then open the Controller UI that node1 serves on http://127.0.0.1:5050/controller/
 #
 # Usage:
-#   start-registry-bare.sh [registration-port] [bind-address]
+#   start-registry-bare.sh [registration-port] [bind-address] [--rust]
 #
 #   $1 = Registration API port (default: 8444; query port = $1-1, ws = $1+4)
 #   $2 = Bind address (default: 127.0.0.1)
+#
+#   --rust  Start the Rust registry instead of the Python one. Same flags,
+#           same ports, same behaviour on the wire -- the two implementations
+#           take the same command line on purpose. Needs
+#           `cd rust && cargo build --release -p nmos-registry-bin` first.
 #
 # Reaching the registry from another host
 # ---------------------------------------
@@ -45,6 +50,11 @@
 
 set -e
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/registry-runtime.sh"
+registry_select_runtime "$@"
+set -- "${REGISTRY_ARGS[@]}"
+
 REG_PORT="${1:-8444}"
 BIND_ADDR="${2:-${NMOS_REGISTRY_ADDR:-127.0.0.1}}"
 # Ports arrive on the command line, and arithmetic is no defence: $(( )) treats
@@ -71,7 +81,8 @@ require_port "<registration-port>" "$REG_PORT" 2 65531
 QUERY_PORT=$((REG_PORT - 1))
 WS_PORT=$((REG_PORT + 4))
 
-exec python3 nmos_registry.py \
+registry_runtime_command python3 nmos_registry.py
+exec "${REGISTRY_CMD[@]}" \
   --registryAddr "${BIND_ADDR}" \
   --registryDisableTLS \
   --registrationPort "${REG_PORT}" \

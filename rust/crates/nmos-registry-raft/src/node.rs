@@ -696,6 +696,12 @@ impl RaftNode {
         self.layout.local.index
     }
 
+    /// How many members this cluster has, this one included.
+    #[must_use]
+    pub fn cluster_size(&self) -> usize {
+        self.layout.size()
+    }
+
     /// The fence callers wait on before answering a client.
     #[must_use]
     pub fn fence(&self) -> Arc<RevisionFence> {

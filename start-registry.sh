@@ -3,7 +3,7 @@
 #
 # Usage:
 #   start-registry.sh [rap] [registration-port] [--oauth2] [--as-host=H]
-#                     [--as-port=P] [--tct=T] [--nap=N]
+#                     [--as-port=P] [--tct=T] [--nap=N] [--rust]
 #
 #   $1 = Registry Access Policy for the Registration API (default: 1)
 #          1  Unrestricted Registration, server-authenticated TLS
@@ -17,6 +17,10 @@
 #   start-node1-bare.bat, which points itself at the WSL IP
 #   (`wsl.exe hostname -I`) and so cannot reach a loopback-only registry.
 #
+#   --rust          Start the Rust registry instead of the Python one. Same
+#                   flags, same certificates, same behaviour on the wire.
+#                   Build it first: cd rust && cargo build --release -p
+#                   nmos-registry-bin
 #   --oauth2        Require OAuth 2.0 on the Query API as well as TLS.
 #   --as-host=H     Authorization server host (default: XYZ-SNX00000)
 #   --as-port=P     Authorization server port (default: 9443)
@@ -60,6 +64,11 @@
 # the same reason -- pass XYZ-SNX00000.
 
 set -e
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/registry-runtime.sh"
+registry_select_runtime "$@"
+set -- "${REGISTRY_ARGS[@]}"
 
 # Positional arguments are consumed only while they do not look like an option.
 # Taking them by index instead meant `start-registry.sh --oauth2` landed in the first
@@ -120,7 +129,6 @@ done
 # Cert directory resolution — override IPMX_CERT_ROOT to point at a
 # different `Certificates/` layout. Default: this repository's own
 # Certificates/ tree.
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # Certificates come from the subset bundled inside this repository, so a
 # standalone clone runs the whole rig with no wider workspace: SNX00000 is the
 # infrastructure serial (registry + Authorization Server) and SNX00001..
@@ -240,7 +248,8 @@ else
   OAUTH2_FLAGS=()
 fi
 
-exec python3 nmos_registry.py \
+registry_runtime_command python3 nmos_registry.py
+exec "${REGISTRY_CMD[@]}" \
   --registryAddr "${NMOS_REGISTRY_ADDR:-127.0.0.1}" \
   --registrySerialNumber SNX00000 \
   --registryCertificate "$REG_CERT" \

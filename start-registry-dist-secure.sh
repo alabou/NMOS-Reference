@@ -57,6 +57,17 @@
 set -Eeuo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# The Rust registry deliberately defers the etcd backend, so this launcher has
+# no --rust. Sourced anyway, so that passing it says why rather than failing on
+# an unrecognised flag as if it were a typo.
+REGISTRY_RUNTIME_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$REGISTRY_RUNTIME_DIR/registry-runtime.sh"
+registry_select_runtime "$@"
+set -- "${REGISTRY_ARGS[@]}"
+registry_reject_rust "The Rust registry has no etcd backend yet, so it cannot \
+serve this rig. Use start-registry-raft.sh --rust for a distributed Rust \
+registry, or drop --rust to run the Python one here."
+
 # Positionals stop at the first option, so `... 0 3 --oauth2` cannot silently
 # land --oauth2 in the RAP slot. Same guard, same reason, as start-registry.sh.
 POSITIONAL=()

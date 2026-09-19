@@ -259,7 +259,12 @@ async fn main() -> std::io::Result<()> {
         }
         tracing::info!(
             member = %backend.node().index(),
-            cluster = %backend.node().index(),
+            // The cluster SIZE, not the index again. It read
+            // `backend.node().index()` twice, so a three-member cluster
+            // reported `cluster=1` on member 1 -- which is what a
+            // single-member cluster would say, and is exactly the wrong thing
+            // to see while diagnosing whether members found each other.
+            cluster = %backend.node().cluster_size(),
             "registry: consensus member started",
         );
     }
