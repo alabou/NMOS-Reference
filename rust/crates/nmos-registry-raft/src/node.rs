@@ -329,6 +329,12 @@ pub(crate) struct NodeState {
     observed_amnesiac: BTreeSet<u64>,
     votes: BTreeSet<u64>,
     pre_votes: BTreeSet<u64>,
+    /// Members that refused this pre-vote round.
+    ///
+    /// Each one is a member that cannot later grant, so they are what
+    /// decide when the round can no longer be won -- see
+    /// `pre_vote_is_lost`.
+    pre_refusals: BTreeSet<u64>,
     append_sequence: u64,
     /// Seeded from the incarnation, **not** from zero.
     ///
@@ -390,6 +396,23 @@ impl NodeState {
     /// Members nobody has heard from count among those, and they cannot have
     /// granted -- so a partitioned cluster never satisfies this, which is the
     /// intended answer.
+    /// Can this pre-vote round no longer be won, however the rest answer?
+    ///
+    /// Every member that has refused is one that cannot later grant, so the
+    /// best case left is everyone else saying yes. When even that falls short
+    /// of a quorum the round is decided, and etcd's `VoteResult` calls it
+    /// `VoteLost`.
+    ///
+    /// Deliberately *not* expressed through [`Self::won`]: that asks whether
+    /// the votes in hand are sufficient, and the question here is whether the
+    /// votes still outstanding could ever be. A member with a forgotten log
+    /// makes `won` stricter still, which can only make losing come sooner, so
+    /// this bound stays correct under the recovery clause as well.
+    fn pre_vote_is_lost(&self, layout: &RaftLayout) -> bool {
+        let still_possible = layout.size().saturating_sub(self.pre_refusals.len());
+        still_possible < layout.quorum()
+    }
+
     fn won(&self, layout: &RaftLayout, tally: &BTreeSet<u64>) -> bool {
         if tally.len() < self.quorum(layout) {
             return false;
@@ -453,6 +476,7 @@ impl NodeState {
         self.leader = None;
         self.votes.clear();
         self.pre_votes.clear();
+        self.pre_refusals.clear();
         self.persist();
         was_leader
     }
@@ -614,6 +638,7 @@ impl RaftNode {
             observed_amnesiac: BTreeSet::new(),
             votes: BTreeSet::new(),
             pre_votes: BTreeSet::new(),
+            pre_refusals: BTreeSet::new(),
             append_sequence: 0,
             sequence: persisted
                 .incarnation
@@ -700,6 +725,29 @@ impl RaftNode {
     #[must_use]
     pub fn cluster_size(&self) -> usize {
         self.layout.size()
+    }
+
+    /// Callers still waiting for a proposal to resolve.
+    ///
+    /// Diagnostic, and the point of it is that it must come back to zero.
+    /// Every entry is a `oneshot::Sender` held on behalf of a client, so an
+    /// entry never removed is a caller never answered *and* memory never
+    /// released -- reachable memory, owned by a live map, which no leak
+    /// detector will ever report. The only way to know is to assert it.
+    #[must_use]
+    pub fn pending_waiters(&self) -> usize {
+        self.state.lock().waiters.len()
+    }
+
+    /// Partly-received snapshots being reassembled, one buffer per peer.
+    ///
+    /// Diagnostic, and bounded by the peer count rather than by traffic -- but
+    /// each buffer is a whole snapshot, so one left behind by a transfer that
+    /// neither finished nor was refused is megabytes held for the life of the
+    /// process.
+    #[must_use]
+    pub fn snapshot_buffers(&self) -> usize {
+        self.state.lock().installing.len()
     }
 
     /// The fence callers wait on before answering a client.
@@ -982,6 +1030,24 @@ impl RaftNode {
                 return;
             }
 
+            if !state.installing.is_empty() {
+                // **Absorbing a snapshot is not a moment to campaign.**
+                //
+                // `go.etcd.io/raft` gates every campaign on `promotable()`
+                // (`raft.go:853`), which is `!IsLearner &&
+                // !hasNextOrInProgressSnapshot()` (`raft.go:1946`). The first
+                // half is `voting` below; this is the second, which was
+                // missing.
+                //
+                // A member mid-transfer is by definition far behind, so it
+                // cannot win a pre-vote the up-to-dateness check is honest
+                // about -- and campaigning clears its `leader`, which stops it
+                // answering mutations for no gain. The transfer is also what
+                // will make it current, so waiting is strictly the better move.
+                state.reset_election_timer(&self.timing, now);
+                return;
+            }
+
             if state.voting || state.cluster_has_forgotten(&self.layout, &[]) {
                 // Pre-Vote first, always. Winning the real election is the
                 // *only* thing a term increment buys, so asking first costs one
@@ -1020,6 +1086,7 @@ impl RaftNode {
         state.leader = None;
         state.votes.clear();
         state.pre_votes.clear();
+        state.pre_refusals.clear();
         state.reset_election_timer(&self.timing, now);
         self.fail_waiters(state, reason);
     }
@@ -1079,6 +1146,7 @@ impl RaftNode {
         state.role = Role::PreCandidate;
         state.leader = None;
         state.pre_votes = BTreeSet::from([self.layout.local.index]);
+        state.pre_refusals.clear();
         state.reset_election_timer(&self.timing, now);
 
         if state.won(&self.layout, &state.pre_votes.clone()) {
@@ -1659,21 +1727,70 @@ impl RaftNode {
     // -- snapshot transfer --------------------------------------------------
 
     /// Send the next chunk of this member's snapshot to a stranded peer.
+    /// Say "I am still the leader" to a peer that can be told nothing else.
+    ///
+    /// `go.etcd.io/raft` carries heartbeats as their own message type, and
+    /// `bcastHeartbeat` reaches every peer whatever its replication state -- so
+    /// a follower waiting for a snapshot still hears from its leader.
+    ///
+    /// Here a heartbeat *is* an `AppendEntries`, so it arrives through
+    /// `send_append`, which diverts to `send_snapshot` for any peer below the
+    /// compaction boundary. Returning silently from there sent that peer
+    /// **nothing at all**: no entries, and no liveness either, because they are
+    /// the same message. Its election timer expires, it campaigns, it loses
+    /// against the leader's lease, and it keeps doing that -- while answering
+    /// every mutation with "no leader elected", because campaigning clears its
+    /// `leader`.
+    ///
+    /// Anchored at index 0, which every log matches -- even an empty one -- so
+    /// the consistency check cannot fail. No entries and a `leader_commit` of
+    /// zero mean that by the receiver's own rule it vouches for nothing and can
+    /// move no commit index. The reply reports `match_index` 0, which the
+    /// leader ignores, because a success is taken only when it moves a peer
+    /// *forward*. So it cannot be mistaken for progress, which is the one thing
+    /// a keepalive must never be.
+    fn send_keepalive(&self, state: &mut NodeState, peer: u64) {
+        state.append_sequence = state.append_sequence.saturating_add(1);
+        let request_id = state.append_sequence;
+        if let Some(tracked) = state.peers.get_mut(&peer) {
+            tracked.sent_commit = 0;
+        }
+        self.transport.send(
+            peer,
+            &Message::AppendEntries(AppendEntries {
+                term: state.term,
+                leader: self.layout.local.index,
+                prev_log_index: 0,
+                prev_log_term: 0,
+                leader_commit: 0,
+                request_id,
+                entries: Vec::new(),
+            }),
+            crate::wire::Stream::Control,
+        );
+    }
+
     fn send_snapshot(&self, state: &mut NodeState, peer: u64) {
         let Some(meta) = state.snapshot_meta else {
             // Nothing to send yet. The peer stays behind until the next
             // compaction produces one, which is correct: there is no state to
-            // hand it that it does not already have.
+            // hand it that it does not already have -- but it must still hear
+            // that this leader is alive.
+            self.send_keepalive(state, peer);
             return;
         };
         if state.snapshot.is_empty() {
+            self.send_keepalive(state, peer);
             return;
         }
         let Some(tracked) = state.peers.get(&peer) else {
             return;
         };
         if tracked.snapshot_in_flight {
-            // One chunk at a time.
+            // One chunk at a time. The chunk is on BULK, which a slow transfer
+            // can occupy for a long time, so the liveness signal goes
+            // separately on CONTROL.
+            self.send_keepalive(state, peer);
             return;
         }
 
@@ -2066,6 +2183,39 @@ impl crate::transport::PeerHandler for RaftNode {
                     let tally = state.pre_votes.clone();
                     if state.won(&self.layout, &tally) {
                         wake_apply = self.campaign(&mut state, now);
+                    }
+                } else if !message.granted {
+                    // **A lost round ends the candidacy**, which is
+                    // `go.etcd.io/raft`'s `case quorum.VoteLost:
+                    // r.becomeFollower(r.Term, None)` (`raft.go:1707`) and was
+                    // missing here.
+                    //
+                    // Losing is the *ordinary* outcome when the cluster is
+                    // healthy: the other members are inside their leader's
+                    // lease and refuse on those grounds. Without this the
+                    // member stays a pre-candidate and re-campaigns at every
+                    // timeout for as long as the leader lives.
+                    //
+                    // That is not merely untidy. A pre-candidate has cleared
+                    // its `leader` -- deliberately, to release the lease it
+                    // held -- so while it stays one it answers every mutation
+                    // with "no leader elected", and a mutation *forwarded* to
+                    // it because it owns the Node fails with "the member
+                    // owning node did not answer".
+                    state.pre_refusals.insert(peer);
+                    if state.pre_vote_is_lost(&self.layout) {
+                        tracing::debug!(
+                            member = self.layout.local.name,
+                            "raft: lost its pre-vote round and returns to following",
+                        );
+                        state.role = Role::Follower;
+                        state.pre_votes.clear();
+                        state.pre_refusals.clear();
+                        // A fresh window, as etcd's `becomeFollower` -> `reset`
+                        // gives. Without it the deadline that has already
+                        // expired is still expired, and the next tick
+                        // campaigns again immediately.
+                        state.reset_election_timer(&self.timing, now);
                     }
                 }
             } else {

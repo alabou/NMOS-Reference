@@ -19,6 +19,7 @@ from __future__ import annotations
 import pytest
 
 from nmos.raft.messages import (
+    EXPECTED_REPLY,
     BY_TYPE,
     AppendEntries,
     AppendEntriesReply,
@@ -251,3 +252,57 @@ class TestTheNonVotingRejoinFields:
             member_index=1, incarnation=42, stream=Stream.CONTROL,
         )
         assert decode_message(hello.TYPE, hello.encode()).incarnation == 42
+
+
+class TestCorrelatingAReplyWithItsRequest:
+    """An id alone cannot say which exchange a reply belongs to.
+
+    Two id spaces meet in the transport's one ``pending`` map: the transport
+    mints ids for ``request``, while ``AppendEntries`` carries an id of the
+    *leader's* own minting for flow control. Both start at one and climb, so
+    they collide -- most readily just after a leader change, when a member that
+    had been a follower has a low append sequence and a low request id at the
+    same time.
+
+    Matched on the number alone, an ``AppendEntriesReply`` can be handed to a
+    caller awaiting a ``ForwardReply``: that caller sees the wrong message and
+    gives up, a registration refused with 503, and the append reply never
+    reaches the node so the peer's ``match_index`` stalls for a tick.
+    """
+
+    def test_every_request_maps_to_the_reply_that_answers_it(self) -> None:
+        assert EXPECTED_REPLY[MessageType.FORWARD] is MessageType.FORWARD_REPLY
+        assert (
+            EXPECTED_REPLY[MessageType.APPEND_ENTRIES]
+            is MessageType.APPEND_ENTRIES_REPLY
+        )
+        assert EXPECTED_REPLY[MessageType.PROPOSE] is MessageType.PROPOSE_REPLY
+        assert EXPECTED_REPLY[MessageType.HELLO] is MessageType.HELLO_ACK
+
+    def test_a_reply_draws_nothing_so_nothing_may_wait_on_one(self) -> None:
+        """What stops a waiter being registered for a reply in the first place."""
+        for reply in (
+            MessageType.FORWARD_REPLY,
+            MessageType.APPEND_ENTRIES_REPLY,
+            MessageType.PROPOSE_REPLY,
+            MessageType.REQUEST_VOTE_REPLY,
+            MessageType.INSTALL_SNAPSHOT_REPLY,
+            MessageType.PROMOTE,
+        ):
+            assert reply not in EXPECTED_REPLY, (
+                f"{reply.name} is recorded as drawing a reply, so a caller "
+                f"could be left waiting for an answer that never comes"
+            )
+
+    def test_the_two_implementations_agree_on_the_table(self) -> None:
+        """Every request kind is mapped, and to a distinct reply.
+
+        A request missing from the table cannot be awaited at all -- `request`
+        refuses it -- so an omission is a feature that stops working rather
+        than a wrong answer.
+        """
+        replies = list(EXPECTED_REPLY.values())
+        assert len(replies) == len(set(replies)), (
+            "two request kinds expect the same reply, so one could satisfy "
+            "the other's waiter"
+        )

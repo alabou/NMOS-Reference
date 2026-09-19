@@ -982,3 +982,126 @@ async fn a_closed_backend_is_dropped() {
         "the node outlived the backend that owned it",
     );
 }
+
+/// After a workload, do the per-operation structures come back to empty?
+///
+/// This is the class of leak that neither a leak detector nor a cycle test
+/// sees. Every byte involved is reachable and legitimately owned by a live
+/// map, so valgrind and LeakSanitizer both call it clean; and there is no
+/// cycle, so an ownership test passes. A registry that runs for weeks fails
+/// here or nowhere.
+///
+/// What is asserted, and why each one matters:
+///
+/// * **`pending_waiters`** -- a `oneshot::Sender` per caller awaiting a
+///   proposal. An entry never removed is a caller never answered as well as
+///   memory never released, so it is a liveness bug and a growth bug at once.
+/// * **`snapshot_buffers`** -- partial snapshots being reassembled. Bounded by
+///   the peer count rather than by traffic, but each is a whole snapshot.
+/// * **the commit queue** -- drained by the matcher, and deliberately does
+///   *not* coalesce, so it is the one structure whose growth is bounded by
+///   throughput rather than by the registry's own size. `high_water` exists
+///   precisely to make that observable and, until now, nothing read it.
+///
+/// Numbers, not just "not growing": the bound is the workload size, so a queue
+/// that never drained would be caught even though it is finite.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_per_operation_structures_return_to_empty() {
+    const ROUNDS: usize = 40;
+
+    let cluster = Backends::build(3);
+    cluster.start_all().await;
+    assert!(until(|| cluster.ready()).await, "never became ready");
+
+    // A distinct Node per round, so each member owns what it registers. Reusing
+    // one id would make every registration after the first a *forwarded*
+    // mutation, and the fabric deliberately does not implement correlated
+    // requests (`fabric/mod.rs`, `request`) -- so the test would be measuring
+    // the harness rather than the structures.
+    for round in 0..ROUNDS {
+        let member = round % cluster.backends.len();
+        let id = format!("11111111-0000-4000-8000-{round:012x}");
+        let body = Body::from_value(json!({
+            "id": id, "version": "1000:0", "label": format!("round {round}"),
+            "description": "", "tags": {}, "href": "http://example/",
+            "hostname": "example", "caps": {},
+            "api": {
+                "versions": ["v1.3"],
+                "endpoints": [
+                    {"host": "example", "port": 80, "protocol": "http"},
+                ],
+            },
+            "services": [], "clocks": [], "interfaces": [],
+        }));
+        cluster.backends[member]
+            .register(ResourceType::Node, body)
+            .await
+            .expect("commits")
+            .expect("accepted");
+    }
+
+    // Every proposal has been answered, so nothing should still be owed.
+    // Asserted before `close`, deliberately: `close` fails every outstanding
+    // waiter, which would empty the map and hide exactly what this looks for.
+    for backend in &cluster.backends {
+        let node = backend.node();
+        assert_eq!(
+            node.pending_waiters(),
+            0,
+            "member {} still owes {} callers a reply after {ROUNDS} \
+             registrations that all returned; each one is an unanswered \
+             client and a `oneshot::Sender` that is never released",
+            node.index(),
+            node.pending_waiters(),
+        );
+        assert_eq!(
+            node.snapshot_buffers(),
+            0,
+            "member {} is holding {} partly-received snapshots with no \
+             transfer in progress",
+            node.index(),
+            node.snapshot_buffers(),
+        );
+    }
+
+    // The commit queue. **No matcher runs in this rig** -- that task is spawned
+    // in `main.rs`, not here -- so the queue is not expected to be empty of its
+    // own accord, and asserting that it is would be asserting the harness.
+    //
+    // Two properties that do hold, and are what the structure promises:
+    //
+    // * it retains no more than was put into it. The queue deliberately does
+    //   not coalesce (divergence D2 -- merging an add with a remove would be
+    //   an observable difference from the Python), so "bounded by the
+    //   workload" is the strongest bound available, and a queue holding more
+    //   than the caller pushed would be retaining something twice.
+    // * draining releases all of it. That is what the matcher does each pass,
+    //   and it is the step that has to return the memory.
+    for backend in &cluster.backends {
+        let registry = backend.registry();
+        let member = backend.node().index();
+        let peak = registry.commit_high_water();
+        assert!(
+            peak <= ROUNDS,
+            "member {member}: the commit queue peaked at {peak} for {ROUNDS} \
+             registrations, so it is retaining more than the workload put in",
+        );
+        assert!(
+            registry.pending_commits() <= ROUNDS,
+            "member {member}: {} commits queued for {ROUNDS} registrations",
+            registry.pending_commits(),
+        );
+
+        let drained = registry.drain_commits().len();
+        assert_eq!(
+            registry.pending_commits(),
+            0,
+            "member {member}: {} commits still queued after a drain returned \
+             {drained} of them -- routing a grain has to release it, or a \
+             registry that never restarts grows by every change it ever made",
+            registry.pending_commits(),
+        );
+    }
+
+    cluster.close_all().await;
+}

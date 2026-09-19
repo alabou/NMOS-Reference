@@ -322,6 +322,7 @@ class RaftNode:
 
         self._votes: set[int] = set()
         self._pre_votes: set[int] = set()
+        self._pre_refusals: set[int] = set()
         # Correlates an append with its reply, so the flow-control pause
         # in ``_send_append`` releases on the right answer.
         self._append_sequence = 0
@@ -564,6 +565,21 @@ class RaftNode:
             return
         if now < self._deadline:
             return
+        if self._installing:
+            # **Absorbing a snapshot is not a moment to campaign.**
+            #
+            # ``go.etcd.io/raft`` gates every campaign on ``promotable()``
+            # (``raft.go:853``), which is ``!IsLearner &&
+            # !hasNextOrInProgressSnapshot()`` (``raft.go:1946``). The first
+            # half is ``_voting`` below; this is the second, which was missing.
+            #
+            # A member mid-transfer is by definition far behind, so it cannot
+            # win a pre-vote the up-to-dateness check is honest about -- and
+            # campaigning clears its ``_leader``, which stops it answering
+            # mutations for no gain. The transfer is also what will make it
+            # current, so waiting is strictly the better move.
+            self._reset_election_timer()
+            return
         if self._voting or self._cluster_has_forgotten():
             # Pre-Vote first, always. Winning the real election is the *only*
             # thing a term increment buys, so asking first costs one round trip
@@ -699,6 +715,7 @@ class RaftNode:
         self._leader = None
         self._votes.clear()
         self._pre_votes.clear()
+        self._pre_refusals.clear()
         self._batcher.fail_all(RaftUnavailable(reason))
         self._reset_election_timer()
 
@@ -711,6 +728,7 @@ class RaftNode:
         self._leader = None
         self._votes.clear()
         self._pre_votes.clear()
+        self._pre_refusals.clear()
         self._persist()
         if was_leader:
             # In-flight proposals cannot commit under a term we no longer own.
@@ -736,6 +754,7 @@ class RaftNode:
         self._role = Role.PRE_CANDIDATE
         self._leader = None
         self._pre_votes = {self._layout.local.index}
+        self._pre_refusals = set()
         self._reset_election_timer()
 
         log.debug(
@@ -954,6 +973,56 @@ class RaftNode:
             self._pre_votes.add(peer)
             if self._won_pre_vote():
                 self._campaign()
+            return
+
+        if not message.granted:
+            # **A lost round ends the candidacy**, which is
+            # ``go.etcd.io/raft``'s ``case quorum.VoteLost:
+            # r.becomeFollower(r.Term, None)`` (``raft.go:1707``) and was
+            # missing here.
+            #
+            # Losing is the *ordinary* outcome when the cluster is healthy: the
+            # other members are inside their leader's lease and refuse on those
+            # grounds. Without this the member simply stays a pre-candidate and
+            # re-campaigns at every timeout, for as long as the leader lives.
+            #
+            # That is not merely untidy. A pre-candidate has cleared its
+            # ``_leader`` -- deliberately, to release the lease it was holding
+            # -- so while it stays one it answers every mutation with "no
+            # leader elected", and a mutation *forwarded* to it because it owns
+            # the Node fails with "the member owning node did not answer". A
+            # member that lost a pre-vote is a follower, and a follower waits
+            # to be told who leads instead of insisting nobody does.
+            self._pre_refusals.add(peer)
+            if self._pre_vote_is_lost():
+                log.debug(
+                    "raft: %s lost its pre-vote round and returns to following",
+                    self._layout.local.name,
+                )
+                self._role = Role.FOLLOWER
+                self._pre_votes.clear()
+                self._pre_refusals.clear()
+                # A fresh window, as etcd's ``becomeFollower`` -> ``reset``
+                # gives. Without it the deadline that has already expired is
+                # still expired, and the next tick campaigns again immediately.
+                self._reset_election_timer()
+
+    def _pre_vote_is_lost(self) -> bool:
+        """Can this round no longer be won, however the rest answer?
+
+        Every member that has refused is one that cannot later grant, so the
+        best case left is everyone else saying yes. When even that falls short
+        of a quorum the round is decided, and etcd's ``VoteResult`` calls it
+        ``VoteLost``.
+
+        Deliberately *not* expressed through ``_won``: that asks whether the
+        votes in hand are sufficient, and the answer wanted here is whether the
+        votes still outstanding could ever be. A member with a forgotten log
+        makes ``_won`` stricter still, which can only make losing come sooner,
+        so this bound stays correct under the recovery clause as well.
+        """
+        still_possible = self._layout.size - len(self._pre_refusals)
+        return still_possible < self._layout.quorum
 
     def _won(self, votes: set[int] | None = None) -> bool:
         """Has this candidate collected enough of the right votes?
@@ -1944,16 +2013,37 @@ class RaftNode:
     # -- snapshot transfer -----------------------------------------------
 
     def _send_snapshot(self, peer: int, state: _PeerState) -> None:
-        """Send the next chunk of this member's snapshot to a stranded peer."""
+        """Send the next chunk of this member's snapshot to a stranded peer.
+
+        When there is no chunk to send this sends a **keepalive** instead, and
+        that is not tidiness. ``go.etcd.io/raft`` carries heartbeats as their
+        own message type, and ``bcastHeartbeat`` reaches every peer whatever
+        its replication state -- so a follower waiting for a snapshot still
+        hears from its leader and still knows one exists.
+
+        Here a heartbeat *is* an ``AppendEntries``, so it arrives through
+        ``_send_append``, which diverts to this method for any peer below the
+        compaction boundary. Returning silently therefore sent that peer
+        **nothing at all**: no entries, and no liveness either, because they
+        are the same message. Its election timer expires, it campaigns, it
+        loses against the leader's lease, and it does that for as long as the
+        condition lasts -- while answering every mutation with "no leader
+        elected", because campaigning clears its ``_leader``.
+        """
         meta = self._snapshot_meta
         if meta is None or not self._snapshot:
             # Nothing to send yet. The peer stays behind until the next
             # compaction produces one, which is correct: there is no state to
-            # hand it that it does not already have.
+            # hand it that it does not already have -- but it must still hear
+            # that this leader is alive.
+            self._send_keepalive(peer, state)
             return
 
         if state.snapshot_in_flight:
-            # One chunk at a time. See ``_PeerState.snapshot_in_flight``.
+            # One chunk at a time. See ``_PeerState.snapshot_in_flight``. The
+            # chunk is on BULK, which a slow transfer can occupy for a long
+            # time, so the liveness signal goes separately on CONTROL.
+            self._send_keepalive(peer, state)
             return
 
         offset = state.snapshot_offset
@@ -1972,6 +2062,36 @@ class RaftNode:
             # heartbeats that keep this member's leadership alive.
             stream=Stream.BULK,
         )
+
+    def _send_keepalive(self, peer: int, state: _PeerState) -> None:
+        """Say "I am still the leader" to a peer that can be told nothing else.
+
+        Anchored at index 0, which every log matches -- ``matches(0, 0)`` is
+        true even of an empty one -- so the consistency check cannot fail and
+        the peer cannot reject it. It carries no entries and a
+        ``leader_commit`` of zero, so by the receiver's own rule
+        (``min(leader_commit, prev_log_index + len(entries))``) it vouches for
+        nothing and can move no commit index.
+
+        What it does do is what etcd's ``MsgHeartbeat`` does: the receiver sets
+        its leader, resets its election timer, and stops campaigning.
+
+        The reply reports ``match_index`` 0, which the leader ignores --
+        ``on_append_entries_reply`` takes only an acknowledgement that moves a
+        peer *forward*. So this cannot be mistaken for progress, which is the
+        one thing a keepalive must never be.
+        """
+        self._append_sequence += 1
+        state.sent_commit = 0
+        self._transport.send(peer, AppendEntries(
+            term=self._term,
+            leader=self._layout.local.index,
+            prev_log_index=0,
+            prev_log_term=0,
+            leader_commit=0,
+            request_id=self._append_sequence,
+            entries=(),
+        ))
 
     def on_install_snapshot(
         self, peer: int, message: InstallSnapshot,

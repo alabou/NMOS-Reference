@@ -67,6 +67,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from nmos.raft.errors import RaftClusterMismatch, RaftProtocolError, RaftUnavailable
 from nmos.raft.messages import (
+    EXPECTED_REPLY,
     AppendEntries,
     AppendEntriesReply,
     Forward,
@@ -206,7 +207,24 @@ class _Link:
     task: asyncio.Task[None] | None = None
     incarnation: int = 0
     connected: bool = False
-    pending: dict[int, asyncio.Future[Any]] = field(default_factory=dict)
+    pending: dict[int, tuple[MessageType, asyncio.Future[Any]]] = field(
+        default_factory=dict,
+    )
+    """Callers awaiting a correlated reply, and what each is waiting for.
+
+    The kind is not decoration -- see ``EXPECTED_REPLY``.
+    """
+
+
+APPLICATION_CONCURRENCY = 64
+"""How many forwarded mutations one member will serve at once.
+
+A bound rather than none, because every one of these is a task awaiting a
+quorum round and a peer under load can offer them faster than they retire.
+Exceeding it is answered immediately with a refusal rather than by waiting: the
+whole point of serving these off the reader is that the reader must not block,
+and a caller that is refused retries, which is the behaviour a 503 already has.
+"""
 
 
 class RaftTransport:
@@ -262,6 +280,14 @@ class RaftTransport:
         # are parked on ``read_frame`` waiting for a peer that has no reason to
         # say anything -- so closing the listener alone deadlocks shutdown.
         self._inbound: set[asyncio.StreamWriter] = set()
+        self._serving: set[asyncio.Task[None]] = set()
+        """Application handlers running off the link reader.
+
+        Owned rather than detached, so ``close`` can cancel them: a task
+        awaiting a quorum round that nobody will now answer would otherwise
+        outlive the transport that started it.
+        """
+        self._application_slots = asyncio.Semaphore(APPLICATION_CONCURRENCY)
         self._links: dict[tuple[int, Stream], _Link] = {}
         self._next_request_id = 1
         self._closing = False
@@ -295,6 +321,13 @@ class RaftTransport:
 
     async def close(self) -> None:
         self._closing = True
+        # The application handlers first: each is awaiting a quorum round that
+        # this transport is about to stop carrying, so none of them can finish.
+        for task in list(self._serving):
+            task.cancel()
+        if self._serving:
+            await asyncio.gather(*list(self._serving), return_exceptions=True)
+        self._serving.clear()
         for link in self._links.values():
             if link.task is not None:
                 link.task.cancel()
@@ -357,9 +390,19 @@ class RaftTransport:
         self._next_request_id += 1
         tagged = _with_request_id(message, request_id)
 
+        expected = EXPECTED_REPLY.get(message.TYPE)
+        if expected is None:
+            raise RaftUnavailable(
+                f"{message.TYPE.name} draws no reply and cannot be awaited; "
+                f"use send() for it",
+            )
+
         loop = asyncio.get_running_loop()
         future: asyncio.Future[Any] = loop.create_future()
-        link.pending[request_id] = future
+        # The expected reply **kind** is stored with the waiter, not just the
+        # id. See ``EXPECTED_REPLY``: the transport's request ids and the
+        # leader's append ids are different spaces that meet in this one map.
+        link.pending[request_id] = (expected, future)
         try:
             link.writer.write(_frame_for(tagged, stream))
             return await asyncio.wait_for(
@@ -468,7 +511,7 @@ class RaftTransport:
             except (OSError, RuntimeError):
                 pass
             link.writer = None
-        for future in link.pending.values():
+        for _expected, future in link.pending.values():
             if not future.done():
                 future.set_exception(error)
         link.pending.clear()
@@ -598,13 +641,70 @@ class RaftTransport:
             reply = handler.on_install_snapshot(peer, message)
         elif frame.type is MessageType.PROMOTE:
             handler.on_promote(peer, message)
-        elif frame.type is MessageType.PROPOSE:
-            reply = await handler.on_propose(peer, message)
-        elif frame.type is MessageType.FORWARD:
-            reply = await handler.on_forward(peer, message)
+        elif frame.type in (MessageType.PROPOSE, MessageType.FORWARD):
+            # **Served off this reader, not on it.**
+            #
+            # These two wait for a quorum round -- the trait says so -- and the
+            # answer to that round arrives as ``AppendEntries`` on *this very
+            # link*. Awaiting them here therefore deadlocks whenever the member
+            # that sent the forward is the leader: the handler waits for a
+            # commit that cannot be read, because the reader is inside the
+            # handler. Measured as every refusal taking the whole mutation
+            # deadline, in both implementations.
+            #
+            # The consensus messages above stay synchronous and in order, which
+            # is what keeps a term from being read and acted on across an
+            # await.
+            self._serve_application(peer, frame, message, writer, handler)
+            return
 
         if reply is not None and writer is not None:
             writer.write(_frame_for(reply, frame.stream, is_reply=True))
+
+    def _serve_application(
+        self, peer: int, frame: Frame, message: Any,
+        writer: asyncio.StreamWriter | None, handler: PeerHandler,
+    ) -> None:
+        """Run a quorum-round handler on its own task, answering when it ends.
+
+        The reply goes back on the connection the request arrived on, which is
+        deliberate: a member whose inbound link works and whose outbound one
+        does not is a case this cluster's own harness models, and answering on
+        a different socket would lose the reply exactly there.
+        """
+        if self._application_slots.locked():
+            # At capacity. Refusing now is the honest answer -- waiting for a
+            # slot would block this reader, which is the whole defect.
+            refusal = _application_refusal(frame, message)
+            if refusal is not None and writer is not None:
+                writer.write(_frame_for(refusal, frame.stream, is_reply=True))
+            return
+
+        task = asyncio.create_task(
+            self._run_application(peer, frame, message, writer, handler),
+        )
+        self._serving.add(task)
+        task.add_done_callback(self._serving.discard)
+
+    async def _run_application(
+        self, peer: int, frame: Frame, message: Any,
+        writer: asyncio.StreamWriter | None, handler: PeerHandler,
+    ) -> None:
+        async with self._application_slots:
+            if frame.type is MessageType.PROPOSE:
+                reply: Any = await handler.on_propose(peer, message)
+            else:
+                reply = await handler.on_forward(peer, message)
+
+        if writer is None or writer.is_closing():
+            # The caller is gone; its own deadline has already told it so.
+            return
+        try:
+            # ``write`` is synchronous and appends the whole frame in one call,
+            # so several of these cannot interleave and no lock is needed.
+            writer.write(_frame_for(reply, frame.stream, is_reply=True))
+        except (OSError, RuntimeError):
+            pass
 
     def _resolve(self, peer: int, frame: Frame, message: Any) -> None:
         """Route a reply: to its awaiting request, or to the handler.
@@ -617,8 +717,13 @@ class RaftTransport:
         link = self._links.get((peer, frame.stream))
         request_id = getattr(message, "request_id", 0)
         if link is not None and request_id:
-            future = link.pending.pop(request_id, None)
-            if future is not None:
+            # Taken only when the reply is the *kind* that was asked for.
+            # Anything else belongs to a different exchange that happens to
+            # share the number, and must be left for the handler.
+            waiting = link.pending.get(request_id)
+            if waiting is not None and waiting[0] is frame.type:
+                del link.pending[request_id]
+                future = waiting[1]
                 if not future.done():
                     future.set_result(message)
                 return
@@ -637,6 +742,32 @@ class RaftTransport:
 # ---------------------------------------------------------------------------
 # Framing helpers
 # ---------------------------------------------------------------------------
+
+def _application_refusal(frame: Frame, message: Any) -> Any | None:
+    """The answer when this member has no capacity left to serve a round.
+
+    Shaped as an ordinary refusal rather than as an error, because that is what
+    the caller already knows how to handle: a forwarded mutation that comes
+    back not-ok becomes a 503, and a 503 is retried. Saying so immediately is
+    strictly better than making the caller wait out a deadline to learn it.
+    """
+    request_id = getattr(message, "request_id", 0)
+    if frame.type is MessageType.PROPOSE:
+        return ProposeReply(
+            accepted=False,
+            reason="this member is at capacity for forwarded work",
+            term=0, first_index=0, request_id=request_id, leader=None,
+        )
+    if frame.type is MessageType.FORWARD:
+        return ForwardReply(
+            ok=False, created=False,
+            error="unavailable",
+            detail="this member is at capacity for forwarded work",
+            applied_index=0, not_owner=False,
+            request_id=request_id, owner=None,
+        )
+    return None
+
 
 def _frame_for(message: Any, stream: Stream, *, is_reply: bool = False) -> bytes:
     return encode_frame(Frame(

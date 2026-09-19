@@ -44,6 +44,7 @@ struct Recorder {
     peer_up: AtomicU64,
     peer_down: AtomicU64,
     last_incarnation: AtomicU64,
+    append_replies: AtomicU64,
     seen: Mutex<Vec<String>>,
 }
 
@@ -86,7 +87,9 @@ impl PeerHandler for Recorder {
 
     fn on_request_vote_reply(&self, _peer: u64, _message: &RequestVoteReply) {}
 
-    fn on_append_entries_reply(&self, _peer: u64, _message: &AppendEntriesReply) {}
+    fn on_append_entries_reply(&self, _peer: u64, _message: &AppendEntriesReply) {
+        self.append_replies.fetch_add(1, Ordering::SeqCst);
+    }
 
     fn on_install_snapshot_reply(&self, _peer: u64, _message: &InstallSnapshotReply) {}
 
@@ -634,4 +637,139 @@ async fn closing_reports_the_peer_down() {
     assert!(until(|| b.live().is_empty()).await);
 
     b.close().await;
+}
+
+/// A forward and concurrent append traffic each get their own answer.
+///
+/// **This does not reproduce the id collision**, and saying so matters more
+/// than the test does. Reproducing it needs an `AppendEntriesReply` to arrive
+/// in the window between `request` registering its waiter and the reply to
+/// *its* message coming back -- and `send` spawns its write (see
+/// `RaftTransport::send`), so the order of the two writes is not controllable
+/// from here. Verified by mutation: reverting `resolve` to match on the id
+/// alone leaves this test passing.
+///
+/// A deterministic reproduction needs a peer that speaks the frame protocol by
+/// hand and answers a `Forward` with an `AppendEntriesReply` carrying the same
+/// id. That is worth writing and is not written.
+///
+/// Worth noting which way the odds run: on loopback the window is microseconds,
+/// so a test is unlikely to hit it. Across a real network it is a full round
+/// trip, which makes the hazard *more* likely in production than here.
+///
+/// What this does cover is the ordinary path -- a forward is answered with a
+/// `ForwardReply` and an append reply reaches the handler rather than being
+/// swallowed -- which is the regression that a wrong fix would cause.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_forward_and_an_append_each_get_their_own_answer() {
+    let (a, recorder_a, b, recorder_b) = pair("collision").await;
+
+    a.send(
+        1,
+        &Message::AppendEntries(AppendEntries {
+            term: 1,
+            leader: 0,
+            prev_log_index: 0,
+            prev_log_term: 0,
+            leader_commit: 0,
+            request_id: 1,
+            entries: Vec::new(),
+        }),
+        Stream::Control,
+    );
+
+    let reply = a
+        .request(
+            1,
+            &Message::Forward(Forward {
+                verb: "register".to_owned(),
+                resource_type: "node".to_owned(),
+                resource_id: "a-node".to_owned(),
+                body_text: "{\"id\":\"a-node\"}".to_owned(),
+                request_id: 0,
+            }),
+            Stream::Control,
+            Some(5_000),
+        )
+        .await
+        .expect("the forward was answered");
+
+    assert!(
+        matches!(reply, Message::ForwardReply(_)),
+        "the forward was answered with {:?}, not a ForwardReply",
+        reply.message_type(),
+    );
+    assert!(
+        until(|| recorder_b.appends.load(Ordering::SeqCst) >= 1).await,
+        "b never received the append",
+    );
+    assert!(
+        until(|| recorder_a.append_replies.load(Ordering::SeqCst) >= 1).await,
+        "the append reply never reached the handler, so the leader would never \
+         learn where that peer had got to",
+    );
+
+    a.close().await;
+    b.close().await;
+}
+
+/// Every request maps to the one reply that answers it.
+///
+/// The table `resolve` discriminates on. An id alone cannot separate the
+/// transport's request ids from the append ids the node mints for flow
+/// control -- both spaces start at one -- so the kind is what makes a match
+/// mean something.
+#[test]
+fn every_request_knows_the_reply_it_expects() {
+    use nmos_registry_raft::wire::MessageType;
+
+    let cases: &[(Message, Option<MessageType>)] = &[
+        (
+            Message::Forward(Forward {
+                verb: String::new(),
+                resource_type: String::new(),
+                resource_id: String::new(),
+                body_text: String::new(),
+                request_id: 0,
+            }),
+            Some(MessageType::ForwardReply),
+        ),
+        (
+            Message::AppendEntries(AppendEntries {
+                term: 0,
+                leader: 0,
+                prev_log_index: 0,
+                prev_log_term: 0,
+                leader_commit: 0,
+                request_id: 0,
+                entries: Vec::new(),
+            }),
+            Some(MessageType::AppendEntriesReply),
+        ),
+    ];
+    for (message, expected) in cases {
+        assert_eq!(
+            message.expected_reply(),
+            *expected,
+            "{:?} expects the wrong reply",
+            message.message_type(),
+        );
+    }
+
+    // A reply draws nothing, so it can never itself be awaited -- which is
+    // what stops a waiter being registered for one.
+    assert_eq!(
+        Message::ForwardReply(ForwardReply {
+            ok: true,
+            created: false,
+            error: String::new(),
+            detail: String::new(),
+            applied_index: 0,
+            not_owner: false,
+            request_id: 0,
+            owner: None,
+        })
+        .expected_reply(),
+        None,
+    );
 }

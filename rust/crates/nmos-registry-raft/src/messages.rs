@@ -1130,6 +1130,36 @@ impl Message {
         }
     }
 
+    /// The reply this message expects, if it is a request that draws one.
+    ///
+    /// Used to correlate a reply with the request that caused it. An id alone
+    /// is not enough, because two different id spaces meet in one map: the
+    /// transport allocates ids for `request`, while `AppendEntries` carries an
+    /// id of the *leader's* own minting for flow control. Both start at one, so
+    /// they collide -- and a reply matched on the number alone can be handed to
+    /// a caller that asked something else entirely.
+    #[must_use]
+    pub const fn expected_reply(&self) -> Option<MessageType> {
+        match *self {
+            Self::Hello(_) => Some(MessageType::HelloAck),
+            Self::RequestVote(_) => Some(MessageType::RequestVoteReply),
+            Self::AppendEntries(_) => Some(MessageType::AppendEntriesReply),
+            Self::InstallSnapshot(_) => Some(MessageType::InstallSnapshotReply),
+            Self::Propose(_) => Some(MessageType::ProposeReply),
+            Self::Forward(_) => Some(MessageType::ForwardReply),
+            Self::Ping(_) => Some(MessageType::Pong),
+            // Replies and one-way messages draw nothing.
+            Self::HelloAck(_)
+            | Self::RequestVoteReply(_)
+            | Self::AppendEntriesReply(_)
+            | Self::InstallSnapshotReply(_)
+            | Self::Promote(_)
+            | Self::ProposeReply(_)
+            | Self::ForwardReply(_)
+            | Self::Pong(_) => None,
+        }
+    }
+
     /// This message's payload bytes.
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {

@@ -374,7 +374,21 @@ struct Link {
     writer: Mutex<Option<Box<dyn AsyncWriteUnpinSend>>>,
     connected: AtomicBool,
     incarnation: AtomicU64,
-    pending: Mutex<HashMap<u64, oneshot::Sender<Message>>>,
+    /// Callers awaiting a correlated reply, and **what each is waiting for**.
+    ///
+    /// The type is not decoration. Two id spaces meet in this one map: the
+    /// transport mints ids for `request`, while `AppendEntries` carries an id
+    /// of the leader's own minting for flow control. Both begin at one and
+    /// climb, so they collide -- most readily just after a leader change, when
+    /// a member that had been a follower has a low append sequence and a low
+    /// request id at the same time.
+    ///
+    /// Matched on the number alone, an `AppendEntriesReply` could then be
+    /// delivered to a caller awaiting a `ForwardReply`. That caller sees the
+    /// wrong message and gives up -- a registration refused with 503 -- and the
+    /// append reply never reaches the node, so the peer's `match_index` stalls
+    /// for a tick. Both failures from one number matching by accident.
+    pending: Mutex<HashMap<u64, (MessageType, oneshot::Sender<Message>)>>,
 }
 
 impl Default for Link {
@@ -489,6 +503,14 @@ struct Inner {
     /// member has gone, so it keeps counting it toward quorum -- measured, as
     /// a surviving member that never saw its peer go down.
     inbound: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// Application handlers running off the link readers.
+    ///
+    /// Owned rather than detached, so `close` can abort them: a task awaiting
+    /// a quorum round that nobody will now answer would otherwise outlive the
+    /// transport that started it.
+    serving: parking_lot::Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// How many forwarded mutations this member will serve at once.
+    application_slots: Arc<tokio::sync::Semaphore>,
 }
 
 /// Everything [`RaftTransport::new`] needs.
@@ -562,6 +584,10 @@ impl RaftTransport {
                 closing: AtomicBool::new(false),
                 next_request_id: AtomicU64::new(1),
                 inbound: Mutex::new(Vec::new()),
+                serving: parking_lot::Mutex::new(Vec::new()),
+                application_slots: Arc::new(tokio::sync::Semaphore::new(
+                    APPLICATION_CONCURRENCY,
+                )),
             }),
             bind,
             bound: Mutex::new(None),
@@ -633,13 +659,21 @@ impl Inner {
         if request_id != 0
             && let Some(link) = self.links.get(&(peer, frame.stream))
         {
-            let waiter = link.pending.lock().await.remove(&request_id);
-            if let Some(sender) = waiter {
+            // Taken only when the reply is the *kind* that was asked for.
+            // Anything else belongs to a different exchange that happens to
+            // share the number, and must be left for the handler.
+            let mut pending = link.pending.lock().await;
+            let matches = pending
+                .get(&request_id)
+                .is_some_and(|&(expected, _)| expected == message.message_type());
+            if matches && let Some((_, sender)) = pending.remove(&request_id) {
+                drop(pending);
                 // A closed receiver means the caller timed out and gave up;
                 // its deadline already told it what it needed to know.
                 drop(sender.send(message));
                 return;
             }
+            drop(pending);
         }
 
         let Some(handler) = self.handler().await else {
@@ -683,8 +717,10 @@ impl Inner {
                 handler.on_promote(peer, m);
                 return None;
             }
-            Message::Propose(ref m) => Message::ProposeReply(handler.on_propose(peer, m).await),
-            Message::Forward(ref m) => Message::ForwardReply(handler.on_forward(peer, m).await),
+            // Never awaited here. `serve` detaches these -- see
+            // `serve_application` -- because they wait for a quorum round whose
+            // answer arrives on the link this reader is reading.
+            Message::Propose(_) | Message::Forward(_) => return None,
             _ => return None,
         })
     }
@@ -924,17 +960,162 @@ impl Inner {
         }
 
         let peer = hello.member_index;
+        // Shared, because the quorum-round handlers answer from their own
+        // tasks. `write_all` can yield part-way through a frame, so without
+        // this two replies could interleave on the wire; the outbound links
+        // have had the same lock for the same reason since they were written.
+        let writer = Arc::new(tokio::sync::Mutex::new(writer));
         while !self.closing.load(Ordering::SeqCst) {
             let Ok(inbound) = read_frame(&mut reader).await else {
                 return;
             };
+
+            if matches!(
+                inbound.message_type,
+                MessageType::Propose | MessageType::Forward
+            ) && !inbound.is_reply()
+            {
+                // **Served off this reader, not on it.**
+                //
+                // These two wait for a quorum round, and the answer to that
+                // round arrives as `AppendEntries` on *this very link*.
+                // Awaiting them here deadlocks whenever the member that sent
+                // the forward is the leader: the handler waits for a commit
+                // that cannot be read, because the reader is inside the
+                // handler. Measured as every refusal taking the whole mutation
+                // deadline, in both implementations.
+                //
+                // Everything else stays synchronous and in order below, which
+                // is what keeps a term from being read and acted on across an
+                // await.
+                Arc::clone(&self).serve_application(
+                    peer,
+                    inbound,
+                    Arc::clone(&writer),
+                );
+                continue;
+            }
+
             if let Some(reply) = self.dispatch(peer, &inbound).await {
                 let bytes = frame_for(&reply, inbound.stream, true);
-                if writer.write_all(&bytes).await.is_err() || writer.flush().await.is_err() {
+                if !write_frame(&writer, &bytes).await {
                     return;
                 }
             }
         }
+    }
+
+    /// Run a quorum-round handler on its own task, answering when it ends.
+    ///
+    /// The reply goes back on the connection the request arrived on, which is
+    /// deliberate: a member whose inbound link works and whose outbound one
+    /// does not is a case this cluster's own harness models, and answering on
+    /// a different socket would lose the reply exactly there.
+    fn serve_application(
+        self: Arc<Self>,
+        peer: u64,
+        frame: Frame,
+        writer: Arc<tokio::sync::Mutex<Box<dyn AsyncWriteUnpinSend>>>,
+    ) {
+        let permit = match Arc::clone(&self.application_slots).try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                // At capacity. Refusing now is the honest answer -- waiting for
+                // a slot would block this reader, which is the whole defect.
+                let refusal = application_refusal(&frame);
+                tokio::spawn(async move {
+                    if let Some(refusal) = refusal {
+                        let bytes = frame_for(&refusal, frame.stream, true);
+                        // Best effort: a dead connection means the
+                        // caller's own deadline has answered it already.
+                        let _sent = write_frame(&writer, &bytes).await;
+                    }
+                });
+                return;
+            }
+        };
+
+        let owner = Arc::clone(&self);
+        let task = tokio::spawn(async move {
+            let _permit = permit;
+            let Some(handler) = owner.handler().await else {
+                return;
+            };
+            let Ok(message) = decode_message(frame.message_type, &frame.payload) else {
+                return;
+            };
+            let reply = match message {
+                Message::Propose(ref m) => {
+                    Message::ProposeReply(handler.on_propose(peer, m).await)
+                }
+                Message::Forward(ref m) => {
+                    Message::ForwardReply(handler.on_forward(peer, m).await)
+                }
+                _ => return,
+            };
+            let bytes = frame_for(&reply, frame.stream, true);
+            // Best effort, for the same reason as the refusal above.
+            let _sent = write_frame(&writer, &bytes).await;
+        });
+        self.serving.lock().push(task);
+    }
+}
+
+/// Write one whole frame to a shared connection.
+///
+/// The lock is what keeps two replies from interleaving: `write_all` can yield
+/// part-way through a frame, and the quorum-round handlers answer from their
+/// own tasks. Returns whether the connection is still usable.
+async fn write_frame(
+    writer: &tokio::sync::Mutex<Box<dyn AsyncWriteUnpinSend>>,
+    bytes: &[u8],
+) -> bool {
+    let mut guard = writer.lock().await;
+    let written = guard.write_all(bytes).await.is_ok() && guard.flush().await.is_ok();
+    drop(guard);
+    written
+}
+
+/// How many forwarded mutations one member will serve at once.
+///
+/// A bound rather than none, because every one of these is a task awaiting a
+/// quorum round and a peer under load can offer them faster than they retire.
+/// Exceeding it is answered immediately with a refusal rather than by waiting:
+/// the whole point of serving these off the reader is that the reader must not
+/// block, and a caller that is refused retries, which is what a 503 already
+/// means to it.
+pub const APPLICATION_CONCURRENCY: usize = 64;
+
+/// The answer when this member has no capacity left to serve a round.
+///
+/// Shaped as an ordinary refusal rather than an error, because that is what
+/// the caller already handles: a forwarded mutation that comes back not-ok
+/// becomes a 503, and a 503 is retried. Saying so immediately is strictly
+/// better than making the caller wait out a deadline to learn it.
+fn application_refusal(frame: &Frame) -> Option<Message> {
+    let request_id = decode_message(frame.message_type, &frame.payload)
+        .ok()
+        .map_or(0, |message| request_id_of(&message));
+    match frame.message_type {
+        MessageType::Propose => Some(Message::ProposeReply(crate::messages::ProposeReply {
+            accepted: false,
+            reason: "this member is at capacity for forwarded work".to_owned(),
+            term: 0,
+            first_index: 0,
+            request_id,
+            leader: None,
+        })),
+        MessageType::Forward => Some(Message::ForwardReply(crate::messages::ForwardReply {
+            ok: false,
+            created: false,
+            error: "unavailable".to_owned(),
+            detail: "this member is at capacity for forwarded work".to_owned(),
+            applied_index: 0,
+            not_owner: false,
+            request_id,
+            owner: None,
+        })),
+        _ => None,
     }
 }
 
@@ -1006,6 +1187,12 @@ impl Transport for RaftTransport {
 
     async fn close(&self) {
         self.inner.closing.store(true, Ordering::SeqCst);
+        // The application handlers first: each is awaiting a quorum round that
+        // this transport is about to stop carrying, so none of them can finish.
+        let serving = std::mem::take(&mut *self.inner.serving.lock());
+        for task in serving {
+            task.abort();
+        }
         // Hang up on accepted connections first, which is what lets a peer's
         // outbound link notice and report this member down.
         for task in self.inner.inbound.lock().await.drain(..) {
@@ -1071,8 +1258,17 @@ impl Transport for RaftTransport {
         // between the two, and a waiter that did not exist yet would be a
         // message answered into the void and a caller waiting out its whole
         // deadline for something that had already happened.
+        let Some(expected) = tagged.expected_reply() else {
+            return Err(RaftUnavailable(format!(
+                "{:?} draws no reply and cannot be awaited; use send() for it",
+                message.message_type(),
+            )));
+        };
         let (sender, receiver) = oneshot::channel();
-        link.pending.lock().await.insert(request_id, sender);
+        link.pending
+            .lock()
+            .await
+            .insert(request_id, (expected, sender));
 
         if let Err(error) = link.write(&frame_for(&tagged, stream, false)).await {
             link.pending.lock().await.remove(&request_id);

@@ -917,3 +917,36 @@ def decode_message(message_type: MessageType, payload: bytes) -> Any:
         ) from exc
     decoded: Any = cls.decode(payload)
     return decoded
+
+
+# ---------------------------------------------------------------------------
+# Correlating a reply with the request that caused it
+# ---------------------------------------------------------------------------
+
+EXPECTED_REPLY: dict[MessageType, MessageType] = {
+    MessageType.HELLO: MessageType.HELLO_ACK,
+    MessageType.REQUEST_VOTE: MessageType.REQUEST_VOTE_REPLY,
+    MessageType.APPEND_ENTRIES: MessageType.APPEND_ENTRIES_REPLY,
+    MessageType.INSTALL_SNAPSHOT: MessageType.INSTALL_SNAPSHOT_REPLY,
+    MessageType.PROPOSE: MessageType.PROPOSE_REPLY,
+    MessageType.FORWARD: MessageType.FORWARD_REPLY,
+    MessageType.PING: MessageType.PONG,
+}
+"""Which reply answers which request.
+
+An id alone is not enough to correlate them, because two id spaces meet in one
+``pending`` map: the transport mints ids for ``request``, while
+``AppendEntries`` carries an id of the *leader's* own minting for flow control.
+Both start at one and climb, so they collide -- most readily just after a
+leader change, when a member that had been a follower has a low append sequence
+and a low request id at the same time.
+
+Matched on the number alone, an ``AppendEntriesReply`` can be handed to a
+caller awaiting a ``ForwardReply``. That caller sees the wrong message and
+gives up -- a registration refused with 503 -- and the append reply never
+reaches the node, so the peer's ``match_index`` stalls for a tick. Two failures
+from one number matching by accident.
+
+Replies and one-way messages are absent: they answer nothing, so nothing may
+wait on them.
+"""
