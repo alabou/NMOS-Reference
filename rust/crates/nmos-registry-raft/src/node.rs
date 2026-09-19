@@ -553,7 +553,7 @@ pub struct RaftNode {
     /// Taken by `start`, which spawns the task that owns it.
     drain: Mutex<Option<ProposalDrain<Operation, Result<Outcome, RaftUnavailable>>>>,
     tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
-    forwarder: Mutex<Option<Arc<dyn ForwardHandler>>>,
+    forwarder: Mutex<Option<std::sync::Weak<dyn ForwardHandler>>>,
 }
 
 /// What a forwarded registry mutation is handed to.
@@ -845,8 +845,27 @@ impl RaftNode {
     }
 
     /// Where a forwarded mutation goes.
+    ///
+    /// **Held weakly, and that is load-bearing.** The handler is the backend,
+    /// and the backend owns this node -- so storing it strongly closes a cycle
+    /// that nothing breaks: backend -> node -> backend. Rust has no cycle
+    /// collector, so neither object is ever dropped, and with them the store,
+    /// the log, the state machine and every snapshot they own.
+    ///
+    /// Measured before this was a `Weak`: after closing a backend and dropping
+    /// every handle to it, a `Weak` to it still upgraded. See
+    /// `a_closed_backend_is_dropped`.
+    ///
+    /// The same shape is harmless in the Python, which is why it ports without
+    /// anyone noticing: `raft_backend.py` installs `self._on_forward`, a bound
+    /// method that keeps the backend alive just as firmly, and CPython's cycle
+    /// collector reclaims it. Behaviour is identical in both; only the
+    /// mechanism that reclaims it differs, because the languages do.
+    ///
+    /// Takes the `Arc` by value and drops it: the caller keeps ownership, this
+    /// keeps only a way back.
     pub fn set_forward_handler(&self, handler: Arc<dyn ForwardHandler>) {
-        *self.forwarder.lock() = Some(handler);
+        *self.forwarder.lock() = Some(Arc::downgrade(&handler));
     }
 
     // -- lifecycle ----------------------------------------------------------
@@ -2666,7 +2685,14 @@ impl crate::transport::PeerHandler for RaftNode {
         _peer: u64,
         message: &crate::messages::Forward,
     ) -> crate::messages::ForwardReply {
-        let handler = self.forwarder.lock().clone();
+        // `upgrade` failing means the backend has been dropped, which is the
+        // same situation as one never having been installed: this member is
+        // not serving registrations, and says so rather than pretending.
+        let handler = self
+            .forwarder
+            .lock()
+            .as_ref()
+            .and_then(std::sync::Weak::upgrade);
         match handler {
             Some(handler) => handler.forward(message).await,
             None => crate::messages::ForwardReply {

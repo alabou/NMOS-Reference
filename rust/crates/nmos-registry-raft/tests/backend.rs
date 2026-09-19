@@ -940,3 +940,45 @@ async fn collection_on_a_degraded_member_returns_at_once() {
     );
     cluster.close_all().await;
 }
+
+/// Does a closed backend actually go away?
+///
+/// There is no leak checker anywhere in this workspace -- no sanitizer, no
+/// Miri, no heap profiler -- so the one shape that leaks without any unsafe
+/// code is worth asserting directly: a reference cycle.
+///
+/// `RaftRegistryBackend` holds `Arc<RaftNode>`, and the node holds the forward
+/// handler, which *is* the backend (`main.rs`, and `start_all` above). Backend
+/// -> node -> backend. Rust has no cycle collector, so if `close` does not
+/// break it, neither object is ever dropped -- and with them the store, the
+/// log, the state machine and every snapshot they own.
+///
+/// Asserted with a `Weak`: after dropping every strong handle this test holds,
+/// upgrading must fail. It succeeding means the graph is holding itself up.
+///
+/// The same shape is harmless in the Python, which is why it is easy to port
+/// without noticing: `raft_backend.py` hands `self._on_forward`, a bound
+/// method that keeps the backend alive, and CPython's cycle collector reclaims
+/// it. That difference is exactly the kind this test exists to catch.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_closed_backend_is_dropped() {
+    let cluster = Backends::build(1);
+    cluster.start_all().await;
+    assert!(until(|| cluster.ready()).await, "never became ready");
+    cluster.close_all().await;
+
+    let watch = Arc::downgrade(&cluster.backends[0]);
+    let node_watch = Arc::downgrade(cluster.backends[0].node());
+    drop(cluster);
+
+    assert!(
+        watch.upgrade().is_none(),
+        "the backend outlived every handle to it: the node still holds it as \
+         its forward handler, so backend -> node -> backend keeps both alive \
+         and everything they own with them",
+    );
+    assert!(
+        node_watch.upgrade().is_none(),
+        "the node outlived the backend that owned it",
+    );
+}
