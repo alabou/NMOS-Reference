@@ -106,6 +106,109 @@ pub const fn should_replicate_commit(previous_commit: u64, new_commit: u64) -> b
     new_commit > previous_commit
 }
 
+/// What a leader records as the commit index it has told one peer.
+///
+/// Not always the commit index it holds. A follower adopts
+/// [`follower_commit_index`], which caps at the last index *this message*
+/// carried -- so a send whose entries were suppressed, because an append to
+/// that peer is still in flight, vouches only as far as `prev_log_index`
+/// however far the leader has committed.
+///
+/// Recording the full commit index there is the leader telling itself it has
+/// passed on something the peer could not take. [`should_send_now`] then finds
+/// nothing left to say and leaves the peer behind until the next tick, which is
+/// the stall the eager send exists to remove, re-entering through the
+/// bookkeeping instead of through the missing send. Measured on an in-memory
+/// five-member cluster with a link slower than the tick: **2,444 of 6,273 sends
+/// recorded a commit index above their own window**.
+///
+/// `go.etcd.io/raft` keeps the same book by splitting the message types:
+/// `maybeSendAppend` records `committed` because a MsgApp's window always
+/// reaches `Next-1` (`raft.go:660`), while `sendHeartbeat`, which carries no
+/// window at all, records the conservative `min(pr.Match, committed)`
+/// (`raft.go:709`). This implementation has one message type, so it caps by the
+/// window -- the same rule stated once rather than twice.
+#[must_use]
+pub const fn commit_to_record(commit_index: u64, window_last: u64) -> u64 {
+    if commit_index < window_last {
+        commit_index
+    } else {
+        window_last
+    }
+}
+
+/// What that record becomes when a rejection moves the peer's window backwards.
+///
+/// A rejected append is one the peer did not take, so a commit index recorded as
+/// delivered through it was not delivered. `go.etcd.io/raft` clamps the same way
+/// wherever `Next` regresses (`tracker/progress.go:142`, `:238`, `:251`),
+/// commenting that the sent commit "unlikely has been applied".
+///
+/// Usually invisible here, because the rejection handler resends at once and
+/// that send re-vouches honestly for whatever window it carries. It matters when
+/// the entries the peer needs have been compacted away: the resend diverts to a
+/// snapshot and vouches for nothing, so a record left high suppresses every
+/// eager send to that peer for the length of the transfer.
+#[must_use]
+pub const fn commit_after_regression(sent_commit: u64, next_index: u64) -> u64 {
+    let window_last = next_index.saturating_sub(1);
+    if sent_commit < window_last {
+        sent_commit
+    } else {
+        window_last
+    }
+}
+
+/// Whether a peer needs an append now, rather than at the next tick.
+///
+/// Two reasons, both from `go.etcd.io/raft`'s `MsgAppResp` handling
+/// (`raft.go:1550-1571`), which does exactly this and says why:
+///
+/// 1. **It has entries waiting.** The reply just cleared its flow-control pause,
+///    and the leader already holds what it is missing. etcd's loop is
+///    `for r.maybeSendAppend(from, false) {}`; one send is the analogue here,
+///    because this design allows a single outstanding append per peer rather
+///    than etcd's `Inflights` window -- a second send would be paused anyway.
+///
+/// 2. **Its commit index is behind what this leader has committed**, and the
+///    leader has not already told it. This is etcd's `CanBumpCommit`
+///    (`tracker/progress.go:189`): `index > sentCommit && sentCommit < Next-1`.
+///    The first half avoids repeating a commit index the peer already has; the
+///    second avoids sending one it could not act on.
+///
+/// The second is the case that matters most, and the one this implementation was
+/// missing. At five members the commit index moves on the *quorum position*, so
+/// a reply from any peer outside it advances nothing -- and that peer, though
+/// fully caught up on entries, is never told the new commit index until a
+/// heartbeat fires. etcd's comment names the consequence exactly: "this is not
+/// strictly necessary because the periodic heartbeat messages deliver commit
+/// indices too. However, a message sent now may arrive earlier than the next
+/// heartbeat fires."
+///
+/// Gated on the pause, as etcd's `maybeSendAppend` is by `IsPaused`
+/// (`raft.go:620`): a peer with an append already in flight learns everything
+/// from that exchange.
+///
+/// Neither reason can loop. A successful reply strictly advances `next_index`,
+/// which is bounded by `last_index`, and `sent_commit` is monotonic within a
+/// leadership -- so both stop holding.
+#[must_use]
+pub const fn should_send_now(
+    pending_request: u64,
+    next_index: u64,
+    last_index: u64,
+    commit_index: u64,
+    sent_commit: u64,
+) -> bool {
+    if pending_request != 0 {
+        return false;
+    }
+    let has_entries = next_index <= last_index;
+    let can_bump_commit =
+        commit_index > sent_commit && sent_commit < next_index.saturating_sub(1);
+    has_entries || can_bump_commit
+}
+
 /// Where a leader's commit index sits, given what each follower has matched.
 ///
 /// Figure 2's leader rule: the highest `N` such that a majority have

@@ -247,10 +247,23 @@ impl<T> RaftLog<T> {
     /// left alone rather than rewritten, so a duplicated `AppendEntries` --
     /// which retries make ordinary -- is idempotent.
     ///
+    /// `committed` is the caller's commit index, and it is a floor rather than
+    /// a hint: a conflict at or below it would discard an entry this member has
+    /// already committed, which Log Matching says cannot happen. Asserted
+    /// rather than assumed, because the cost is one comparison and the
+    /// alternative is discovering it as a silently wrong state machine.
+    /// `go.etcd.io/raft` asserts the same thing in `maybeAppend`
+    /// (`log.go:120`) and panics.
+    ///
     /// # Errors
     ///
-    /// The entries are not contiguous with what this log holds.
-    pub fn append_replicated(&mut self, entries: Vec<Entry<T>>) -> Result<(), AppendError>
+    /// The entries are not contiguous with what this log holds, or a conflict
+    /// falls at or below `committed`.
+    pub fn append_replicated(
+        &mut self,
+        entries: Vec<Entry<T>>,
+        committed: u64,
+    ) -> Result<(), AppendError>
     where
         T: PartialEq,
     {
@@ -267,6 +280,14 @@ impl<T> RaftLog<T> {
                     .term;
                 if existing_term == entry.term {
                     continue;
+                }
+                if entry.index <= committed {
+                    return Err(AppendError(format!(
+                        "entry {} arrived as term {} but is held here as term \
+                         {existing_term}, and index {committed} is committed -- \
+                         accepting it would discard committed state",
+                        entry.index, entry.term,
+                    )));
                 }
                 self.truncate_suffix(entry.index)
                     .map_err(|e| AppendError(e.to_string()))?;
@@ -435,3 +456,71 @@ impl std::fmt::Display for AppendError {
 }
 
 impl std::error::Error for AppendError {}
+
+#[cfg(test)]
+mod tests {
+    use super::{Entry, RaftLog};
+
+    fn log_of(terms: &[u64]) -> RaftLog<&'static str> {
+        let mut log = RaftLog::new();
+        for (offset, &term) in terms.iter().enumerate() {
+            let index = u64::try_from(offset).expect("small").saturating_add(1);
+            log.append_replicated(
+                vec![Entry {
+                    term,
+                    index,
+                    payload: Vec::new(),
+                    value: "e",
+                }],
+                0,
+            )
+            .expect("contiguous");
+        }
+        log
+    }
+
+    /// Log Matching says it cannot happen, so it is asserted, not assumed.
+    ///
+    /// A conflicting entry at or below the commit index would discard state
+    /// this member has already committed -- the one thing a state machine may
+    /// never do. `go.etcd.io/raft` asserts the same thing in `maybeAppend`
+    /// (`log.go:120`) and panics; the cost either way is one comparison, and
+    /// the alternative is finding out as a silently wrong state machine.
+    #[test]
+    fn a_conflict_at_or_below_the_commit_index_is_refused() {
+        let mut log = log_of(&[1, 1, 1, 1]);
+        let error = log
+            .append_replicated(
+                vec![Entry {
+                    term: 2,
+                    index: 3,
+                    payload: Vec::new(),
+                    value: "rewrite",
+                }],
+                3,
+            )
+            .expect_err("a committed entry was quietly rewritten");
+        assert!(
+            error.to_string().contains("discard committed"),
+            "refused for the wrong reason: {error}",
+        );
+    }
+
+    /// The ordinary case, which the guard above must not catch.
+    #[test]
+    fn a_conflict_above_the_commit_index_still_truncates() {
+        let mut log = log_of(&[1, 1, 1, 1]);
+        log.append_replicated(
+            vec![Entry {
+                term: 2,
+                index: 3,
+                payload: Vec::new(),
+                value: "new3",
+            }],
+            2,
+        )
+        .expect("an uncommitted conflict truncates");
+        assert_eq!(log.get(3).expect("index 3 is held").term, 2);
+        assert_eq!(log.last_index(), 3);
+    }
+}

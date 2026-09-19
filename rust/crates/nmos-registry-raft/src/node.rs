@@ -256,6 +256,34 @@ struct PeerState {
     /// carrying the same offset, the follower sees the second as out of order,
     /// restarts from zero, and the pair loop forever making no progress.
     snapshot_in_flight: bool,
+    /// Correlation ids at or below this belong to a superseded exchange.
+    ///
+    /// Set to the current value of the node-wide append sequence whenever this
+    /// leader's view of the peer is reset -- on becoming leader, and on a
+    /// reconnect. Every send made afterwards is minted above it, so a reply at
+    /// or below it was drawn by a send this leader has since disowned.
+    ///
+    /// It exists because nothing else identifies one. A reply carries no
+    /// incarnation, and an append reply is not a correlated request whose
+    /// future the transport fails when the link drops, so a reply from the
+    /// incarnation that has just been replaced arrives looking exactly like a
+    /// current one -- and is then applied to the member that replaced it.
+    reply_floor: u64,
+    /// When this peer last *answered*, which is what check-quorum runs on.
+    ///
+    /// `go.etcd.io/raft` keeps the same evidence as `RecentActive`, set only on
+    /// a reply (`raft.go:1388`, `:1580`) and cleared for every peer once an
+    /// election interval (`raft.go:1286`); `QuorumActive` then asks whether a
+    /// majority answered inside that window. A timestamp rather than a
+    /// flag-and-sweep, which is the same question asked without a second timer.
+    ///
+    /// The distinction from `up` is the point. `up` is the TCP link, and a peer
+    /// whose process is stopped, deadlocked or stalled holds its socket open
+    /// for minutes: the kernel keeps the connection and nothing errors until
+    /// retransmits give up. Counting such a peer toward the quorum is how a
+    /// leader goes on answering as leader, and accepting writes that can never
+    /// commit, while a majority of the cluster is not actually there.
+    last_heard_at: Option<Instant>,
 }
 
 impl Default for PeerState {
@@ -273,6 +301,8 @@ impl Default for PeerState {
             sent_commit: 0,
             snapshot_offset: 0,
             snapshot_in_flight: false,
+            reply_floor: 0,
+            last_heard_at: None,
         }
     }
 }
@@ -310,7 +340,6 @@ pub(crate) struct NodeState {
     sequence: u64,
     waiters: HashMap<ProposalId, oneshot::Sender<Result<Outcome, RaftUnavailable>>>,
     deadline: Instant,
-    quorum_deadline: Instant,
     /// When this member last accepted an `AppendEntries` from a leader.
     ///
     /// The basis of the lease: a follower being served by a healthy leader
@@ -591,7 +620,6 @@ impl RaftNode {
                 .saturating_mul(PROPOSALS_PER_INCARNATION),
             waiters: HashMap::new(),
             deadline: now,
-            quorum_deadline: now,
             heard_from_leader_at: None,
             machine,
             terms,
@@ -765,6 +793,11 @@ impl RaftNode {
     }
 
     /// Whether a majority is reachable, this member included.
+    ///
+    /// Reachability, not responsiveness -- see [`Self::quorum_is_answering`]
+    /// for the stronger question a leader asks of itself. This one is asked by
+    /// members that are *not* leading, which send nothing and so have no
+    /// replies to count, and by the backend when reporting readiness.
     #[must_use]
     pub fn has_quorum(&self) -> bool {
         self.transport
@@ -772,6 +805,37 @@ impl RaftNode {
             .len()
             .saturating_add(1)
             .ge(&self.layout.quorum())
+    }
+
+    /// Have a majority *answered* this leader within an election window?
+    ///
+    /// `go.etcd.io/raft`'s `QuorumActive` (`tracker/tracker.go:208`), which
+    /// check-quorum consults once an election interval and which counts only
+    /// peers that have actually replied.
+    ///
+    /// The difference from [`Self::has_quorum`] is that a stopped or stalled
+    /// peer keeps its socket open and stays `up` for minutes, so a leader
+    /// counting connections can believe it has a quorum while a majority of the
+    /// cluster is answering nothing. Writes accepted in that state can never
+    /// commit.
+    ///
+    /// Members catching up are excluded for the same reason they are excluded
+    /// from the commit count: their acknowledgements do not establish a quorum.
+    /// etcd excludes learners from `QuorumActive` identically.
+    fn quorum_is_answering(&self, state: &NodeState, now: Instant) -> bool {
+        let window = Duration::from_millis(self.timing.election_max_ms);
+        let answering = state
+            .peers
+            .values()
+            .filter(|peer| {
+                !peer.catching_up
+                    && peer
+                        .last_heard_at
+                        .is_some_and(|heard| now.duration_since(heard) < window)
+            })
+            .count()
+            .saturating_add(1);
+        answering >= self.layout.quorum()
     }
 
     /// Where a forwarded mutation goes.
@@ -856,16 +920,21 @@ impl RaftNode {
         {
             let mut state = self.state.lock();
             if state.role == Role::Leader {
-                if self.has_quorum() {
-                    state.quorum_deadline = now
-                        .checked_add(Duration::from_millis(self.timing.election_max_ms))
-                        .unwrap_or(now);
-                } else if now >= state.quorum_deadline {
+                if !self.quorum_is_answering(&state, now) {
                     // Check-quorum. A leader cut off from a majority cannot
                     // commit anything, and the other side of the partition has
                     // had long enough to elect someone else -- so continuing to
                     // answer as leader would mean reporting READY while
                     // accepting writes that can never commit.
+                    //
+                    // **One interval, not two.** `quorum_is_answering` already
+                    // asks "within an election window", so counting a second
+                    // window down from the moment it turns false would double
+                    // how long a partitioned leader keeps the role.
+                    // `go.etcd.io/raft` steps down on the spot when
+                    // `QuorumActive` fails (`raft.go:1282`); the grace a fresh
+                    // leader needs comes from `become_leader` seeding
+                    // `last_heard_at`, not from a second timer.
                     self.relinquish(&mut state, "lost contact with a quorum", now);
                     return;
                 }
@@ -1119,10 +1188,27 @@ impl RaftNode {
             }
         };
 
-        let mut request_id = 0;
+        // **Every send is correlated, not only the ones carrying entries.**
+        //
+        // The id is what tells a reply apart from one sent by a *previous
+        // incarnation* of this peer. Nothing else can: a reply carries no
+        // incarnation of its own, and an append reply is not a correlated
+        // request whose future the transport fails when the link drops. So a
+        // reply the dying member had already put on the wire can arrive after
+        // this leader has reset its view and be read as news about the member
+        // that replaced it.
+        //
+        // Measured: a leader credited a restarted member with index 6 while it
+        // held nothing, *and* took `catching_up = false` from the same reply,
+        // which put it back into the commit tally. On three members that is
+        // leader plus phantom -- a quorum -- so the leader could commit an
+        // index only it held. Leader Completeness, from one stale message.
+        //
+        // Only a send that *carries entries* arms the flow-control pause,
+        // which is unchanged: a heartbeat's id never equals `pending_request`.
+        state.append_sequence = state.append_sequence.saturating_add(1);
+        let request_id = state.append_sequence;
         if let Some(last) = entries.last() {
-            state.append_sequence = state.append_sequence.saturating_add(1);
-            request_id = state.append_sequence;
             let last_index = last.index;
             if let Some(tracked) = state.peers.get_mut(&peer) {
                 tracked.pending_through = last_index;
@@ -1132,8 +1218,25 @@ impl RaftNode {
         }
 
         let leader_commit = state.commit_index;
+        // What this message can actually deliver, which is not always the whole
+        // commit index. The receiver adopts `min(leader_commit, prev_log_index +
+        // len(entries))`, so a send whose entries were suppressed above carries
+        // a window ending at `previous` however far this leader has committed.
+        // Recording the full commit index there would be the leader telling
+        // itself it had passed on something the peer could not take, and
+        // `should_send_now` would then see nothing left to say and leave the
+        // peer behind until the next tick -- the exact stall the eager send
+        // exists to remove.
+        //
+        // `go.etcd.io/raft` keeps the same book by splitting the message types:
+        // `maybeSendAppend` records `committed` because its window always
+        // reaches `Next-1` (`raft.go:660`), while `sendHeartbeat`, which carries
+        // no window at all, records the conservative `min(pr.Match, committed)`
+        // (`raft.go:709`). This implementation has one message type, so it caps
+        // by the window instead -- the same rule stated once rather than twice.
+        let window_last = entries.last().map_or(previous, |entry| entry.index);
         if let Some(tracked) = state.peers.get_mut(&peer) {
-            tracked.sent_commit = leader_commit;
+            tracked.sent_commit = crate::commit::commit_to_record(leader_commit, window_last);
         }
         let message = Message::AppendEntries(AppendEntries {
             term: state.term,
@@ -1408,41 +1511,19 @@ impl RaftNode {
 
 /// Should this peer be sent an append right now, rather than at the next tick?
 ///
-/// Two reasons, both taken from `go.etcd.io/raft`'s `MsgAppResp` handling
-/// (`raft.go:1550-1571`), which does exactly this and says why:
-///
-/// 1. **It has entries waiting.** The reply just cleared its flow-control
-///    pause, and the leader already holds what it is missing. etcd's loop is
-///    `for r.maybeSendAppend(from, false) {}`; here one send is the analogue,
-///    because this design allows a single outstanding append per peer rather
-///    than etcd's `Inflights` window -- a second send would be paused anyway.
-///
-/// 2. **Its commit index is behind what this leader has committed**, and the
-///    leader has not already told it. This is etcd's `CanBumpCommit`
-///    (`tracker/progress.go:189`): `index > sentCommit && sentCommit < Next-1`.
-///    The first half avoids re-sending a commit index the peer already has; the
-///    second avoids sending one it could not act on anyway.
-///
-/// The second is the case that matters most and the one this implementation
-/// was missing. At five members the commit index moves on the *quorum
-/// position*, so a reply from any peer outside it advances nothing -- and that
-/// peer, though fully caught up on entries, is never told the new commit index
-/// until a heartbeat fires. etcd's comment names the consequence exactly: "this
-/// is not strictly necessary because the periodic heartbeat messages deliver
-/// commit indices too. However, a message sent now may arrive earlier than the
-/// next heartbeat fires."
-///
-/// Measured here as a registration driven at such a peer waiting one heartbeat
-/// interval, because until its commit index moves it cannot apply, and until it
-/// applies the caller is not answered.
+/// The rule itself is [`crate::commit::should_send_now`], beside the commit
+/// rules it is inseparable from; this reads the peer's bookkeeping for it.
 fn should_send_now(state: &NodeState, peer: u64) -> bool {
     let Some(tracked) = state.peers.get(&peer) else {
         return false;
     };
-    let has_entries = tracked.next_index <= state.log.last_index();
-    let can_bump_commit = state.commit_index > tracked.sent_commit
-        && tracked.sent_commit < tracked.next_index.saturating_sub(1);
-    has_entries || can_bump_commit
+    crate::commit::should_send_now(
+        tracked.pending_request,
+        tracked.next_index,
+        state.log.last_index(),
+        state.commit_index,
+        tracked.sent_commit,
+    )
 }
 
 /// Stamp a proposal id onto an operation built without one.
@@ -1502,6 +1583,7 @@ impl RaftNode {
         state.observed_amnesiac.clear();
 
         let next_index = state.log.last_index().saturating_add(1);
+        let append_sequence = state.append_sequence;
         for peer in state.peers.values_mut() {
             peer.next_index = next_index;
             peer.match_index = 0;
@@ -1515,11 +1597,19 @@ impl RaftNode {
             peer.pending_request = 0;
             peer.pending_since = None;
             peer.sent_commit = 0;
+            // Replies drawn by the previous leadership's sends say nothing
+            // about this one's, and this leader has just reset everything they
+            // would report on.
+            peer.reply_floor = append_sequence;
             // Likewise a snapshot this member was sending in an earlier term:
             // the new transfer starts from zero, and a carried-over offset
             // would have the leader resume a stream the peer is not expecting.
             peer.snapshot_offset = 0;
             peer.snapshot_in_flight = false;
+            // One election window of grace before check-quorum asks anything of
+            // them. A leader that demanded evidence it has not had time to
+            // collect would step down in the tick after winning.
+            peer.last_heard_at = Some(now);
         }
 
         tracing::info!(
@@ -1528,10 +1618,6 @@ impl RaftNode {
             "raft: is leader",
         );
         self.leader_changed.notify_waiters();
-        state.quorum_deadline = now
-            .checked_add(Duration::from_millis(self.timing.election_max_ms))
-            .unwrap_or(now);
-
         // Raft §8: a new leader cannot know what earlier terms committed until
         // it commits an entry of its own, so it appends one that does nothing.
         let proposal = state.next_proposal(self.layout.local.index);
@@ -1616,11 +1702,20 @@ impl RaftNode {
                 meta.last_term,
             ));
         }
-        if meta.last_index < state.log.snapshot_index() {
+        if meta.last_index <= state.commit_index {
+            // Against the **commit index**, not the compaction boundary.
+            // `snapshot_index <= commit_index` always, so comparing against the
+            // boundary let through every snapshot landing in between -- and
+            // installing one of those replaces the state machine with older
+            // state while `commit_index` correctly stays put, leaving committed
+            // entries un-applied. That is the one thing a state machine may
+            // never do.
+            //
+            // `go.etcd.io/raft` refuses on exactly this line (`raft.go:1861`):
+            // `if s.Metadata.Index <= r.raftLog.committed { return false }`.
             return Some(format!(
-                "it ends at index {}, below the boundary already applied here ({})",
-                meta.last_index,
-                state.log.snapshot_index(),
+                "it ends at index {}, at or below what is already committed here ({})",
+                meta.last_index, state.commit_index,
             ));
         }
         None
@@ -2003,6 +2098,31 @@ impl crate::transport::PeerHandler for RaftNode {
             // that could justify the recovery path when it is not warranted.
             state.observed_amnesiac.clear();
 
+            if message.prev_log_index < state.commit_index {
+                // A delayed or duplicated append anchored below what this member
+                // has already committed. Answering it on its own terms would
+                // report `prev_log_index + len(entries)` -- a match *below* our
+                // commit index, which walks the leader's view of us backwards
+                // and makes it re-send entries we hold. Answer with what we
+                // really have instead.
+                //
+                // `go.etcd.io/raft` returns early here for the same reason
+                // (`raft.go:1796`), replying with `r.raftLog.committed`.
+                //
+                // It is also the guard that keeps such a message away from the
+                // truncation path below: everything at or below the commit index
+                // is settled, and no append may reopen it.
+                return AppendEntriesReply {
+                    term: state.term,
+                    success: true,
+                    match_index: state.commit_index,
+                    conflict_index: 0,
+                    conflict_term: 0,
+                    catching_up: !state.voting,
+                    request_id: message.request_id,
+                };
+            }
+
             if !state
                 .log
                 .matches(message.prev_log_index, message.prev_log_term)
@@ -2047,7 +2167,8 @@ impl crate::transport::PeerHandler for RaftNode {
                         }
                     }
                 }
-                if let Err(error) = state.log.append_replicated(decoded) {
+                let committed = state.commit_index;
+                if let Err(error) = state.log.append_replicated(decoded, committed) {
                     tracing::warn!(error = %error.0, "raft: replicated append refused");
                     return AppendEntriesReply {
                         term: state.term,
@@ -2093,7 +2214,8 @@ impl crate::transport::PeerHandler for RaftNode {
     fn on_append_entries_reply(&self, peer: u64, message: &AppendEntriesReply) {
         let mut wake_apply = false;
         let mut resend = false;
-        let mut more_to_send = false;
+        // "This reply told us nothing to act on", the Python's early return.
+        let mut settled = false;
         let mut promote: Option<Promote> = None;
         {
             let mut state = self.state.lock();
@@ -2108,12 +2230,28 @@ impl crate::transport::PeerHandler for RaftNode {
                 return;
             };
 
+            if message.request_id <= tracked.reply_floor {
+                // Drawn by a send this leader has since disowned -- see
+                // `PeerState::reply_floor`. Believing it credits the member
+                // that has just replaced this one with a log it does not have,
+                // and takes `catching_up` from a member that no longer exists.
+                return;
+            }
+
             // Only the answer to *this* append releases the pause. A reply to a
-            // heartbeat sent meanwhile carries request id 0 and says nothing
-            // about whether the entries landed.
-            if message.request_id != 0 && message.request_id == tracked.pending_request {
+            // send that carried no entries says nothing about whether entries
+            // landed, and its id never matches `pending_request`.
+            let answered_our_append =
+                message.request_id != 0 && message.request_id == tracked.pending_request;
+            if answered_our_append {
                 tracked.pending_request = 0;
             }
+
+            // Recorded before the success/failure split, as `go.etcd.io/raft`
+            // records `RecentActive` there (`raft.go:1388`, `:1580`): the peer
+            // answered, and that is true whatever it said. This is the evidence
+            // check-quorum runs on -- see `quorum_is_answering`.
+            tracked.last_heard_at = Some(Instant::now());
 
             let was_catching_up = tracked.catching_up;
             tracked.catching_up = message.catching_up;
@@ -2127,23 +2265,98 @@ impl crate::transport::PeerHandler for RaftNode {
                 tracing::info!(peer, through = bar, "raft: member is catching up");
             }
 
+            let matched = state.peers.get(&peer).map_or(0, |t| t.match_index);
+            if !message.success && message.conflict_index <= matched {
+                // Stale, and safe to say so only because of `reply_floor`.
+                //
+                // `go.etcd.io/raft` refuses the same way in `MaybeDecrTo`
+                // (`tracker/progress.go:230`: `if rejected <= pr.Match`),
+                // commenting that "rejections can happen spuriously as messages
+                // are sent out of order or duplicated". Its `rejected` is the
+                // `prev_log_index` of the refused append, which this reply does
+                // not carry; the conflict hint is used instead, and the two ask
+                // subtly different questions.
+                //
+                // The substitution is sound because within one leadership a
+                // peer that acknowledged `match_index` holds every index up to
+                // it, identical to this leader's, by Log Matching -- so a
+                // genuine conflict must lie above it. `become_leader` resets
+                // `match_index`, so nothing carries across terms.
+                //
+                // It was **not** sound before the fence above: a phantom
+                // `match_index` left by a previous incarnation's reply made a
+                // rejoining member's honest "resume from index 1" look stale,
+                // and the leader ignored it for the rest of the term.
+                return;
+            }
+
             if !message.success {
                 // Resume from the start of the conflicting term rather than one
                 // index back, so a far-behind member costs a handful of
                 // exchanges instead of one per entry.
+                //
+                // No `match_index + 1` floor, unlike etcd's
+                // `max(min(rejected, matchHint+1), pr.Match+1)`
+                // (`tracker/progress.go:249`). etcd needs one because
+                // `rejected` and `matchHint` are two different quantities and
+                // the smaller can fall below `Match`. Here there is one, and
+                // the guard above has already returned unless `conflict_index >
+                // match_index` -- so a floor could never be the larger term,
+                // and adding it would be a line that looks load-bearing and is
+                // not.
                 if let Some(tracked) = state.peers.get_mut(&peer) {
                     tracked.next_index = message.conflict_index.max(1);
+                    // The window just moved backwards, so anything recorded as
+                    // told to this peer above its new end was told through a
+                    // message it rejected. `go.etcd.io/raft` clamps the same way
+                    // whenever `Next` regresses (`tracker/progress.go:142`,
+                    // `:238`, `:251`), commenting that the sent commit "unlikely
+                    // has been applied".
+                    tracked.sent_commit = crate::commit::commit_after_regression(
+                        tracked.sent_commit,
+                        tracked.next_index,
+                    );
                 }
                 resend = true;
             } else if let Some(tracked) = state.peers.get_mut(&peer) {
-                tracked.match_index = message.match_index;
-                tracked.next_index = message.match_index.saturating_add(1);
-                // This reply cleared the flow-control pause. If the peer is
-                // still behind, it has entries waiting that this leader
-                // already holds -- so send them now rather than at the next
-                // tick.
-                more_to_send = tracked.pending_request == 0;
+                // **Both indices only ever move forward within a leadership.**
+                //
+                // A follower vouches for `prev_log_index + len(entries)` -- the
+                // window of the message it is answering. An entries-less send
+                // therefore draws a reply vouching for `prev_log_index` alone,
+                // which is *less* than a preceding append's reply vouched for.
+                // Taking that as news walks this peer's position backwards and
+                // makes the leader re-send entries it already holds. Measured
+                // before this guard: 15% of all replies on an idle in-memory
+                // cluster, 24% over a slow link.
+                //
+                // `go.etcd.io/raft` keeps the invariant in one place,
+                // `MaybeUpdate` (`tracker/progress.go:205`), and gates its
+                // whole success branch on it.
+                let advanced = message.match_index > tracked.match_index;
+                if advanced {
+                    tracked.match_index = message.match_index;
+                }
+                // `Match < Next`, which etcd states as an invariant on the same
+                // line it advances them (`tracker/progress.go:211`). Enforced on
+                // every success rather than only on an advance, because the two
+                // can be driven apart by different messages: a rejection lowers
+                // `next_index` alone, and a success can then leave `match_index`
+                // above it. A leader in that state anchors its next append below
+                // what the peer already acknowledged, and if that anchor is
+                // under the peer's commit index the peer answers without taking
+                // the entries -- so neither side moves and the pair spin until
+                // the term ends.
+                tracked.next_index = tracked
+                    .next_index
+                    .max(tracked.match_index.saturating_add(1));
 
+                // Above the guard below, deliberately. Promotion is decided by
+                // what the peer says about *itself* together with where it has
+                // got to, and both are known whether or not this reply moved
+                // anything. A member that is caught up and simply repeating its
+                // position would otherwise never be promoted, and a rejoining
+                // member's caller waits forever.
                 if tracked.catching_up && tracked.match_index >= tracked.promote_through {
                     tracked.catching_up = false;
                     let through = tracked.promote_through;
@@ -2153,17 +2366,35 @@ impl crate::transport::PeerHandler for RaftNode {
                         through_index: through,
                     });
                 }
-                wake_apply = self.advance_commit(&mut state);
+
+                if !advanced && !answered_our_append {
+                    // Told nothing new, and not the answer to an outstanding
+                    // append, so there is no replication decision to make. etcd
+                    // stops here too: its success branch runs only when
+                    // `MaybeUpdate` moved something, or when the reply releases
+                    // a probing peer (`raft.go:1528`). That second clause is why
+                    // a non-advancing reply which *did* clear our pause still
+                    // falls through -- it releases flow control, and entries may
+                    // be waiting behind it.
+                    settled = true;
+                } else {
+                    wake_apply = self.advance_commit(&mut state);
+                }
             }
 
             if resend {
                 self.send_append(&mut state, peer);
-            } else if more_to_send && should_send_now(&state, peer) {
+            } else if !settled && !wake_apply && should_send_now(&state, peer) {
                 // **The rejection path already did this; the success path did
                 // not.** A reply that clears a peer's pause without moving the
                 // commit index -- which is every reply from a peer outside the
                 // quorum position -- left that peer's outstanding entries
                 // unsent until the next heartbeat.
+                //
+                // `!wake_apply` is "the commit index did not move". When it
+                // does, the `replicate()` below already sends every peer --
+                // this one included -- so sending here as well would put two
+                // messages on the same link for one reply.
                 //
                 // Measured: the caller of a registration driven at such a peer
                 // waits one heartbeat interval, because until the entries
@@ -2324,6 +2555,11 @@ impl crate::transport::PeerHandler for RaftNode {
         }
 
         if let Some(tracked) = state.peers.get_mut(&peer) {
+            // A peer working through a transfer is answering, and must count
+            // toward check-quorum exactly as an append reply does. In
+            // `go.etcd.io/raft` the snapshot acknowledgement arrives as an
+            // ordinary `MsgAppResp`, so it sets `RecentActive` on the same line.
+            tracked.last_heard_at = Some(Instant::now());
             tracked.snapshot_in_flight = false;
             if message.done {
                 tracked.next_index = meta.last_index.saturating_add(1);
@@ -2463,9 +2699,14 @@ impl crate::transport::PeerHandler for RaftNode {
 
         if state.role == Role::Leader {
             let next = state.log.last_index().saturating_add(1);
+            let append_sequence = state.append_sequence;
             if let Some(tracked) = state.peers.get_mut(&peer) {
                 tracked.next_index = next;
                 tracked.match_index = 0;
+                // Everything in flight to the incarnation that has gone is now
+                // disowned; a reply it already sent must not be read as news
+                // about the one that replaced it.
+                tracked.reply_floor = append_sequence;
                 // A reconnect invalidates anything in flight: neither the chunk
                 // nor the append it was waiting on will ever be answered, and
                 // holding the pause open would strand the peer.

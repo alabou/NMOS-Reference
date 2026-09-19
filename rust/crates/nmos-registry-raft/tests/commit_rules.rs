@@ -19,7 +19,8 @@
 )]
 
 use nmos_registry_raft::commit::{
-    follower_commit_index, last_new_index, leader_commit_index, should_replicate_commit,
+    commit_after_regression, commit_to_record, follower_commit_index, last_new_index,
+    leader_commit_index, should_replicate_commit, should_send_now,
 };
 
 // -- defect 3.3: the follower commit rule -----------------------------------
@@ -193,4 +194,84 @@ fn a_single_member_cluster_commits_on_its_own() {
     // Quorum of one. A one-member cluster that could not commit would be a
     // registry that accepts nothing.
     assert_eq!(leader_commit_index(vec![3], 0, 1, |_| Some(1)), 3);
+}
+
+// -- what the leader records as told, and when it sends again ---------------
+//
+// The other half of defect 3.4, and the half that was missed on the first
+// attempt. Advancing the commit index replicates at once, which
+// `should_replicate_commit` covers -- but a reply that does *not* advance it
+// still leaves that peer behind, and the bookkeeping that decides so has to be
+// honest about what each message actually vouched for.
+
+#[test]
+fn a_send_records_only_the_commit_index_its_own_window_delivers() {
+    // The suppressed case: an append to this peer is already in flight, so this
+    // message carries no entries and its window ends at prev_log_index 4. The
+    // follower will adopt min(10, 4) = 4 by `follower_commit_index`, so 4 is
+    // what the leader may record having told it.
+    assert_eq!(commit_to_record(10, 4), 4);
+
+    // Recording 10 here is the leader telling itself it had passed on something
+    // the peer could not take. `should_send_now` below then finds nothing left
+    // to say, and the peer learns the rest at the next heartbeat -- the exact
+    // stall the eager send exists to remove.
+    assert_ne!(commit_to_record(10, 4), 10);
+}
+
+#[test]
+fn a_send_that_reaches_the_commit_index_records_all_of_it() {
+    // Entries ride along through index 12, past the commit index, so the whole
+    // of it is delivered and recording less would send a needless second copy.
+    assert_eq!(commit_to_record(10, 12), 10);
+    assert_eq!(commit_to_record(10, 10), 10);
+}
+
+#[test]
+fn a_rejection_takes_back_what_the_new_window_no_longer_covers() {
+    // The peer rejected back to index 2, so the leader vouches only through 1.
+    // A record of 7 was delivered through the very message it refused.
+    assert_eq!(commit_after_regression(7, 2), 1);
+    // Already honest, so untouched -- this only ever clamps downwards.
+    assert_eq!(commit_after_regression(1, 9), 1);
+    // The floor: rejected back to the start of the log vouches for nothing.
+    assert_eq!(commit_after_regression(7, 1), 0);
+}
+
+#[test]
+fn a_peer_missing_entries_is_sent_them_without_waiting_for_a_tick() {
+    // next_index 5, last_index 10: five entries this leader already holds.
+    assert!(should_send_now(0, 5, 10, 10, 4));
+}
+
+#[test]
+fn a_peer_behind_only_on_the_commit_index_is_still_told_at_once() {
+    // Caught up on entries (next_index 11 > last_index 10) and so contributing
+    // nothing to `has_entries`. This is etcd's `CanBumpCommit`, and the case
+    // that dominates at five members: the commit index moves on the quorum
+    // position, so every peer outside it lands exactly here after every round.
+    assert!(should_send_now(0, 11, 10, 10, 4));
+}
+
+#[test]
+fn a_peer_already_told_the_commit_index_is_not_told_again() {
+    // `index > sentCommit` is false -- it has nothing new to learn, and a send
+    // would be one message per reply for no reason.
+    assert!(!should_send_now(0, 11, 10, 10, 10));
+}
+
+#[test]
+fn a_peer_that_could_not_act_on_the_commit_index_is_not_sent_it() {
+    // The second half of `CanBumpCommit`: `sentCommit < Next-1`. This peer has
+    // already been told a commit index reaching the end of its window, so a
+    // higher one tells it nothing it can use until its window moves.
+    assert!(!should_send_now(0, 5, 4, 10, 4));
+}
+
+#[test]
+fn a_peer_with_an_append_in_flight_is_left_to_that_exchange() {
+    // etcd gates `maybeSendAppend` on `IsPaused` for the same reason: a second
+    // copy of entries the link has not drained is a feedback loop, and the
+    // reply to the outstanding append will say where the peer really is.
+    assert!(!should_send_now(42, 5, 10, 10, 4));
 }

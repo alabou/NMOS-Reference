@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from nmos.raft.errors import RaftLogCompacted
+from nmos.raft.errors import RaftInvariantViolated, RaftLogCompacted
 from nmos.raft.log import Entry, RaftLog
 
 
@@ -116,14 +116,14 @@ class TestReplication:
         log.append_replicated([
             Entry(term=1, index=2, payload=b"", value="e2"),
             Entry(term=1, index=3, payload=b"", value="e3"),
-        ])
+        ], committed=0)
         assert log.last_index == 3
 
     def test_a_conflicting_entry_truncates_everything_after_it(self) -> None:
         log = _log(1, 1, 1, 1)
         log.append_replicated([
             Entry(term=2, index=3, payload=b"", value="new3"),
-        ])
+        ], committed=0)
         assert log.last_index == 3
         assert log.get(3).term == 2
         assert log.get(3).value == "new3"
@@ -134,15 +134,38 @@ class TestReplication:
         log.discard_through(2, 1)
         log.append_replicated([
             Entry(term=1, index=1, payload=b"", value="stale"),
-        ])
+        ], committed=0)
         assert log.first_index == 3
+
+    def test_a_conflict_at_or_below_the_commit_index_is_refused(self) -> None:
+        """Log Matching says it cannot happen, so it is asserted, not assumed.
+
+        A conflicting entry at or below the commit index would discard state
+        this member has already committed -- the one thing a state machine may
+        never do. ``go.etcd.io/raft`` asserts the same thing in ``maybeAppend``
+        (``log.go:120``) and panics; the cost either way is one comparison, and
+        the alternative is finding out as a silently wrong state machine.
+        """
+        log = _log(1, 1, 1, 1)
+        with pytest.raises(RaftInvariantViolated, match="discard committed"):
+            log.append_replicated([
+                Entry(term=2, index=3, payload=b"", value="rewrite"),
+            ], committed=3)
+
+    def test_a_conflict_above_the_commit_index_still_truncates(self) -> None:
+        """The ordinary case, which the guard above must not catch."""
+        log = _log(1, 1, 1, 1)
+        log.append_replicated([
+            Entry(term=2, index=3, payload=b"", value="new3"),
+        ], committed=2)
+        assert log.get(3).term == 2
 
     def test_a_gap_is_refused(self) -> None:
         log = _log(1)
         with pytest.raises(ValueError, match="contiguous"):
             log.append_replicated([
                 Entry(term=1, index=5, payload=b"", value="gap"),
-            ])
+            ], committed=0)
 
 
 class TestMatching:

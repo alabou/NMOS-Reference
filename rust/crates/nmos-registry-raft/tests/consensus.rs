@@ -757,8 +757,16 @@ async fn a_follower_vouches_only_for_the_window_the_message_covered() {
     // follower's log runs ahead.
     //
     // Arranged directly here rather than waited for: replicate four entries,
-    // then send a heartbeat whose window ends at index 1.
-    use nmos_registry_raft::messages::AppendEntries;
+    // give this follower an **uncommitted** tail beyond them, then send a
+    // heartbeat whose window ends where the committed part does.
+    //
+    // The tail has to be uncommitted for the hazard to exist at all. Entries at
+    // or below a follower's commit index are on a quorum by definition, so
+    // vouching for them overstates nothing -- and a message anchored below the
+    // commit index is answered with that commit index by the guard in
+    // `on_append_entries` (`go.etcd.io/raft`, `raft.go:1796`), never reaching
+    // the arithmetic under test.
+    use nmos_registry_raft::messages::{AppendEntries, WireEntry};
     use nmos_registry_raft::transport::PeerHandler;
 
     let cluster = Cluster::build(3, quick());
@@ -784,22 +792,68 @@ async fn a_follower_vouches_only_for_the_window_the_message_covered() {
     // Read the term at index 1 rather than assume it: the cluster may have held
     // several elections before settling, so index 1's term is whatever the
     // first successful leader held.
-    let prev_log_term = cluster.nodes[follower as usize]
-        .log_term_at(1)
-        .expect("index 1 is held");
-    let held = cluster.nodes[follower as usize].last_log_index();
-    assert!(held > 1, "the follower holds only {held} entries");
+    // Take this follower off the fabric first. The cluster is live and the
+    // runtime is multi-threaded, so a real append can land between any two
+    // calls below and move the commit index out from under the scenario --
+    // and a message anchored below the commit index is then answered by the
+    // guard in `on_append_entries` rather than by the arithmetic under test.
+    //
+    // The Python harness needs no equivalent because its event loop cannot
+    // interleave between two synchronous calls. That is a difference in the
+    // harnesses, not in what is being asserted.
+    let others: Vec<u64> = (0..3u64).filter(|&m| m != follower).collect();
+    cluster.fabric.isolate(follower, &others);
+    let settled = cluster.nodes[follower as usize].commit_index();
+    let settled_term = cluster.nodes[follower as usize]
+        .log_term_at(settled)
+        .expect("the commit index is held");
 
+    // The stale uncommitted tail: two entries past everything committed, which
+    // a previous term could have left here and this leader may never have seen.
+    let tail: Vec<WireEntry> = (1..=2u64)
+        .map(|offset| WireEntry {
+            term,
+            index: settled + offset,
+            payload: claim(leader as u64, 90 + offset).encode(),
+        })
+        .collect();
+    let seeded = cluster.nodes[follower as usize].on_append_entries(
+        leader as u64,
+        &AppendEntries {
+            term,
+            leader: leader as u64,
+            prev_log_index: settled,
+            prev_log_term: settled_term,
+            leader_commit: settled,
+            request_id: 6,
+            entries: tail,
+        },
+    );
+    assert!(seeded.success, "the follower refused the uncommitted tail");
+    assert!(
+        cluster.nodes[follower as usize].last_log_index() > settled,
+        "the follower holds no uncommitted tail, so this proves nothing",
+    );
+
+    let anchor = cluster.nodes[follower as usize].commit_index();
+    let anchor_term = cluster.nodes[follower as usize]
+        .log_term_at(anchor)
+        .expect("the commit index is held");
+    assert!(
+        cluster.nodes[follower as usize].last_log_index() > anchor,
+        "the follower holds nothing past its commit index, so this proves \
+         nothing",
+    );
     let reply = cluster.nodes[follower as usize].on_append_entries(
         leader as u64,
         &AppendEntries {
             term,
             leader: leader as u64,
-            // A heartbeat covering nothing beyond index 1, while this follower
-            // holds several more entries.
-            prev_log_index: 1,
-            prev_log_term,
-            leader_commit: 1,
+            // A heartbeat covering nothing beyond the committed point, while
+            // this follower holds more entries past it.
+            prev_log_index: anchor,
+            prev_log_term: anchor_term,
+            leader_commit: anchor,
             request_id: 7,
             entries: Vec::new(),
         },
@@ -807,10 +861,10 @@ async fn a_follower_vouches_only_for_the_window_the_message_covered() {
 
     assert!(reply.success, "the consistency check failed unexpectedly");
     assert_eq!(
-        reply.match_index, 1,
+        reply.match_index, anchor,
         "the follower vouched for index {} when the message covered only \
-         index 1; the leader stores that verbatim and counts it toward the \
-         quorum, so it can commit an index no majority holds",
+         index {anchor}; the leader stores that verbatim and counts it toward \
+         the quorum, so it can commit an index no majority holds",
         reply.match_index,
     );
     cluster.close_all().await;
@@ -861,4 +915,130 @@ async fn a_peer_is_never_promoted_below_its_bar() {
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
     cluster.close_all().await;
+}
+
+// -- what the leader will believe about a peer ------------------------------
+//
+// From reading `go.etcd.io/raft` beside this implementation rather than from a
+// failing test, which is why each carries the number that made the case.
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_peer_is_never_recorded_as_holding_less_than_it_did() {
+    // etcd's `MaybeUpdate`: `if n <= pr.Match { return false }`.
+    //
+    // A follower vouches for the window of the message it is answering, so an
+    // entries-less send draws a reply vouching for `prev_log_index` alone --
+    // less than a preceding append's reply vouched for. Taking that as news
+    // walks the peer backwards and re-sends entries it already holds.
+    //
+    // Measured before the guard: 418 of 2,744 replies on an idle five-member
+    // cluster, 15.2%, every one of them carrying request id 0.
+    use nmos_registry_raft::messages::AppendEntriesReply;
+    use nmos_registry_raft::transport::PeerHandler;
+
+    let cluster = Cluster::build(3, quick());
+    cluster.start_all().await;
+    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
+    let leader = cluster.leaders()[0] as usize;
+    for sequence in 1..=4u64 {
+        cluster.nodes[leader]
+            .propose(claim(leader as u64, sequence))
+            .await
+            .expect("commits");
+    }
+    let peer = (0..3u64)
+        .find(|&m| m as usize != leader)
+        .expect("a follower");
+    assert!(
+        until(|| cluster.nodes[leader]
+            .peer_progress(peer)
+            .is_some_and(|(matched, _, _)| matched >= 4))
+        .await,
+        "the leader never saw this peer reach index 4",
+    );
+
+    let (before, _, _) = cluster.nodes[leader]
+        .peer_progress(peer)
+        .expect("the peer is tracked");
+    let term = cluster.nodes[leader].term();
+
+    // What an entries-less send anchored well behind draws back.
+    cluster.nodes[leader].on_append_entries_reply(
+        peer,
+        &AppendEntriesReply {
+            term,
+            success: true,
+            match_index: 1,
+            conflict_index: 0,
+            conflict_term: 0,
+            catching_up: false,
+            request_id: 0,
+        },
+    );
+
+    let (after, _, _) = cluster.nodes[leader]
+        .peer_progress(peer)
+        .expect("the peer is tracked");
+    assert_eq!(
+        after, before,
+        "member {peer} was recorded as holding only {after} because a \
+         heartbeat vouched for that much; it had already acknowledged {before}",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_append_below_the_commit_index_is_answered_with_it() {
+    // etcd returns early here (`raft.go:1796`), replying with its own commit
+    // index. A delayed or duplicated append anchored below what this member has
+    // committed would otherwise be answered with `prev_log_index +
+    // len(entries)` -- a match below our commit index, which walks the leader's
+    // view of us backwards and makes it re-send what we hold.
+    use nmos_registry_raft::messages::AppendEntries;
+    use nmos_registry_raft::transport::PeerHandler;
+
+    let cluster = Cluster::build(3, quick());
+    cluster.start_all().await;
+    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
+    let leader = cluster.leaders()[0] as usize;
+    for sequence in 1..=4u64 {
+        cluster.nodes[leader]
+            .propose(claim(leader as u64, sequence))
+            .await
+            .expect("commits");
+    }
+    let follower = (0..3usize)
+        .find(|&m| m != leader)
+        .expect("a follower");
+    assert!(
+        until(|| cluster.nodes[follower].commit_index() > 1).await,
+        "the follower committed nothing, so this proves nothing",
+    );
+
+    let committed = cluster.nodes[follower].commit_index();
+    let term = cluster.nodes[follower].term();
+    let prev_log_term = cluster.nodes[follower]
+        .log_term_at(1)
+        .expect("index 1 is held");
+
+    let reply = cluster.nodes[follower].on_append_entries(
+        leader as u64,
+        &AppendEntries {
+            term,
+            leader: leader as u64,
+            prev_log_index: 1,
+            prev_log_term,
+            leader_commit: committed,
+            request_id: 9,
+            entries: Vec::new(),
+        },
+    );
+
+    assert!(reply.success, "a stale append was rejected outright");
+    assert_eq!(
+        reply.match_index, committed,
+        "answered with {} for a message anchored at index 1, though this \
+         member has committed through {committed} -- the leader stores that \
+         verbatim",
+        reply.match_index,
+    );
 }

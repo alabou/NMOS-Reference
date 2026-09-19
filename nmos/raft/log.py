@@ -43,7 +43,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Generic, Sequence, TypeVar
 
-from nmos.raft.errors import RaftLogCompacted
+from nmos.raft.errors import RaftInvariantViolated, RaftLogCompacted
 
 T = TypeVar("T")
 
@@ -182,7 +182,9 @@ class RaftLog(Generic[T]):
             )
         return first, self.last_index
 
-    def append_replicated(self, entries: Sequence[Entry[T]]) -> None:
+    def append_replicated(
+        self, entries: Sequence[Entry[T]], *, committed: int,
+    ) -> None:
         """Append entries received from the leader, resolving conflicts.
 
         Implements the rule that makes replication converge: where an existing
@@ -190,6 +192,14 @@ class RaftLog(Generic[T]):
         and **everything after it** is discarded. Entries that already match
         are left alone rather than rewritten, so a duplicated ``AppendEntries``
         -- which retries make ordinary -- is idempotent.
+
+        ``committed`` is the caller's commit index, and it is a floor rather
+        than a hint: a conflict at or below it would discard an entry this
+        member has already committed, which Log Matching says cannot happen.
+        Asserted rather than assumed, because the cost is one comparison and
+        the alternative is discovering it as a silently wrong state machine.
+        ``go.etcd.io/raft`` asserts the same thing in ``maybeAppend``
+        (``log.go:120``) and panics.
         """
         for entry in entries:
             if entry.index <= self._snapshot_index:
@@ -200,6 +210,13 @@ class RaftLog(Generic[T]):
                 existing = self.get(entry.index)
                 if existing.term == entry.term:
                     continue
+                if entry.index <= committed:
+                    raise RaftInvariantViolated(
+                        f"entry {entry.index} arrived as term {entry.term} "
+                        f"but is held here as term {existing.term}, and index "
+                        f"{committed} is committed -- accepting it would "
+                        f"discard committed state",
+                    )
                 self.truncate_suffix(entry.index)
             if entry.index != self.last_index + 1:
                 raise ValueError(

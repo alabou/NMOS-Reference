@@ -215,6 +215,40 @@ class _PeerState:
     happened here -- never sends it at all until the next heartbeat.
     """
 
+    reply_floor: int = 0
+    """Correlation ids at or below this belong to a superseded exchange.
+
+    Set to the current value of the node-wide append sequence whenever this
+    leader's view of the peer is reset -- on becoming leader, and on a
+    reconnect. Every send made afterwards is minted above it, so a reply at or
+    below it was drawn by a send this leader has since disowned.
+
+    It exists because nothing else identifies one. A reply carries no
+    incarnation, and an append reply is not a correlated request whose future
+    the transport fails when the link drops, so a reply from the incarnation
+    that has just been replaced arrives looking exactly like a current one --
+    and is then applied to the member that replaced it.
+    """
+
+    last_heard_at: float = 0.0
+    """When this peer last *answered*, which is what check-quorum runs on.
+
+    ``go.etcd.io/raft`` keeps the same evidence as ``RecentActive``, set only
+    on a reply (``raft.go:1388``, ``:1580``) and cleared for every peer once an
+    election interval (``raft.go:1286``); ``QuorumActive`` then asks whether a
+    majority answered inside that window.
+
+    A timestamp rather than a flag-and-sweep, which is the same question asked
+    without a second timer.
+
+    The distinction from ``up`` is the point. ``up`` is the TCP link, and a
+    peer whose process is stopped, deadlocked or stalled holds its socket open
+    for minutes: the kernel keeps the connection and nothing errors until
+    retransmits give up. Counting such a peer toward the quorum is how a leader
+    goes on answering as leader, and accepting writes that can never commit,
+    while a majority of the cluster is not actually there.
+    """
+
     snapshot_offset: int = 0
     """How much of the snapshot this peer has confirmed receiving."""
 
@@ -308,7 +342,6 @@ class RaftNode:
         )
 
         self._deadline = 0.0
-        self._quorum_deadline = 0.0
         # When this member last accepted an AppendEntries from a leader. The
         # basis of the lease in ``on_request_vote``: a follower that is being
         # served by a healthy leader refuses to help depose it.
@@ -417,11 +450,41 @@ class RaftNode:
 
     @property
     def has_quorum(self) -> bool:
-        """Whether enough members are reachable for a write to commit."""
+        """Whether enough members are reachable for a write to commit.
+
+        Reachability, not responsiveness -- see ``_quorum_is_answering`` for
+        the stronger question a leader asks of itself. This one is asked by
+        members that are *not* leading, which send nothing and so have no
+        replies to count, and by the backend when reporting readiness.
+        """
         reachable = 1 + sum(
             1 for peer in self._peers.values() if peer.up and not peer.catching_up
         )
         return reachable >= self._layout.quorum
+
+    def _quorum_is_answering(self, now: float) -> bool:
+        """Have a majority *answered* this leader within an election window?
+
+        ``go.etcd.io/raft``'s ``QuorumActive`` (``tracker/tracker.go:208``),
+        which check-quorum consults once an election interval and which counts
+        only peers that have actually replied.
+
+        The difference from ``has_quorum`` is the whole of finding 2 in the
+        etcd comparison: a stopped or stalled peer keeps its socket open and
+        stays ``up`` for minutes, so a leader counting connections can believe
+        it has a quorum while a majority of the cluster is answering nothing.
+        Writes accepted in that state can never commit.
+
+        Members catching up are excluded for the same reason they are excluded
+        from the commit count: their acknowledgements do not establish a
+        quorum. etcd excludes learners from ``QuorumActive`` identically.
+        """
+        window = self._timing.election_max
+        answering = 1 + sum(
+            1 for peer in self._peers.values()
+            if not peer.catching_up and now - peer.last_heard_at < window
+        )
+        return answering >= self._layout.quorum
 
     # -- lifecycle -------------------------------------------------------
 
@@ -470,14 +533,21 @@ class RaftNode:
     def _tick(self) -> None:
         now = asyncio.get_running_loop().time()
         if self._role is Role.LEADER:
-            if self.has_quorum:
-                self._quorum_deadline = now + self._timing.election_max
-            elif now >= self._quorum_deadline:
+            if not self._quorum_is_answering(now):
                 # Check-quorum. A leader cut off from a majority cannot commit
                 # anything, and the other side of the partition has had long
                 # enough to elect someone else -- so continuing to answer as
                 # leader would mean reporting READY while accepting writes
                 # that can never commit.
+                #
+                # **One interval, not two.** ``_quorum_is_answering`` already
+                # asks "within an election window", so counting a second
+                # window down from the moment it turns false would double how
+                # long a partitioned leader keeps the role.
+                # ``go.etcd.io/raft`` steps down on the spot when
+                # ``QuorumActive`` fails (``raft.go:1282``); the grace a fresh
+                # leader needs comes from ``_become_leader`` seeding
+                # ``last_heard_at``, not from a second timer.
                 self._relinquish("lost contact with a quorum")
                 return
             self._replicate()
@@ -949,10 +1019,16 @@ class RaftNode:
         # `up` and `incarnation` are deliberately kept. They are observations
         # about the peer itself rather than about this leadership, and
         # forgetting them would make a healthy cluster look down for a tick.
+        now = asyncio.get_running_loop().time()
         next_index = self._log.last_index + 1
         for peer in self._peers.values():
             peer.next_index = next_index
             peer.match_index = 0
+            # One election window of grace before check-quorum asks anything of
+            # them, matching the deadline armed below. A leader that demanded
+            # evidence it has not had time to collect would step down in the
+            # tick after winning.
+            peer.last_heard_at = now
             peer.catching_up = False
             peer.promote_through = 0
             # In-flight bookkeeping for appends this member sent while it was
@@ -965,6 +1041,10 @@ class RaftNode:
             # Same lifetime as the rest: what an earlier leadership told this
             # peer says nothing about what this one has committed.
             peer.sent_commit = 0
+            # Replies drawn by the previous leadership's sends say nothing
+            # about this one's, and this leader has just reset everything they
+            # would report on.
+            peer.reply_floor = self._append_sequence
             # Likewise a snapshot this member was sending in an earlier term:
             # the new transfer starts from zero, and a carried-over offset
             # would have the leader resume a stream the peer is not expecting.
@@ -976,9 +1056,6 @@ class RaftNode:
         )
         self._leader_changed.set()
         self._leader_changed.clear()
-        self._quorum_deadline = (
-            asyncio.get_running_loop().time() + self._timing.election_max
-        )
 
         # Raft §8: a new leader cannot know what earlier terms committed until
         # it commits an entry of its own, so it appends one that does nothing.
@@ -1028,15 +1105,56 @@ class RaftNode:
             # own tick.
             self._send_snapshot(peer, state)
             return
-        request_id = 0
+        # **Every send is correlated, not only the ones carrying entries.**
+        #
+        # The id is what tells a reply apart from one sent by a *previous
+        # incarnation* of this peer. Nothing else can: a reply carries no
+        # incarnation of its own, and an append reply is not a correlated
+        # request whose future the transport fails when the link drops. So a
+        # reply the dying member had already put on the wire can arrive after
+        # this leader has reset its view and be read as news about the member
+        # that replaced it.
+        #
+        # Measured: a leader credited a restarted member with index 6 while it
+        # held nothing, *and* took ``catching_up=False`` from the same reply,
+        # which put it back into the commit tally. On three members that is
+        # leader plus phantom -- a quorum -- so the leader could commit an index
+        # only it held. Leader Completeness, from one stale message.
+        #
+        # Ids are minted from one node-wide sequence, so every send made after
+        # a reconnect has an id above every send made before it. That is what
+        # ``reply_floor`` compares against.
+        #
+        # Only a send that *carries entries* arms the flow-control pause, which
+        # is unchanged: a heartbeat's id will never equal ``pending_request``.
+        self._append_sequence += 1
+        request_id = self._append_sequence
         if entries:
-            self._append_sequence += 1
-            request_id = self._append_sequence
             state.pending_through = entries[-1].index
             state.pending_request = request_id
             state.pending_since = asyncio.get_running_loop().time()
 
-        state.sent_commit = self._commit_index
+        # What this message can actually deliver, which is not always the whole
+        # commit index. The receiver adopts ``min(leader_commit, prev_log_index
+        # + len(entries))``, so a send whose entries were suppressed above
+        # carries a window ending at ``previous`` no matter how far this leader
+        # has committed. Recording the full commit index there would be the
+        # leader telling itself it had passed on something the peer could not
+        # take -- and ``_should_send_now`` would then see nothing left to say
+        # and leave the peer behind until the next tick, which is the exact
+        # stall the eager send exists to remove.
+        #
+        # ``go.etcd.io/raft`` keeps the same book by splitting the message
+        # types: ``maybeSendAppend`` records ``committed`` because its window
+        # always reaches ``Next-1`` (``raft.go:660``), while ``sendHeartbeat``
+        # -- which carries no window at all -- records the conservative
+        # ``min(pr.Match, committed)`` (``raft.go:709``). This implementation
+        # has one message type, so it caps by the window instead, which is the
+        # same rule stated once rather than twice. ``CanBumpCommit``'s comment
+        # says what is being tracked: a commit index "may bump the follower's
+        # commit index up to Next-1".
+        window_last = entries[-1].index if entries else previous
+        state.sent_commit = min(self._commit_index, window_last)
         self._transport.send(peer, AppendEntries(
             term=self._term,
             leader=self._layout.local.index,
@@ -1084,6 +1202,25 @@ class RaftNode:
         # could justify the recovery path above when it is not warranted.
         self._observed_amnesiac.clear()
 
+        if message.prev_log_index < self._commit_index:
+            # A delayed or duplicated append anchored below what this member
+            # has already committed. Answering it on its own terms would report
+            # ``prev_log_index + len(entries)`` -- a match *below* our commit
+            # index, which walks the leader's view of us backwards and makes it
+            # re-send entries we hold. Answer with what we really have instead.
+            #
+            # ``go.etcd.io/raft`` returns early here for the same reason
+            # (``raft.go:1796``), replying with ``r.raftLog.committed``.
+            #
+            # It is also the guard that keeps such a message away from the
+            # truncation path below: everything at or below the commit index is
+            # settled, and no append may reopen it.
+            return AppendEntriesReply(
+                term=self._term, success=True, match_index=self._commit_index,
+                conflict_index=0, conflict_term=0,
+                catching_up=not self._voting, request_id=message.request_id,
+            )
+
         if not self._log.matches(message.prev_log_index, message.prev_log_term):
             conflict_index, conflict_term = self._log.find_conflict(
                 message.prev_log_index, message.prev_log_term,
@@ -1095,13 +1232,16 @@ class RaftNode:
             )
 
         if message.entries:
-            self._log.append_replicated([
-                Entry(
-                    term=wire.term, index=wire.index, payload=wire.payload,
-                    value=decode_operation(wire.payload),
-                )
-                for wire in message.entries
-            ])
+            self._log.append_replicated(
+                [
+                    Entry(
+                        term=wire.term, index=wire.index, payload=wire.payload,
+                        value=decode_operation(wire.payload),
+                    )
+                    for wire in message.entries
+                ],
+                committed=self._commit_index,
+            )
 
         # Figure 2, AppendEntries receiver rule 5, verbatim: "If leaderCommit >
         # commitIndex, set commitIndex = min(leaderCommit, index of last new
@@ -1176,11 +1316,28 @@ class RaftNode:
         if state is None:
             return
 
+        if message.request_id <= state.reply_floor:
+            # Drawn by a send this leader has since disowned -- see
+            # ``_PeerState.reply_floor``. Believing it credits the member that
+            # has just replaced this one with a log it does not have, and takes
+            # ``catching_up`` from a member that no longer exists.
+            return
+
         # Only the answer to *this* append releases the pause. A reply to a
-        # heartbeat sent meanwhile carries request_id 0 and says nothing about
-        # whether the entries landed.
-        if message.request_id != 0 and message.request_id == state.pending_request:
+        # send that carried no entries says nothing about whether entries
+        # landed, and its id will never match ``pending_request``.
+        answered_our_append = (
+            message.request_id != 0
+            and message.request_id == state.pending_request
+        )
+        if answered_our_append:
             state.pending_request = 0
+
+        # Recorded before the success/failure split, as ``go.etcd.io/raft``
+        # records ``RecentActive`` there (``raft.go:1388``, ``:1580``): the
+        # peer answered, and that is true whatever it said. This is the
+        # evidence check-quorum runs on -- see ``_quorum_is_answering``.
+        state.last_heard_at = asyncio.get_running_loop().time()
 
         was_catching_up = state.catching_up
         state.catching_up = message.catching_up
@@ -1193,17 +1350,94 @@ class RaftNode:
                 peer, state.promote_through,
             )
 
+        if not message.success and message.conflict_index <= state.match_index:
+            # Stale, and safe to say so only because of ``reply_floor``.
+            #
+            # ``go.etcd.io/raft`` refuses the same way in ``MaybeDecrTo``
+            # (``tracker/progress.go:230``: ``if rejected <= pr.Match``),
+            # commenting that "rejections can happen spuriously as messages
+            # are sent out of order or duplicated". Its ``rejected`` is the
+            # ``prev_log_index`` of the refused append, which this reply does
+            # not carry; the conflict hint is used instead, and the two ask
+            # subtly different questions.
+            #
+            # The substitution is sound because within one leadership a peer
+            # that acknowledged ``match_index`` holds every index up to it,
+            # identical to this leader's, by Log Matching -- so a genuine
+            # conflict must lie above it. ``_become_leader`` resets
+            # ``match_index``, so nothing is carried across terms.
+            #
+            # It was **not** sound before the fence above, and the difference
+            # is worth keeping in view: a phantom ``match_index`` left by a
+            # previous incarnation's reply made a rejoining member's honest
+            # "resume from index 1" look stale, and the leader ignored it for
+            # the rest of the term. Measured, as a member that never caught up
+            # and a caller never answered.
+            return
+
         if not message.success:
             # Resume from the start of the conflicting term rather than one
             # index back, so a far-behind member costs a handful of exchanges
             # instead of one per entry.
+            #
+            # No ``match_index + 1`` floor, unlike etcd's
+            # ``max(min(rejected, matchHint+1), pr.Match+1)``
+            # (``tracker/progress.go:249``). etcd needs one because `rejected`
+            # and `matchHint` are two different quantities and the smaller can
+            # fall below `Match`. Here there is one, and the guard above has
+            # already returned unless ``conflict_index > match_index`` -- so a
+            # floor could never be the larger term, and adding it would be a
+            # line that looks load-bearing and is not.
             state.next_index = max(1, message.conflict_index)
+            # The window just moved backwards, so anything recorded as told to
+            # this peer above its new end was told through a message it
+            # rejected. ``go.etcd.io/raft`` clamps the same way whenever
+            # ``Next`` regresses (``tracker/progress.go:142``, ``:238``,
+            # ``:251``), commenting that the sent commit "unlikely has been
+            # applied".
+            state.sent_commit = min(state.sent_commit, state.next_index - 1)
             self._send_append(peer, state)
             return
 
-        state.match_index = message.match_index
-        state.next_index = message.match_index + 1
+        # **Both indices only ever move forward within a leadership.**
+        #
+        # A follower vouches for ``prev_log_index + len(entries)`` -- the window
+        # of the message it is answering. An entries-less send therefore draws a
+        # reply vouching for ``prev_log_index`` alone, which is *less* than a
+        # preceding append's reply vouched for. Taking that as news walks this
+        # peer's position backwards and makes the leader re-send entries it
+        # already holds. Measured before this guard: 15% of all replies on an
+        # idle in-memory cluster, 24% over a slow link.
+        #
+        # ``go.etcd.io/raft`` has the invariant in one place, ``MaybeUpdate``
+        # (``tracker/progress.go:205``), and gates its whole success branch on
+        # it:
+        #
+        #     if n <= pr.Match { return false }
+        #     pr.Match = n
+        #     pr.Next = max(pr.Next, n+1)   // invariant: Match < Next
+        #
+        advanced = message.match_index > state.match_index
+        if advanced:
+            state.match_index = message.match_index
+        # ``Match < Next``, which etcd states as an invariant on the same line
+        # it advances them (``tracker/progress.go:211``). Enforced on every
+        # success rather than only on an advance, because the two can be driven
+        # apart by different messages: a rejection lowers ``next_index`` alone,
+        # and a success can then leave ``match_index`` above it. A leader in
+        # that state anchors its next append *below* what the peer has already
+        # acknowledged, and if that anchor is under the peer's commit index the
+        # peer answers without taking the entries -- so neither side moves and
+        # the pair spin until the term ends. Measured as exactly that: a leader
+        # at ``next=1 match=2`` re-sending ``prev=0`` forever.
+        state.next_index = max(state.next_index, state.match_index + 1)
 
+        # Above the guard below, deliberately. Promotion is decided by what the
+        # peer says about *itself* together with where it has got to, and both
+        # are known whether or not this particular reply moved anything. A
+        # member that is caught up and simply repeating its position would
+        # otherwise never be promoted, and a rejoining member's caller waits
+        # forever -- measured exactly that way.
         if state.catching_up and state.match_index >= state.promote_through:
             state.catching_up = False
             self._transport.send(peer, Promote(
@@ -1211,6 +1445,16 @@ class RaftNode:
                 through_index=state.promote_through,
             ))
             log.info("raft: member %d promoted", peer)
+
+        if not advanced and not answered_our_append:
+            # Told nothing new, and not the answer to an outstanding append, so
+            # there is no replication decision to make. etcd stops here too:
+            # its success branch runs only when ``MaybeUpdate`` moved
+            # something, or when the reply releases a probing peer
+            # (``raft.go:1528``). That second clause is why a non-advancing
+            # reply which *did* clear our pause still falls through -- it
+            # releases flow control, and entries may be waiting behind it.
+            return
 
         before = self._commit_index
         self._advance_commit()
@@ -1541,8 +1785,36 @@ class RaftNode:
                 )
             state.incarnation = incarnation
             if self._role is Role.LEADER:
-                state.next_index = self._log.last_index + 1
+                # **Everything known about this peer's log is discarded, and
+                # that is a deliberate divergence from ``go.etcd.io/raft``.**
+                #
+                # etcd keeps ``Match`` across unreachability -- ``MsgUnreachable``
+                # (``raft.go:1629``) only moves the peer to probing, and
+                # ``BecomeProbe`` sets ``Next = Match + 1`` -- because in etcd a
+                # log is durable, so a peer that comes back still holds what it
+                # acknowledged. Its premise does not hold here: this log lives
+                # in memory, which is the whole reason the non-voting rejoin
+                # exists, so a reconnect genuinely can mean the peer has
+                # nothing.
+                #
+                # Keeping ``match_index`` on that assumption is not merely
+                # optimistic, it deadlocks. A rejoining member rejects from
+                # index 1, the staleness test in ``on_append_entries_reply``
+                # reads that as a rejection below what it already acknowledged,
+                # and the leader ignores it for as long as it holds the term --
+                # measured directly, as a rejoining member that never caught up
+                # and a caller that was never answered.
+                #
+                # The cost of being conservative is a transient one: until this
+                # peer's next successful reply it contributes nothing to the
+                # commit count, so a connection flap can defer a commit by a
+                # round trip. That is the right trade against losing a member.
                 state.match_index = 0
+                state.next_index = self._log.last_index + 1
+                # Everything in flight to the incarnation that has gone is now
+                # disowned; a reply it already sent must not be read as news
+                # about the one that replaced it.
+                state.reply_floor = self._append_sequence
                 # A reconnect invalidates anything that was in flight: neither
                 # the chunk nor the append it was waiting on will ever be
                 # answered, and holding the pause open would strand the peer.
@@ -1815,10 +2087,21 @@ class RaftNode:
                 f"it covers term {meta.last_term} but arrived from a member "
                 f"at term {sender_term}"
             )
-        if meta.last_index < self._log.snapshot_index:
+        if meta.last_index <= self._commit_index:
+            # Against the **commit index**, not the compaction boundary.
+            # ``snapshot_index <= commit_index`` always, so comparing against
+            # the boundary let through every snapshot landing in between --
+            # and installing one of those replaces the state machine with older
+            # state while ``_commit_index`` correctly stays put, leaving
+            # committed entries un-applied. That is the one thing a state
+            # machine may never do.
+            #
+            # ``go.etcd.io/raft`` refuses on exactly this line
+            # (``raft.go:1861``): ``if s.Metadata.Index <= r.raftLog.committed
+            # { return false }``.
             return (
-                f"it ends at index {meta.last_index}, below the boundary "
-                f"already applied here ({self._log.snapshot_index})"
+                f"it ends at index {meta.last_index}, at or below what is "
+                f"already committed here ({self._commit_index})"
             )
         return None
 
@@ -1834,6 +2117,12 @@ class RaftNode:
         meta = self._snapshot_meta
         if state is None or meta is None:
             return
+
+        # A peer working through a transfer is answering, and must count toward
+        # check-quorum exactly as an append reply does. In ``go.etcd.io/raft``
+        # the snapshot acknowledgement arrives as an ordinary ``MsgAppResp``,
+        # so it sets ``RecentActive`` on the same line.
+        state.last_heard_at = asyncio.get_running_loop().time()
 
         state.snapshot_in_flight = False
 

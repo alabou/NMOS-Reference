@@ -24,6 +24,7 @@ import pytest
 from nmos.raft.errors import RaftUnavailable
 from nmos.raft.messages import AppendEntries, AppendEntriesReply, WireEntry
 from nmos.raft.node import Role
+from nmos.raft.snapshot import SnapshotMeta
 from nmos.raft.operations import (
     ProposalId,
     RegisterOp,
@@ -717,7 +718,7 @@ class TestALeaderReinitialisesWhatItKnowsAboutItsFollowers:
             node.on_append_entries_reply(peer, AppendEntriesReply(
                 term=node.term, success=True, match_index=2,
                 conflict_index=0, conflict_term=0,
-                catching_up=True, request_id=0,
+                catching_up=True, request_id=state.reply_floor + 1,
             ))
 
             assert state.promote_through == committed, (
@@ -970,6 +971,475 @@ class TestTheFollowerCommitRule:
             assert third.match_index == 2, (
                 f"a resend of one entry from index 1 matches at 2, not "
                 f"{third.match_index}"
+            )
+        finally:
+            await cluster.close()
+
+
+class TestTheLeaderRecordsOnlyWhatItActuallyTold:
+    """``sent_commit`` is what the *window* delivered, not what was committed.
+
+    A follower adopts ``min(leader_commit, prev_log_index + len(entries))``, so
+    a send whose entries were suppressed -- because an append to that peer is
+    still in flight -- carries a window ending at ``prev_log_index`` no matter
+    how far the leader has committed. Recording the full commit index there is
+    the leader telling itself it has passed on something the peer could not
+    take, and ``_should_send_now`` then finds nothing left to say and leaves
+    the peer behind until the next tick.
+
+    That is the same stall the eager send exists to remove, re-entering through
+    the bookkeeping rather than through the missing send. Measured on an
+    in-memory five-member cluster with a link slower than the tick: 2,444 of
+    6,273 sends recorded a commit index above their own window.
+
+    ``go.etcd.io/raft`` avoids it by splitting the message types -- MsgApp
+    records ``committed`` because its window always reaches ``Next-1``
+    (``raft.go:660``), MsgHeartbeat records ``min(pr.Match, committed)``
+    (``raft.go:709``). One message type here, so the cap is by window.
+    """
+
+    async def test_a_suppressed_append_records_only_its_own_window(
+        self, tmp_path: Path,
+    ) -> None:
+        cluster = await _cluster(3, tmp_path)
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            node = leader.node
+            peer = next(p for p in node._peers if p != node.index)
+
+            for tag in range(6):
+                await asyncio.wait_for(
+                    node.propose(_register(_stale_id(tag), 0)), timeout=5.0,
+                )
+            await cluster.settle(20)
+            assert node.commit_index >= 4, "nothing committed, so this proves nothing"
+
+            # The state the suppression exists for: this peer is behind, and an
+            # append carrying what it is missing is already on the link.
+            state = node._peers[peer]
+            state.next_index = 2
+            state.match_index = 1
+            state.pending_request = 4242
+            state.pending_through = node.log.last_index
+            state.pending_since = asyncio.get_running_loop().time()
+            assert node._carrying_entries_would_repeat_them(state), (
+                "the append is not considered in flight, so the send below "
+                "would carry entries and this tests nothing"
+            )
+
+            node._send_append(peer, state)
+
+            # prev_log_index is next_index - 1 == 1, and no entries ride along,
+            # so index 1 is every commit index this message can deliver.
+            assert state.sent_commit == 1, (
+                f"recorded having told member {peer} the commit index "
+                f"{state.sent_commit}, but the message it just sent vouches "
+                f"only through index 1 -- the peer cannot adopt more than that"
+            )
+
+            # And the consequence: the in-flight append lands, the peer is now
+            # caught up on entries, and the only thing left to give it is the
+            # commit index. An overstated record hides exactly this.
+            state.pending_request = 0
+            state.match_index = node.log.last_index
+            state.next_index = node.log.last_index + 1
+            assert node._should_send_now(state), (
+                f"member {peer} holds every entry but has been told the commit "
+                f"index only through {state.sent_commit} of "
+                f"{node.commit_index}, and this leader sees nothing to send -- "
+                f"so it learns the rest at the next heartbeat"
+            )
+        finally:
+            await cluster.close()
+
+    async def test_a_rejection_takes_back_what_the_window_no_longer_covers(
+        self, tmp_path: Path,
+    ) -> None:
+        """``tracker/progress.go:142``: when ``Next`` regresses, so must this.
+
+        A rejected append is one the peer did not take, so any commit index
+        recorded as delivered through it was not delivered.
+
+        Usually invisible, because the rejection handler resends immediately
+        and that send re-vouches honestly for whatever window it carries. It
+        becomes visible exactly where it matters: when the entries the peer
+        needs have been compacted away, so the resend diverts to a snapshot and
+        vouches for nothing at all. Left high, the record then suppresses every
+        eager send to that peer for the whole length of the transfer.
+        """
+        cluster = await _cluster(3, tmp_path)
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            node = leader.node
+            peer = next(p for p in node._peers if p != node.index)
+
+            for tag in range(6):
+                await asyncio.wait_for(
+                    node.propose(_register(_stale_id(tag), 0)), timeout=5.0,
+                )
+            await cluster.settle(20)
+            committed = node.commit_index
+            assert committed >= 4, "nothing committed, so this proves nothing"
+
+            # Everything this peer is about to ask for is gone, so the resend
+            # cannot carry entries -- and with no snapshot built yet it carries
+            # nothing whatsoever.
+            node.log.discard_through(committed, node.log.term_at(committed))
+            assert node._snapshot_meta is None, (
+                "a snapshot exists, so the resend below is a transfer rather "
+                "than a no-op and this tests the wrong path"
+            )
+
+            state = node._peers[peer]
+            state.sent_commit = committed
+
+            node.on_append_entries_reply(peer, AppendEntriesReply(
+                term=node.term, success=False, match_index=0,
+                conflict_index=2, conflict_term=node.term,
+                catching_up=False, request_id=state.reply_floor + 1,
+            ))
+
+            assert state.sent_commit <= state.next_index - 1, (
+                f"member {peer} rejected back to index {state.next_index} and "
+                f"was sent nothing in reply, yet this leader still records "
+                f"having told it the commit index {state.sent_commit} -- "
+                f"through the very message it refused"
+            )
+        finally:
+            await cluster.close()
+
+
+class TestWhatTheLeaderWillBelieveAboutAPeer:
+    """Bookkeeping that ``go.etcd.io/raft`` guards and this did not.
+
+    All three come from reading the two implementations side by side rather
+    than from a failing test, which is why each carries the number that made
+    the case.
+    """
+
+    async def test_a_peer_is_never_recorded_as_holding_less_than_it_did(
+        self, tmp_path: Path,
+    ) -> None:
+        """etcd's ``MaybeUpdate``: ``if n <= pr.Match { return false }``.
+
+        A follower vouches for the window of the message it is answering, so
+        an entries-less send draws a reply vouching for ``prev_log_index``
+        alone -- less than a preceding append's reply vouched for. Taking that
+        as news walks the peer backwards and re-sends entries it already holds.
+
+        Measured before the guard: **418 of 2,744 replies on an idle
+        five-member cluster, 15.2%**, and 23.6% over a slow link. Every one of
+        them carried request id 0, which is the entries-less send.
+        """
+        cluster = await _cluster(3, tmp_path)
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            node = leader.node
+            peer = next(p for p in node._peers if p != node.index)
+
+            for tag in range(5):
+                await asyncio.wait_for(
+                    node.propose(_register(_stale_id(tag), 0)), timeout=5.0,
+                )
+            await cluster.settle(20)
+
+            state = node._peers[peer]
+            state.match_index = 5
+            state.next_index = 6
+
+            # What an entries-less send anchored at index 2 draws back.
+            node.on_append_entries_reply(peer, AppendEntriesReply(
+                term=node.term, success=True, match_index=2,
+                conflict_index=0, conflict_term=0,
+                catching_up=False, request_id=state.reply_floor + 1,
+            ))
+
+            assert state.match_index == 5, (
+                f"member {peer} was recorded as holding only "
+                f"{state.match_index} because a heartbeat vouched for that "
+                f"much; it had already acknowledged 5"
+            )
+            assert state.next_index >= 6, (
+                f"next_index fell to {state.next_index}, so this leader will "
+                f"re-send entries member {peer} already holds"
+            )
+        finally:
+            await cluster.close()
+
+    async def test_the_next_index_stays_above_the_match_index(
+        self, tmp_path: Path,
+    ) -> None:
+        """``Match < Next``, which etcd states where it advances them.
+
+        The two are moved by different messages -- a rejection lowers
+        ``next_index`` alone -- so a success can leave ``match_index`` above
+        it. A leader in that state anchors its next append below what the peer
+        acknowledged, and if that anchor is under the peer's commit index the
+        peer answers without taking the entries. Neither side moves.
+
+        Measured as exactly that: a leader stuck at ``next=1 match=2``
+        re-sending ``prev=0`` until the term ended.
+        """
+        cluster = await _cluster(3, tmp_path)
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            node = leader.node
+            peer = next(p for p in node._peers if p != node.index)
+
+            for tag in range(5):
+                await asyncio.wait_for(
+                    node.propose(_register(_stale_id(tag), 0)), timeout=5.0,
+                )
+            await cluster.settle(20)
+
+            state = node._peers[peer]
+            state.match_index = 2
+            state.next_index = 1
+
+            node.on_append_entries_reply(peer, AppendEntriesReply(
+                term=node.term, success=True, match_index=2,
+                conflict_index=0, conflict_term=0,
+                catching_up=False, request_id=state.reply_floor + 1,
+            ))
+
+            assert state.next_index > state.match_index, (
+                f"next_index {state.next_index} is not above match_index "
+                f"{state.match_index}, so the next append is anchored below "
+                f"what this peer has already acknowledged"
+            )
+        finally:
+            await cluster.close()
+
+    async def test_a_peer_that_has_stopped_answering_does_not_hold_the_quorum(
+        self, tmp_path: Path,
+    ) -> None:
+        """Check-quorum runs on replies, not on the socket.
+
+        etcd sets ``RecentActive`` only when a peer answers
+        (``raft.go:1388``, ``:1580``) and clears it every election interval.
+        Counting connections instead lets a stopped or stalled peer -- whose
+        socket the kernel holds open for minutes -- keep a leader believing it
+        has a quorum while a majority is answering nothing. Writes accepted
+        there can never commit.
+        """
+        cluster = await _cluster(3, tmp_path)
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            node = leader.node
+            now = asyncio.get_running_loop().time()
+
+            assert node._quorum_is_answering(now), (
+                "a healthy leader does not believe it has a quorum"
+            )
+            assert node.has_quorum, "the links are not up, so this proves nothing"
+
+            # Every peer still connected, none of them answering -- SIGSTOP, a
+            # stalled event loop, a deadlocked process.
+            for state in node._peers.values():
+                state.last_heard_at = now - node._timing.election_max * 2
+
+            assert node.has_quorum, (
+                "the test no longer distinguishes the two: the links went "
+                "down, which check-quorum already noticed"
+            )
+            assert not node._quorum_is_answering(now), (
+                "every peer has been silent for two election windows and this "
+                "leader still counts them, so it goes on accepting writes "
+                "that can never commit"
+            )
+        finally:
+            await cluster.close()
+
+
+class TestRepliesFromAnIncarnationThatIsGone:
+    """The safety bug the etcd comparison turned up on its way past.
+
+    A reply carries no incarnation, and an append reply is not a correlated
+    request whose future the transport fails when a link drops. So a reply the
+    dying member had already put on the wire arrives looking exactly like a
+    current one -- and is applied to the member that replaced it.
+    """
+
+    async def test_a_reply_from_the_previous_incarnation_is_not_believed(
+        self, tmp_path: Path,
+    ) -> None:
+        """Measured before the fence, on three members:
+
+        * the leader credited the restarted member with index 6 while it held
+          nothing;
+        * it took ``catching_up=False`` from the same reply, which put that
+          member back into ``_advance_commit``'s tally.
+
+        Leader plus phantom is a quorum of three, so the leader could commit an
+        index only it held. That is Leader Completeness, from one stale
+        message.
+        """
+        cluster = await _cluster(3, tmp_path)
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            node = leader.node
+            for tag in range(5):
+                await asyncio.wait_for(
+                    node.propose(_register(_stale_id(tag), 0)), timeout=5.0,
+                )
+            await cluster.settle(20)
+
+            peer = next(
+                m.index for m in cluster.members if m.index != leader.index
+            )
+            state = node._peers[peer]
+            held = state.match_index
+            assert held > 0, "the peer acknowledged nothing, so this proves nothing"
+
+            # What the dying incarnation had already put on the wire.
+            in_flight = AppendEntriesReply(
+                term=node.term, success=True, match_index=held,
+                conflict_index=0, conflict_term=0,
+                catching_up=False, request_id=state.reply_floor + 1,
+            )
+
+            replacement = await cluster.restart(peer)
+            state = node._peers[peer]
+            assert state.match_index == 0, (
+                "the reconnect did not reset this leader's view, so the "
+                "scenario below is not the one being tested"
+            )
+
+            node.on_append_entries_reply(peer, in_flight)
+
+            really_holds = replacement.node.log.last_index
+            assert state.match_index <= really_holds, (
+                f"member {peer} is credited with index {state.match_index} "
+                f"while holding through {really_holds}; counted toward the "
+                f"commit quorum, that lets this leader commit an index no "
+                f"majority has"
+            )
+        finally:
+            await cluster.close()
+
+    async def test_a_stale_rejection_does_not_move_a_peer_backwards(
+        self, tmp_path: Path,
+    ) -> None:
+        """etcd's ``MaybeDecrTo``, which the fence above makes portable.
+
+        Within one leadership a peer that acknowledged ``match_index`` holds
+        every index up to it, identical to this leader's, so a genuine conflict
+        must lie above it. Refusing one below is therefore sound -- but only
+        once no phantom ``match_index`` can be left by a previous incarnation,
+        which is what made the first attempt strand a rejoining member.
+        """
+        cluster = await _cluster(3, tmp_path)
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            node = leader.node
+            for tag in range(5):
+                await asyncio.wait_for(
+                    node.propose(_register(_stale_id(tag), 0)), timeout=5.0,
+                )
+            await cluster.settle(20)
+
+            peer = next(
+                m.index for m in cluster.members if m.index != leader.index
+            )
+            state = node._peers[peer]
+            state.match_index = 5
+            state.next_index = 6
+
+            node.on_append_entries_reply(peer, AppendEntriesReply(
+                term=node.term, success=False, match_index=0,
+                conflict_index=2, conflict_term=node.term,
+                catching_up=False, request_id=state.reply_floor + 1,
+            ))
+
+            assert state.next_index > state.match_index, (
+                f"a rejection pointing at index 2 moved this peer back to "
+                f"{state.next_index}, below the {state.match_index} it has "
+                f"already acknowledged"
+            )
+        finally:
+            await cluster.close()
+
+
+class TestWhatAFollowerWillAccept:
+    async def test_a_snapshot_at_or_below_the_commit_index_is_refused(
+        self, tmp_path: Path,
+    ) -> None:
+        """etcd: ``if s.Metadata.Index <= r.raftLog.committed { return false }``.
+
+        Comparing against the compaction boundary instead let through every
+        snapshot landing between it and the commit index -- and installing one
+        replaces the state machine with older state while the commit index
+        correctly stays put, leaving committed entries un-applied.
+        """
+        cluster = await _cluster(3, tmp_path)
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            follower = next(
+                m for m in cluster.members if m.index != leader.index
+            )
+            for tag in range(5):
+                await asyncio.wait_for(
+                    leader.node.propose(_register(_stale_id(tag), 0)),
+                    timeout=5.0,
+                )
+            await cluster.settle(20)
+
+            node = follower.node
+            committed = node.commit_index
+            assert committed > node.log.snapshot_index, (
+                "nothing is committed above the compaction boundary, so the "
+                "window this guards does not exist here"
+            )
+
+            meta = SnapshotMeta(
+                last_index=committed, last_term=node.term, resources=0,
+            )
+            assert node._why_the_snapshot_cannot_be_real(meta, node.term), (
+                f"a snapshot ending at index {committed} was accepted, but "
+                f"this member has committed through {committed} -- installing "
+                f"it would un-apply committed state"
+            )
+        finally:
+            await cluster.close()
+
+    async def test_an_append_below_the_commit_index_is_answered_with_it(
+        self, tmp_path: Path,
+    ) -> None:
+        """etcd returns early here, replying with its own commit index.
+
+        A delayed or duplicated append anchored below what this member has
+        committed would otherwise be answered with ``prev_log_index +
+        len(entries)`` -- a match below our commit index, which walks the
+        leader's view of us backwards and makes it re-send what we hold.
+        """
+        cluster = await _cluster(3, tmp_path)
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            follower = next(
+                m for m in cluster.members if m.index != leader.index
+            )
+            for tag in range(5):
+                await asyncio.wait_for(
+                    leader.node.propose(_register(_stale_id(tag), 0)),
+                    timeout=5.0,
+                )
+            await cluster.settle(20)
+
+            node = follower.node
+            committed = node.commit_index
+            assert committed > 1, "nothing committed, so this proves nothing"
+
+            reply = node.on_append_entries(leader.index, AppendEntries(
+                term=node.term, leader=leader.index,
+                prev_log_index=1, prev_log_term=node.log.term_at(1),
+                leader_commit=committed, request_id=9, entries=(),
+            ))
+
+            assert reply.success, "a stale append was rejected outright"
+            assert reply.match_index == committed, (
+                f"answered with {reply.match_index} for a message anchored at "
+                f"index 1, though this member has committed through "
+                f"{committed} -- the leader stores that verbatim"
             )
         finally:
             await cluster.close()
