@@ -44,6 +44,7 @@ use axum::response::Response;
 use nmos_registry::decode::decode_post_envelope;
 use nmos_registry::manager::SubscriptionManager;
 use nmos_registry::registry::Registry;
+use nmos_registry_backend::{BackendState, RegistryBackend};
 use nmos_registry_core::links::LinkResolver;
 use nmos_registry_core::resource_type::ResourceType;
 
@@ -59,7 +60,13 @@ const QUERY_BASE_PATH: &str = "/x-nmos/query/v1.3";
 #[derive(Clone)]
 pub struct RegistrationState {
     /// The registry being written to.
+    ///
+    /// The same `Arc` the backend holds. Reads go straight here; every
+    /// *mutation* goes through [`Self::backend`], which is what lets a
+    /// distributed backend refuse a write while this view keeps serving.
     pub registry: Arc<Registry>,
+    /// The storage layer, and the thing that says whether writes are possible.
+    pub backend: Arc<dyn RegistryBackend>,
     /// Needed only for the status line, which counts subscriptions and grains
     /// alongside resources -- nmos-cpp's format, and this handler has to match
     /// it for the two logs to be readable side by side.
@@ -102,8 +109,20 @@ pub async fn post_resource(
         }
     };
 
+    // The gate, before any work: a backend that cannot commit should not have
+    // the body parsed against it, and the client should be told to retry rather
+    // than be given a verdict the registry could not actually apply.
+    if !state.backend.state().accepts_mutations() {
+        return unavailable(state.backend.state(), &view);
+    }
+
     let stored = body.text().to_owned();
-    match state.registry.register(resource_type, body) {
+    let applied = match state.backend.register(resource_type, body).await {
+        // The storage layer failed, not the body. 503, not 400.
+        Err(_) => return unavailable(state.backend.state(), &view),
+        Ok(outcome) => outcome,
+    };
+    match applied {
         Err(failure) => response::error(StatusCode::BAD_REQUEST, &failure.detail, &[], Some(&view)),
         Ok(applied) => {
             // `:25` -- 201 for a create, 200 for an update, `Location` on both.
@@ -219,7 +238,14 @@ pub async fn delete_resource(
 
     // A 409 would belong here if the resource were held at another API version;
     // unreachable in a single-version registry.
-    if state.registry.delete(resolved, &resource_id).is_none() {
+    if !state.backend.state().accepts_mutations() {
+        return unavailable(state.backend.state(), &view);
+    }
+    let removed = match state.backend.unregister(resolved, &resource_id).await {
+        Err(_) => return unavailable(state.backend.state(), &view),
+        Ok(removed) => removed,
+    };
+    if removed.is_none() {
         return response::error(
             StatusCode::NOT_FOUND,
             &format!("{} {resource_id} is not registered", resolved.singular()),
@@ -283,6 +309,33 @@ pub fn health_body(health: i64) -> String {
     format!(r#"{{"health": "{health}"}}"#)
 }
 
+/// The 503 answered when the backend cannot accept mutations.
+///
+/// `Retry-After: 1` because the conditions that produce it -- a lost quorum, a
+/// resync after compaction, a member still preloading -- resolve on the order of
+/// seconds, and a Node that backed off for minutes would stay unregistered long
+/// after the registry recovered.
+///
+/// **Query is deliberately not gated on this.** A registry serving a cached view
+/// during a storage outage is still useful, and refusing reads because writes
+/// are impossible turns a partial outage into a total one. That is why
+/// `BackendState::serves_queries` is not the negation of `accepts_mutations`.
+fn unavailable(state: BackendState, view: &RequestView<'_>) -> Response {
+    let mut response = response::error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        &format!(
+            "registry storage is {}; registration is temporarily unavailable",
+            state.value(),
+        ),
+        &[],
+        Some(view),
+    );
+    response
+        .headers_mut()
+        .insert("retry-after", HeaderValue::from_static("1"));
+    response
+}
+
 /// `POST /health/nodes/{nodeId}` -- heartbeat.
 ///
 /// `Behaviour - Registration.md:45` -- Nodes heartbeat every 5 s by default.
@@ -296,7 +349,14 @@ pub async fn post_health(
 ) -> Response {
     let path = uri.path().to_owned();
     let view = RequestView::new(&path, &headers);
-    match state.registry.heartbeat(&node_id) {
+    if !state.backend.state().accepts_mutations() {
+        return unavailable(state.backend.state(), &view);
+    }
+    let beat = match state.backend.heartbeat(&node_id).await {
+        Err(_) => return unavailable(state.backend.state(), &view),
+        Ok(beat) => beat,
+    };
+    match beat {
         Some(health) => response::json(
             StatusCode::OK,
             health_body(health),

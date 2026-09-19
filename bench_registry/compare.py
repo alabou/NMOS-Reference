@@ -8,6 +8,7 @@
     python3 bench_registry/compare.py --targets cpp,standalone,rust
     python3 bench_registry/compare.py --targets cpp,standalone,dist1,dist3
     python3 bench_registry/compare.py --targets cpp,standalone,raft1,raft3,raft5
+    python3 bench_registry/compare.py --targets rust,rustraft1,rustraft3,rustraft5
 
 Matched observability comes first
 ---------------------------------
@@ -510,6 +511,91 @@ def start_raft(name: str, quiet: bool, *, members: int) -> Target:
     )
 
 
+def start_rust_raft(name: str, quiet: bool, *, members: int) -> Target:
+    """Start ``members`` **Rust** registries forming one consensus cluster.
+
+    Deliberately the same shape as ``start_raft``: the same flags, the same
+    member arithmetic, the same one-registry-per-member structure, and the load
+    driven at member 0 so a registration is owned by the member that receives
+    it. Only the executable differs.
+
+    That is the whole reason this function exists rather than a parameter on
+    ``start_raft``: the two command lines are asserted identical by
+    ``cli_parity.rs``, so writing them out side by side is what makes a
+    difference between them visible rather than a shared helper hiding one.
+    """
+    if not RUST_REGISTRY.is_file():
+        raise SystemExit(
+            f"rust registry not built at {RUST_REGISTRY}\n"
+            f"  (cd rust && cargo build --release -p nmos-registry-bin)"
+        )
+
+    pairs = [_free_pair() for _ in range(members)]
+    advertised = [f"127.0.0.1:{client}" for client, _peer in pairs]
+
+    processes: list[subprocess.Popen[bytes]] = []
+    fronts: list[tuple[int, int, int]] = []
+
+    for index in range(members):
+        registration_port, query_port, ws_port = (
+            _free_port(), _free_port(), _free_port(),
+        )
+        fronts.append((registration_port, query_port, ws_port))
+        state_dir = WORK / f"{name}-raft" / f"m{index}"
+        if state_dir.exists():
+            shutil.rmtree(state_dir)
+        state_dir.mkdir(parents=True)
+
+        command = [
+            str(RUST_REGISTRY),
+            "--registryDisableTLS",
+            "--registryAddr", "127.0.0.1",
+            "--registrationPort", str(registration_port),
+            "--queryPort", str(query_port),
+            "--queryWebSocketPort", str(ws_port),
+            "--logFile", "" if quiet else str(WORK / f"{name}-m{index}.log"),
+            "--statusInterval", "0" if quiet else "5",
+            "--distributed",
+            "--distributedBackend", "raft",
+            "--raftDisableTLS",
+            "--raftStateDir", str(state_dir),
+            "--raftNamespace", f"/bench/{name}",
+            "--registryAdvertisedHost", advertised[index],
+        ]
+        for other in advertised:
+            if other != advertised[index]:
+                command += ["--registryNeighbour", other]
+
+        environment = dict(os.environ)
+        if quiet:
+            environment["NMOS_LOG_LEVEL"] = "WARNING"
+        stdout_path = WORK / f"{name}-m{index}.out"
+        processes.append(subprocess.Popen(
+            command, cwd=str(REPO),
+            stdout=stdout_path.open("wb"), stderr=subprocess.STDOUT,
+            env=environment,
+        ))
+
+    registration_port, query_port, ws_port = fronts[0]
+    for _registration, member_query, _ws in fronts:
+        if not _wait_http(f"http://127.0.0.1:{member_query}/x-nmos/query/v1.3/",
+                          timeout=90.0):
+            for process in processes:
+                process.kill()
+            raise SystemExit(f"{name} did not start; see {WORK}/{name}-m*.out")
+
+    return Target(
+        name=name,
+        registration=f"http://127.0.0.1:{registration_port}",
+        query=f"http://127.0.0.1:{query_port}",
+        websocket=f"ws://127.0.0.1:{ws_port}",
+        process=processes[0],
+        log_paths=[],
+        stdout_path=WORK / f"{name}-m0.out",
+        extra=processes[1:],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Comparison
 # ---------------------------------------------------------------------------
@@ -533,6 +619,16 @@ TAXES = [
     # nothing over standalone.
     ("raft tax", "standalone", "raft1",
      "log, framing and apply -- no fence, no fsync, no quorum involved"),
+    # The same three questions asked of the Rust cluster. The first is what a
+    # deployment actually chooses between -- one Rust registry or a resilient
+    # cluster of them -- and the second and third are what each added pair of
+    # members costs.
+    ("rust raft tax", "rust", "rustraft1",
+     "consensus machinery on the Rust registry, with no quorum involved"),
+    ("rust consensus tax (3)", "rustraft1", "rustraft3",
+     "what tolerating one member failure costs"),
+    ("rust consensus tax (5)", "rustraft3", "rustraft5",
+     "what tolerating two costs on top of that"),
     ("raft consensus tax", "raft1", "raft3",
      "quorum breadth and a second apply, without the fsync"),
 ]
@@ -663,6 +759,10 @@ async def main_async(args: argparse.Namespace) -> int:
             elif name.startswith("dist"):
                 members = int(name[4:] or "1")
                 target = start_python(name, args.quiet, members=members)
+                key = name
+            elif name.startswith("rustraft"):
+                members = int(name[8:] or "1")
+                target = start_rust_raft(name, args.quiet, members=members)
                 key = name
             elif name.startswith("raft"):
                 members = int(name[4:] or "1")

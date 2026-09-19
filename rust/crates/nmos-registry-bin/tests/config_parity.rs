@@ -108,10 +108,49 @@ fn run(program: &Path, leading: &[&Path], argv: &[String]) -> Refusal {
     command.args(argv);
     // A misconfigured registry must not reach the point of writing one.
     command.env("NMOS_LOG_LEVEL", "ERROR");
-    let output = command.output().expect("the process runs");
-    Refusal {
-        code: output.status.code(),
-        message: config_line(&output.stderr),
+    command.stdout(std::process::Stdio::null());
+    command.stderr(std::process::Stdio::piped());
+
+    // Bounded, not `output()`. Every case here is expected to be refused, so
+    // the process should exit at once -- but a case that stops being refused
+    // turns `output()` into a wait with no end, and the suite hangs with a
+    // *listening registry* still holding its ports. That orphan then fails
+    // `a_valid_configuration_is_not_refused_by_either` with `AddrInUse`,
+    // which points at the wrong test entirely. Observed, and it cost more to
+    // diagnose than this loop costs to write.
+    let mut child = command.spawn().expect("the process starts");
+    let deadline = std::time::Instant::now()
+        .checked_add(std::time::Duration::from_secs(20))
+        .expect("a deadline within this century");
+    let status = loop {
+        match child.try_wait().expect("try_wait") {
+            Some(status) => break Some(status),
+            None if std::time::Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    };
+
+    let mut stderr = Vec::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        use std::io::Read as _;
+        let _ = pipe.read_to_end(&mut stderr);
+    }
+
+    match status {
+        Some(status) => Refusal {
+            code: status.code(),
+            message: config_line(&stderr),
+        },
+        // Distinguishable from any real refusal, so the comparison reports
+        // "one accepted it" rather than comparing a message that never came.
+        None => Refusal {
+            code: None,
+            message: "<not refused: still running>".to_owned(),
+        },
     }
 }
 
@@ -260,10 +299,18 @@ fn a_valid_configuration_is_not_refused_by_either() {
         "SNX00000".into(),
         "--trustedRootCA".into(),
         s(certs.join("ExampleRootCA.pem")),
-        // A port nothing is listening on, and `--help` would skip the checks,
-        // so instead the process is started and killed below.
+        // Every listening port moved off its default. Only the registration
+        // port used to be, which left query and websocket on 8446/8448 -- so
+        // any other registry on this machine, including one the developer is
+        // running, failed this test with `AddrInUse` and a message about a
+        // "refused configuration". `--help` would skip the checks, so the
+        // process has to be started for real and killed below.
         "--registrationPort".into(),
         "18498".into(),
+        "--queryPort".into(),
+        "18496".into(),
+        "--queryWebSocketPort".into(),
+        "18497".into(),
     ];
 
     for (label, program, leading) in [

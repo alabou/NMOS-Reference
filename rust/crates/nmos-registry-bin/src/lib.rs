@@ -23,6 +23,7 @@
 pub mod as_client;
 pub mod cert_check;
 pub mod cli;
+pub mod distributed;
 pub mod identity;
 pub mod listen;
 pub mod logging;

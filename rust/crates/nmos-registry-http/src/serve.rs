@@ -47,6 +47,7 @@ use crate::query::{DEFAULT_PAGING_LIMIT, MAX_PAGING_LIMIT, QueryState};
 use crate::registration::RegistrationState;
 use crate::router;
 use crate::security::InterfaceSecurity;
+use nmos_registry_backend::{RegistryBackend, StandaloneBackend};
 
 /// Where the three listeners bind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,14 +88,22 @@ pub struct Assembly {
     pub subscriptions: Arc<SubscriptionManager>,
     /// The Query API instance id, stamped into every grain's `source_id`.
     pub query_id: String,
+    /// The storage layer behind the Registration API.
+    ///
+    /// Defaults to [`StandaloneBackend`] over the same registry, which keeps
+    /// every existing caller working and is not a placeholder: standalone mode
+    /// is the original registry, not a degraded distributed one.
+    pub backend: Arc<dyn RegistryBackend>,
 }
 
 impl Assembly {
     /// A fresh, empty registry.
     #[must_use]
     pub fn new(registry: Registry, query_id: String) -> Self {
+        let registry = Arc::new(registry);
         Self {
-            registry: Arc::new(registry),
+            backend: Arc::new(StandaloneBackend::new(Arc::clone(&registry))),
+            registry,
             subscriptions: Arc::new(SubscriptionManager::new()),
             query_id,
             registration_security: InterfaceSecurity::registration(false),
@@ -105,6 +114,7 @@ impl Assembly {
     fn registration_state(&self) -> RegistrationState {
         RegistrationState {
             registry: Arc::clone(&self.registry),
+            backend: Arc::clone(&self.backend),
             subscriptions: Arc::clone(&self.subscriptions),
         }
     }
@@ -229,7 +239,11 @@ pub async fn status_task(
 /// only thing standing between an ungracefully-disconnected Node and a
 /// permanently stale registry, so it has to survive a bad pass and try again --
 /// the same reasoning as `gc.py`'s own handler.
-pub async fn collector_task(registry: Arc<Registry>, subscriptions: Arc<SubscriptionManager>) {
+pub async fn collector_task(
+    backend: Arc<dyn RegistryBackend>,
+    subscriptions: Arc<SubscriptionManager>,
+) {
+    let registry = Arc::clone(backend.registry());
     let mut ticker = tokio::time::interval(GC_TICK);
     // The first tick of a tokio interval fires immediately; skipping it stops a
     // sweep running before anything has had a chance to register.
@@ -238,7 +252,20 @@ pub async fn collector_task(registry: Arc<Registry>, subscriptions: Arc<Subscrip
         ticker.tick().await;
         // The events are committed by `collect_garbage` itself, so the matcher
         // picks them up and subscribers see the removals as grains.
-        let collected = registry.collect_garbage();
+        // Through the backend, not around it. A distributed backend has to
+        // replicate a collection like any other mutation, and one that swept
+        // its local store directly would delete resources the rest of the
+        // cluster still believed in.
+        let collected = match backend.collect_garbage().await {
+            Ok(collected) => collected,
+            Err(error) => {
+                // Not fatal: the next tick tries again, and a registry that
+                // stopped collecting because one pass failed would grow without
+                // bound while looking healthy.
+                tracing::warn!("registry: garbage collection unavailable: {error}");
+                continue;
+            }
+        };
         if collected.is_empty() {
             continue;
         }
@@ -273,7 +300,7 @@ pub async fn run(assembly: &Assembly, ports: Ports) -> std::io::Result<()> {
         Arc::clone(&assembly.subscriptions),
     ));
     let collector = tokio::spawn(collector_task(
-        Arc::clone(&assembly.registry),
+        Arc::clone(&assembly.backend),
         Arc::clone(&assembly.subscriptions),
     ));
 
@@ -405,7 +432,7 @@ mod tests {
         assert_eq!(registry.count_extant(ResourceType::Node), 1);
 
         let task = tokio::spawn(collector_task(
-            Arc::clone(&registry),
+            Arc::new(StandaloneBackend::new(Arc::clone(&registry))),
             Arc::new(SubscriptionManager::new()),
         ));
         for _ in 0..60 {
@@ -459,7 +486,7 @@ mod tests {
             Arc::clone(&assembly.subscriptions),
         ));
         let collector = tokio::spawn(collector_task(
-            Arc::clone(&assembly.registry),
+            Arc::clone(&assembly.backend),
             Arc::clone(&assembly.subscriptions),
         ));
 

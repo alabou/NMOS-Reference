@@ -82,6 +82,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-trait"
+version = "0.1.92"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82f6aeea286b8eb4dd3431a1be1b59d290ace00f5bfd8e2a159bc2a05e2c1667"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.6",
+]
+
+[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -301,6 +312,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "crc32fast"
+version = "1.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01a7799fd6b852db0e61728dde9a204c423b44d689dbd432522543614b490e78"
+dependencies = [
+ "cfg-if",
 ]
 
 [[package]]
@@ -810,6 +830,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nmos-cluster"
+version = "0.1.0"
+dependencies = [
+ "openssl",
+ "serde_json",
+]
+
+[[package]]
 name = "nmos-json"
 version = "0.1.0"
 dependencies = [
@@ -835,6 +863,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nmos-registry-backend"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "nmos-registry",
+ "nmos-registry-core",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "nmos-registry-bin"
 version = "0.1.0"
 dependencies = [
@@ -843,9 +882,12 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "nmos-cluster",
  "nmos-registry",
+ "nmos-registry-backend",
  "nmos-registry-core",
  "nmos-registry-http",
+ "nmos-registry-raft",
  "openssl",
  "serde",
  "serde_json",
@@ -871,6 +913,7 @@ dependencies = [
 name = "nmos-registry-http"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
  "base64 0.23.1",
  "bytes",
@@ -880,6 +923,7 @@ dependencies = [
  "jsonschema",
  "nmos-json",
  "nmos-registry",
+ "nmos-registry-backend",
  "nmos-registry-core",
  "openssl",
  "parking_lot",
@@ -892,6 +936,37 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "nmos-registry-raft"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "crc32fast",
+ "futures-util",
+ "nmos-cluster",
+ "nmos-registry",
+ "nmos-registry-backend",
+ "nmos-registry-core",
+ "openssl",
+ "parking_lot",
+ "serde_json",
+ "tokio",
+ "tokio-openssl",
+ "tracing",
+]
+
+[[package]]
+name = "nmos-registry-testkit"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "nmos-registry",
+ "nmos-registry-backend",
+ "nmos-registry-core",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

@@ -172,11 +172,54 @@ class Script:
         live.sort(key=lambda pair: (pair[0].value, pair[1]))
         return live[self.rng.randrange(len(live))]
 
+    def _version(self) -> str:
+        """The version this registration carries.
+
+        Ordinarily ``<tick>:0``, which is what exercises the version-regression
+        rule. One registration in twenty carries a **boundary** version
+        instead.
+
+        Those matter because ``resource_core.json`` bounds the version only by
+        ``^[0-9]+:[0-9]+$`` -- no ceiling on either field -- so a nanosecond
+        field of ``5000000000`` is schema-valid and this implementation
+        accepts it. A corpus that only ever emitted ``<tick>:0`` could not tell
+        that a second implementation had quietly narrowed the accepted range,
+        and one had: it refused ``0:5000000000`` with a 400 where this accepts
+        it, and every one of the 400 recorded steps passed anyway.
+
+        Chosen from the tick rather than from ``self.rng``, deliberately.
+        Drawing here would consume from the same stream every other decision
+        uses, shifting the whole sequence -- which it did on the first attempt,
+        and the corpus lost its ``version_regression`` refusals entirely while
+        still looking like a 400-step corpus. The coverage guard in
+        ``store_parity.rs`` caught it; nothing else would have.
+
+        Kept rare so the ordinary path still dominates.
+        """
+        if self.tick % 17 != 0:
+            return f"{2000 + self.tick}:0"
+        boundaries = [
+            # Nanoseconds at and beyond one second. Pattern-valid, and not a
+            # real instant -- which is the point: the schema permits it.
+            f"{2000 + self.tick}:999999999",
+            f"{2000 + self.tick}:1000000000",
+            f"{2000 + self.tick}:5000000000",
+            # Beyond 32 bits, which is where a narrower field gives up.
+            f"{2000 + self.tick}:4294967296",
+            # Leading zeros: pattern-valid, and `int()` accepts them.
+            f"{2000 + self.tick}:000000001",
+            f"0000{2000 + self.tick}:0",
+        ]
+        # Seconds still rise with the tick, so these stay ordered against the
+        # ordinary versions around them and do not accidentally become
+        # version-regression cases -- which would test something else.
+        return boundaries[(self.tick // 17) % len(boundaries)]
+
     def _register(
         self, resource_type: ResourceType, resource_id: str,
         parent_id: str | None, label: str,
     ) -> dict[str, Any]:
-        version = f"{2000 + self.tick}:0"
+        version = self._version()
         parent_key = {
             ResourceType.NODE: None,
             ResourceType.DEVICE: "node_id",

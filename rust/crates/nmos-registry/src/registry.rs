@@ -260,6 +260,52 @@ impl Registry {
             .with_write(|core| std::mem::replace(&mut core.store, store))
     }
 
+    /// Run a caller-composed mutation under the write lock, queueing its events.
+    ///
+    /// The seam a replicated backend needs and the ordinary handlers do not.
+    /// Applying a committed log entry is several store calls that must not be
+    /// interleaved -- look the record up, hand its pre-image to an open
+    /// snapshot capture, re-run `prepare`, then `apply_committed` with the
+    /// cursors the proposer decided -- and no fixed method on this type can
+    /// express that without importing the consensus layer's vocabulary into
+    /// the registry's.
+    ///
+    /// **The invariant is unchanged and still compile-enforced.** `f` is not
+    /// `async` and the guard is `!Send`, so awaiting inside it does not
+    /// compile; the events `f` returns are queued in the same critical section
+    /// as the mutation that produced them; and the matcher is woken only after
+    /// the guard drops, because its first act on waking is to take this lock.
+    ///
+    /// What this does *not* do is let a caller hold the lock across entries. A
+    /// run of committed entries takes it once per entry, which is what keeps a
+    /// long catch-up from starving every reader for the length of it.
+    pub fn with_mutation<R>(
+        &self,
+        f: impl FnOnce(&mut RegistryStore) -> (R, Vec<ResourceEvent>),
+    ) -> R {
+        let (result, queued) = self.core.with_write(|core| {
+            let (result, events) = f(&mut core.store);
+            let queued = !events.is_empty();
+            core.commits.extend(events);
+            (result, queued)
+        });
+        if queued {
+            self.announce_commits();
+        }
+        result
+    }
+
+    /// Read the store under the read lock, returning something owned.
+    ///
+    /// The counterpart of [`Self::with_mutation`], and needed for the same
+    /// reason: a snapshot walk reads the store in chunks that no fixed method
+    /// on this type can express. Non-async and `!Send`-guarded like every other
+    /// access here, so a walk cannot accidentally hold the lock across a yield
+    /// -- which is what makes chunking it meaningful rather than decorative.
+    pub fn with_read_store<R>(&self, f: impl FnOnce(&RegistryStore) -> R) -> R {
+        self.core.with_read(|core| f(&core.store))
+    }
+
     // -- the matcher's side ----------------------------------------------
 
     /// Take the committed changes awaiting classification.

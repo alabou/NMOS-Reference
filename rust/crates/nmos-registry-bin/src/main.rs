@@ -19,11 +19,19 @@ use nmos_registry_bin::listen::{context_for, serve_maybe_tls};
 use nmos_registry_bin::{as_client, cert_check, cli, identity, logging, tls};
 
 use nmos_registry::registry::Registry;
+use nmos_registry_backend::RegistryBackend;
 use nmos_registry_core::store::RegistryStore;
 use nmos_registry_http::jwks_cache;
 use nmos_registry_http::oauth2::SharedJwks;
 use nmos_registry_http::security::InterfaceSecurity;
 use nmos_registry_http::serve::{Assembly, Ports, collector_task, matcher_task, status_task};
+use nmos_registry_raft::backend::RaftRegistryBackend;
+use nmos_registry_raft::cluster::derive_raft_layout;
+use nmos_registry_raft::cursors::CursorAllocator;
+use nmos_registry_raft::machine::StateMachine;
+use nmos_registry_raft::node::{ForwardHandler, RaftNode, RaftTiming};
+use nmos_registry_raft::persist::TermStore;
+use nmos_registry_raft::transport::{PeerTls, RaftTransport, Transport, TransportSettings};
 use tokio::net::TcpListener;
 
 #[tokio::main]
@@ -56,6 +64,30 @@ async fn main() -> std::io::Result<()> {
         args.forget_interval as i64,
     );
     let mut assembly = Assembly::new(Registry::new(store), uuid::Uuid::new_v4().to_string());
+
+    // `--distributed` swaps the storage layer and nothing else: the routers,
+    // the subscriptions and the Query path are identical either way, which is
+    // the whole point of the backend seam.
+    let cluster = match nmos_registry_bin::distributed::resolve(&distributed_flags(&args)) {
+        Ok(cluster) => cluster,
+        Err(error) => {
+            eprintln!("CONFIG: {error}");
+            std::process::exit(1);
+        }
+    };
+    let consensus = match cluster {
+        None => None,
+        Some(config) => match build_consensus(&config, &assembly.registry) {
+            Ok(backend) => {
+                assembly.backend = Arc::clone(&backend) as Arc<dyn RegistryBackend>;
+                Some(backend)
+            }
+            Err(error) => {
+                eprintln!("CONFIG: {error}");
+                std::process::exit(1);
+            }
+        },
+    };
 
     // TR-10-SEC:105 forbids the Registration API from requiring OAuth 2.0, so
     // `--oauth2` reaches only the Query interface. The constructor is what
@@ -216,6 +248,22 @@ async fn main() -> std::io::Result<()> {
         }
     };
 
+    // The backend is started **after** the listeners are bound and before any
+    // traffic is served. Consensus has to be running for the Registration API
+    // to answer anything but 503, and binding first means a peer that connects
+    // the instant this member starts finds a listener rather than a refusal.
+    if let Some(ref backend) = consensus {
+        if let Err(error) = backend.start().await {
+            eprintln!("CONFIG: the consensus backend did not start: {error}");
+            std::process::exit(1);
+        }
+        tracing::info!(
+            member = %backend.node().index(),
+            cluster = %backend.node().index(),
+            "registry: consensus member started",
+        );
+    }
+
     let matcher = tokio::spawn(matcher_task(
         Arc::clone(&assembly.registry),
         Arc::clone(&assembly.subscriptions),
@@ -226,7 +274,7 @@ async fn main() -> std::io::Result<()> {
         args.status_interval,
     ));
     let collector = tokio::spawn(collector_task(
-        Arc::clone(&assembly.registry),
+        Arc::clone(&assembly.backend),
         Arc::clone(&assembly.subscriptions),
     ));
 
@@ -242,4 +290,140 @@ async fn main() -> std::io::Result<()> {
         jwks.abort();
     }
     result.map(|((), (), ())| ())
+}
+
+/// The flags the distributed resolver reads, lifted out of the parsed CLI.
+///
+/// Separated so the rules can be exercised without building a command line --
+/// and so which flags participate is visible in one place rather than spread
+/// through a resolver.
+fn distributed_flags(args: &cli::Args) -> nmos_registry_bin::distributed::DistributedFlags {
+    nmos_registry_bin::distributed::DistributedFlags {
+        distributed: args.distributed,
+        backend: args.distributed_backend.clone(),
+        advertised_host: args.registry_advertised_host.clone(),
+        neighbours: args.registry_neighbour.clone(),
+        namespace: args.raft_namespace.clone(),
+        client_port: args.raft_client_port,
+        peer_port: args.raft_peer_port,
+        state_dir: args.raft_state_dir.clone(),
+        certificate: args.raft_certificate.clone(),
+        key: args.raft_key.clone(),
+        trusted_root_ca: args.raft_trusted_root_ca.clone(),
+        certificate_name: args.raft_certificate_name.clone(),
+        crl_file: args.raft_crl_file.clone(),
+        disable_tls: args.raft_disable_tls,
+        rpc_timeout: args.raft_rpc_timeout,
+        mutation_timeout: args.raft_mutation_timeout,
+        // The same three inputs that decide the registry's access policy, so
+        // the two can never disagree about whether this command line describes
+        // a secured registry.
+        registry_listeners_are_tls: !args.registry_disable_tls
+            && !args.registry_certificate.is_empty()
+            && !args.registry_key.is_empty(),
+        // Nothing to collect: this build has no etcd flags to be given. The
+        // field stays so that adding them later cannot forget the refusal.
+        etcd_flags_given: Vec::new(),
+    }
+}
+
+/// Wire one consensus member: layout, transport, term store, machine, backend.
+///
+/// Built here, in one place, rather than half in the backend and half in the
+/// node -- the Python makes the same choice for the same reason.
+fn build_consensus(
+    config: &nmos_registry_bin::distributed::RaftConfig,
+    registry: &Arc<Registry>,
+) -> Result<Arc<RaftRegistryBackend>, String> {
+    let raft = derive_raft_layout(&config.layout, config.layout.token.clone());
+
+    let peers: std::collections::HashMap<u64, (String, u16)> = raft
+        .peers()
+        .into_iter()
+        .map(|member| (member.index, (member.host.clone(), member.port)))
+        .collect();
+
+    let tls = if config.tls {
+        Some(Arc::new(
+            peer_tls(config).map_err(|error| format!("peer TLS: {error}"))?,
+        ))
+    } else {
+        None
+    };
+
+    let bind: std::net::SocketAddr =
+        format!("{}:{}", config.layout.local.bind_address, config.peer_port)
+            .parse()
+            .map_err(|_| {
+                format!(
+                    "cannot bind the peer listener at {}:{}",
+                    config.layout.local.bind_address, config.peer_port,
+                )
+            })?;
+
+    std::fs::create_dir_all(&config.state_dir)
+        .map_err(|error| format!("{}: {error}", config.state_dir.display()))?;
+    let terms = TermStore::new(
+        config
+            .state_dir
+            .join(format!("{}.json", config.layout.local.name)),
+    );
+
+    let transport = Arc::new(RaftTransport::new(TransportSettings {
+        local: raft.local.index,
+        peers,
+        bind,
+        cluster_id: raft.cluster_id.clone(),
+        member_name: raft.local.name.clone(),
+        // Replaced by the node once it has loaded the term store: loading is
+        // what increments the counter, so reading it here as well would tell
+        // every peer this member had restarted once more than it had.
+        incarnation: 0,
+        tls,
+        rpc_timeout_ms: config
+            .rpc_timeout
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX),
+    }));
+
+    let machine = StateMachine::new(
+        raft.local.index,
+        CursorAllocator::new(raft.local.index).map_err(|error| format!("cursor lane: {error}"))?,
+    );
+    let node = RaftNode::new(
+        raft,
+        Arc::clone(&transport) as Arc<dyn Transport>,
+        terms,
+        machine,
+        Arc::clone(registry),
+        RaftTiming::default(),
+    );
+    transport.set_incarnation(node.incarnation());
+
+    let backend = RaftRegistryBackend::new(Arc::clone(registry), node, config.mutation_timeout);
+    // The backend answers forwarded mutations itself, so a mutation handed over
+    // by another member takes the same path as a local one. Two paths would
+    // validate differently, which is the divergence ownership exists to remove.
+    backend
+        .node()
+        .set_forward_handler(Arc::clone(&backend) as Arc<dyn ForwardHandler>);
+    Ok(backend)
+}
+
+/// The peer TLS material, from the same certificate in both directions.
+fn peer_tls(
+    config: &nmos_registry_bin::distributed::RaftConfig,
+) -> Result<PeerTls, Box<dyn std::error::Error>> {
+    let crl = (!config.crl_file.is_empty()).then(|| Path::new(&config.crl_file));
+    let context = tls::peer_context(
+        Path::new(&config.certificate),
+        Path::new(&config.key),
+        &config.trusted_root_ca,
+        crl,
+    )?;
+    Ok(PeerTls {
+        context,
+        peer_name: config.certificate_name.clone(),
+    })
 }

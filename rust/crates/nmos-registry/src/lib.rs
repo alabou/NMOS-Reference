@@ -54,6 +54,7 @@
 pub mod commit;
 pub mod connection;
 pub mod decode;
+pub mod fence;
 pub mod grain;
 pub mod lock;
 pub mod manager;

@@ -1,0 +1,470 @@
+{
+  "cases": [
+    {
+      "encoded_hex": "080110031a146e6d6f732d72656769737472792d61626331323322106e6d6f732d72656769737472792d6830280230073801",
+      "fields": {
+        "cluster_id": "nmos-registry-abc123",
+        "incarnation": 7,
+        "major": 1,
+        "member_index": 2,
+        "member_name": "nmos-registry-h0",
+        "minor": 3,
+        "stream": 1
+      },
+      "message": "Hello",
+      "type": 1,
+      "variant": "sample"
+    },
+    {
+      "encoded_hex": "08ac0210ac021a18202073617475726174656420c3a9e2809476616c756520202218202073617475726174656420c3a9e2809476616c7565202028ac0230ac023801",
+      "fields": {
+        "cluster_id": "  saturated \u00e9\u2014value  ",
+        "incarnation": 300,
+        "major": 300,
+        "member_index": 300,
+        "member_name": "  saturated \u00e9\u2014value  ",
+        "minor": 300,
+        "stream": 1
+      },
+      "message": "Hello",
+      "type": 1,
+      "variant": "saturated"
+    },
+    {
+      "encoded_hex": "080112026f6b180320012804",
+      "fields": {
+        "accepted": true,
+        "incarnation": 4,
+        "member_index": 1,
+        "minor": 3,
+        "reason": "ok"
+      },
+      "message": "HelloAck",
+      "type": 2,
+      "variant": "sample"
+    },
+    {
+      "encoded_hex": "08011218202073617475726174656420c3a9e2809476616c7565202018ac0220ac0228ac02",
+      "fields": {
+        "accepted": true,
+        "incarnation": 300,
+        "member_index": 300,
+        "minor": 300,
+        "reason": "  saturated \u00e9\u2014value  "
+      },
+      "message": "HelloAck",
+      "type": 2,
+      "variant": "saturated"
+    },
+    {
+      "encoded_hex": "08051002185a200428003800",
+      "fields": {
+        "amnesiac": [],
+        "candidate": 2,
+        "last_log_index": 90,
+        "last_log_term": 4,
+        "pre_vote": false,
+        "probe": false,
+        "term": 5
+      },
+      "message": "RequestVote",
+      "type": 16,
+      "variant": "sample"
+    },
+    {
+      "encoded_hex": "08ac0210ac0218ac0220ac022801300330093801",
+      "fields": {
+        "amnesiac": [
+          3,
+          9
+        ],
+        "candidate": 300,
+        "last_log_index": 300,
+        "last_log_term": 300,
+        "pre_vote": true,
+        "probe": true,
+        "term": 300
+      },
+      "message": "RequestVote",
+      "type": 16,
+      "variant": "saturated"
+    },
+    {
+      "encoded_hex": "0805100118012000",
+      "fields": {
+        "granted": true,
+        "pre_vote": false,
+        "term": 5,
+        "voting": true
+      },
+      "message": "RequestVoteReply",
+      "type": 17,
+      "variant": "sample"
+    },
+    {
+      "encoded_hex": "08ac02100118012001",
+      "fields": {
+        "granted": true,
+        "pre_vote": true,
+        "term": 300,
+        "voting": true
+      },
+      "message": "RequestVoteReply",
+      "type": 17,
+      "variant": "saturated"
+    },
+    {
+      "encoded_hex": "08091001182a20082828304d3a080809102b1a0201023a070809102c1a0103",
+      "fields": {
+        "entries": [
+          {
+            "entry": {
+              "index": 43,
+              "payload": {
+                "bytes": "0102"
+              },
+              "term": 9
+            }
+          },
+          {
+            "entry": {
+              "index": 44,
+              "payload": {
+                "bytes": "03"
+              },
+              "term": 9
+            }
+          }
+        ],
+        "leader": 1,
+        "leader_commit": 40,
+        "prev_log_index": 42,
+        "prev_log_term": 8,
+        "request_id": 77,
+        "term": 9
+      },
+      "message": "AppendEntries",
+      "type": 18,
+      "variant": "sample"
+    },
+    {
+      "encoded_hex": "08ac0210ac0218ac0220ac0228ac0230ac023a07080710081a01013a08080710091a020203",
+      "fields": {
+        "entries": [
+          {
+            "entry": {
+              "index": 8,
+              "payload": {
+                "bytes": "01"
+              },
+              "term": 7
+            }
+          },
+          {
+            "entry": {
+              "index": 9,
+              "payload": {
+                "bytes": "0203"
+              },
+              "term": 7
+            }
+          }
+        ],
+        "leader": 300,
+        "leader_commit": 300,
+        "prev_log_index": 300,
+        "prev_log_term": 300,
+        "request_id": 300,
+        "term": 300
+      },
+      "message": "AppendEntries",
+      "type": 18,
+      "variant": "saturated"
+    },
+    {
+      "encoded_hex": "08091001182c200028003000384d",
+      "fields": {
+        "catching_up": false,
+        "conflict_index": 0,
+        "conflict_term": 0,
+        "match_index": 44,
+        "request_id": 77,
+        "success": true,
+        "term": 9
+      },
+      "message": "AppendEntriesReply",
+      "type": 19,
+      "variant": "sample"
+    },
+    {
+      "encoded_hex": "08ac02100118ac0220ac0228ac02300138ac02",
+      "fields": {
+        "catching_up": true,
+        "conflict_index": 300,
+        "conflict_term": 300,
+        "match_index": 300,
+        "request_id": 300,
+        "success": true,
+        "term": 300
+      },
+      "message": "AppendEntriesReply",
+      "type": 19,
+      "variant": "saturated"
+    },
+    {
+      "encoded_hex": "0804100018e807200328801032066f776e6572733a04deadbeef4001",
+      "fields": {
+        "data": {
+          "bytes": "deadbeef"
+        },
+        "done": true,
+        "last_index": 1000,
+        "last_term": 3,
+        "leader": 0,
+        "offset": 2048,
+        "ownership": {
+          "bytes": "6f776e657273"
+        },
+        "term": 4
+      },
+      "message": "InstallSnapshot",
+      "type": 20,
+      "variant": "sample"
+    },
+    {
+      "encoded_hex": "08ac0210ac0218ac0220ac0228ac02320300ff103a0300ff104001",
+      "fields": {
+        "data": {
+          "bytes": "00ff10"
+        },
+        "done": true,
+        "last_index": 300,
+        "last_term": 300,
+        "leader": 300,
+        "offset": 300,
+        "ownership": {
+          "bytes": "00ff10"
+        },
+        "term": 300
+      },
+      "message": "InstallSnapshot",
+      "type": 20,
+      "variant": "saturated"
+    },
+    {
+      "encoded_hex": "08041084101801",
+      "fields": {
+        "bytes_received": 2052,
+        "done": true,
+        "term": 4
+      },
+      "message": "InstallSnapshotReply",
+      "type": 21,
+      "variant": "sample"
+    },
+    {
+      "encoded_hex": "08ac0210ac021801",
+      "fields": {
+        "bytes_received": 300,
+        "done": true,
+        "term": 300
+      },
+      "message": "InstallSnapshotReply",
+      "type": 21,
+      "variant": "saturated"
+    },
+    {
+      "encoded_hex": "0806100118f403",
+      "fields": {
+        "leader": 1,
+        "term": 6,
+        "through_index": 500
+      },
+      "message": "Promote",
+      "type": 22,
+      "variant": "sample"
+    },
+    {
+      "encoded_hex": "08ac0210ac0218ac02",
+      "fields": {
+        "leader": 300,
+        "term": 300,
+        "through_index": 300
+      },
+      "message": "Promote",
+      "type": 22,
+      "variant": "saturated"
+    },
+    {
+      "encoded_hex": "080b12066f702d6f6e6512066f702d74776f12086f702d7468726565",
+      "fields": {
+        "proposals": [
+          {
+            "bytes": "6f702d6f6e65"
+          },
+          {
+            "bytes": "6f702d74776f"
+          },
+          {
+            "bytes": "6f702d7468726565"
+          }
+        ],
+        "request_id": 11
+      },
+      "message": "Propose",
+      "type": 32,
+      "variant": "sample"
+    },
+    {
+      "encoded_hex": "08ac0212010112020203",
+      "fields": {
+        "proposals": [
+          {
+            "bytes": "01"
+          },
+          {
+            "bytes": "0203"
+          }
+        ],
+        "request_id": 300
+      },
+      "message": "Propose",
+      "type": 32,
+      "variant": "saturated"
+    },
+    {
+      "encoded_hex": "0801120018062078280b3001",
+      "fields": {
+        "accepted": true,
+        "first_index": 120,
+        "leader": 1,
+        "reason": "",
+        "request_id": 11,
+        "term": 6
+      },
+      "message": "ProposeReply",
+      "type": 33,
+      "variant": "sample"
+    },
+    {
+      "encoded_hex": "08011218202073617475726174656420c3a9e2809476616c7565202018ac0220ac0228ac0230ac02",
+      "fields": {
+        "accepted": true,
+        "first_index": 300,
+        "leader": 300,
+        "reason": "  saturated \u00e9\u2014value  ",
+        "request_id": 300,
+        "term": 300
+      },
+      "message": "ProposeReply",
+      "type": 33,
+      "variant": "saturated"
+    },
+    {
+      "encoded_hex": "0801120018062078280b",
+      "fields": {
+        "accepted": true,
+        "first_index": 120,
+        "leader": null,
+        "reason": "",
+        "request_id": 11,
+        "term": 6
+      },
+      "message": "ProposeReply",
+      "type": 33,
+      "variant": "absent"
+    },
+    {
+      "encoded_hex": "0a087265676973746572120673656e6465721a2438633466316532612d303030302d343030302d383030302d30303030303030303030303022297b226964223a223863346631653261222c2276656e646f723a657874656e73696f6e223a747275657d2803",
+      "fields": {
+        "body_text": "{\"id\":\"8c4f1e2a\",\"vendor:extension\":true}",
+        "request_id": 3,
+        "resource_id": "8c4f1e2a-0000-4000-8000-000000000000",
+        "resource_type": "sender",
+        "verb": "register"
+      },
+      "message": "Forward",
+      "type": 34,
+      "variant": "sample"
+    },
+    {
+      "encoded_hex": "0a18202073617475726174656420c3a9e2809476616c756520201218202073617475726174656420c3a9e2809476616c756520201a18202073617475726174656420c3a9e2809476616c756520202218202073617475726174656420c3a9e2809476616c7565202028ac02",
+      "fields": {
+        "body_text": "  saturated \u00e9\u2014value  ",
+        "request_id": 300,
+        "resource_id": "  saturated \u00e9\u2014value  ",
+        "resource_type": "  saturated \u00e9\u2014value  ",
+        "verb": "  saturated \u00e9\u2014value  "
+      },
+      "message": "Forward",
+      "type": 34,
+      "variant": "saturated"
+    },
+    {
+      "encoded_hex": "080110011a00220028c102300038034002",
+      "fields": {
+        "applied_index": 321,
+        "created": true,
+        "detail": "",
+        "error": "",
+        "not_owner": false,
+        "ok": true,
+        "owner": 2,
+        "request_id": 3
+      },
+      "message": "ForwardReply",
+      "type": 35,
+      "variant": "sample"
+    },
+    {
+      "encoded_hex": "080110011a18202073617475726174656420c3a9e2809476616c756520202218202073617475726174656420c3a9e2809476616c7565202028ac02300138ac0240ac02",
+      "fields": {
+        "applied_index": 300,
+        "created": true,
+        "detail": "  saturated \u00e9\u2014value  ",
+        "error": "  saturated \u00e9\u2014value  ",
+        "not_owner": true,
+        "ok": true,
+        "owner": 300,
+        "request_id": 300
+      },
+      "message": "ForwardReply",
+      "type": 35,
+      "variant": "saturated"
+    },
+    {
+      "encoded_hex": "080110011a00220028c10230003803",
+      "fields": {
+        "applied_index": 321,
+        "created": true,
+        "detail": "",
+        "error": "",
+        "not_owner": false,
+        "ok": true,
+        "owner": null,
+        "request_id": 3
+      },
+      "message": "ForwardReply",
+      "type": 35,
+      "variant": "absent"
+    },
+    {
+      "encoded_hex": "0863",
+      "fields": {
+        "nonce": 99
+      },
+      "message": "Ping",
+      "type": 48,
+      "variant": "sample"
+    },
+    {
+      "encoded_hex": "08ac02",
+      "fields": {
+        "nonce": 300
+      },
+      "message": "Ping",
+      "type": 48,
+      "variant": "saturated"
+    }
+  ]
+}

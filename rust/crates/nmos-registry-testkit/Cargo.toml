@@ -1,0 +1,23 @@
+[package]
+name = "nmos-registry-testkit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "A cluster shape the conformance suite can be written against, and the standalone rig that proves the suite before there is a second backend to blame."
+
+[dependencies]
+nmos-registry = { path = "../nmos-registry" }
+nmos-registry-core = { path = "../nmos-registry-core" }
+nmos-registry-backend = { path = "../nmos-registry-backend" }
+async-trait = "0.1"
+tokio = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

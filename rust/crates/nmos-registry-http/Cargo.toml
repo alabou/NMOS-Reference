@@ -11,6 +11,7 @@ description = "The registry's HTTP surface: routers, handlers, middleware and th
 [dependencies]
 nmos-registry-core = { path = "../nmos-registry-core" }
 nmos-registry = { path = "../nmos-registry" }
+nmos-registry-backend = { path = "../nmos-registry-backend" }
 nmos-json = { path = "../nmos-json" }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -34,6 +35,7 @@ base64 = "0.23.1"
 parking_lot = "0.12"
 
 [dev-dependencies]
+async-trait = "0.1"
 serde_json = { workspace = true }
 tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }

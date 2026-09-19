@@ -64,9 +64,10 @@ def check_corpus(
     *,
     name: str,
     output: Path,
-    build: Callable[[], list[dict[str, Any]]],
+    build: Callable[[], Any],
     module: str,
     key: Callable[[int, dict[str, Any]], str] | None = None,
+    records_key: str | None = None,
 ) -> None:
     """Fail unless ``output`` matches what ``build`` produces now.
 
@@ -77,6 +78,11 @@ def check_corpus(
         module: Dotted module path, so the message can say how to regenerate.
         key: Identifies a record for the diff. Defaults to its position, which
             is right for the corpora whose records carry no natural label.
+        records_key: Set when the corpus is an object wrapping its records --
+            the ``nmos/raft`` ones carry a protocol version alongside them --
+            and the records live under this key. Everything *outside* that key
+            is compared whole, so a protocol version that moved without the
+            recording being refreshed fails here rather than at a peer.
     """
     if key is None:
         def key(index: int, _record: dict[str, Any]) -> str:  # noqa: E306
@@ -93,8 +99,23 @@ def check_corpus(
         f"assert against.\n{regenerate}"
     )
 
-    committed: list[dict[str, Any]] = json.loads(output.read_text())
-    current = build()
+    committed_doc = json.loads(output.read_text())
+    current_doc = build()
+
+    if records_key is None:
+        committed: list[dict[str, Any]] = committed_doc
+        current: list[dict[str, Any]] = current_doc
+    else:
+        committed = committed_doc[records_key]
+        current = current_doc[records_key]
+        envelope_was = {k: v for k, v in committed_doc.items() if k != records_key}
+        envelope_now = {k: v for k, v in current_doc.items() if k != records_key}
+        assert envelope_was == envelope_now, (
+            f"the {name} corpus's envelope changed — recorded {envelope_was}, "
+            f"now {envelope_now}. A protocol version that moves without the "
+            f"recording being refreshed leaves the Rust suite asserting against "
+            f"the old one.\n{regenerate}"
+        )
 
     assert len(committed) == len(current), (
         f"the {name} corpus changed size — {len(committed)} recorded, "

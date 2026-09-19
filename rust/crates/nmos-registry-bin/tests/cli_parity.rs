@@ -63,12 +63,11 @@ struct Flag {
 /// would silently widen a filter, whereas a name that disappears from Python
 /// fails here.
 const DEFERRED: &[&str] = &[
-    // Distributed Registry
-    "--distributed",
-    "--distributedBackend",
-    "--registryAdvertisedHost",
-    "--registryNeighbour",
-    // Distributed Registry (etcd)
+    // Distributed Registry (etcd). Deferred as a whole -- decision #10 of the
+    // port plan -- so every flag naming it is here. They are not silently
+    // ignored: `--distributedBackend etcd` is refused with a message saying the
+    // backend is not built in this implementation, which is the property the
+    // Python's own "refused, never reinterpreted" rule exists to guarantee.
     "--etcdBinary",
     "--etcdBootstrap",
     "--etcdCertificate",
@@ -86,19 +85,6 @@ const DEFERRED: &[&str] = &[
     "--etcdPeerPort",
     "--etcdRpcTimeout",
     "--etcdTrustedRootCA",
-    // Distributed Registry (raft)
-    "--raftCertificate",
-    "--raftCertificateName",
-    "--raftClientPort",
-    "--raftCrlFile",
-    "--raftDisableTLS",
-    "--raftKey",
-    "--raftMutationTimeout",
-    "--raftNamespace",
-    "--raftPeerPort",
-    "--raftRpcTimeout",
-    "--raftStateDir",
-    "--raftTrustedRootCA",
 ];
 
 fn corpus() -> Corpus {

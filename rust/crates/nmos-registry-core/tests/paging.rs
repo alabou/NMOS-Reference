@@ -33,7 +33,7 @@ const MAX_LIMIT: usize = 100;
 const BASE_URL: &str = "http://api.example.com/x-nmos/query/v1.1/nodes/";
 
 /// One sample record, identified only by its cursor.
-fn resource(nanoseconds: u32) -> RegisteredResource {
+fn resource(nanoseconds: u64) -> RegisteredResource {
     let cursor = TaiCursor::new(0, nanoseconds);
     RegisteredResource::new(
         ResourceType::Node,

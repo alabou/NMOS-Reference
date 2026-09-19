@@ -24,7 +24,13 @@
 //! The assertions are deliberately loose. This exists to produce numbers; a
 //! tight threshold here would fail on a loaded machine and tell nobody anything.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::panic
+)]
 
 use std::time::Instant;
 
@@ -37,7 +43,11 @@ use serde_json::json;
 fn id(kind: &str, n: usize) -> String {
     // Version 4, variant 8: the validators check both, and a store that
     // rejected these would make the measurement meaningless.
-    format!("{:08x}-0000-4000-8000-{:012x}", n, kind.len() * 1_000_000 + n)
+    format!(
+        "{:08x}-0000-4000-8000-{:012x}",
+        n,
+        kind.len() * 1_000_000 + n
+    )
 }
 
 fn node_body(id: &str) -> Body {
@@ -90,7 +100,11 @@ fn percentile(sorted: &[u128], p: f64) -> f64 {
     if sorted.is_empty() {
         return 0.0;
     }
-    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
     let index = ((sorted.len() as f64 - 1.0) * p).round() as usize;
     #[allow(clippy::cast_precision_loss)]
     let value = sorted[index.min(sorted.len() - 1)] as f64;

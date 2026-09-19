@@ -76,6 +76,9 @@ fn registration_router() -> Router {
     router::registration(
         RegistrationState {
             registry: Arc::new(Registry::new(RegistryStore::new())),
+            backend: std::sync::Arc::new(nmos_registry_backend::StandaloneBackend::new(Arc::new(
+                Registry::new(RegistryStore::new()),
+            ))),
             subscriptions: std::sync::Arc::new(nmos_registry::manager::SubscriptionManager::new()),
         },
         InterfaceSecurity::registration(false),

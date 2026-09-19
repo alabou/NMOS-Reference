@@ -146,7 +146,7 @@ fn tai(cursor: TaiCursor) -> Tai {
     let seconds = i64::try_from(cursor.seconds).unwrap_or(i64::MAX);
     Tai {
         sec: seconds.saturating_sub(Tai::UTC_OFFSET),
-        nsec: u64::from(cursor.nanoseconds),
+        nsec: cursor.nanoseconds,
     }
 }
 

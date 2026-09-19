@@ -1,0 +1,718 @@
+{
+  "cases": [
+    {
+      "client_endpoints": [
+        "reg-a.example.com:2381"
+      ],
+      "failures_tolerated": 0,
+      "flavour": "",
+      "initial_cluster": "nmos-registry-reg-a.example.com=https://reg-a.example.com:2382",
+      "local": "nmos-registry-reg-a.example.com",
+      "local_host": "reg-a.example.com",
+      "local_peer_port": null,
+      "members": [
+        {
+          "bind_address": "reg-a.example.com",
+          "client_port": 2381,
+          "host": "reg-a.example.com",
+          "name": "nmos-registry-reg-a.example.com",
+          "peer_port": 2382
+        }
+      ],
+      "name": "a single member",
+      "namespace": "/nmos",
+      "quorum": 1,
+      "refused": null,
+      "specs": [
+        {
+          "host": "reg-a.example.com"
+        }
+      ],
+      "tls": true,
+      "token": "nmos-registry-35963b7af68e52a5"
+    },
+    {
+      "client_endpoints": [
+        "reg-b.example.com:2381",
+        "reg-a.example.com:2381",
+        "reg-c.example.com:2381"
+      ],
+      "failures_tolerated": 1,
+      "flavour": "",
+      "initial_cluster": "nmos-registry-reg-a.example.com=https://reg-a.example.com:2382,nmos-registry-reg-b.example.com=https://reg-b.example.com:2382,nmos-registry-reg-c.example.com=https://reg-c.example.com:2382",
+      "local": "nmos-registry-reg-b.example.com",
+      "local_host": "reg-b.example.com",
+      "local_peer_port": null,
+      "members": [
+        {
+          "bind_address": "reg-a.example.com",
+          "client_port": 2381,
+          "host": "reg-a.example.com",
+          "name": "nmos-registry-reg-a.example.com",
+          "peer_port": 2382
+        },
+        {
+          "bind_address": "reg-b.example.com",
+          "client_port": 2381,
+          "host": "reg-b.example.com",
+          "name": "nmos-registry-reg-b.example.com",
+          "peer_port": 2382
+        },
+        {
+          "bind_address": "reg-c.example.com",
+          "client_port": 2381,
+          "host": "reg-c.example.com",
+          "name": "nmos-registry-reg-c.example.com",
+          "peer_port": 2382
+        }
+      ],
+      "name": "three members, given out of order",
+      "namespace": "/nmos",
+      "quorum": 2,
+      "refused": null,
+      "specs": [
+        {
+          "host": "reg-c.example.com"
+        },
+        {
+          "host": "reg-a.example.com"
+        },
+        {
+          "host": "reg-b.example.com"
+        }
+      ],
+      "tls": true,
+      "token": "nmos-registry-8886438e37e36207"
+    },
+    {
+      "client_endpoints": [
+        "reg-3.example.com:2381",
+        "reg-0.example.com:2381",
+        "reg-1.example.com:2381",
+        "reg-2.example.com:2381",
+        "reg-4.example.com:2381"
+      ],
+      "failures_tolerated": 2,
+      "flavour": "",
+      "initial_cluster": "nmos-registry-reg-0.example.com=https://reg-0.example.com:2382,nmos-registry-reg-1.example.com=https://reg-1.example.com:2382,nmos-registry-reg-2.example.com=https://reg-2.example.com:2382,nmos-registry-reg-3.example.com=https://reg-3.example.com:2382,nmos-registry-reg-4.example.com=https://reg-4.example.com:2382",
+      "local": "nmos-registry-reg-3.example.com",
+      "local_host": "reg-3.example.com",
+      "local_peer_port": null,
+      "members": [
+        {
+          "bind_address": "reg-0.example.com",
+          "client_port": 2381,
+          "host": "reg-0.example.com",
+          "name": "nmos-registry-reg-0.example.com",
+          "peer_port": 2382
+        },
+        {
+          "bind_address": "reg-1.example.com",
+          "client_port": 2381,
+          "host": "reg-1.example.com",
+          "name": "nmos-registry-reg-1.example.com",
+          "peer_port": 2382
+        },
+        {
+          "bind_address": "reg-2.example.com",
+          "client_port": 2381,
+          "host": "reg-2.example.com",
+          "name": "nmos-registry-reg-2.example.com",
+          "peer_port": 2382
+        },
+        {
+          "bind_address": "reg-3.example.com",
+          "client_port": 2381,
+          "host": "reg-3.example.com",
+          "name": "nmos-registry-reg-3.example.com",
+          "peer_port": 2382
+        },
+        {
+          "bind_address": "reg-4.example.com",
+          "client_port": 2381,
+          "host": "reg-4.example.com",
+          "name": "nmos-registry-reg-4.example.com",
+          "peer_port": 2382
+        }
+      ],
+      "name": "five members",
+      "namespace": "/nmos",
+      "quorum": 3,
+      "refused": null,
+      "specs": [
+        {
+          "host": "reg-0.example.com"
+        },
+        {
+          "host": "reg-1.example.com"
+        },
+        {
+          "host": "reg-2.example.com"
+        },
+        {
+          "host": "reg-3.example.com"
+        },
+        {
+          "host": "reg-4.example.com"
+        }
+      ],
+      "tls": true,
+      "token": "nmos-registry-9e44d710eea9603f"
+    },
+    {
+      "client_endpoints": [
+        "reg-b.example.com:2381",
+        "reg-a.example.com:2381",
+        "reg-c.example.com:2381"
+      ],
+      "failures_tolerated": 1,
+      "flavour": "raft\n",
+      "initial_cluster": "nmos-registry-reg-a.example.com=https://reg-a.example.com:2382,nmos-registry-reg-b.example.com=https://reg-b.example.com:2382,nmos-registry-reg-c.example.com=https://reg-c.example.com:2382",
+      "local": "nmos-registry-reg-b.example.com",
+      "local_host": "reg-b.example.com",
+      "local_peer_port": null,
+      "members": [
+        {
+          "bind_address": "reg-a.example.com",
+          "client_port": 2381,
+          "host": "reg-a.example.com",
+          "name": "nmos-registry-reg-a.example.com",
+          "peer_port": 2382
+        },
+        {
+          "bind_address": "reg-b.example.com",
+          "client_port": 2381,
+          "host": "reg-b.example.com",
+          "name": "nmos-registry-reg-b.example.com",
+          "peer_port": 2382
+        },
+        {
+          "bind_address": "reg-c.example.com",
+          "client_port": 2381,
+          "host": "reg-c.example.com",
+          "name": "nmos-registry-reg-c.example.com",
+          "peer_port": 2382
+        }
+      ],
+      "name": "a raft flavoured token",
+      "namespace": "/nmos",
+      "quorum": 2,
+      "refused": null,
+      "specs": [
+        {
+          "host": "reg-a.example.com"
+        },
+        {
+          "host": "reg-b.example.com"
+        },
+        {
+          "host": "reg-c.example.com"
+        }
+      ],
+      "tls": true,
+      "token": "nmos-registry-4b63d3d11ceb00ee"
+    },
+    {
+      "client_endpoints": [
+        "reg-b.example.com:2381",
+        "reg-a.example.com:2381",
+        "reg-c.example.com:2381"
+      ],
+      "failures_tolerated": 1,
+      "flavour": "",
+      "initial_cluster": "nmos-registry-reg-a.example.com=https://reg-a.example.com:2382,nmos-registry-reg-b.example.com=https://reg-b.example.com:2382,nmos-registry-reg-c.example.com=https://reg-c.example.com:2382",
+      "local": "nmos-registry-reg-b.example.com",
+      "local_host": "reg-b.example.com",
+      "local_peer_port": null,
+      "members": [
+        {
+          "bind_address": "reg-a.example.com",
+          "client_port": 2381,
+          "host": "reg-a.example.com",
+          "name": "nmos-registry-reg-a.example.com",
+          "peer_port": 2382
+        },
+        {
+          "bind_address": "reg-b.example.com",
+          "client_port": 2381,
+          "host": "reg-b.example.com",
+          "name": "nmos-registry-reg-b.example.com",
+          "peer_port": 2382
+        },
+        {
+          "bind_address": "reg-c.example.com",
+          "client_port": 2381,
+          "host": "reg-c.example.com",
+          "name": "nmos-registry-reg-c.example.com",
+          "peer_port": 2382
+        }
+      ],
+      "name": "a different namespace changes the token",
+      "namespace": "/other",
+      "quorum": 2,
+      "refused": null,
+      "specs": [
+        {
+          "host": "reg-a.example.com"
+        },
+        {
+          "host": "reg-b.example.com"
+        },
+        {
+          "host": "reg-c.example.com"
+        }
+      ],
+      "tls": true,
+      "token": "nmos-registry-9b9a865c40c5a8cf"
+    },
+    {
+      "client_endpoints": [
+        "127.0.0.1:2383",
+        "127.0.0.1:2381",
+        "127.0.0.1:2385"
+      ],
+      "failures_tolerated": 1,
+      "flavour": "",
+      "initial_cluster": "nmos-registry-127.0.0.1-2382=https://127.0.0.1:2382,nmos-registry-127.0.0.1-2384=https://127.0.0.1:2384,nmos-registry-127.0.0.1-2386=https://127.0.0.1:2386",
+      "local": "nmos-registry-127.0.0.1-2384",
+      "local_host": "127.0.0.1",
+      "local_peer_port": 2384,
+      "members": [
+        {
+          "bind_address": "127.0.0.1",
+          "client_port": 2381,
+          "host": "127.0.0.1",
+          "name": "nmos-registry-127.0.0.1-2382",
+          "peer_port": 2382
+        },
+        {
+          "bind_address": "127.0.0.1",
+          "client_port": 2383,
+          "host": "127.0.0.1",
+          "name": "nmos-registry-127.0.0.1-2384",
+          "peer_port": 2384
+        },
+        {
+          "bind_address": "127.0.0.1",
+          "client_port": 2385,
+          "host": "127.0.0.1",
+          "name": "nmos-registry-127.0.0.1-2386",
+          "peer_port": 2386
+        }
+      ],
+      "name": "three members co-located on one host",
+      "namespace": "/nmos",
+      "quorum": 2,
+      "refused": null,
+      "specs": [
+        {
+          "client_port": 2381,
+          "host": "127.0.0.1",
+          "peer_port": 2382
+        },
+        {
+          "client_port": 2383,
+          "host": "127.0.0.1",
+          "peer_port": 2384
+        },
+        {
+          "client_port": 2385,
+          "host": "127.0.0.1",
+          "peer_port": 2386
+        }
+      ],
+      "tls": true,
+      "token": "nmos-registry-83a4ba2836c89ede"
+    },
+    {
+      "client_endpoints": [
+        "reg-b.example.com:2381",
+        "reg a/b:c.example.com:2381",
+        "reg-c.example.com:2381"
+      ],
+      "failures_tolerated": 1,
+      "flavour": "",
+      "initial_cluster": "nmos-registry-reg-a-b-c.example.com=https://reg a/b:c.example.com:2382,nmos-registry-reg-b.example.com=https://reg-b.example.com:2382,nmos-registry-reg-c.example.com=https://reg-c.example.com:2382",
+      "local": "nmos-registry-reg-b.example.com",
+      "local_host": "reg-b.example.com",
+      "local_peer_port": null,
+      "members": [
+        {
+          "bind_address": "reg a/b:c.example.com",
+          "client_port": 2381,
+          "host": "reg a/b:c.example.com",
+          "name": "nmos-registry-reg-a-b-c.example.com",
+          "peer_port": 2382
+        },
+        {
+          "bind_address": "reg-b.example.com",
+          "client_port": 2381,
+          "host": "reg-b.example.com",
+          "name": "nmos-registry-reg-b.example.com",
+          "peer_port": 2382
+        },
+        {
+          "bind_address": "reg-c.example.com",
+          "client_port": 2381,
+          "host": "reg-c.example.com",
+          "name": "nmos-registry-reg-c.example.com",
+          "peer_port": 2382
+        }
+      ],
+      "name": "a host needing sanitisation",
+      "namespace": "/nmos",
+      "quorum": 2,
+      "refused": null,
+      "specs": [
+        {
+          "host": "reg a/b:c.example.com",
+          "name": null
+        },
+        {
+          "host": "reg-b.example.com"
+        },
+        {
+          "host": "reg-c.example.com"
+        }
+      ],
+      "tls": true,
+      "token": "nmos-registry-692f49824500708b"
+    },
+    {
+      "client_endpoints": [
+        "reg-c.example.com:2381",
+        "reg-a.example.com:2381",
+        "reg-b.example.com:2381"
+      ],
+      "failures_tolerated": 1,
+      "flavour": "",
+      "initial_cluster": "alpha=https://reg-a.example.com:2382,beta=https://reg-b.example.com:2382,gamma=https://reg-c.example.com:2382",
+      "local": "gamma",
+      "local_host": "reg-c.example.com",
+      "local_peer_port": null,
+      "members": [
+        {
+          "bind_address": "reg-a.example.com",
+          "client_port": 2381,
+          "host": "reg-a.example.com",
+          "name": "alpha",
+          "peer_port": 2382
+        },
+        {
+          "bind_address": "reg-b.example.com",
+          "client_port": 2381,
+          "host": "reg-b.example.com",
+          "name": "beta",
+          "peer_port": 2382
+        },
+        {
+          "bind_address": "reg-c.example.com",
+          "client_port": 2381,
+          "host": "reg-c.example.com",
+          "name": "gamma",
+          "peer_port": 2382
+        }
+      ],
+      "name": "explicit names override derivation",
+      "namespace": "/nmos",
+      "quorum": 2,
+      "refused": null,
+      "specs": [
+        {
+          "host": "reg-a.example.com",
+          "name": "alpha"
+        },
+        {
+          "host": "reg-b.example.com",
+          "name": "beta"
+        },
+        {
+          "host": "reg-c.example.com",
+          "name": "gamma"
+        }
+      ],
+      "tls": true,
+      "token": "nmos-registry-332165db9e2e67a7"
+    },
+    {
+      "client_endpoints": [
+        "reg-a.example.com:2381",
+        "reg-b.example.com:2381",
+        "reg-c.example.com:2381"
+      ],
+      "failures_tolerated": 1,
+      "flavour": "",
+      "initial_cluster": "nmos-registry-reg-a.example.com=https://reg-a.example.com:2382,nmos-registry-reg-b.example.com=https://reg-b.example.com:2382,nmos-registry-reg-c.example.com=https://reg-c.example.com:2382",
+      "local": "nmos-registry-reg-a.example.com",
+      "local_host": "reg-a.example.com",
+      "local_peer_port": null,
+      "members": [
+        {
+          "bind_address": "127.0.0.1",
+          "client_port": 2381,
+          "host": "reg-a.example.com",
+          "name": "nmos-registry-reg-a.example.com",
+          "peer_port": 2382
+        },
+        {
+          "bind_address": "reg-b.example.com",
+          "client_port": 2381,
+          "host": "reg-b.example.com",
+          "name": "nmos-registry-reg-b.example.com",
+          "peer_port": 2382
+        },
+        {
+          "bind_address": "reg-c.example.com",
+          "client_port": 2381,
+          "host": "reg-c.example.com",
+          "name": "nmos-registry-reg-c.example.com",
+          "peer_port": 2382
+        }
+      ],
+      "name": "a bind address distinct from the advertised host",
+      "namespace": "/nmos",
+      "quorum": 2,
+      "refused": null,
+      "specs": [
+        {
+          "bind_address": "127.0.0.1",
+          "host": "reg-a.example.com"
+        },
+        {
+          "host": "reg-b.example.com"
+        },
+        {
+          "host": "reg-c.example.com"
+        }
+      ],
+      "tls": true,
+      "token": "nmos-registry-8886438e37e36207"
+    },
+    {
+      "flavour": "",
+      "local_host": "reg-a.example.com",
+      "local_peer_port": null,
+      "name": "no members at all",
+      "namespace": "/nmos",
+      "refused": "no members configured; --distributed needs --registryAdvertisedHost plus --registryNeighbour",
+      "specs": [],
+      "tls": true
+    },
+    {
+      "flavour": "",
+      "local_host": "reg-0.example.com",
+      "local_peer_port": null,
+      "name": "an even-sized cluster",
+      "namespace": "/nmos",
+      "refused": "a cluster must have 1, 3, 5 members, got 4. An even-sized cluster tolerates no more failures than the odd size below it.",
+      "specs": [
+        {
+          "host": "reg-0.example.com"
+        },
+        {
+          "host": "reg-1.example.com"
+        },
+        {
+          "host": "reg-2.example.com"
+        },
+        {
+          "host": "reg-3.example.com"
+        }
+      ],
+      "tls": true
+    },
+    {
+      "flavour": "",
+      "local_host": "reg-z.example.com",
+      "local_peer_port": null,
+      "name": "the local host is not a member",
+      "namespace": "/nmos",
+      "refused": "local host 'reg-z.example.com' is not in the member list (reg-a.example.com, reg-b.example.com, reg-c.example.com). --registryAdvertisedHost must name this member, and the same canonical set must be configured on every member.",
+      "specs": [
+        {
+          "host": "reg-a.example.com"
+        },
+        {
+          "host": "reg-b.example.com"
+        },
+        {
+          "host": "reg-c.example.com"
+        }
+      ],
+      "tls": true
+    },
+    {
+      "flavour": "",
+      "local_host": "127.0.0.1",
+      "local_peer_port": null,
+      "name": "an ambiguous local host",
+      "namespace": "/nmos",
+      "refused": "'127.0.0.1' matches 3 members (peer ports: 2382, 2384, 2386); specify which one this is",
+      "specs": [
+        {
+          "client_port": 2381,
+          "host": "127.0.0.1",
+          "peer_port": 2382
+        },
+        {
+          "client_port": 2383,
+          "host": "127.0.0.1",
+          "peer_port": 2384
+        },
+        {
+          "client_port": 2385,
+          "host": "127.0.0.1",
+          "peer_port": 2386
+        }
+      ],
+      "tls": true
+    },
+    {
+      "flavour": "",
+      "local_host": "127.0.0.1",
+      "local_peer_port": 9999,
+      "name": "a local peer port no member has",
+      "namespace": "/nmos",
+      "refused": "no member at '127.0.0.1' has peer port 9999 (have: 2382, 2384, 2386)",
+      "specs": [
+        {
+          "client_port": 2381,
+          "host": "127.0.0.1",
+          "peer_port": 2382
+        },
+        {
+          "client_port": 2383,
+          "host": "127.0.0.1",
+          "peer_port": 2384
+        },
+        {
+          "client_port": 2385,
+          "host": "127.0.0.1",
+          "peer_port": 2386
+        }
+      ],
+      "tls": true
+    },
+    {
+      "flavour": "",
+      "local_host": "reg-a.example.com",
+      "local_peer_port": null,
+      "name": "client and peer ports the same",
+      "namespace": "/nmos",
+      "refused": "reg-a.example.com: client and peer ports are both 2382; they are separate listeners and cannot share a port",
+      "specs": [
+        {
+          "client_port": 2382,
+          "host": "reg-a.example.com",
+          "peer_port": 2382
+        },
+        {
+          "host": "reg-b.example.com"
+        },
+        {
+          "host": "reg-c.example.com"
+        }
+      ],
+      "tls": true
+    },
+    {
+      "flavour": "",
+      "local_host": "reg-b.example.com",
+      "local_peer_port": null,
+      "name": "a host with surrounding whitespace",
+      "namespace": "/nmos",
+      "refused": "member host ' reg-a.example.com ' is empty or has surrounding whitespace",
+      "specs": [
+        {
+          "host": " reg-a.example.com "
+        },
+        {
+          "host": "reg-b.example.com"
+        },
+        {
+          "host": "reg-c.example.com"
+        }
+      ],
+      "tls": true
+    },
+    {
+      "flavour": "",
+      "local_host": "reg-b.example.com",
+      "local_peer_port": null,
+      "name": "an empty explicit name",
+      "namespace": "/nmos",
+      "refused": "reg-a.example.com: explicit member name is empty",
+      "specs": [
+        {
+          "host": "reg-a.example.com",
+          "name": ""
+        },
+        {
+          "host": "reg-b.example.com"
+        },
+        {
+          "host": "reg-c.example.com"
+        }
+      ],
+      "tls": true
+    },
+    {
+      "flavour": "",
+      "local_host": "127.0.0.1",
+      "local_peer_port": 2386,
+      "name": "two members sharing a peer endpoint",
+      "namespace": "/nmos",
+      "refused": "duplicate peer endpoint 127.0.0.1:2382",
+      "specs": [
+        {
+          "client_port": 2381,
+          "host": "127.0.0.1",
+          "name": "a",
+          "peer_port": 2382
+        },
+        {
+          "client_port": 2383,
+          "host": "127.0.0.1",
+          "name": "b",
+          "peer_port": 2382
+        },
+        {
+          "client_port": 2385,
+          "host": "127.0.0.1",
+          "name": "c",
+          "peer_port": 2386
+        }
+      ],
+      "tls": true
+    },
+    {
+      "flavour": "",
+      "local_host": "127.0.0.1",
+      "local_peer_port": 2386,
+      "name": "two members sharing a name",
+      "namespace": "/nmos",
+      "refused": "duplicate member name 'same'. Members sharing a host must be given explicit distinct names.",
+      "specs": [
+        {
+          "client_port": 2381,
+          "host": "127.0.0.1",
+          "name": "same",
+          "peer_port": 2382
+        },
+        {
+          "client_port": 2383,
+          "host": "127.0.0.1",
+          "name": "same",
+          "peer_port": 2384
+        },
+        {
+          "client_port": 2385,
+          "host": "127.0.0.1",
+          "name": "c",
+          "peer_port": 2386
+        }
+      ],
+      "tls": true
+    }
+  ]
+}

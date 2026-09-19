@@ -1,0 +1,83 @@
+{
+  "cases": [
+    {
+      "file": "{ this is not json",
+      "name": "not json at all",
+      "parity_prefix": "<PATH> is unreadable: ",
+      "refusal": "<PATH> is unreadable: Expecting property name enclosed in double quotes: line 1 column 3 (char 2). Refusing to start with no memory of whether this member has already voted; delete it only if this member is genuinely new to the cluster."
+    },
+    {
+      "file": "[]",
+      "name": "a json list",
+      "parity_prefix": "<PATH> holds a JSON list, not an object. Refusing to start with no memory of whether this member has already voted.",
+      "refusal": "<PATH> holds a JSON list, not an object. Refusing to start with no memory of whether this member has already voted."
+    },
+    {
+      "file": "\"a string\"",
+      "name": "a json string",
+      "parity_prefix": "<PATH> holds a JSON str, not an object. Refusing to start with no memory of whether this member has already voted.",
+      "refusal": "<PATH> holds a JSON str, not an object. Refusing to start with no memory of whether this member has already voted."
+    },
+    {
+      "file": "42",
+      "name": "a json number",
+      "parity_prefix": "<PATH> holds a JSON int, not an object. Refusing to start with no memory of whether this member has already voted.",
+      "refusal": "<PATH> holds a JSON int, not an object. Refusing to start with no memory of whether this member has already voted."
+    },
+    {
+      "file": "null",
+      "name": "a json null",
+      "parity_prefix": "<PATH> holds a JSON NoneType, not an object. Refusing to start with no memory of whether this member has already voted.",
+      "refusal": "<PATH> holds a JSON NoneType, not an object. Refusing to start with no memory of whether this member has already voted."
+    },
+    {
+      "file": "{\"version\": 2, \"term\": 1, \"voted_for\": null, \"incarnation\": 1}",
+      "name": "an unknown version",
+      "parity_prefix": "<PATH> has state version 2, this member understands 1",
+      "refusal": "<PATH> has state version 2, this member understands 1"
+    },
+    {
+      "file": "{\"version\": \"1\", \"term\": 1, \"voted_for\": null, \"incarnation\": 1}",
+      "name": "a quoted version",
+      "parity_prefix": "<PATH> has state version '1', this member understands 1",
+      "refusal": "<PATH> has state version '1', this member understands 1"
+    },
+    {
+      "file": "{\"term\": 1, \"voted_for\": null, \"incarnation\": 1}",
+      "name": "no version",
+      "parity_prefix": "<PATH> has state version None, this member understands 1",
+      "refusal": "<PATH> has state version None, this member understands 1"
+    },
+    {
+      "file": "{\"version\": 1, \"voted_for\": null, \"incarnation\": 1}",
+      "name": "no term",
+      "parity_prefix": "<PATH> does not hold a usable term and vote: ",
+      "refusal": "<PATH> does not hold a usable term and vote: KeyError('term'). Refusing to start with no memory of whether this member has already voted; delete it only if this member is genuinely new to the cluster."
+    },
+    {
+      "file": "{\"version\": 1, \"term\": 1, \"incarnation\": 1}",
+      "name": "no vote",
+      "parity_prefix": "<PATH> does not hold a usable term and vote: ",
+      "refusal": "<PATH> does not hold a usable term and vote: KeyError('voted_for'). Refusing to start with no memory of whether this member has already voted; delete it only if this member is genuinely new to the cluster."
+    },
+    {
+      "file": "{\"version\": 1, \"term\": 1, \"voted_for\": null}",
+      "name": "no incarnation",
+      "parity_prefix": "<PATH> does not hold a usable term and vote: ",
+      "refusal": "<PATH> does not hold a usable term and vote: KeyError('incarnation'). Refusing to start with no memory of whether this member has already voted; delete it only if this member is genuinely new to the cluster."
+    },
+    {
+      "file": "{\"version\": 1, \"term\": \"not a number\", \"voted_for\": null, \"incarnation\": 1}",
+      "name": "an unparseable term",
+      "parity_prefix": "<PATH> does not hold a usable term and vote: ",
+      "refusal": "<PATH> does not hold a usable term and vote: ValueError(\"invalid literal for int() with base 10: 'not a number'\"). Refusing to start with no memory of whether this member has already voted; delete it only if this member is genuinely new to the cluster."
+    },
+    {
+      "file": "{\"version\": 1, \"term\": 1, \"voted_for\": [\"a\", \"list\"], \"incarnation\": 1}",
+      "name": "a vote that is not a member index",
+      "parity_prefix": "<PATH> does not hold a usable term and vote: ",
+      "refusal": "<PATH> does not hold a usable term and vote: TypeError(\"int() argument must be a string, a bytes-like object or a real number, not 'list'\"). Refusing to start with no memory of whether this member has already voted; delete it only if this member is genuinely new to the cluster."
+    }
+  ],
+  "path_placeholder": "<PATH>"
+}

@@ -206,6 +206,15 @@ class _PeerState:
     """When ``pending_through`` was sent, so a genuinely lost append -- or a
     lost reply -- is still retransmitted rather than waited on forever."""
 
+    sent_commit: int = 0
+    """The commit index last *sent* to this peer.
+
+    ``go.etcd.io/raft`` calls this ``sentCommit`` and gates an eager send on it
+    (``tracker/progress.go:189``, ``CanBumpCommit``). Without it the leader
+    either repeats a commit index the peer already has, or -- which is what
+    happened here -- never sends it at all until the next heartbeat.
+    """
+
     snapshot_offset: int = 0
     """How much of the snapshot this peer has confirmed receiving."""
 
@@ -953,6 +962,9 @@ class RaftNode:
             peer.pending_through = 0
             peer.pending_request = 0
             peer.pending_since = 0.0
+            # Same lifetime as the rest: what an earlier leadership told this
+            # peer says nothing about what this one has committed.
+            peer.sent_commit = 0
             # Likewise a snapshot this member was sending in an earlier term:
             # the new transfer starts from zero, and a carried-over offset
             # would have the leader resume a stream the peer is not expecting.
@@ -1024,6 +1036,7 @@ class RaftNode:
             state.pending_request = request_id
             state.pending_since = asyncio.get_running_loop().time()
 
+        state.sent_commit = self._commit_index
         self._transport.send(peer, AppendEntries(
             term=self._term,
             leader=self._layout.local.index,
@@ -1199,7 +1212,60 @@ class RaftNode:
             ))
             log.info("raft: member %d promoted", peer)
 
+        before = self._commit_index
         self._advance_commit()
+        if self._commit_index == before and self._should_send_now(state):
+            # ``_advance_commit`` replicates to everyone when the commit index
+            # moves. When it does not -- which is every reply from a peer
+            # outside the quorum position -- this peer is left behind until the
+            # next tick, and a caller waiting on it waits a whole heartbeat.
+            self._send_append(peer, state)
+
+    def _should_send_now(self, state: _PeerState) -> bool:
+        """Does this peer need an append now, rather than at the next tick?
+
+        Two reasons, both taken from ``go.etcd.io/raft``'s ``MsgAppResp``
+        handling (``raft.go:1550-1571``), which does exactly this and says why:
+
+        * **it has entries waiting** -- the reply just cleared its flow-control
+          pause, and this leader already holds what it is missing;
+        * **its commit index is behind** what this leader has committed, and it
+          has not been told. This is etcd's ``CanBumpCommit``
+          (``tracker/progress.go:189``): ``index > sentCommit and sentCommit <
+          Next-1``. The first half avoids repeating a commit index the peer
+          already has; the second avoids sending one it could not act on.
+
+        The second is the case that matters most and the one this was missing.
+        The commit index moves on the *quorum position*, so a reply from any
+        peer outside it advances nothing -- and that peer, though caught up on
+        entries, is never told the new commit index until a heartbeat fires.
+        etcd's comment names the consequence exactly: "this is not strictly
+        necessary because the periodic heartbeat messages deliver commit
+        indices too. However, a message sent now may arrive earlier than the
+        next heartbeat fires."
+
+        Measured here as a registration driven at such a peer waiting one
+        heartbeat interval: until its commit index moves it cannot apply, and
+        until it applies the caller is not answered. At five members with the
+        default 50 ms heartbeat that was a p90 of 39.6 ms against a round trip
+        of under 2 ms.
+
+        Gated on the pause, as etcd's ``maybeSendAppend`` is by ``IsPaused``
+        (``raft.go:620``): a peer with an append already in flight will learn
+        everything from that exchange.
+
+        Neither condition can loop. A successful reply strictly advances
+        ``next_index``, which is bounded by ``last_index``, and ``sent_commit``
+        is monotonic within a leadership -- so both stop being true.
+        """
+        if state.pending_request != 0:
+            return False
+        has_entries = state.next_index <= self._log.last_index
+        can_bump_commit = (
+            self._commit_index > state.sent_commit
+            and state.sent_commit < state.next_index - 1
+        )
+        return has_entries or can_bump_commit
 
     def on_promote(self, peer: int, message: Promote) -> None:
         if message.term < self._term:
@@ -1483,6 +1549,7 @@ class RaftNode:
                 state.snapshot_in_flight = False
                 state.pending_request = 0
                 state.snapshot_offset = 0
+                state.sent_commit = 0
                 self._send_append(peer, state)
         else:
             state.catching_up = False

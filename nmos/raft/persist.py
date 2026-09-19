@@ -136,6 +136,13 @@ class TermStore:
                 f"only if this member is genuinely new to the cluster.",
             ) from exc
 
+        if not isinstance(raw, dict):
+            raise PersistentStateError(
+                f"{self._path} holds a JSON {type(raw).__name__}, not an "
+                f"object. Refusing to start with no memory of whether this "
+                f"member has already voted.",
+            )
+
         version = raw.get("version")
         if version != STATE_VERSION:
             raise PersistentStateError(
@@ -143,12 +150,27 @@ class TermStore:
                 f"understands {STATE_VERSION}",
             )
 
+        # The three values, read inside the same refusal as an unparseable
+        # file. A document that is valid JSON but has no ``term`` is no more
+        # usable than one that is not JSON at all, and until this ``try`` was
+        # here the ``KeyError`` escaped from *outside* the one above -- so the
+        # member died with a traceback rather than the refusal, at the one
+        # moment an operator most needs to be told what to do about it.
+        try:
+            term = int(raw["term"])
+            stored_vote = raw["voted_for"]
+            voted_for = None if stored_vote is None else int(stored_vote)
+            incarnation = int(raw["incarnation"]) + 1
+        except (KeyError, TypeError, ValueError) as exc:
+            raise PersistentStateError(
+                f"{self._path} does not hold a usable term and vote: {exc!r}. "
+                f"Refusing to start with no memory of whether this member has "
+                f"already voted; delete it only if this member is genuinely "
+                f"new to the cluster.",
+            ) from exc
+
         state = PersistentState(
-            term=int(raw["term"]),
-            voted_for=(
-                None if raw["voted_for"] is None else int(raw["voted_for"])
-            ),
-            incarnation=int(raw["incarnation"]) + 1,
+            term=term, voted_for=voted_for, incarnation=incarnation,
         )
         self.save(state)
         return state

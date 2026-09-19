@@ -15,10 +15,14 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/nmos-cluster",
     "crates/nmos-json",
     "crates/nmos-types",
     "crates/nmos-registry-core",
     "crates/nmos-registry",
+    "crates/nmos-registry-backend",
+    "crates/nmos-registry-testkit",
+    "crates/nmos-registry-raft",
     "crates/nmos-registry-http",
     "crates/nmos-registry-bin",
 ]

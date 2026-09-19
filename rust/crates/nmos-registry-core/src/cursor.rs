@@ -41,8 +41,28 @@ pub const TAI_UTC_OFFSET: i64 = 37;
 pub struct TaiCursor {
     /// Whole TAI seconds.
     pub seconds: u64,
-    /// Nanoseconds within the second, always `< 1_000_000_000`.
-    pub nanoseconds: u32,
+    /// Nanoseconds within the second.
+    ///
+    /// `u64`, not `u32`, and that is a parity requirement rather than
+    /// headroom. `resource_core.json`'s `version` pattern is `^[0-9]+:[0-9]+$`
+    /// -- no ceiling on the nanosecond field -- and the Python parses it with
+    /// `int()`, so it accepts `0:5000000000` and registers the resource.
+    /// Measured: with a `u32` field the parse returned `None` here and the same
+    /// body was refused with a 400, which is an accept/reject divergence
+    /// against a schema-valid input.
+    ///
+    /// A *well-formed* cursor is still below 1_000_000_000; `next` and the
+    /// allocator both rely on that. This is about what may arrive, not about
+    /// what this registry mints.
+    ///
+    /// **Accepted divergence (agreed 2026-09-18).** `u64` does not close the
+    /// gap completely: Python's `int()` has no width at all, so it also accepts
+    /// a field of twenty or more digits, and this refuses those. Closing it
+    /// would mean arbitrary precision in a type that is `Copy`, sixteen bytes,
+    /// and compared on every store insert and every page query -- paid on every
+    /// request, to accept a value no clock can produce. The divergence is
+    /// deliberate and is not to be "fixed".
+    pub nanoseconds: u64,
 }
 
 impl TaiCursor {
@@ -68,10 +88,10 @@ impl TaiCursor {
 
     /// Build from parts, normalising a nanosecond overflow into the seconds.
     #[must_use]
-    pub const fn new(seconds: u64, nanoseconds: u32) -> Self {
+    pub const fn new(seconds: u64, nanoseconds: u64) -> Self {
         if nanoseconds >= 1_000_000_000 {
             Self {
-                seconds: seconds.saturating_add((nanoseconds / 1_000_000_000) as u64),
+                seconds: seconds.saturating_add(nanoseconds / 1_000_000_000),
                 nanoseconds: nanoseconds % 1_000_000_000,
             }
         } else {
@@ -98,7 +118,7 @@ impl TaiCursor {
         let seconds = since_epoch
             .as_secs()
             .saturating_add(TAI_UTC_OFFSET.unsigned_abs());
-        Self::new(seconds, since_epoch.subsec_nanos())
+        Self::new(seconds, u64::from(since_epoch.subsec_nanos()))
     }
 
     /// Parse `"<seconds>:<nanoseconds>"`.
@@ -115,6 +135,12 @@ impl TaiCursor {
     #[must_use]
     pub fn parse(text: &str) -> Option<Self> {
         let (head, tail) = text.split_once(':')?;
+        // Redundant, and kept. `all` over an empty slice is vacuously true, so
+        // an empty half reaches `parse`, which refuses it -- measured: removing
+        // this changes no verdict in the corpus. It stays because it states the
+        // rule the pattern actually expresses (`[0-9]+`, one or more), and the
+        // alternative is a reader working out that emptiness is caught two
+        // lines later by accident rather than by intent.
         if head.is_empty() || tail.is_empty() {
             return None;
         }

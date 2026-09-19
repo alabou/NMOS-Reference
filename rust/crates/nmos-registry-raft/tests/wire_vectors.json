@@ -1,0 +1,190 @@
+{
+  "cases": [
+    {
+      "encoded_hex": "41524d4e01000000001200000c00000008091001182a2009282a4803bf677e90",
+      "fields": [
+        {
+          "field": 1,
+          "kind": "uint",
+          "value": 9
+        },
+        {
+          "field": 2,
+          "kind": "uint",
+          "value": 1
+        },
+        {
+          "field": 3,
+          "kind": "uint",
+          "value": 42
+        },
+        {
+          "field": 4,
+          "kind": "uint",
+          "value": 9
+        },
+        {
+          "field": 5,
+          "kind": "uint",
+          "value": 42
+        },
+        {
+          "field": 9,
+          "kind": "uint",
+          "value": 3
+        }
+      ],
+      "flags": 0,
+      "minor": 0,
+      "name": "append_empty",
+      "payload_hex": "08091001182a2009282a4803",
+      "stream": 0,
+      "type": 18
+    },
+    {
+      "encoded_hex": "41524d4e01000000000100001b000000080110001a116e6d6f732d72656769737472792d616263200228076c6cc01f",
+      "fields": [
+        {
+          "field": 1,
+          "kind": "uint",
+          "value": 1
+        },
+        {
+          "field": 2,
+          "kind": "uint",
+          "value": 0
+        },
+        {
+          "field": 3,
+          "kind": "string",
+          "value": "nmos-registry-abc"
+        },
+        {
+          "field": 4,
+          "kind": "uint",
+          "value": 2
+        },
+        {
+          "field": 5,
+          "kind": "uint",
+          "value": 7
+        }
+      ],
+      "flags": 0,
+      "minor": 0,
+      "name": "hello",
+      "payload_hex": "080110001a116e6d6f732d72656769737472792d61626320022807",
+      "stream": 0,
+      "type": 1
+    },
+    {
+      "encoded_hex": "41524d4e01000000011400000f00000008041000186420043a03010203400171ac3a69",
+      "fields": [
+        {
+          "field": 1,
+          "kind": "uint",
+          "value": 4
+        },
+        {
+          "field": 2,
+          "kind": "uint",
+          "value": 0
+        },
+        {
+          "field": 3,
+          "kind": "uint",
+          "value": 100
+        },
+        {
+          "field": 4,
+          "kind": "uint",
+          "value": 4
+        },
+        {
+          "field": 7,
+          "kind": "bytes",
+          "value": "010203"
+        },
+        {
+          "field": 8,
+          "kind": "bool",
+          "value": true
+        }
+      ],
+      "flags": 0,
+      "minor": 0,
+      "name": "install_snapshot",
+      "payload_hex": "08041000186420043a030102034001",
+      "stream": 1,
+      "type": 20
+    },
+    {
+      "encoded_hex": "41524d4e010000000030000000000000522f1348",
+      "fields": [],
+      "flags": 0,
+      "minor": 0,
+      "name": "ping",
+      "payload_hex": "",
+      "stream": 0,
+      "type": 48
+    },
+    {
+      "encoded_hex": "41524d4e01000000001000000800000008051000180a2005785503d7",
+      "fields": [
+        {
+          "field": 1,
+          "kind": "uint",
+          "value": 5
+        },
+        {
+          "field": 2,
+          "kind": "uint",
+          "value": 0
+        },
+        {
+          "field": 3,
+          "kind": "uint",
+          "value": 10
+        },
+        {
+          "field": 4,
+          "kind": "uint",
+          "value": 5
+        }
+      ],
+      "flags": 0,
+      "minor": 0,
+      "name": "request_vote",
+      "payload_hex": "08051000180a2005",
+      "stream": 0,
+      "type": 16
+    },
+    {
+      "encoded_hex": "41524d4e010000000011010006000000080510011801a1a217f7",
+      "fields": [
+        {
+          "field": 1,
+          "kind": "uint",
+          "value": 5
+        },
+        {
+          "field": 2,
+          "kind": "bool",
+          "value": true
+        },
+        {
+          "field": 3,
+          "kind": "bool",
+          "value": true
+        }
+      ],
+      "flags": 1,
+      "minor": 0,
+      "name": "vote_reply_granted",
+      "payload_hex": "080510011801",
+      "stream": 0,
+      "type": 17
+    }
+  ],
+  "protocol_major": 1
+}

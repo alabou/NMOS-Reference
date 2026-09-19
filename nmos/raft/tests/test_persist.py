@@ -121,6 +121,65 @@ class TestAtomicity:
         with pytest.raises(PersistentStateError, match="state version"):
             TermStore(path).load()
 
+    @pytest.mark.parametrize(
+        "document",
+        [
+            pytest.param({"version": STATE_VERSION}, id="nothing but a version"),
+            pytest.param(
+                {"version": STATE_VERSION, "voted_for": None, "incarnation": 1},
+                id="no term",
+            ),
+            pytest.param(
+                {"version": STATE_VERSION, "term": 1, "incarnation": 1},
+                id="no vote",
+            ),
+            pytest.param(
+                {"version": STATE_VERSION, "term": 1, "voted_for": None},
+                id="no incarnation",
+            ),
+            pytest.param(
+                {
+                    "version": STATE_VERSION, "term": "not a number",
+                    "voted_for": None, "incarnation": 1,
+                },
+                id="an unparseable term",
+            ),
+            pytest.param(
+                {
+                    "version": STATE_VERSION, "term": 1,
+                    "voted_for": ["a", "list"], "incarnation": 1,
+                },
+                id="a vote that is not a member index",
+            ),
+        ],
+    )
+    def test_a_structurally_wrong_file_refuses_the_same_way(
+        self, tmp_path: Path, document: dict[str, object],
+    ) -> None:
+        """Valid JSON is not the same as a usable file, and both must refuse.
+
+        These used to escape the ``try`` around ``json.loads`` and reach the
+        caller as a bare ``KeyError`` or ``ValueError``, so the member died
+        with a traceback instead of being told what the file was and what to
+        do about it -- at the one moment an operator most needs to be told.
+        """
+        path = tmp_path / "state.json"
+        path.write_text(json.dumps(document))
+        with pytest.raises(PersistentStateError, match="already voted"):
+            TermStore(path).load()
+
+    @pytest.mark.parametrize(
+        "text", ["[]", '"a string"', "42", "null"],
+    )
+    def test_a_json_document_that_is_not_an_object_refuses_to_start(
+        self, tmp_path: Path, text: str,
+    ) -> None:
+        """``raw.get`` would raise ``AttributeError`` on all of these."""
+        path = tmp_path / "state.json"
+        path.write_text(text)
+        with pytest.raises(PersistentStateError, match="not an object"):
+            TermStore(path).load()
+
 
 class TestWriteAccounting:
     def test_writes_are_counted(self, tmp_path: Path) -> None:

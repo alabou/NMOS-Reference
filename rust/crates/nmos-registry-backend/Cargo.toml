@@ -1,0 +1,21 @@
+[package]
+name = "nmos-registry-backend"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "What the Registration API needs from the storage layer, and the standalone implementation of it."
+
+[dependencies]
+nmos-registry = { path = "../nmos-registry" }
+nmos-registry-core = { path = "../nmos-registry-core" }
+async-trait = "0.1"
+
+[dev-dependencies]
+tokio = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

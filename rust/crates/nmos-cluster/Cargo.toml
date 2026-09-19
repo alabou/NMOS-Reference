@@ -1,0 +1,22 @@
+[package]
+name = "nmos-cluster"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "The member set, its canonical order, and the cluster token every member derives identically."
+
+[dependencies]
+# OpenSSL for the token digest, not a pure-Rust SHA-256. Adding a second crypto
+# implementation would contradict the reason this workspace links OpenSSL at
+# all -- one library under one future FIPS boundary, shared with the Python
+# registry -- and "it is only a hash" is exactly how a second one gets in.
+openssl = "0.10.81"
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

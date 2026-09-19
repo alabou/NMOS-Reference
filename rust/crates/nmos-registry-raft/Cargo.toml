@@ -1,0 +1,41 @@
+[package]
+name = "nmos-registry-raft"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "The native consensus backend: log, state machine, transport and the RegistryBackend that fronts them."
+
+[dependencies]
+nmos-registry = { path = "../nmos-registry" }
+nmos-registry-core = { path = "../nmos-registry-core" }
+nmos-registry-backend = { path = "../nmos-registry-backend" }
+nmos-cluster = { path = "../nmos-cluster" }
+async-trait = "0.1"
+tokio = { workspace = true }
+tracing = { workspace = true }
+crc32fast = "1"
+# The node's state lock. `parking_lot` guards are `!Send`, so holding one
+# across an await does not compile -- which is how this crate keeps the
+# no-await-inside-a-decision property the Python gets from one event loop.
+parking_lot = "0.12"
+# TLS is OpenSSL, not rustls -- the same decision the binary records, for the
+# same reason: one libssl under one future FIPS boundary, shared with the
+# Python registry.
+openssl = "0.10.81"
+tokio-openssl = "0.6.5"
+# The term/vote file, and the snapshot envelope. Not dev-only: `persist.rs`
+# reads and writes JSON at startup.
+serde_json = { workspace = true }
+
+[dev-dependencies]
+parking_lot = "0.12"
+futures-util = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+crc32fast = "1"
+
+[lints]
+workspace = true

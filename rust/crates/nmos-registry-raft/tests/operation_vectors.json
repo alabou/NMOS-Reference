@@ -1,0 +1,128 @@
+{
+  "cases": [
+    {
+      "encoded_hex": "080012060a0408011002",
+      "fields": {
+        "proposal": {
+          "member": 1,
+          "sequence": 2
+        }
+      },
+      "kind": 0,
+      "operation": "NoopOp"
+    },
+    {
+      "encoded_hex": "08011295010a0408001007120673656e6465721a2438633466316532612d303030302d343030302d383030302d303030303030303030303030222431663265336434632d303030302d343030302d383030302d3030303030303030303030302a247b226964223a223863346631653261222c226c6162656c223a22612073656e646572227d320508e80710083a0508e907101040d20948015002",
+      "fields": {
+        "body_text": "{\"id\":\"8c4f1e2a\",\"label\":\"a sender\"}",
+        "claim_owner": 2,
+        "created": {
+          "nanoseconds": 8,
+          "seconds": 1000
+        },
+        "expect_created": true,
+        "health": 1234,
+        "node_id": "1f2e3d4c-0000-4000-8000-000000000000",
+        "proposal": {
+          "member": 0,
+          "sequence": 7
+        },
+        "resource_id": "8c4f1e2a-0000-4000-8000-000000000000",
+        "resource_type": "sender",
+        "updated": {
+          "nanoseconds": 16,
+          "seconds": 1001
+        }
+      },
+      "kind": 1,
+      "operation": "RegisterOp"
+    },
+    {
+      "encoded_hex": "080212150a040802100112066465766963651a056465762d31",
+      "fields": {
+        "proposal": {
+          "member": 2,
+          "sequence": 1
+        },
+        "resource_id": "dev-1",
+        "resource_type": "device"
+      },
+      "kind": 2,
+      "operation": "UnregisterOp"
+    },
+    {
+      "encoded_hex": "0803120e0a040801100912066e6f64652d31",
+      "fields": {
+        "node_id": "node-1",
+        "proposal": {
+          "member": 1,
+          "sequence": 9
+        }
+      },
+      "kind": 3,
+      "operation": "ExpireOp"
+    },
+    {
+      "encoded_hex": "080412300a040801100a120c0a0673656e64657212027331120a0a04666c6f7712026631120e0a08726563656976657212027231",
+      "fields": {
+        "proposal": {
+          "member": 1,
+          "sequence": 10
+        },
+        "victims": [
+          [
+            "sender",
+            "s1"
+          ],
+          [
+            "flow",
+            "f1"
+          ],
+          [
+            "receiver",
+            "r1"
+          ]
+        ]
+      },
+      "kind": 4,
+      "operation": "ForgetOp"
+    },
+    {
+      "encoded_hex": "080512100a040803100112066e6f64652d311803",
+      "fields": {
+        "node_id": "node-1",
+        "owner": 3,
+        "proposal": {
+          "member": 3,
+          "sequence": 1
+        }
+      },
+      "kind": 5,
+      "operation": "ClaimOwnershipOp"
+    },
+    {
+      "encoded_hex": "0806120e0a040803100212066e6f64652d31",
+      "fields": {
+        "node_id": "node-1",
+        "proposal": {
+          "member": 3,
+          "sequence": 2
+        }
+      },
+      "kind": 6,
+      "operation": "ReleaseOwnershipOp"
+    },
+    {
+      "encoded_hex": "080712080a04080010031002",
+      "fields": {
+        "member": 2,
+        "proposal": {
+          "member": 0,
+          "sequence": 3
+        }
+      },
+      "kind": 7,
+      "operation": "MemberDownOp"
+    }
+  ]
+}

@@ -138,6 +138,25 @@ pub enum RegistrationError {
 }
 
 impl RegistrationError {
+    /// The condition a stable identifier names, if it names one.
+    ///
+    /// The inverse of [`Self::as_str`], and needed for the same reason that is
+    /// public: a refusal decided on another member arrives as its code, and
+    /// this member has to turn it back into the condition to answer with.
+    /// Unknown codes are `None` rather than a default -- a member inventing a
+    /// reason for a peer's refusal is worse than admitting it does not know.
+    #[must_use]
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code {
+            "schema" => Some(Self::Schema),
+            "id_type_conflict" => Some(Self::IdTypeConflict),
+            "version_regression" => Some(Self::VersionRegression),
+            "parent_changed" => Some(Self::ParentChanged),
+            "parent_missing" => Some(Self::ParentMissing),
+            _ => None,
+        }
+    }
+
     /// The stable identifier for this condition.
     #[must_use]
     pub const fn as_str(self) -> &'static str {

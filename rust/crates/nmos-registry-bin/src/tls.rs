@@ -483,6 +483,60 @@ pub fn client_context(
     Ok(builder.build())
 }
 
+/// One context for both ends of a peer link.
+///
+/// Members talk only to each other, and the shared certificate carries both
+/// `serverAuth` and `clientAuth` -- which is exactly what lets one context
+/// serve listening and dialling. The Python makes the same choice for the same
+/// reason, and it is why there is one `--raftCertificate` rather than two.
+///
+/// The TR-10-SEC restrictions apply here too. Peer traffic carries every
+/// registered resource, so exempting it from the cipher policy the client-facing
+/// listeners are held to would put the whole database on the weaker link.
+///
+/// # Errors
+///
+/// [`TlsError`] if the certificate, key, anchors or CRL cannot be loaded, or
+/// if the policy cannot be applied.
+pub fn peer_context(
+    chain: &Path,
+    key: &Path,
+    trust_anchors: &[impl AsRef<Path>],
+    gcrl: Option<&Path>,
+) -> Result<SslContext, TlsError> {
+    check_gcrl(gcrl)?;
+
+    // `tls_client` rather than `tls_server`: the method decides only the
+    // default role, and `SslMethod::tls()` is deprecated in favour of choosing
+    // per-connection, which is what `Ssl::new` plus `set_accept_state` /
+    // `set_connect_state` does below in the transport.
+    let mut builder = SslContextBuilder::new(SslMethod::tls())?;
+    apply_tr10_restrictions(&mut builder)?;
+
+    builder.set_certificate_chain_file(chain)?;
+    builder.set_private_key_file(key, openssl::ssl::SslFiletype::PEM)?;
+    builder.check_private_key()?;
+
+    for anchor in trust_anchors {
+        builder.set_ca_file(anchor.as_ref())?;
+    }
+    if let Some(path) = gcrl {
+        // The same two steps `server_context` takes, and for the same reason:
+        // the bundle may hold several CRL blocks, and `CRL_CHECK` is the leaf
+        // check rather than `CRL_CHECK_ALL`'s whole chain.
+        builder.set_ca_file(path)?;
+        builder
+            .verify_param_mut()
+            .set_flags(X509VerifyFlags::CRL_CHECK)?;
+    }
+
+    // Mutual, and required in both directions: a peer that presented no
+    // certificate would be admitted by chain validation vacuously, and the
+    // shared-SAN check in the transport would then be the only gate left.
+    builder.set_verify(SslVerifyMode::PEER | SslVerifyMode::FAIL_IF_NO_PEER_CERT);
+    Ok(builder.build())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

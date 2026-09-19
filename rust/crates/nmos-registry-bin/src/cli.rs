@@ -191,6 +191,86 @@ pub struct Args {
     /// impossible to express.
     #[arg(long = "logFile", default_value = "/tmp/nmos-registry.log")]
     pub log_file: String,
+
+    // -- Distributed Registry -------------------------------------------
+    //
+    // Without `--distributed` nothing below is read and the registry behaves
+    // exactly as it always has.
+    /// Which storage layer backs `--distributed`.
+    ///
+    /// Both values the Python accepts are accepted here, deliberately, even
+    /// though only `raft` is built. Rejecting `etcd` at the parser would give
+    /// clap's generic "invalid value for --distributedBackend"; accepting it
+    /// and refusing in the resolver gives the operator the sentence that
+    /// actually helps -- that the backend is deferred rather than gone, and
+    /// that the Python registry still offers it.
+    #[arg(long = "distributedBackend", value_parser = ["raft", "etcd"], default_value = "raft")]
+    pub distributed_backend: String,
+
+    /// Share state with 1, 3 or 5 peer registries.
+    #[arg(long = "distributed", default_value_t = false)]
+    pub distributed: bool,
+
+    /// This member's advertised host, as `host` or `host:client_port`.
+    ///
+    /// MUST be a SAN of this member's peer certificate.
+    #[arg(long = "registryAdvertisedHost", default_value = "")]
+    pub registry_advertised_host: String,
+
+    /// A peer registry's advertised host. Repeat once per peer.
+    #[arg(long = "registryNeighbour")]
+    pub registry_neighbour: Vec<String>,
+
+    /// Key namespace. Part of the cluster token.
+    #[arg(long = "raftNamespace", default_value = "/nmos-reference/registry/v1")]
+    pub raft_namespace: String,
+
+    /// Member-status port.
+    #[arg(long = "raftClientPort", default_value_t = 2481)]
+    pub raft_client_port: u16,
+
+    /// Peer transport port.
+    #[arg(long = "raftPeerPort", default_value_t = 2482)]
+    pub raft_peer_port: u16,
+
+    /// Where this member's term/vote file lives.
+    #[arg(long = "raftStateDir", default_value = "/var/lib/nmos-registry/raft")]
+    pub raft_state_dir: String,
+
+    /// Shared peer certificate chain.
+    #[arg(long = "raftCertificate", default_value = "")]
+    pub raft_certificate: String,
+
+    /// Private key for the peer certificate.
+    #[arg(long = "raftKey", default_value = "")]
+    pub raft_key: String,
+
+    /// Trusted root CA for peer verification. May be repeated.
+    #[arg(long = "raftTrustedRootCA")]
+    pub raft_trusted_root_ca: Vec<String>,
+
+    /// The shared SAN every peer is verified against.
+    #[arg(
+        long = "raftCertificateName",
+        default_value = "Example.Company.Device.Etcd.ABC.example.com"
+    )]
+    pub raft_certificate_name: String,
+
+    /// CRL for peer certificates.
+    #[arg(long = "raftCrlFile", default_value = "")]
+    pub raft_crl_file: String,
+
+    /// Disable TLS between members. TESTING ONLY -- refused off the loopback.
+    #[arg(long = "raftDisableTLS", default_value_t = false)]
+    pub raft_disable_tls: bool,
+
+    /// Per-message deadline, in seconds.
+    #[arg(long = "raftRpcTimeout", default_value_t = 2.0)]
+    pub raft_rpc_timeout: f64,
+
+    /// Overall deadline for one registration to commit, in seconds.
+    #[arg(long = "raftMutationTimeout", default_value_t = 7.0)]
+    pub raft_mutation_timeout: f64,
 }
 
 impl Args {

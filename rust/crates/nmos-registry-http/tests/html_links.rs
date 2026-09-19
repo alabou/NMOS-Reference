@@ -90,6 +90,9 @@ impl Rig {
         router::registration(
             RegistrationState {
                 registry: Arc::clone(&self.registry),
+                backend: std::sync::Arc::new(nmos_registry_backend::StandaloneBackend::new(
+                    Arc::clone(&self.registry),
+                )),
                 subscriptions: std::sync::Arc::new(
                     nmos_registry::manager::SubscriptionManager::new(),
                 ),

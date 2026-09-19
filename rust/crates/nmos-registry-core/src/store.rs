@@ -79,7 +79,18 @@ pub struct RegistrationFailure {
 }
 
 impl RegistrationFailure {
-    fn new(error: RegistrationError, detail: impl Into<String>) -> Self {
+    /// Build a refusal.
+    ///
+    /// Public because a distributed backend has to **reconstruct** one: a
+    /// registration forwarded to the member that owns its Node is decided
+    /// there, and the refusal comes back as a code and a detail string that
+    /// this member must turn into the same 400 it would have produced itself.
+    /// Keeping this private would mean the forwarded path could only answer
+    /// 503, which turns a client's terminal "your body is wrong" into "try
+    /// again" -- and a Node that retries a body the cluster will never accept
+    /// retries forever.
+    #[must_use]
+    pub fn new(error: RegistrationError, detail: impl Into<String>) -> Self {
         Self {
             error,
             detail: detail.into(),

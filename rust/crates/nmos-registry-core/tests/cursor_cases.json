@@ -1,0 +1,196 @@
+{
+  "cases": [
+    {
+      "nanoseconds": 0,
+      "rendered": "0:0",
+      "seconds": 0,
+      "text": "0:0"
+    },
+    {
+      "nanoseconds": 2,
+      "rendered": "1:2",
+      "seconds": 1,
+      "text": "1:2"
+    },
+    {
+      "nanoseconds": 318744030,
+      "rendered": "1441716120:318744030",
+      "seconds": 1441716120,
+      "text": "1441716120:318744030"
+    },
+    {
+      "nanoseconds": 123456789,
+      "rendered": "1700000000:123456789",
+      "seconds": 1700000000,
+      "text": "1700000000:123456789"
+    },
+    {
+      "nanoseconds": 999999999,
+      "rendered": "0:999999999",
+      "seconds": 0,
+      "text": "0:999999999"
+    },
+    {
+      "nanoseconds": 1000000000,
+      "rendered": "0:1000000000",
+      "seconds": 0,
+      "text": "0:1000000000"
+    },
+    {
+      "nanoseconds": 1500000000,
+      "rendered": "0:1500000000",
+      "seconds": 0,
+      "text": "0:1500000000"
+    },
+    {
+      "nanoseconds": 4294967295,
+      "rendered": "0:4294967295",
+      "seconds": 0,
+      "text": "0:4294967295"
+    },
+    {
+      "nanoseconds": 4294967296,
+      "rendered": "0:4294967296",
+      "seconds": 0,
+      "text": "0:4294967296"
+    },
+    {
+      "nanoseconds": 5000000000,
+      "rendered": "0:5000000000",
+      "seconds": 0,
+      "text": "0:5000000000"
+    },
+    {
+      "nanoseconds": 18446744073709551615,
+      "rendered": "0:18446744073709551615",
+      "seconds": 0,
+      "text": "0:18446744073709551615"
+    },
+    {
+      "nanoseconds": 0,
+      "rendered": "0:0",
+      "seconds": 0,
+      "text": "00:00"
+    },
+    {
+      "nanoseconds": 2,
+      "rendered": "1:2",
+      "seconds": 1,
+      "text": "0000000001:0000000002"
+    },
+    {
+      "nanoseconds": null,
+      "rendered": null,
+      "seconds": null,
+      "text": ""
+    },
+    {
+      "nanoseconds": null,
+      "rendered": null,
+      "seconds": null,
+      "text": ":"
+    },
+    {
+      "nanoseconds": null,
+      "rendered": null,
+      "seconds": null,
+      "text": "1:"
+    },
+    {
+      "nanoseconds": null,
+      "rendered": null,
+      "seconds": null,
+      "text": ":2"
+    },
+    {
+      "nanoseconds": null,
+      "rendered": null,
+      "seconds": null,
+      "text": "1"
+    },
+    {
+      "nanoseconds": null,
+      "rendered": null,
+      "seconds": null,
+      "text": "1:2:3"
+    },
+    {
+      "nanoseconds": null,
+      "rendered": null,
+      "seconds": null,
+      "text": "+1:2"
+    },
+    {
+      "nanoseconds": null,
+      "rendered": null,
+      "seconds": null,
+      "text": "1:+2"
+    },
+    {
+      "nanoseconds": null,
+      "rendered": null,
+      "seconds": null,
+      "text": " 1:2"
+    },
+    {
+      "nanoseconds": null,
+      "rendered": null,
+      "seconds": null,
+      "text": "1:2 "
+    },
+    {
+      "nanoseconds": null,
+      "rendered": null,
+      "seconds": null,
+      "text": "1_0:2"
+    },
+    {
+      "nanoseconds": null,
+      "rendered": null,
+      "seconds": null,
+      "text": "1:2_0"
+    },
+    {
+      "nanoseconds": null,
+      "rendered": null,
+      "seconds": null,
+      "text": "-1:2"
+    },
+    {
+      "nanoseconds": null,
+      "rendered": null,
+      "seconds": null,
+      "text": "1.0:2"
+    },
+    {
+      "nanoseconds": null,
+      "rendered": null,
+      "seconds": null,
+      "text": "a:2"
+    },
+    {
+      "nanoseconds": null,
+      "rendered": null,
+      "seconds": null,
+      "text": "1:b"
+    },
+    {
+      "nanoseconds": null,
+      "rendered": null,
+      "seconds": null,
+      "text": "0x10:2"
+    },
+    {
+      "nanoseconds": null,
+      "rendered": null,
+      "seconds": null,
+      "text": "1:2\n"
+    },
+    {
+      "nanoseconds": null,
+      "rendered": null,
+      "seconds": null,
+      "text": "\n1:2"
+    }
+  ]
+}
