@@ -37,6 +37,13 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
+# Run directly -- `python3 bench_registry/mixed_cluster.py` -- and sys.path[0]
+# is this directory, not the repository, so `nmos` below would not import. The
+# repository root is already known, so put it on the path rather than making
+# every caller remember PYTHONPATH.
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
 import aiohttp
 
 from nmos.registry.tests._fixtures import make_node

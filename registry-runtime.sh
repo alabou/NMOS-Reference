@@ -44,19 +44,15 @@ registry_select_runtime() {
   done
 }
 
-# Refuse --rust for a launcher the Rust registry cannot serve.
+# Every registry launcher now accepts --rust.
 #
-# The etcd rigs are the case: the Rust port deliberately defers the etcd
-# backend, so it has no --etcd* flags at all. Without this the failure would be
-# an unknown-argument error naming one flag, which reads like a typo rather
-# than like "this backend does not exist yet".
-registry_reject_rust() {
-  if [ "${REGISTRY_RUST:-0}" = "1" ]; then
-    echo "$(basename "$0"): --rust is not available for this launcher." >&2
-    echo "  $1" >&2
-    exit 64
-  fi
-}
+# There used to be a `registry_reject_rust` here, taken by the two etcd rigs
+# because the Rust port had no --etcd* flags. It gained them, both launchers
+# were routed through `registry_runtime_command`, and the helper was left
+# behind with a comment still asserting the backend did not exist -- which is
+# the more expensive half of dead code, since it reads as current fact. If a
+# launcher ever does need to refuse --rust, write the refusal at that call
+# site, where it cannot outlive the reason for it.
 
 # Resolve what to exec.
 #

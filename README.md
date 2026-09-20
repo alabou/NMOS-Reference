@@ -30,6 +30,7 @@ An NMOS Node implementation — covering the AMWA NMOS Interface Specifications 
 - **Typed Python** — `mypy --strict` clean across the `nmos/` package and the vendored Authorization Server in `fake-as/` (tests excluded).
 - **Asyncio throughout** — aiohttp HTTP / WebSocket servers, `DispatchGroup`-based task lifecycles, errgroup-style cancellation.
 - **Bundled IS-04 registry** — `nmos_registry.py` serves the Registration and Query APIs (HTTP + WebSocket) so the whole system runs from this checkout with no third-party registry to install. See [NMOS Registry](#nmos-registry).
+- **High-throughput registry in Rust** — the same registry, same wire format, same command line, multi-threaded: paired with the raft backend it delivers a **fault-tolerant registry that out-registers a single-instance `nmos-cpp`**, and a single cluster can mix Python and Rust members interchangeably. Optional — Python remains the default and the specification. See [Two implementations of the registry](#two-implementations-of-the-registry).
 - **Test suite** — 2 900+ tests across unit, integration, and end-to-end paths.
 
 ---
@@ -409,6 +410,67 @@ node launchers already pass.
 
 The registry reports its effective Registry Access Policy in the startup
 banner, so the running compliance mode is visible rather than inferred.
+
+### Two implementations of the registry
+
+The registry — and only the registry — exists twice: the Python one above, and
+a **Rust port** in `rust/`. The Node, the Controller and the agent UI are
+Python and stay Python.
+
+They are not a fork and a replacement. **Python is the specification and the
+teaching reference; Rust is the performance implementation**, and both are
+maintained. Rust must match Python's behaviour exactly — not only what it
+accepts and rejects, but the *error text* it returns.
+
+Add `--rust` to any registry launcher. The two take the **same command line**, so a rig is pointed at either
+without changing anything else:
+
+```bash
+# Build once (Rust toolchain required -- see below).
+cd rust && cargo build --release -p nmos-registry-bin && cd ..
+
+./start-registry-bare.sh --rust           # no TLS
+./start-registry.sh 2 --rust              # mutual TLS
+./start-registry-raft.sh 0 3 --rust       # one member of a raft cluster
+./start-registry-dist.sh 0 3 --rust       # one member over etcd
+```
+
+**Why it exists: throughput.** The Python registry applies every change on the
+same single event loop that serves its HTTP, so it is bounded by one core. That
+is a property of the design, not a bug to optimise away — and the only way past
+it is a second implementation. The Rust one is multi-threaded on `tokio`, and
+the difference on a registration-heavy workload is not marginal.
+
+**Fault tolerance without trading away speed.** This is the part worth
+noticing. Paired with the raft backend, a 3-member Rust cluster replicates
+every change to a quorum before acknowledging it — and still sustains higher
+registration throughput than a *single* instance of `nmos-cpp`, the widely used
+C++ NMOS registry. Resilience normally costs throughput; here it does not.
+
+None of that is asked to be taken on trust. `bench_registry/compare.py` runs
+the comparison — `nmos-cpp`, both implementations, both backends, at 1 and 3
+members — over the AMWA reference workload of 2 500 Nodes × 6 = 15 000
+resources, and prints the table:
+
+```bash
+PYTHONPATH=. .venv/bin/python bench_registry/compare.py --amwa-nodes 2500 \
+    --targets cpp,standalone,rust,raft3,rustraft3
+```
+
+**Mixed clusters work.** A single cluster can run Python and Rust members
+together, over either backend, and they agree byte for byte — a resource
+registered on one implementation is served back by the other with identical
+bytes. `bench_registry/mixed_cluster.py` is that test:
+
+```bash
+python3 bench_registry/mixed_cluster.py prr                  # raft
+python3 bench_registry/mixed_cluster.py prr --backend etcd   # etcd
+```
+
+**What it costs.** A Rust toolchain (`rustup`, stable) — the one place this
+project asks for something outside the checkout. Nothing else changes: a
+checkout without Rust behaves exactly as before, and every launcher without
+`--rust` runs the Python registry.
 
 ### Distributed registry (`--distributed`)
 
@@ -1028,12 +1090,27 @@ nmos/                   — Core NMOS implementation
     FOR-AI-AGENTS.md, OPERATING-THE-CONTROLLER.md — read these before driving the UI
   json/                 — Typed JSON serialization engine
   types/generated/      — Auto-generated typed wrappers for all NMOS resource types
-  codegen/              — Go-source parser + generator that produces types/generated/
+  codegen/              — Hand-edited type model in definitions/ + the generator that
+                          emits it twice: nmos/types/generated/ (Python) and
+                          rust/crates/nmos-types/ (Rust). Reads no Go — go_parser.py
+                          is a historical bootstrap tool, not a pipeline stage. A
+                          fingerprint fails the build if either tree drifts.
   oauth2/               — Bearer token validation, JWKS cache lifecycle
   crypto/               — ExclusiveSession: token-based mutual exclusion for Node Reservation
   tasks/                — DispatchGroup wrapping asyncio.TaskGroup
   codec/                — Audio/video codec descriptors (H.264, H.265, AAC, JXSV, AES3, …)
   enums/, ip/, errors/, uuid/  — Domain primitives
+
+rust/                   — Rust port of the REGISTRY only (see Two implementations
+                          of the registry). Optional: a checkout with no Rust
+                          toolchain behaves exactly as before.
+  crates/nmos-json/     — JSON engine: decode, encode, spans, validators
+  crates/nmos-types/    — Generated typed wrappers, the peer of nmos/types/generated/
+  crates/nmos-registry-core/    — Store, paging, query filter (no tokio, by design)
+  crates/nmos-registry-http/    — axum routers, handlers, HTML renderer
+  crates/nmos-registry-raft/    — Consensus and the raft backend
+  crates/nmos-registry-etcd/, nmos-etcd/  — The etcd backend and its client
+  crates/nmos-registry-bin/     — The `nmos-registry` binary; mirrors nmos_registry.py's CLI
 
 sdp/                    — SDP encoding/decoding (Matrox profile)
 caps/                   — Capability/constraint framework (Matrox CCF)
