@@ -1163,6 +1163,41 @@ async fn the_commit_queue_stays_bounded_under_sustained_load() {
         }
     }
 
+    // Let every member finish applying before asking whether anything is left
+    // over. `register` returns once the member that served it has the entry
+    // applied and locally visible; the other two are still replicating, and
+    // raft promises only that a committed entry reaches them eventually. So a
+    // follower can be mid-apply at the moment the loop drains it, drain fewer
+    // events than it will ultimately produce, and push the remainder a moment
+    // later -- leaving a queue that is not empty even though nothing is wrong.
+    //
+    // Measured, rather than assumed: with the members' `last_applied` sampled
+    // at the instant each was drained, every observed residue was a follower
+    // that had been drained while still behind the final commit index (95 or
+    // 96 against a committed 97), and the serving member was caught up every
+    // time. Waiting for the cluster to quiesce and draining once more asserts
+    // the property the test is named for -- nothing is *retained* -- instead
+    // of accidentally asserting that replication had already finished.
+    let applied_everything = until(|| {
+        let committed = cluster
+            .backends
+            .iter()
+            .map(|backend| backend.node().commit_index())
+            .max()
+            .unwrap_or(0);
+        cluster.backends.iter().all(|backend| {
+            backend.node().commit_index() == committed && backend.node().last_applied() == committed
+        })
+    })
+    .await;
+    assert!(
+        applied_everything,
+        "the members never finished applying the entries they had committed",
+    );
+    for backend in &cluster.backends {
+        drop(backend.registry().drain_commits());
+    }
+
     // The high water is cumulative -- it is not reset between rounds -- so the
     // property is that it settled rather than tracked the total.
     let settled = peaks.last().copied().unwrap_or(0);
