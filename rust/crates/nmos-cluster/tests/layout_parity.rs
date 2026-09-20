@@ -231,3 +231,49 @@ fn the_bind_address_is_not_part_of_the_identity() {
          that listen on different local addresses refuse each other",
     );
 }
+
+#[test]
+fn the_topology_constants_agree_with_the_python() {
+    // Values neither implementation computes, so nothing else would catch a
+    // drift between them. `DEFAULT_CERTIFICATE_NAME` is the one that matters
+    // most: it is one string doing three jobs -- the gRPC target-name override
+    // the etcd client verifies against, etcd's own allowed-hostname check, and
+    // the raft transport's equivalent -- and a drifted copy leaves one side
+    // accepting certificates the other rejects, silently, until a mixed
+    // cluster meets one.
+    //
+    // It was a bare literal in `nmos-registry-bin/src/cli.rs` until the etcd
+    // backend needed a second copy of it; lifting it here is what made this
+    // assertion possible.
+    let corpus = corpus();
+    let constants = &corpus["constants"];
+
+    assert_eq!(
+        constants["default_certificate_name"].as_str(),
+        Some(nmos_cluster::DEFAULT_CERTIFICATE_NAME),
+    );
+    assert_eq!(
+        constants["default_client_port"].as_u64(),
+        Some(u64::from(nmos_cluster::DEFAULT_CLIENT_PORT)),
+    );
+    assert_eq!(
+        constants["default_peer_port"].as_u64(),
+        Some(u64::from(nmos_cluster::DEFAULT_PEER_PORT)),
+    );
+    assert_eq!(
+        constants["member_name_prefix"].as_str(),
+        Some(nmos_cluster::MEMBER_NAME_PREFIX),
+    );
+    let sizes: Vec<u64> = constants["permitted_sizes"]
+        .as_array()
+        .expect("permitted_sizes")
+        .iter()
+        .map(|value| value.as_u64().expect("a size"))
+        .collect();
+    let mut ours: Vec<u64> = nmos_cluster::PERMITTED_SIZES
+        .iter()
+        .map(|size| *size as u64)
+        .collect();
+    ours.sort_unstable();
+    assert_eq!(sizes, ours);
+}

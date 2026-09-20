@@ -34,6 +34,11 @@ from pathlib import Path
 from typing import Any
 
 from nmos.cluster.layout import (
+    DEFAULT_CERTIFICATE_NAME,
+    DEFAULT_CLIENT_PORT,
+    DEFAULT_PEER_PORT,
+    MEMBER_NAME_PREFIX,
+    PERMITTED_SIZES,
     ClusterConfigError,
     MemberSpec,
     derive_cluster,
@@ -304,7 +309,22 @@ def build() -> dict[str, Any]:
             "one that only refuses would pass against an implementation that "
             "refuses everything",
         )
-    return {"cases": cases}
+    return {
+        # The topology constants, so the two implementations cannot disagree
+        # about a value neither of them computes. `DEFAULT_CERTIFICATE_NAME` in
+        # particular is one string doing three jobs -- the gRPC target-name
+        # override, etcd's allowed-hostname check and the raft transport's --
+        # and a drifted copy would leave one side accepting certificates the
+        # other rejects, with nothing failing until a mixed cluster met one.
+        "constants": {
+            "default_client_port": DEFAULT_CLIENT_PORT,
+            "default_peer_port": DEFAULT_PEER_PORT,
+            "member_name_prefix": MEMBER_NAME_PREFIX,
+            "default_certificate_name": DEFAULT_CERTIFICATE_NAME,
+            "permitted_sizes": sorted(PERMITTED_SIZES),
+        },
+        "cases": cases,
+    }
 
 
 def main() -> None:

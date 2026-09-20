@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -77,6 +78,53 @@ async def _settled(cluster: Cluster) -> None:
     await asyncio.sleep(FAST.heartbeat)
 
 
+async def _cluster_with_a_quiet_follower(
+    tmp_path: Path, *, timing: Any = FAST,
+) -> Cluster:
+    """A live cluster whose ``members[1]`` hears nothing but what a test sends.
+
+    Every test in this module drives that member by hand, as a follower
+    receiving synthetic ``AppendEntries``. Without this, the other two members
+    are *also* running for real, and the test is racing them.
+
+    That race was not theoretical. The full gate failed on
+    ``test_applied_never_runs_past_committed_as_commit_advances`` roughly once
+    a run while passing in isolation every time, and instrumenting the
+    follower showed exactly why::
+
+        from=0 term=1 prev=9 lc=9 entries=0 commit 5->9   <- the test
+        from=2 term=3 prev=1 lc=0 entries=1 commit 9->9   <- a real leader
+
+    Member 2 had won a genuine election at term 3. From that moment the test's
+    term-1 messages were stale and ignored, so the commit index stopped
+    following what the test asked for -- and in the other direction, a real
+    leader that replicates first moves the commit index to somewhere the test
+    never set. Measured at 8 failures in 30 runs under load, 0 in 30 without
+    it.
+
+    Isolating the member makes the premise true instead of hoping the timing
+    preserves it. Two properties make that sound, both measured rather than
+    assumed:
+
+    * an isolated member **cannot raise its own term** -- pre-vote refuses to
+      advance a term it cannot win a quorum for, so it sits at the term it
+      started with through ten election timeouts while the others reach term 2.
+      The test's ``follower.term + 1`` therefore stays above it for the whole
+      test;
+    * the applier under test is entirely local, so isolating the member
+      removes nothing the tests are about.
+
+    Isolation is applied after ``start`` because that is when members attach to
+    the network; doing it earlier would find no handlers and silently do
+    nothing. There is no gap: ``start`` returns and this runs with no await in
+    between, so no message can be delivered in the window.
+    """
+    cluster = Cluster(3, tmp_path, timing=timing)
+    await cluster.start()
+    cluster.network.isolate(1)
+    return cluster
+
+
 class TestTheInvariantIsAssertedNotAssumed:
     """The bound is enforced; this is what happens if some other path breaks it.
 
@@ -91,8 +139,7 @@ class TestTheInvariantIsAssertedNotAssumed:
     async def test_an_impossible_applied_index_is_refused(
         self, tmp_path: Path,
     ) -> None:
-        cluster = Cluster(3, tmp_path, timing=FAST)
-        await cluster.start()
+        cluster = await _cluster_with_a_quiet_follower(tmp_path)
         try:
             node = cluster.members[1].node
             # Reach past the fix to the state it exists to prevent.
@@ -106,8 +153,7 @@ class TestTheInvariantIsAssertedNotAssumed:
     async def test_an_impossible_commit_index_is_refused(
         self, tmp_path: Path,
     ) -> None:
-        cluster = Cluster(3, tmp_path, timing=FAST)
-        await cluster.start()
+        cluster = await _cluster_with_a_quiet_follower(tmp_path)
         try:
             node = cluster.members[1].node
             node._commit_index = 99  # noqa: SLF001
@@ -128,8 +174,7 @@ class TestTheInvariantIsAssertedNotAssumed:
         the invariant still broken -- a silent failure wearing the costume of a
         handled one.
         """
-        cluster = Cluster(3, tmp_path, timing=FAST)
-        await cluster.start()
+        cluster = await _cluster_with_a_quiet_follower(tmp_path)
         try:
             node = cluster.members[1].node
             node._machine._last_applied = 5  # noqa: SLF001
@@ -160,8 +205,7 @@ class TestTheApplierStopsAtTheCommitIndex:
         Ten entries are replicated with ``leader_commit`` at three. The follower
         must apply exactly three, however large its apply batch is.
         """
-        cluster = Cluster(3, tmp_path, timing=FAST)
-        await cluster.start()
+        cluster = await _cluster_with_a_quiet_follower(tmp_path)
         try:
             follower = cluster.members[1].node
             term = follower.term + 1
@@ -205,8 +249,7 @@ class TestTheApplierStopsAtTheCommitIndex:
         looks correct at rest and was wrong in between -- and in between is when
         a client can read it.
         """
-        cluster = Cluster(3, tmp_path, timing=FAST)
-        await cluster.start()
+        cluster = await _cluster_with_a_quiet_follower(tmp_path)
         try:
             follower = cluster.members[1].node
             term = follower.term + 1
@@ -265,8 +308,7 @@ class TestTheApplierStopsAtTheCommitIndex:
                 "max_apply_batch": 2,
             },
         )
-        cluster = Cluster(3, tmp_path, timing=timing)
-        await cluster.start()
+        cluster = await _cluster_with_a_quiet_follower(tmp_path, timing=timing)
         try:
             follower = cluster.members[1].node
             term = follower.term + 1

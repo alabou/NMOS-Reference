@@ -250,9 +250,14 @@ pub struct Args {
     pub raft_trusted_root_ca: Vec<String>,
 
     /// The shared SAN every peer is verified against.
+    ///
+    /// The default comes from `nmos-cluster` rather than being spelled here:
+    /// the etcd backend verifies against the same shipped certificate set
+    /// under its own flag name, and two literals that drifted would leave one
+    /// side accepting certificates the other rejects.
     #[arg(
         long = "raftCertificateName",
-        default_value = "Example.Company.Device.Etcd.ABC.example.com"
+        default_value = nmos_cluster::DEFAULT_CERTIFICATE_NAME
     )]
     pub raft_certificate_name: String,
 
@@ -271,6 +276,113 @@ pub struct Args {
     /// Overall deadline for one registration to commit, in seconds.
     #[arg(long = "raftMutationTimeout", default_value_t = 7.0)]
     pub raft_mutation_timeout: f64,
+
+    // --- Distributed Registry (etcd) --------------------------------------
+    //
+    // Seventeen flags, spelled exactly as `nmos_registry.py` spells them.
+    // They are the whole of what the etcd backend is configured with, and the
+    // acceptance criterion for M10 in its most literal form: when these work
+    // as they do in Python, a deployment can move between implementations
+    // without touching its command line.
+    /// Comma-separated etcd client endpoints.
+    ///
+    /// Normally derived from the member list; required with `--etcdExternal`.
+    #[arg(long = "etcdEndpoints", default_value = "")]
+    pub etcd_endpoints: String,
+
+    /// Do not manage an etcd process; connect to one managed elsewhere.
+    ///
+    /// Implied, and required, on native Windows.
+    #[arg(long = "etcdExternal", default_value_t = false)]
+    pub etcd_external: bool,
+
+    /// etcd executable (POSIX only).
+    ///
+    /// Defaults to the repo-local `.etcd/etcd` from `./install-etcd.sh`, else
+    /// `etcd` on PATH.
+    #[arg(long = "etcdBinary", default_value = "")]
+    pub etcd_binary: String,
+
+    /// Persistent etcd data directory (POSIX only). Never deleted by the
+    /// registry.
+    #[arg(long = "etcdDataDir", default_value = "/var/lib/nmos-registry/etcd")]
+    pub etcd_data_dir: String,
+
+    /// ONE-TIME cluster initialization (POSIX only).
+    ///
+    /// Refused if the data directory is non-empty. Remove the flag after the
+    /// cluster is formed.
+    #[arg(long = "etcdBootstrap", default_value_t = false)]
+    pub etcd_bootstrap: bool,
+
+    /// etcd key namespace.
+    ///
+    /// Part of the cluster token, so two deployments on the same hosts cannot
+    /// merge.
+    #[arg(long = "etcdNamespace", default_value = "/nmos-reference/registry/v1")]
+    pub etcd_namespace: String,
+
+    /// etcd client port (clear of etcd's own 2379 default).
+    #[arg(long = "etcdClientPort", default_value_t = nmos_cluster::DEFAULT_CLIENT_PORT)]
+    pub etcd_client_port: u16,
+
+    /// etcd peer port (clear of etcd's own 2380 default).
+    #[arg(long = "etcdPeerPort", default_value_t = nmos_cluster::DEFAULT_PEER_PORT)]
+    pub etcd_peer_port: u16,
+
+    /// Shared etcd certificate (`*.etcd.chain.pem`).
+    ///
+    /// One certificate serves all four roles -- client listener, peer
+    /// listener, outbound peer, and this registry's client connection --
+    /// which is what its dual serverAuth+clientAuth EKU is for.
+    #[arg(long = "etcdCertificate", default_value = "")]
+    pub etcd_certificate: String,
+
+    /// Private key for `--etcdCertificate`.
+    #[arg(long = "etcdKey", default_value = "")]
+    pub etcd_key: String,
+
+    /// Trusted root CA for etcd client and peer verification. May be repeated.
+    #[arg(long = "etcdTrustedRootCA")]
+    pub etcd_trusted_root_ca: Vec<String>,
+
+    /// Shared SAN every member is verified against.
+    ///
+    /// Used as the gRPC target-name override AND as etcd's
+    /// `--client/peer-cert-allowed-hostname`, which is what stops an ordinary
+    /// device certificate from the same Product CA writing to the registry
+    /// database.
+    #[arg(
+        long = "etcdCertificateName",
+        default_value = nmos_cluster::DEFAULT_CERTIFICATE_NAME
+    )]
+    pub etcd_certificate_name: String,
+
+    /// CRL for etcd client certificates.
+    ///
+    /// Independent of `--gcrl`, which covers the Registration and Query
+    /// listeners.
+    #[arg(long = "etcdClientCrlFile", default_value = "")]
+    pub etcd_client_crl_file: String,
+
+    /// CRL for etcd peer certificates.
+    #[arg(long = "etcdPeerCrlFile", default_value = "")]
+    pub etcd_peer_crl_file: String,
+
+    /// Disable TLS to and between etcd members.
+    ///
+    /// TESTING ONLY -- the etcd database holds every registration.
+    #[arg(long = "etcdDisableTLS", default_value_t = false)]
+    pub etcd_disable_tls: bool,
+
+    /// Per-RPC deadline in seconds.
+    #[arg(long = "etcdRpcTimeout", default_value_t = 2.0)]
+    pub etcd_rpc_timeout: f64,
+
+    /// Overall fence-and-retry deadline for one Registration mutation; past it
+    /// the answer is 503.
+    #[arg(long = "etcdMutationTimeout", default_value_t = 7.0)]
+    pub etcd_mutation_timeout: f64,
 }
 
 impl Args {

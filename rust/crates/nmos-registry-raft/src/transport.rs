@@ -600,9 +600,7 @@ impl RaftTransport {
                 next_request_id: AtomicU64::new(1),
                 inbound: Mutex::new(Vec::new()),
                 serving: parking_lot::Mutex::new(Vec::new()),
-                application_slots: Arc::new(tokio::sync::Semaphore::new(
-                    APPLICATION_CONCURRENCY,
-                )),
+                application_slots: Arc::new(tokio::sync::Semaphore::new(APPLICATION_CONCURRENCY)),
             }),
             bind,
             bound: Mutex::new(None),
@@ -1007,11 +1005,7 @@ impl Inner {
                 // Everything else stays synchronous and in order below, which
                 // is what keeps a term from being read and acted on across an
                 // await.
-                Arc::clone(&self).serve_application(
-                    peer,
-                    inbound,
-                    Arc::clone(&writer),
-                );
+                Arc::clone(&self).serve_application(peer, inbound, Arc::clone(&writer));
                 continue;
             }
 
@@ -1064,12 +1058,8 @@ impl Inner {
                 return;
             };
             let reply = match message {
-                Message::Propose(ref m) => {
-                    Message::ProposeReply(handler.on_propose(peer, m).await)
-                }
-                Message::Forward(ref m) => {
-                    Message::ForwardReply(handler.on_forward(peer, m).await)
-                }
+                Message::Propose(ref m) => Message::ProposeReply(handler.on_propose(peer, m).await),
+                Message::Forward(ref m) => Message::ForwardReply(handler.on_forward(peer, m).await),
                 _ => return,
             };
             let bytes = frame_for(&reply, frame.stream, true);

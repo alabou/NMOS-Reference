@@ -5,13 +5,30 @@
 
 Run it exactly as the NMOS type generator is run::
 
-    python -m nmos.etcd.generate
+    python -m nmos.etcd.generate               # both trees
+    python -m nmos.etcd.generate --lang python
+    python -m nmos.etcd.generate --lang rust
 
-Output goes to ``nmos/etcd/generated/`` and **is committed**, mirroring
-``nmos/types/generated/`` which is also tracked. That is a deliberate choice:
-someone trying the distributed registry then needs only
-``pip install -r requirements-etcd.txt`` and ``./install-etcd.sh``, with no
-codegen step and no need to understand the build.
+Output goes to ``nmos/etcd/generated/`` and
+``rust/crates/nmos-etcd/src/generated/``, and **both are committed**, mirroring
+``nmos/types/generated/`` and ``nmos-types/src/generated/`` which are also
+tracked. That is a deliberate choice: someone trying the distributed registry
+then needs only ``pip install -r requirements-etcd.txt`` and
+``./install-etcd.sh``, with no codegen step and no need to understand the build
+-- and someone building only the Rust needs no Python at all.
+
+Two emitters, one input
+-----------------------
+The vendored protos are stripped **once**, by ``strip_proto`` below, into one
+staging directory that both emitters read. One committed input, two peer
+emitters, neither derived from the other's output -- the same arrangement
+``nmos/codegen/`` uses for the NMOS type model, and for the same reason: it is
+what makes "two implementations, one wire contract" structural rather than a
+matter of remembering to run both.
+
+There is deliberately **one** stripper. A second would drift, and a drifted
+stripper silently drops a field -- which is a client writing subtly wrong
+records into the registry database, not a build error.
 
 Committed generated code can go stale against its source, so ``generate()``
 stamps the package with a digest of the vendored protos and
@@ -53,12 +70,15 @@ and starts writing subtly wrong records into the registry database.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
+import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
 
 # --------------------------------------------------------------------------
@@ -68,6 +88,14 @@ from pathlib import Path
 PACKAGE_DIR = Path(__file__).resolve().parent
 PROTO_DIR = PACKAGE_DIR / "proto"
 OUTPUT_DIR = PACKAGE_DIR / "generated"
+
+REPO_ROOT = PACKAGE_DIR.parents[1]
+RUST_OUTPUT_DIR = (
+    REPO_ROOT / "rust" / "crates" / "nmos-etcd" / "src" / "generated"
+)
+RUST_CODEGEN_MANIFEST = (
+    REPO_ROOT / "rust" / "crates" / "nmos-etcd-codegen" / "Cargo.toml"
+)
 
 # Compiled in this order only for readable logs; protoc resolves imports itself.
 PROTO_FILES = ("kv.proto", "auth.proto", "rpc.proto")
@@ -325,28 +353,70 @@ def _rewrite_imports_to_package(path: Path) -> None:
         path.write_text(rewritten, encoding="utf-8")
 
 
-def generate() -> None:
-    """Strip the vendored protos and compile them into ``generated/``."""
-    if not PROTO_DIR.is_dir():
-        raise SystemExit(f"missing vendored protos: {PROTO_DIR}")
+def bundled_protoc() -> Path:
+    """The ``protoc`` grpcio-tools ships, as a standalone executable.
 
+    The Rust emitter runs ``protoc`` itself rather than going through
+    ``grpc_tools``, so it needs a path rather than a Python module. grpcio-tools
+    installs exactly that alongside the interpreter, which is why regenerating
+    the Rust needs nothing a contributor does not already have for the Python.
+    """
+    candidate = Path(sys.executable).parent / "python-grpc-tools-protoc"
+    if not candidate.is_file():
+        raise SystemExit(
+            f"cannot find the protoc grpcio-tools ships ({candidate}).\n"
+            f"  pip install -r requirements-etcd.txt",
+        )
+    return candidate
+
+
+def _run_rust_codegen(staged_dir: Path) -> None:
+    """Hand the stripped protos to the Rust emitter.
+
+    Deliberately a second *emitter* and not a second *stripper*. There is one
+    stripper -- ``strip_proto`` above -- and it runs before either language is
+    generated, because a stripper implemented twice drifts, and a drifted
+    stripper silently drops a field from the wire contract.
+
+    The emitter is its own cargo workspace, excluded from the registry's, so
+    ``prost-build``'s dependencies are not compiled by every ordinary build.
+    """
+    if not RUST_CODEGEN_MANIFEST.is_file():
+        raise SystemExit(
+            f"missing the Rust emitter: {RUST_CODEGEN_MANIFEST}",
+        )
+    cargo = shutil.which("cargo")
+    if cargo is None:
+        raise SystemExit(
+            "cargo is not on PATH, so the Rust stubs cannot be regenerated.\n"
+            "  . \"$HOME/.cargo/env\"\n"
+            "Or regenerate only the Python with --lang python; the committed "
+            "Rust tree is unaffected until the protos change.",
+        )
+    command = [
+        cargo, "run", "--quiet",
+        "--manifest-path", str(RUST_CODEGEN_MANIFEST),
+        "--",
+        str(staged_dir), str(RUST_OUTPUT_DIR), proto_fingerprint(),
+    ]
+    result = subprocess.run(
+        command,
+        text=True,
+        env={**os.environ, "PROTOC": str(bundled_protoc())},
+    )
+    if result.returncode != 0:
+        raise SystemExit(f"the Rust emitter failed ({result.returncode})")
+
+
+def _generate_python(staged_dir: Path) -> None:
+    """Compile the staged protos into ``nmos/etcd/generated/``."""
     # A stale file from a previous etcd version would keep importing cleanly and
     # silently shadow the new contract, so the directory is rebuilt each time.
     if OUTPUT_DIR.exists():
         shutil.rmtree(OUTPUT_DIR)
     OUTPUT_DIR.mkdir(parents=True)
 
-    with tempfile.TemporaryDirectory(prefix="nmos-etcd-proto-") as staging:
-        staged_dir = Path(staging)
-        for name in PROTO_FILES:
-            source = PROTO_DIR / name
-            if not source.is_file():
-                raise SystemExit(f"missing vendored proto: {source}")
-            stripped = strip_proto(
-                source.read_text(encoding="utf-8"), source.name,
-            )
-            (staged_dir / name).write_text(stripped, encoding="utf-8")
-        _run_protoc(staged_dir)
+    _run_protoc(staged_dir)
 
     (OUTPUT_DIR / "__init__.py").write_text(
         _INIT_TEMPLATE.format(fingerprint=proto_fingerprint()),
@@ -361,5 +431,53 @@ def generate() -> None:
         print(f"  {name}")
 
 
+def generate(*, languages: Sequence[str] = ("python", "rust")) -> None:
+    """Strip the vendored protos once, then emit each requested language.
+
+    The stripping happens **once**, into one staging directory both emitters
+    read. That is the shape ``nmos/codegen/generate.py`` already uses for the
+    NMOS type model, and it is what makes "two implementations, one wire
+    contract" structural rather than a matter of remembering to run both.
+    """
+    if not PROTO_DIR.is_dir():
+        raise SystemExit(f"missing vendored protos: {PROTO_DIR}")
+
+    with tempfile.TemporaryDirectory(prefix="nmos-etcd-proto-") as staging:
+        staged_dir = Path(staging)
+        for name in PROTO_FILES:
+            source = PROTO_DIR / name
+            if not source.is_file():
+                raise SystemExit(f"missing vendored proto: {source}")
+            stripped = strip_proto(
+                source.read_text(encoding="utf-8"), source.name,
+            )
+            (staged_dir / name).write_text(stripped, encoding="utf-8")
+
+        if "python" in languages:
+            _generate_python(staged_dir)
+        if "rust" in languages:
+            _run_rust_codegen(staged_dir)
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--lang",
+        choices=("python", "rust", "both"),
+        default="both",
+        help=(
+            "which emitter to run (default: both). Both trees are committed "
+            "and must be regenerated together: a fingerprint recorded in one "
+            "and not the other is what the cross-tree test refuses."
+        ),
+    )
+    args = parser.parse_args(argv)
+    languages = ("python", "rust") if args.lang == "both" else (args.lang,)
+    generate(languages=languages)
+
+
 if __name__ == "__main__":
-    generate()
+    main()

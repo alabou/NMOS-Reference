@@ -73,10 +73,12 @@ pub mod decode;
 pub mod engine;
 pub mod enums;
 pub mod error;
+pub mod repr;
 pub mod spans;
 pub mod validators;
 pub mod value;
 
 pub use enums::EnumId;
 pub use error::{Error, ErrorKind, Result};
+pub use repr::{py_repr, py_repr_str};
 pub use value::{Hyperlink, Nullable, RawJson, Tags, Tai};

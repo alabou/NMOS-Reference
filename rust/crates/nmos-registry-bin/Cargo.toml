@@ -21,6 +21,8 @@ nmos-registry = { path = "../nmos-registry" }
 nmos-registry-core = { path = "../nmos-registry-core" }
 nmos-registry-http = { path = "../nmos-registry-http" }
 nmos-registry-backend = { path = "../nmos-registry-backend" }
+nmos-etcd = { path = "../nmos-etcd" }
+nmos-registry-etcd = { path = "../nmos-registry-etcd" }
 nmos-registry-raft = { path = "../nmos-registry-raft" }
 nmos-cluster = { path = "../nmos-cluster" }
 clap = { workspace = true }

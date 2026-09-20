@@ -86,6 +86,33 @@ pub fn member_spans(source: &str) -> Result<IndexMap<String, &str>> {
     Ok(out)
 }
 
+/// Whether `source` is one complete JSON document, by `json.loads`' rules.
+///
+/// Stands in for `JsonEngine.parse_any` where a caller needs the verdict and
+/// not the value -- to tell "this is not JSON at all" from "this is JSON, but
+/// not the shape I need", which are different things to say to an operator.
+///
+/// It has to be *these* rules rather than `serde_json::from_str(..).is_ok()`,
+/// for two reasons that both reach real values:
+///
+/// * `NaN`, `Infinity` and `-Infinity` are accepted here and by Python, and
+///   refused by `serde_json`. A stored body containing one exists today.
+/// * Trailing content after the value is refused here and by Python
+///   (`Extra data`), so `[1] x` is not a document either way.
+///
+/// Leading and trailing whitespace are allowed, exactly as `json.loads`
+/// allows them.
+#[must_use]
+pub fn is_json_document(source: &str) -> bool {
+    let mut scanner = Scanner::new(source);
+    scanner.skip_whitespace();
+    if scanner.scan_any().is_err() {
+        return false;
+    }
+    scanner.skip_whitespace();
+    scanner.index == source.len()
+}
+
 /// The exact source text of one member's value, or `None` when absent.
 ///
 /// # Errors
@@ -610,5 +637,67 @@ mod tests {
         // inside another member invisible here.
         let source = r#"{"a": {"data": 1}, "data": 2}"#;
         assert_eq!(member_text(source, "data").unwrap(), Some("2"));
+    }
+
+    #[test]
+    fn a_document_is_one_complete_value_by_json_loads_rules() {
+        for source in [
+            "{}",
+            r#"{"a": 1}"#,
+            "[1, 2]",
+            "7",
+            "-7.5e3",
+            r#""text""#,
+            "null",
+            "true",
+            "  [1]  ",
+            "\n\t{}\r\n",
+        ] {
+            assert!(is_json_document(source), "{source:?} should be a document");
+        }
+    }
+
+    #[test]
+    fn pythons_three_non_json_literals_are_documents_here() {
+        // The whole reason this exists rather than a `serde_json` round trip.
+        // `json.loads` accepts all three, nested as well as bare, and a stored
+        // body containing one exists today.
+        for source in [
+            "NaN",
+            "Infinity",
+            "-Infinity",
+            "[NaN]",
+            "[1, Infinity]",
+            r#"[[{"a": NaN}]]"#,
+            r#"{"n": -Infinity}"#,
+        ] {
+            assert!(is_json_document(source), "{source:?} should be a document");
+            assert!(
+                serde_json::from_str::<serde_json::Value>(source).is_err(),
+                "{source:?} is the case serde_json disagrees about, and it did not",
+            );
+        }
+    }
+
+    #[test]
+    fn trailing_content_is_extra_data_and_not_a_document() {
+        // `json.loads` raises `Extra data`. Nothing may follow the value but
+        // whitespace.
+        for source in ["[1] x", "7 7", "{} {}", r#""a" "b""#, "nullx"] {
+            assert!(
+                !is_json_document(source),
+                "{source:?} should not be a document",
+            );
+        }
+    }
+
+    #[test]
+    fn nothing_at_all_is_not_a_document() {
+        for source in ["", "   ", "\n", "{", "[1,", "tru"] {
+            assert!(
+                !is_json_document(source),
+                "{source:?} should not be a document",
+            );
+        }
     }
 }

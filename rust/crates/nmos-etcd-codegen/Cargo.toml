@@ -1,0 +1,33 @@
+# The etcd proto -> Rust emitter.
+#
+# **Deliberately its own workspace, not a member of the one above.** It exists
+# to be *run* on demand, not built: `prost-build` and `tonic-build` pull in a
+# compiler's worth of dependencies, and making every `cargo build --workspace`
+# resolve and compile them would tax every developer for a step almost nobody
+# runs. `nmos/etcd/generated/` is committed for exactly the same reason.
+#
+# Driven by `python -m nmos.etcd.generate --lang rust`, which strips the
+# vendored protos with the one authoritative stripper and hands the result
+# here. Do not invoke this directly: the stripping is not optional, and a
+# generation that skipped it would compile etcd's build annotations into the
+# client.
+[workspace]
+
+[package]
+name = "nmos-etcd-codegen"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "Apache-2.0"
+authors = ["Alain Bouchard"]
+publish = false
+
+[dependencies]
+# `prost-build` alone, not `tonic-build`. Only the **messages** are generated;
+# the RPCs are written out explicitly in `nmos-etcd`'s channel, naming each
+# method path, which is the same decision `nmos/etcd/generate.py` records for
+# the Python and for the same reason: this client is meant to be a small,
+# audited set of RPCs rather than a generic passthrough. Generating service
+# stubs would give it an API surface covering every RPC etcd has, including the
+# ones the registry must never call.
+prost-build = "0.14"

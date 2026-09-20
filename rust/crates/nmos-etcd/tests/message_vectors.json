@@ -1,0 +1,221 @@
+{
+  "cases": [
+    {
+      "encoded_hex": "0888ef99abc5e88c91111080febbefcdf9aed5990118b283f9e60f2007",
+      "message": "ResponseHeader",
+      "name": "ResponseHeader",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "0a132f6e6d6f732f6e6f6465732f6e312f73656c66100b181620212a1e7b226964223a20226e31222c20226c6162656c223a2022636166c3a9227d30de81b7dde09bf0d60b",
+      "message": "KeyValue",
+      "name": "KeyValue",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "080112450a132f6e6d6f732f6e6f6465732f6e312f73656c66100b181620212a1e7b226964223a20226e31222c20226c6162656c223a2022636166c3a9227d30de81b7dde09bf0d60b1a330a132f6e6d6f732f6e6f6465732f6e312f73656c66100b181520202a0c7b226964223a20226e31227d30de81b7dde09bf0d60b",
+      "message": "Event",
+      "name": "Event",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "0a0c2f6e6d6f732f6e6f6465732f120c2f6e6d6f732f6e6f6465733018f40320633801500158e807",
+      "message": "RangeRequest",
+      "name": "RangeRequest",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "0a1d0888ef99abc5e88c91111080febbefcdf9aed5990118b283f9e60f200712450a132f6e6d6f732f6e6f6465732f6e312f73656c66100b181620212a1e7b226964223a20226e31222c20226c6162656c223a2022636166c3a9227d30de81b7dde09bf0d60b12330a132f6e6d6f732f6e6f6465732f6e312f73656c66100b181520202a0c7b226964223a20226e31227d30de81b7dde09bf0d60b18012002",
+      "message": "RangeResponse",
+      "name": "RangeResponse",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "0a0c2f6e6d6f732f6964732f6e3112046e6f646518959aef3a2001",
+      "message": "PutRequest",
+      "name": "PutRequest",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "0a0f2f6e6d6f732f6e6f6465732f6e312f120f2f6e6d6f732f6e6f6465732f6e31301801",
+      "message": "DeleteRangeRequest",
+      "name": "DeleteRangeRequest",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "0a1d0888ef99abc5e88c91111080febbefcdf9aed5990118b283f9e60f200710071a330a132f6e6d6f732f6e6f6465732f6e312f73656c66100b181520202a0c7b226964223a20226e31227d30de81b7dde09bf0d60b",
+      "message": "DeleteRangeResponse",
+      "name": "DeleteRangeResponse",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "10021a132f6e6d6f732f6e6f6465732f6e312f73656c663016",
+      "message": "Compare",
+      "name": "Compare",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "08011a0c2f6e6d6f732f6964732f6e312003",
+      "message": "Compare",
+      "name": "Compare/version",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "080310011a0c2f6e6d6f732f6964732f6e312805",
+      "message": "Compare",
+      "name": "Compare/create",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "080210031a0c2f6e6d6f732f6964732f6e313a046e6f6465",
+      "message": "Compare",
+      "name": "Compare/value",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "10041a132f6e6d6f732f6e6f6465732f6e312f73656c6640959aef3a",
+      "message": "Compare",
+      "name": "Compare/lease",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "121b0a0c2f6e6d6f732f6964732f6e3112046e6f646518959aef3a2001",
+      "message": "RequestOp",
+      "name": "RequestOp/put",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "0a280a0c2f6e6d6f732f6e6f6465732f120c2f6e6d6f732f6e6f6465733018f40320633801500158e807",
+      "message": "RequestOp",
+      "name": "RequestOp/range",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "1a240a0f2f6e6d6f732f6e6f6465732f6e312f120f2f6e6d6f732f6e6f6465732f6e31301801",
+      "message": "RequestOp",
+      "name": "RequestOp/delete",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "0a660a1d0888ef99abc5e88c91111080febbefcdf9aed5990118b283f9e60f200712450a132f6e6d6f732f6e6f6465732f6e312f73656c66100b181620212a1e7b226964223a20226e31222c20226c6162656c223a2022636166c3a9227d30de81b7dde09bf0d60b",
+      "message": "ResponseOp",
+      "name": "ResponseOp/range",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "12540a1d0888ef99abc5e88c91111080febbefcdf9aed5990118b283f9e60f200712330a132f6e6d6f732f6e6f6465732f6e312f73656c66100b181520202a0c7b226964223a20226e31227d30de81b7dde09bf0d60b",
+      "message": "ResponseOp",
+      "name": "ResponseOp/put",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "0a1910021a132f6e6d6f732f6e6f6465732f6e312f73656c663016121d121b0a0c2f6e6d6f732f6964732f6e3112046e6f646518959aef3a20011a2a0a280a0c2f6e6d6f732f6e6f6465732f120c2f6e6d6f732f6e6f6465733018f40320633801500158e807",
+      "message": "TxnRequest",
+      "name": "TxnRequest",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "0a1d0888ef99abc5e88c91111080febbefcdf9aed5990118b283f9e60f200710011a21121f0a1d0888ef99abc5e88c91111080febbefcdf9aed5990118b283f9e60f2007",
+      "message": "TxnResponse",
+      "name": "TxnResponse",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "0a062f6e6d6f732f12062f6e6d6f733018922120012a010030013809",
+      "message": "WatchCreateRequest",
+      "name": "WatchCreateRequest",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "0a130a062f6e6d6f732f12062f6e6d6f7330189221",
+      "message": "WatchRequest",
+      "name": "WatchRequest/create",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "1a00",
+      "message": "WatchRequest",
+      "name": "WatchRequest/progress",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "0a1d0888ef99abc5e88c91111080febbefcdf9aed5990118b283f9e60f20071009200128a01f3236657463647365727665723a206d7663633a207265717569726564207265766973696f6e20686173206265656e20636f6d7061637465645a4712450a132f6e6d6f732f6e6f6465732f6e312f73656c66100b181620212a1e7b226964223a20226e31222c20226c6162656c223a2022636166c3a9227d30de81b7dde09bf0d60b",
+      "message": "WatchResponse",
+      "name": "WatchResponse",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "081e108906",
+      "message": "LeaseGrantRequest",
+      "name": "LeaseGrantRequest",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "0a1d0888ef99abc5e88c91111080febbefcdf9aed5990118b283f9e60f2007108906181e",
+      "message": "LeaseGrantResponse",
+      "name": "LeaseGrantResponse",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "088906",
+      "message": "LeaseKeepAliveRequest",
+      "name": "LeaseKeepAliveRequest",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "0a1d0888ef99abc5e88c91111080febbefcdf9aed5990118b283f9e60f2007108906181d",
+      "message": "LeaseKeepAliveResponse",
+      "name": "LeaseKeepAliveResponse",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "088906",
+      "message": "LeaseRevokeRequest",
+      "name": "LeaseRevokeRequest",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "0a1d0888ef99abc5e88c91111080febbefcdf9aed5990118b283f9e60f2007",
+      "message": "LeaseRevokeResponse",
+      "name": "LeaseRevokeResponse",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "0889061001",
+      "message": "LeaseTimeToLiveRequest",
+      "name": "LeaseTimeToLiveRequest",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "0a1d0888ef99abc5e88c91111080febbefcdf9aed5990118b283f9e60f20071089061819201e2a132f6e6d6f732f6e6f6465732f6e312f73656c66",
+      "message": "LeaseTimeToLiveResponse",
+      "name": "LeaseTimeToLiveResponse",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "08a01f1001",
+      "message": "CompactionRequest",
+      "name": "CompactionRequest",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "0a1d0888ef99abc5e88c91111080febbefcdf9aed5990118b283f9e60f2007",
+      "message": "CompactionResponse",
+      "name": "CompactionResponse",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "0a1d0888ef99abc5e88c91111080febbefcdf9aed5990118b283f9e60f20071206332e362e3134188080402080febbefcdf9aed5990128ab04300738aa04421061207265636f72646564206572726f7248808020",
+      "message": "StatusResponse",
+      "name": "StatusResponse",
+      "round_trips": true
+    },
+    {
+      "encoded_hex": "0a1d0888ef99abc5e88c91111080febbefcdf9aed5990118b283f9e60f200712470880febbefcdf9aed5990112086d656d6265722d301a1768747470733a2f2f3132372e302e302e313a3232333830221768747470733a2f2f3132372e302e302e313a3232333739",
+      "message": "MemberListResponse",
+      "name": "MemberListResponse",
+      "round_trips": true
+    }
+  ],
+  "proto_fingerprint": "35c9ee6f6fe01a01a0e93a4a73e02e02b841e2444d0d9af9b23af74bf5b9cac1"
+}

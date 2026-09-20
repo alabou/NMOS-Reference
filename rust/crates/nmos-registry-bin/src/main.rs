@@ -18,9 +18,11 @@ use clap::Parser as _;
 use nmos_registry_bin::listen::{context_for, serve_maybe_tls};
 use nmos_registry_bin::{as_client, cert_check, cli, identity, logging, tls};
 
+use nmos_etcd::supervisor::{EtcdSupervisor, SupervisorConfig};
 use nmos_registry::registry::Registry;
 use nmos_registry_backend::RegistryBackend;
 use nmos_registry_core::store::RegistryStore;
+use nmos_registry_etcd::EtcdRegistryBackend;
 use nmos_registry_http::jwks_cache;
 use nmos_registry_http::oauth2::SharedJwks;
 use nmos_registry_http::security::InterfaceSecurity;
@@ -75,18 +77,60 @@ async fn main() -> std::io::Result<()> {
             std::process::exit(1);
         }
     };
+    // One seam, two storage layers. The routers, the subscriptions and the
+    // Query path are identical whichever is chosen -- which is the whole point
+    // of `RegistryBackend`, and why this is the only place that branches.
+    // Two handles rather than one, because only the raft arm has a node to
+    // report on. Both are started in the same place below; what differs is
+    // what there is to say about them once they are.
+    let mut etcd_backend: Option<Arc<EtcdRegistryBackend>> = None;
+    let mut etcd_supervisor: Option<Arc<EtcdSupervisor>> = None;
     let consensus = match cluster {
         None => None,
-        Some(config) => match build_consensus(&config, &assembly.registry) {
-            Ok(backend) => {
-                assembly.backend = Arc::clone(&backend) as Arc<dyn RegistryBackend>;
-                Some(backend)
+        Some(nmos_registry_bin::distributed::Cluster::Raft(config)) => {
+            match build_consensus(&config, &assembly.registry) {
+                Ok(backend) => {
+                    assembly.backend = Arc::clone(&backend) as Arc<dyn RegistryBackend>;
+                    Some(backend)
+                }
+                Err(error) => {
+                    eprintln!("CONFIG: {error}");
+                    std::process::exit(1);
+                }
             }
-            Err(error) => {
-                eprintln!("CONFIG: {error}");
-                std::process::exit(1);
+        }
+        Some(nmos_registry_bin::distributed::Cluster::Etcd(config)) => {
+            // A managed member is brought up before the backend connects to
+            // it. `--etcdExternal` skips this entirely: the cluster is someone
+            // else's, and this registry is a client of it and nothing more.
+            if config.manages_process() {
+                let mut supervisor_config = SupervisorConfig::new(
+                    config.layout.clone(),
+                    config.binary.clone(),
+                    config.data_dir.clone(),
+                );
+                supervisor_config.bootstrap = config.bootstrap;
+                supervisor_config.tls = config.tls;
+                supervisor_config.certificate = config.certificate.clone();
+                supervisor_config.key = config.key.clone();
+                supervisor_config.trusted_root_ca = config.trusted_root_ca.clone();
+                supervisor_config.certificate_name = config.certificate_name.clone();
+                supervisor_config.client_crl_file = config.client_crl_file.clone();
+                supervisor_config.peer_crl_file = config.peer_crl_file.clone();
+                etcd_supervisor = Some(Arc::new(EtcdSupervisor::new(supervisor_config)));
             }
-        },
+            match EtcdRegistryBackend::new(Arc::clone(&assembly.registry), *config) {
+                Ok(backend) => {
+                    assembly.backend = Arc::clone(&backend) as Arc<dyn RegistryBackend>;
+                    etcd_backend = Some(backend);
+                    None
+                }
+                Err(error) => {
+                    eprintln!("CONFIG: {error}");
+                    std::process::exit(1);
+                }
+            }
+        }
     };
 
     // TR-10-SEC:105 forbids the Registration API from requiring OAuth 2.0, so
@@ -269,6 +313,39 @@ async fn main() -> std::io::Result<()> {
         );
     }
 
+    // The member first, then the backend that talks to it. A supervisor
+    // that adopts rather than launches does almost nothing here, which is the
+    // recommended production shape: etcd under systemd, registry adopting it,
+    // so a registry restart costs one reconnect instead of a member
+    // leave/rejoin.
+    if let Some(ref supervisor) = etcd_supervisor {
+        match supervisor.start().await {
+            Ok(ownership) => tracing::info!(
+                ownership = ownership.as_str(),
+                "registry: local etcd member ready",
+            ),
+            Err(error) => {
+                eprintln!("CONFIG: the local etcd member did not start: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // Same placement, same reason: the storage layer has to be consistent
+    // before the Registration API answers anything but 503, and the listeners
+    // are already bound so a peer that arrives now finds one.
+    if let Some(ref backend) = etcd_backend {
+        if let Err(error) = backend.start().await {
+            eprintln!("CONFIG: the etcd backend did not start: {error}");
+            std::process::exit(1);
+        }
+        tracing::info!(
+            namespace = %backend.namespace().prefix(),
+            applied = %backend.applied_revision(),
+            "registry: etcd backend started",
+        );
+    }
+
     let matcher = tokio::spawn(matcher_task(
         Arc::clone(&assembly.registry),
         Arc::clone(&assembly.subscriptions),
@@ -283,18 +360,75 @@ async fn main() -> std::io::Result<()> {
         Arc::clone(&assembly.subscriptions),
     ));
 
-    let result = tokio::try_join!(
-        serve_maybe_tls(registration, registration_context, apps.registration),
-        serve_maybe_tls(query, query_context.clone(), apps.query),
-        serve_maybe_tls(websocket, query_context, apps.websocket),
-    );
+    // Serve until a listener fails or a shutdown signal arrives.
+    //
+    // Without the signal arm the listeners run until the process is killed
+    // outright, and everything below -- including stopping a managed etcd --
+    // never runs. `nmos_registry.py:1108` installs the same two handlers for
+    // the same reason. Found the hard way: a Ctrl-C'd run left an orphaned
+    // etcd holding the client port and the data-directory lock, which is
+    // precisely what `EtcdSupervisor`'s ownership rule exists to prevent.
+    let result = tokio::select! {
+        served = async {
+            tokio::try_join!(
+                serve_maybe_tls(registration, registration_context, apps.registration),
+                serve_maybe_tls(query, query_context.clone(), apps.query),
+                serve_maybe_tls(websocket, query_context, apps.websocket),
+            )
+        } => served.map(|((), (), ())| ()),
+        () = shutdown_signal() => {
+            tracing::info!("registry: shutting down");
+            Ok(())
+        }
+    };
     matcher.abort();
     collector.abort();
     status.abort();
     if let Some(jwks) = jwks {
         jwks.abort();
     }
-    result.map(|((), (), ())| ())
+
+    // Stop what we started, and never what we adopted. Terminating a
+    // self-launched child is what keeps a Ctrl-C'd development run from
+    // orphaning a process that still holds the client port and the
+    // data-directory lock; leaving an adopted one alone is what keeps a
+    // registry restart from taking a service-managed etcd down with it. The
+    // supervisor decides which, from how it came to be talking to the member.
+    if let Some(supervisor) = etcd_supervisor {
+        supervisor.stop().await;
+    }
+
+    result
+}
+
+/// Resolves when the process is asked to stop.
+///
+/// SIGINT and SIGTERM, the same pair `nmos_registry.py` handles. Both
+/// matter: SIGINT is a development Ctrl-C and SIGTERM is what a service
+/// manager sends, and a managed etcd must be stopped in either case.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut terminate = match signal(SignalKind::terminate()) {
+            Ok(stream) => stream,
+            Err(error) => {
+                // Without a SIGTERM stream the Ctrl-C arm still works, so
+                // this degrades rather than failing the process.
+                tracing::warn!("registry: cannot listen for SIGTERM: {error}");
+                drop(tokio::signal::ctrl_c().await);
+                return;
+            }
+        };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = terminate.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        drop(tokio::signal::ctrl_c().await);
+    }
 }
 
 /// The flags the distributed resolver reads, lifted out of the parsed CLI.
@@ -326,9 +460,25 @@ fn distributed_flags(args: &cli::Args) -> nmos_registry_bin::distributed::Distri
         registry_listeners_are_tls: !args.registry_disable_tls
             && !args.registry_certificate.is_empty()
             && !args.registry_key.is_empty(),
-        // Nothing to collect: this build has no etcd flags to be given. The
-        // field stays so that adding them later cannot forget the refusal.
-        etcd_flags_given: Vec::new(),
+        etcd: nmos_registry_bin::distributed::EtcdFlags {
+            endpoints: args.etcd_endpoints.clone(),
+            external: args.etcd_external,
+            binary: args.etcd_binary.clone(),
+            data_dir: args.etcd_data_dir.clone(),
+            bootstrap: args.etcd_bootstrap,
+            namespace: args.etcd_namespace.clone(),
+            client_port: args.etcd_client_port,
+            peer_port: args.etcd_peer_port,
+            certificate: args.etcd_certificate.clone(),
+            key: args.etcd_key.clone(),
+            trusted_root_ca: args.etcd_trusted_root_ca.clone(),
+            certificate_name: args.etcd_certificate_name.clone(),
+            client_crl_file: args.etcd_client_crl_file.clone(),
+            peer_crl_file: args.etcd_peer_crl_file.clone(),
+            disable_tls: args.etcd_disable_tls,
+            rpc_timeout: args.etcd_rpc_timeout,
+            mutation_timeout: args.etcd_mutation_timeout,
+        },
     }
 }
 

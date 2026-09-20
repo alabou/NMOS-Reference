@@ -1,5 +1,12 @@
 # Build output. Disposable, like __pycache__/ and .mypy_cache/ elsewhere in
 # this repo. Generated *code* is the exception and IS committed -- see the Code
-# Generation section of CLAUDE.md -- so crates/nmos-types/src/generated/ is
-# deliberately not listed here.
+# Generation section of CLAUDE.md -- so crates/nmos-types/src/generated/ and
+# crates/nmos-etcd/src/generated/ are deliberately not listed here.
 /target
+
+# The proto emitter is its own cargo workspace, excluded from the one above so
+# that `prost-build`'s dependencies are not compiled by every ordinary build.
+# Its own build output is disposable on the same terms; its Cargo.lock is
+# committed, because a tool that emits committed code should emit the same
+# thing next year as it does today.
+/crates/nmos-etcd-codegen/target

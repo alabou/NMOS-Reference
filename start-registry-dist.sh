@@ -25,16 +25,14 @@
 set -Eeuo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# The Rust registry deliberately defers the etcd backend, so this launcher has
-# no --rust. Sourced anyway, so that passing it says why rather than failing on
-# an unrecognised flag as if it were a typo.
+# `--rust` runs the Rust registry against the same etcd cluster, with the same
+# flags. Both implementations speak one wire contract and one key layout, so a
+# member of either kind can join a rig of the other -- which is what makes a
+# mixed cluster a test rather than a thought experiment.
 REGISTRY_RUNTIME_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$REGISTRY_RUNTIME_DIR/registry-runtime.sh"
 registry_select_runtime "$@"
 set -- "${REGISTRY_ARGS[@]}"
-registry_reject_rust "The Rust registry has no etcd backend yet, so it cannot \
-serve this rig. Use start-registry-raft.sh --rust for a distributed Rust \
-registry, or drop --rust to run the Python one here."
 
 INDEX="${1:-0}"
 MEMBERS="${2:-3}"
@@ -64,7 +62,8 @@ echo "  Query        : http://127.0.0.1:${QUERY_PORT}/x-nmos/query/v1.3/"
 echo "  etcd         : ${ENDPOINTS}"
 echo
 
-exec "$PYTHON" nmos_registry.py \
+registry_runtime_command "$PYTHON" nmos_registry.py
+exec "${REGISTRY_CMD[@]}" \
     --registryDisableTLS \
     --registryAddr 127.0.0.1 \
     --registrationPort "$REG_PORT" \

@@ -20,12 +20,10 @@
 //!
 //! # The distributed flags
 //!
-//! Thirty-three of the sixty configure the raft and etcd backends, which land
-//! in M8 and M9 with the backends themselves. They are listed in [`DEFERRED`]
-//! rather than ignored by a rule, so the test fails in *both* directions: a new
-//! Python flag that nothing here implements, and an implemented flag still
-//! sitting on the deferred list. When the backends land the list empties and
-//! the check becomes total.
+//! Thirty-three of the sixty configure the raft and etcd backends. They landed
+//! with the backends themselves -- raft in M9, etcd in M10 -- and [`DEFERRED`]
+//! is now **empty**, so this check is total: every flag Python accepts, this
+//! binary accepts, with the same arity and the same choices.
 
 // Test code is exempt from the panic-free lints the workspace denies.
 #![allow(
@@ -62,30 +60,14 @@ struct Flag {
 /// filtering on the group keeps the check honest: renaming a group in Python
 /// would silently widen a filter, whereas a name that disappears from Python
 /// fails here.
-const DEFERRED: &[&str] = &[
-    // Distributed Registry (etcd). Deferred as a whole -- decision #10 of the
-    // port plan -- so every flag naming it is here. They are not silently
-    // ignored: `--distributedBackend etcd` is refused with a message saying the
-    // backend is not built in this implementation, which is the property the
-    // Python's own "refused, never reinterpreted" rule exists to guarantee.
-    "--etcdBinary",
-    "--etcdBootstrap",
-    "--etcdCertificate",
-    "--etcdCertificateName",
-    "--etcdClientCrlFile",
-    "--etcdClientPort",
-    "--etcdDataDir",
-    "--etcdDisableTLS",
-    "--etcdEndpoints",
-    "--etcdExternal",
-    "--etcdKey",
-    "--etcdMutationTimeout",
-    "--etcdNamespace",
-    "--etcdPeerCrlFile",
-    "--etcdPeerPort",
-    "--etcdRpcTimeout",
-    "--etcdTrustedRootCA",
-];
+/// Flags Python accepts that this binary does not.
+///
+/// **Empty, and that is the point.** It held the seventeen `--etcd*` flags
+/// while the etcd backend was deferred; M10 implemented them, so the list
+/// emptied and this check is now total in both directions: a new Python flag
+/// nothing here implements fails, and so does a flag re-listed here after it
+/// was implemented.
+const DEFERRED: &[&str] = &[];
 
 fn corpus() -> Corpus {
     serde_json::from_str(include_str!("cli_flags.json")).expect("cli_flags.json parses")

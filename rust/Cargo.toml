@@ -23,6 +23,8 @@ members = [
     "crates/nmos-registry-backend",
     "crates/nmos-registry-testkit",
     "crates/nmos-registry-raft",
+    "crates/nmos-etcd",
+    "crates/nmos-registry-etcd",
     "crates/nmos-registry-http",
     "crates/nmos-registry-bin",
 ]

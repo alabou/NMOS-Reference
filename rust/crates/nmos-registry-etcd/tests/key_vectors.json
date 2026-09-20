@@ -1,0 +1,2577 @@
+{
+  "cases": [
+    {
+      "accepted": true,
+      "kind": "namespace",
+      "name": "/nmos",
+      "prefix": "/nmos"
+    },
+    {
+      "accepted": true,
+      "kind": "namespace",
+      "name": "/a/b",
+      "prefix": "/a/b"
+    },
+    {
+      "accepted": true,
+      "kind": "namespace",
+      "name": "/x",
+      "prefix": "/x"
+    },
+    {
+      "accepted": true,
+      "kind": "namespace",
+      "name": "/nmos-registry",
+      "prefix": "/nmos-registry"
+    },
+    {
+      "accepted": true,
+      "kind": "namespace",
+      "name": "/ns with space",
+      "prefix": "/ns with space"
+    },
+    {
+      "accepted": true,
+      "kind": "namespace",
+      "name": "/ns'quote",
+      "prefix": "/ns'quote"
+    },
+    {
+      "accepted": true,
+      "kind": "namespace",
+      "name": "/ns\"double",
+      "prefix": "/ns\"double"
+    },
+    {
+      "accepted": true,
+      "kind": "namespace",
+      "name": "/caf\u00e9",
+      "prefix": "/caf\u00e9"
+    },
+    {
+      "accepted": false,
+      "kind": "namespace",
+      "message": "namespace must start with '/': 'nmos'",
+      "name": "nmos",
+      "prefix": "nmos"
+    },
+    {
+      "accepted": false,
+      "kind": "namespace",
+      "message": "namespace must not end with '/': '/nmos/'",
+      "name": "/nmos/",
+      "prefix": "/nmos/"
+    },
+    {
+      "accepted": false,
+      "kind": "namespace",
+      "message": "namespace must not end with '/': '/'",
+      "name": "/",
+      "prefix": "/"
+    },
+    {
+      "accepted": false,
+      "kind": "namespace",
+      "message": "namespace must start with '/': ''",
+      "name": "",
+      "prefix": ""
+    },
+    {
+      "accepted": false,
+      "kind": "namespace",
+      "message": "namespace must start with '/': 'nmos/'",
+      "name": "nmos/",
+      "prefix": "nmos/"
+    },
+    {
+      "accepted": false,
+      "kind": "namespace",
+      "message": "namespace must not end with '/': '//'",
+      "name": "//",
+      "prefix": "//"
+    },
+    {
+      "accepted": false,
+      "kind": "namespace",
+      "message": "namespace must not end with '/': '/a/b/'",
+      "name": "/a/b/",
+      "prefix": "/a/b/"
+    },
+    {
+      "accepted": false,
+      "kind": "namespace",
+      "message": "namespace must start with '/': ' /nmos'",
+      "name": " /nmos",
+      "prefix": " /nmos"
+    },
+    {
+      "accepted": true,
+      "kind": "namespace",
+      "name": "/nmos\n",
+      "prefix": "/nmos\n"
+    },
+    {
+      "accepted": false,
+      "kind": "namespace",
+      "message": "namespace must start with '/': \"ns'quote\"",
+      "name": "ns'quote",
+      "prefix": "ns'quote"
+    },
+    {
+      "accepted": false,
+      "kind": "namespace",
+      "message": "namespace must not end with '/': \"/ns'quote/\"",
+      "name": "/ns'quote/",
+      "prefix": "/ns'quote/"
+    },
+    {
+      "accepted": false,
+      "kind": "namespace",
+      "message": "namespace must start with '/': 'ns\"double'",
+      "name": "ns\"double",
+      "prefix": "ns\"double"
+    },
+    {
+      "accepted": false,
+      "kind": "namespace",
+      "message": "namespace must start with '/': 'ns\\'both\"'",
+      "name": "ns'both\"",
+      "prefix": "ns'both\""
+    },
+    {
+      "accepted": false,
+      "kind": "namespace",
+      "message": "namespace must start with '/': 'ns\\nnewline'",
+      "name": "ns\nnewline",
+      "prefix": "ns\nnewline"
+    },
+    {
+      "accepted": false,
+      "kind": "namespace",
+      "message": "namespace must start with '/': 'ns\\tab'",
+      "name": "ns\tab",
+      "prefix": "ns\tab"
+    },
+    {
+      "accepted": false,
+      "kind": "namespace",
+      "message": "namespace must start with '/': 'ns\\\\back'",
+      "name": "ns\\back",
+      "prefix": "ns\\back"
+    },
+    {
+      "accepted": false,
+      "kind": "namespace",
+      "message": "namespace must start with '/': 'ns\\x00nul'",
+      "name": "ns\u0000nul",
+      "prefix": "ns\u0000nul"
+    },
+    {
+      "accepted": false,
+      "kind": "namespace",
+      "message": "namespace must start with '/': 'nscaf\u00e9'",
+      "name": "nscaf\u00e9",
+      "prefix": "nscaf\u00e9"
+    },
+    {
+      "args": [],
+      "call": "root",
+      "key_hex": "2f6e6d6f732f",
+      "kind": "key",
+      "name": "root",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [],
+      "call": "meta_config",
+      "key_hex": "2f6e6d6f732f6d6574612f636f6e666967",
+      "kind": "key",
+      "name": "meta_config",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [],
+      "call": "ids_root",
+      "key_hex": "2f6e6d6f732f6964732f",
+      "kind": "key",
+      "name": "ids_root",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [],
+      "call": "nodes_root",
+      "key_hex": "2f6e6d6f732f6e6f6465732f",
+      "kind": "key",
+      "name": "nodes_root",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "3b8be755-08ff-452b-b217-c9151eb21193"
+      ],
+      "call": "id_claim",
+      "key_hex": "2f6e6d6f732f6964732f33623862653735352d303866662d343532622d623231372d633931353165623231313933",
+      "kind": "key",
+      "name": "id_claim#0",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "3b8be755-08ff-452b-b217-c9151eb21193"
+      ],
+      "call": "node",
+      "key_hex": "2f6e6d6f732f6e6f6465732f33623862653735352d303866662d343532622d623231372d6339313531656232313139332f73656c66",
+      "kind": "key",
+      "name": "node#0",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "3b8be755-08ff-452b-b217-c9151eb21193"
+      ],
+      "call": "node_subtree",
+      "key_hex": "2f6e6d6f732f6e6f6465732f33623862653735352d303866662d343532622d623231372d6339313531656232313139332f",
+      "kind": "key",
+      "name": "node_subtree#0",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "n1",
+        "3b8be755-08ff-452b-b217-c9151eb21193"
+      ],
+      "call": "device",
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f33623862653735352d303866662d343532622d623231372d6339313531656232313139332f73656c66",
+      "kind": "key",
+      "name": "device#0",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "n1",
+        "3b8be755-08ff-452b-b217-c9151eb21193"
+      ],
+      "call": "device_subtree",
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f33623862653735352d303866662d343532622d623231372d6339313531656232313139332f",
+      "kind": "key",
+      "name": "device_subtree#0",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "n1"
+      ],
+      "call": "id_claim",
+      "key_hex": "2f6e6d6f732f6964732f6e31",
+      "kind": "key",
+      "name": "id_claim#1",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "n1"
+      ],
+      "call": "node",
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f73656c66",
+      "kind": "key",
+      "name": "node#1",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "n1"
+      ],
+      "call": "node_subtree",
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f",
+      "kind": "key",
+      "name": "node_subtree#1",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "n1",
+        "n1"
+      ],
+      "call": "device",
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f6e312f73656c66",
+      "kind": "key",
+      "name": "device#1",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "n1",
+        "n1"
+      ],
+      "call": "device_subtree",
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f6e312f",
+      "kind": "key",
+      "name": "device_subtree#1",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        ""
+      ],
+      "call": "id_claim",
+      "key_hex": "2f6e6d6f732f6964732f",
+      "kind": "key",
+      "name": "id_claim#2",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        ""
+      ],
+      "call": "node",
+      "key_hex": "2f6e6d6f732f6e6f6465732f2f73656c66",
+      "kind": "key",
+      "name": "node#2",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        ""
+      ],
+      "call": "node_subtree",
+      "key_hex": "2f6e6d6f732f6e6f6465732f2f",
+      "kind": "key",
+      "name": "node_subtree#2",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "n1",
+        ""
+      ],
+      "call": "device",
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f2f73656c66",
+      "kind": "key",
+      "name": "device#2",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "n1",
+        ""
+      ],
+      "call": "device_subtree",
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f2f",
+      "kind": "key",
+      "name": "device_subtree#2",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "a/b"
+      ],
+      "call": "id_claim",
+      "key_hex": "2f6e6d6f732f6964732f612f62",
+      "kind": "key",
+      "name": "id_claim#3",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "a/b"
+      ],
+      "call": "node",
+      "key_hex": "2f6e6d6f732f6e6f6465732f612f622f73656c66",
+      "kind": "key",
+      "name": "node#3",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "a/b"
+      ],
+      "call": "node_subtree",
+      "key_hex": "2f6e6d6f732f6e6f6465732f612f622f",
+      "kind": "key",
+      "name": "node_subtree#3",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "n1",
+        "a/b"
+      ],
+      "call": "device",
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f612f622f73656c66",
+      "kind": "key",
+      "name": "device#3",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "n1",
+        "a/b"
+      ],
+      "call": "device_subtree",
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f612f622f",
+      "kind": "key",
+      "name": "device_subtree#3",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "self"
+      ],
+      "call": "id_claim",
+      "key_hex": "2f6e6d6f732f6964732f73656c66",
+      "kind": "key",
+      "name": "id_claim#4",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "self"
+      ],
+      "call": "node",
+      "key_hex": "2f6e6d6f732f6e6f6465732f73656c662f73656c66",
+      "kind": "key",
+      "name": "node#4",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "self"
+      ],
+      "call": "node_subtree",
+      "key_hex": "2f6e6d6f732f6e6f6465732f73656c662f",
+      "kind": "key",
+      "name": "node_subtree#4",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "n1",
+        "self"
+      ],
+      "call": "device",
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f73656c662f73656c66",
+      "kind": "key",
+      "name": "device#4",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "n1",
+        "self"
+      ],
+      "call": "device_subtree",
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f73656c662f",
+      "kind": "key",
+      "name": "device_subtree#4",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "devices"
+      ],
+      "call": "id_claim",
+      "key_hex": "2f6e6d6f732f6964732f64657669636573",
+      "kind": "key",
+      "name": "id_claim#5",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "devices"
+      ],
+      "call": "node",
+      "key_hex": "2f6e6d6f732f6e6f6465732f646576696365732f73656c66",
+      "kind": "key",
+      "name": "node#5",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "devices"
+      ],
+      "call": "node_subtree",
+      "key_hex": "2f6e6d6f732f6e6f6465732f646576696365732f",
+      "kind": "key",
+      "name": "node_subtree#5",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "n1",
+        "devices"
+      ],
+      "call": "device",
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f646576696365732f73656c66",
+      "kind": "key",
+      "name": "device#5",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "n1",
+        "devices"
+      ],
+      "call": "device_subtree",
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f646576696365732f",
+      "kind": "key",
+      "name": "device_subtree#5",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "caf\u00e9"
+      ],
+      "call": "id_claim",
+      "key_hex": "2f6e6d6f732f6964732f636166c3a9",
+      "kind": "key",
+      "name": "id_claim#6",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "caf\u00e9"
+      ],
+      "call": "node",
+      "key_hex": "2f6e6d6f732f6e6f6465732f636166c3a92f73656c66",
+      "kind": "key",
+      "name": "node#6",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "caf\u00e9"
+      ],
+      "call": "node_subtree",
+      "key_hex": "2f6e6d6f732f6e6f6465732f636166c3a92f",
+      "kind": "key",
+      "name": "node_subtree#6",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "n1",
+        "caf\u00e9"
+      ],
+      "call": "device",
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f636166c3a92f73656c66",
+      "kind": "key",
+      "name": "device#6",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "n1",
+        "caf\u00e9"
+      ],
+      "call": "device_subtree",
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f636166c3a92f",
+      "kind": "key",
+      "name": "device_subtree#6",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "id with space"
+      ],
+      "call": "id_claim",
+      "key_hex": "2f6e6d6f732f6964732f69642077697468207370616365",
+      "kind": "key",
+      "name": "id_claim#7",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "id with space"
+      ],
+      "call": "node",
+      "key_hex": "2f6e6d6f732f6e6f6465732f696420776974682073706163652f73656c66",
+      "kind": "key",
+      "name": "node#7",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "id with space"
+      ],
+      "call": "node_subtree",
+      "key_hex": "2f6e6d6f732f6e6f6465732f696420776974682073706163652f",
+      "kind": "key",
+      "name": "node_subtree#7",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "n1",
+        "id with space"
+      ],
+      "call": "device",
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f696420776974682073706163652f73656c66",
+      "kind": "key",
+      "name": "device#7",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "n1",
+        "id with space"
+      ],
+      "call": "device_subtree",
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f696420776974682073706163652f",
+      "kind": "key",
+      "name": "device_subtree#7",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "node",
+        "n1",
+        "d1",
+        "r1"
+      ],
+      "call": "child",
+      "kind": "key",
+      "message": "node has its own key function",
+      "name": "child/node",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "device",
+        "n1",
+        "d1",
+        "r1"
+      ],
+      "call": "child",
+      "kind": "key",
+      "message": "device has its own key function",
+      "name": "child/device",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "source",
+        "n1",
+        "d1",
+        "r1"
+      ],
+      "call": "child",
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f64312f736f75726365732f7231",
+      "kind": "key",
+      "name": "child/source",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "flow",
+        "n1",
+        "d1",
+        "r1"
+      ],
+      "call": "child",
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f64312f666c6f77732f7231",
+      "kind": "key",
+      "name": "child/flow",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "sender",
+        "n1",
+        "d1",
+        "r1"
+      ],
+      "call": "child",
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f64312f73656e646572732f7231",
+      "kind": "key",
+      "name": "child/sender",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [
+        "receiver",
+        "n1",
+        "d1",
+        "r1"
+      ],
+      "call": "child",
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f64312f7265636569766572732f7231",
+      "kind": "key",
+      "name": "child/receiver",
+      "prefix": "/nmos"
+    },
+    {
+      "args": [],
+      "call": "root",
+      "key_hex": "2f612f622f",
+      "kind": "key",
+      "name": "root@/a/b",
+      "prefix": "/a/b"
+    },
+    {
+      "args": [
+        "n1"
+      ],
+      "call": "node",
+      "key_hex": "2f612f622f6e6f6465732f6e312f73656c66",
+      "kind": "key",
+      "name": "node@/a/b",
+      "prefix": "/a/b"
+    },
+    {
+      "args": [
+        "sender",
+        "n1",
+        "d1",
+        "s1"
+      ],
+      "call": "child",
+      "key_hex": "2f612f622f6e6f6465732f6e312f646576696365732f64312f73656e646572732f7331",
+      "kind": "key",
+      "name": "child@/a/b",
+      "prefix": "/a/b"
+    },
+    {
+      "args": [],
+      "call": "root",
+      "key_hex": "2f782f",
+      "kind": "key",
+      "name": "root@/x",
+      "prefix": "/x"
+    },
+    {
+      "args": [
+        "n1"
+      ],
+      "call": "node",
+      "key_hex": "2f782f6e6f6465732f6e312f73656c66",
+      "kind": "key",
+      "name": "node@/x",
+      "prefix": "/x"
+    },
+    {
+      "args": [
+        "sender",
+        "n1",
+        "d1",
+        "s1"
+      ],
+      "call": "child",
+      "key_hex": "2f782f6e6f6465732f6e312f646576696365732f64312f73656e646572732f7331",
+      "kind": "key",
+      "name": "child@/x",
+      "prefix": "/x"
+    },
+    {
+      "args": [],
+      "call": "root",
+      "key_hex": "2f636166c3a92f",
+      "kind": "key",
+      "name": "root@/caf\u00e9",
+      "prefix": "/caf\u00e9"
+    },
+    {
+      "args": [
+        "n1"
+      ],
+      "call": "node",
+      "key_hex": "2f636166c3a92f6e6f6465732f6e312f73656c66",
+      "kind": "key",
+      "name": "node@/caf\u00e9",
+      "prefix": "/caf\u00e9"
+    },
+    {
+      "args": [
+        "sender",
+        "n1",
+        "d1",
+        "s1"
+      ],
+      "call": "child",
+      "key_hex": "2f636166c3a92f6e6f6465732f6e312f646576696365732f64312f73656e646572732f7331",
+      "kind": "key",
+      "name": "child@/caf\u00e9",
+      "prefix": "/caf\u00e9"
+    },
+    {
+      "depth": 0,
+      "device_id": null,
+      "is_node": true,
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f73656c66",
+      "kind": "parse",
+      "name": "node",
+      "node_id": "n1",
+      "outcome": "parsed",
+      "prefix": "/nmos",
+      "resource_id": "n1",
+      "resource_type": "node"
+    },
+    {
+      "depth": 1,
+      "device_id": "d1",
+      "is_node": false,
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f64312f73656c66",
+      "kind": "parse",
+      "name": "device",
+      "node_id": "n1",
+      "outcome": "parsed",
+      "prefix": "/nmos",
+      "resource_id": "d1",
+      "resource_type": "device"
+    },
+    {
+      "key_hex": "2f6e6d6f732f6d6574612f636f6e666967",
+      "kind": "parse",
+      "name": "meta_config",
+      "outcome": "ignored",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f6964732f6e31",
+      "kind": "parse",
+      "name": "id_claim",
+      "outcome": "ignored",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f",
+      "kind": "parse",
+      "message": "unrecognised key section '': '/nmos/'",
+      "name": "root",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f6e6f6465732f",
+      "kind": "parse",
+      "message": "malformed resource key: '/nmos/nodes/'",
+      "name": "nodes_root",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f6964732f",
+      "kind": "parse",
+      "name": "ids_root",
+      "outcome": "ignored",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f",
+      "kind": "parse",
+      "message": "malformed resource key: '/nmos/nodes/n1/'",
+      "name": "node_subtree",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f64312f",
+      "kind": "parse",
+      "message": "malformed resource key: '/nmos/nodes/n1/devices/d1/'",
+      "name": "device_subtree",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "depth": 2,
+      "device_id": "d1",
+      "is_node": false,
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f64312f736f75726365732f7231",
+      "kind": "parse",
+      "name": "child/source",
+      "node_id": "n1",
+      "outcome": "parsed",
+      "prefix": "/nmos",
+      "resource_id": "r1",
+      "resource_type": "source"
+    },
+    {
+      "depth": 2,
+      "device_id": "d1",
+      "is_node": false,
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f64312f666c6f77732f7231",
+      "kind": "parse",
+      "name": "child/flow",
+      "node_id": "n1",
+      "outcome": "parsed",
+      "prefix": "/nmos",
+      "resource_id": "r1",
+      "resource_type": "flow"
+    },
+    {
+      "depth": 2,
+      "device_id": "d1",
+      "is_node": false,
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f64312f73656e646572732f7231",
+      "kind": "parse",
+      "name": "child/sender",
+      "node_id": "n1",
+      "outcome": "parsed",
+      "prefix": "/nmos",
+      "resource_id": "r1",
+      "resource_type": "sender"
+    },
+    {
+      "depth": 2,
+      "device_id": "d1",
+      "is_node": false,
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f64312f7265636569766572732f7231",
+      "kind": "parse",
+      "name": "child/receiver",
+      "node_id": "n1",
+      "outcome": "parsed",
+      "prefix": "/nmos",
+      "resource_id": "r1",
+      "resource_type": "receiver"
+    },
+    {
+      "key_hex": "2f6f746865722f6e6f6465732f6e312f73656c66",
+      "kind": "parse",
+      "message": "key outside namespace '/nmos': '/other/nodes/n1/self'",
+      "name": "outside",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f73582f6e6f6465732f6e312f73656c66",
+      "kind": "parse",
+      "message": "key outside namespace '/nmos': '/nmosX/nodes/n1/self'",
+      "name": "prefix_extended",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f73",
+      "kind": "parse",
+      "message": "key outside namespace '/nmos': '/nmos'",
+      "name": "prefix_only",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "",
+      "kind": "parse",
+      "message": "key outside namespace '/nmos': ''",
+      "name": "empty",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f",
+      "kind": "parse",
+      "message": "key outside namespace '/nmos': '/'",
+      "name": "slash",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f7468696e67732f78",
+      "kind": "parse",
+      "message": "unrecognised key section 'things': '/nmos/things/x'",
+      "name": "unknown_section",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f6d6574612f636f6e6669672f6578747261",
+      "kind": "parse",
+      "name": "meta_nested",
+      "outcome": "ignored",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f6d657461",
+      "kind": "parse",
+      "name": "meta_bare",
+      "outcome": "ignored",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f6964732f612f62",
+      "kind": "parse",
+      "name": "ids_nested",
+      "outcome": "ignored",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f696473",
+      "kind": "parse",
+      "name": "ids_bare",
+      "outcome": "ignored",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f2f73656c66",
+      "kind": "parse",
+      "message": "unrecognised key section '': '/nmos//self'",
+      "name": "section_empty",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e31",
+      "kind": "parse",
+      "message": "malformed resource key: '/nmos/nodes/n1'",
+      "name": "node_no_self",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f6f74686572",
+      "kind": "parse",
+      "message": "malformed resource key: '/nmos/nodes/n1/other'",
+      "name": "node_wrong_leaf",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "depth": 0,
+      "device_id": null,
+      "is_node": true,
+      "key_hex": "2f6e6d6f732f6e6f6465732f2f73656c66",
+      "kind": "parse",
+      "name": "node_empty_id",
+      "node_id": "",
+      "outcome": "parsed",
+      "prefix": "/nmos",
+      "resource_id": "",
+      "resource_type": "node"
+    },
+    {
+      "key_hex": "2f6e6d6f732f6e6f646573",
+      "kind": "parse",
+      "message": "malformed resource key: '/nmos/nodes'",
+      "name": "nodes_bare",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f676164676574732f64312f73656c66",
+      "kind": "parse",
+      "message": "malformed resource key: '/nmos/nodes/n1/gadgets/d1/self'",
+      "name": "device_wrong_middle",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f64312f6f74686572",
+      "kind": "parse",
+      "message": "malformed resource key: '/nmos/nodes/n1/devices/d1/other'",
+      "name": "device_wrong_leaf",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f6431",
+      "kind": "parse",
+      "message": "malformed resource key: '/nmos/nodes/n1/devices/d1'",
+      "name": "device_no_leaf",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f64312f776964676574732f7731",
+      "kind": "parse",
+      "message": "unknown collection 'widgets' in key '/nmos/nodes/n1/devices/d1/widgets/w1'",
+      "name": "child_unknown_collection",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f64312f73656e6465722f7331",
+      "kind": "parse",
+      "message": "unknown collection 'sender' in key '/nmos/nodes/n1/devices/d1/sender/s1'",
+      "name": "child_singular_collection",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "depth": 0,
+      "device_id": "d1",
+      "is_node": true,
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f64312f6e6f6465732f78",
+      "kind": "parse",
+      "name": "child_nodes_collection",
+      "node_id": "n1",
+      "outcome": "parsed",
+      "prefix": "/nmos",
+      "resource_id": "x",
+      "resource_type": "node"
+    },
+    {
+      "depth": 1,
+      "device_id": "d1",
+      "is_node": false,
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f64312f646576696365732f78",
+      "kind": "parse",
+      "name": "child_devices_collection",
+      "node_id": "n1",
+      "outcome": "parsed",
+      "prefix": "/nmos",
+      "resource_id": "x",
+      "resource_type": "device"
+    },
+    {
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f64312f73656c662f78",
+      "kind": "parse",
+      "message": "unknown collection 'self' in key '/nmos/nodes/n1/devices/d1/self/x'",
+      "name": "child_self_collection",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f64312f2f7331",
+      "kind": "parse",
+      "message": "unknown collection '' in key '/nmos/nodes/n1/devices/d1//s1'",
+      "name": "child_empty_collection",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f64312f73656e646572732f73312f6578747261",
+      "kind": "parse",
+      "message": "malformed resource key: '/nmos/nodes/n1/devices/d1/senders/s1/extra'",
+      "name": "child_too_deep",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e312f646576696365732f64312f73656e646572732f73312f",
+      "kind": "parse",
+      "message": "malformed resource key: '/nmos/nodes/n1/devices/d1/senders/s1/'",
+      "name": "child_trailing_slash",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "depth": 0,
+      "device_id": null,
+      "is_node": true,
+      "key_hex": "2f6e6d6f732f6e6f6465732f636166c3a92f73656c66",
+      "kind": "parse",
+      "name": "node_unicode_id",
+      "node_id": "caf\u00e9",
+      "outcome": "parsed",
+      "prefix": "/nmos",
+      "resource_id": "caf\u00e9",
+      "resource_type": "node"
+    },
+    {
+      "depth": 0,
+      "device_id": null,
+      "is_node": true,
+      "key_hex": "2f6e6d6f732f6e6f6465732f6e20312f73656c66",
+      "kind": "parse",
+      "name": "node_space_id",
+      "node_id": "n 1",
+      "outcome": "parsed",
+      "prefix": "/nmos",
+      "resource_id": "n 1",
+      "resource_type": "node"
+    },
+    {
+      "key_hex": "2f6e6d6f732f7468696e67732f69742773",
+      "kind": "parse",
+      "message": "unrecognised key section 'things': \"/nmos/things/it's\"",
+      "name": "quote_in_key",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f7468696e67732f736179227822",
+      "kind": "parse",
+      "message": "unrecognised key section 'things': '/nmos/things/say\"x\"'",
+      "name": "double_quote_in_key",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f7468696e67732f6974277320227822",
+      "kind": "parse",
+      "message": "unrecognised key section 'things': '/nmos/things/it\\'s \"x\"'",
+      "name": "both_quotes_in_key",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f7468696e67732f610a62",
+      "kind": "parse",
+      "message": "unrecognised key section 'things': '/nmos/things/a\\nb'",
+      "name": "newline_in_key",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f7468696e67732f610962",
+      "kind": "parse",
+      "message": "unrecognised key section 'things': '/nmos/things/a\\tb'",
+      "name": "tab_in_key",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f7468696e67732f615c62",
+      "kind": "parse",
+      "message": "unrecognised key section 'things': '/nmos/things/a\\\\b'",
+      "name": "backslash_in_key",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f7468696e67732f610162",
+      "kind": "parse",
+      "message": "unrecognised key section 'things': '/nmos/things/a\\x01b'",
+      "name": "control_in_key",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "key_hex": "2f6e6d6f732f7468696e67732f636166c3a9",
+      "kind": "parse",
+      "message": "unrecognised key section 'things': '/nmos/things/caf\u00e9'",
+      "name": "unicode_in_refusal",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "depth": 0,
+      "device_id": null,
+      "is_node": true,
+      "key_hex": "2f6e6d6f732f6e6f6465732ffffe2f73656c66",
+      "kind": "parse",
+      "name": "not_utf8",
+      "node_id": "\ufffd\ufffd",
+      "outcome": "parsed",
+      "prefix": "/nmos",
+      "resource_id": "\ufffd\ufffd",
+      "resource_type": "node"
+    },
+    {
+      "key_hex": "fffe2f6e6f6465732f6e312f73656c66",
+      "kind": "parse",
+      "message": "key outside namespace '/nmos': '\ufffd\ufffd/nodes/n1/self'",
+      "name": "not_utf8_outside",
+      "outcome": "error",
+      "prefix": "/nmos"
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "0:0",
+      "encoded_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022303a30222c202275706461746564223a202231303a3230222c20226865616c7468223a20302c202264617461223a207b226964223a20226e31227d7d",
+      "health": 0,
+      "kind": "encode",
+      "name": "body#0",
+      "resource_type": "node",
+      "round_trips": true,
+      "updated": "10:20",
+      "version": 1
+    },
+    {
+      "body_text": "{}",
+      "created": "10:20",
+      "encoded_hex": "7b2276223a20312c202274797065223a2022646576696365222c202263726561746564223a202231303a3230222c202275706461746564223a2022313a393939393939393939222c20226865616c7468223a20312c202264617461223a207b7d7d",
+      "health": 1,
+      "kind": "encode",
+      "name": "body#1",
+      "resource_type": "device",
+      "round_trips": true,
+      "updated": "1:999999999",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\":\"n1\",\"rate\":1e3}",
+      "created": "1:999999999",
+      "encoded_hex": "7b2276223a20312c202274797065223a2022736f75726365222c202263726561746564223a2022313a393939393939393939222c202275706461746564223a2022333931333035363030303a313233343536373839222c20226865616c7468223a20313730303030303030302c202264617461223a207b226964223a226e31222c2272617465223a3165337d7d",
+      "health": 1700000000,
+      "kind": "encode",
+      "name": "body#2",
+      "resource_type": "source",
+      "round_trips": true,
+      "updated": "3913056000:123456789",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\", \"label\": \"caf\\u00e9\"}",
+      "created": "3913056000:123456789",
+      "encoded_hex": "7b2276223a20312c202274797065223a2022666c6f77222c202263726561746564223a2022333931333035363030303a313233343536373839222c202275706461746564223a2022303a30222c20226865616c7468223a202d312c202264617461223a207b226964223a20226e31222c20226c6162656c223a20226361665c7530306539227d7d",
+      "health": -1,
+      "kind": "encode",
+      "name": "body#3",
+      "resource_type": "flow",
+      "round_trips": true,
+      "updated": "0:0",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\", \"label\": \"caf\u00e9\"}",
+      "created": "0:0",
+      "encoded_hex": "7b2276223a20312c202274797065223a202273656e646572222c202263726561746564223a2022303a30222c202275706461746564223a202231303a3230222c20226865616c7468223a20393232333337323033363835343737353830372c202264617461223a207b226964223a20226e31222c20226c6162656c223a2022636166c3a9227d7d",
+      "health": 9223372036854775807,
+      "kind": "encode",
+      "name": "body#4",
+      "resource_type": "sender",
+      "round_trips": true,
+      "updated": "10:20",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\", \"n\": 1.50}",
+      "created": "10:20",
+      "encoded_hex": "7b2276223a20312c202274797065223a20227265636569766572222c202263726561746564223a202231303a3230222c202275706461746564223a2022313a393939393939393939222c20226865616c7468223a20302c202264617461223a207b226964223a20226e31222c20226e223a20312e35307d7d",
+      "health": 0,
+      "kind": "encode",
+      "name": "body#5",
+      "resource_type": "receiver",
+      "round_trips": true,
+      "updated": "1:999999999",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\", \"n\": 1000000.0}",
+      "created": "1:999999999",
+      "encoded_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a393939393939393939222c202275706461746564223a2022333931333035363030303a313233343536373839222c20226865616c7468223a20312c202264617461223a207b226964223a20226e31222c20226e223a20313030303030302e307d7d",
+      "health": 1,
+      "kind": "encode",
+      "name": "body#6",
+      "resource_type": "node",
+      "round_trips": true,
+      "updated": "3913056000:123456789",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\", \"nested\": {\"a\": [1, 2, {\"b\": null}]}}",
+      "created": "3913056000:123456789",
+      "encoded_hex": "7b2276223a20312c202274797065223a2022646576696365222c202263726561746564223a2022333931333035363030303a313233343536373839222c202275706461746564223a2022303a30222c20226865616c7468223a20313730303030303030302c202264617461223a207b226964223a20226e31222c20226e6573746564223a207b2261223a205b312c20322c207b2262223a206e756c6c7d5d7d7d7d",
+      "health": 1700000000,
+      "kind": "encode",
+      "name": "body#7",
+      "resource_type": "device",
+      "round_trips": true,
+      "updated": "0:0",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\", \"label\": \"}, \\\"data\\\": {\\\"id\\\": \\\"spoof\\\"}\"}",
+      "created": "0:0",
+      "encoded_hex": "7b2276223a20312c202274797065223a2022736f75726365222c202263726561746564223a2022303a30222c202275706461746564223a202231303a3230222c20226865616c7468223a202d312c202264617461223a207b226964223a20226e31222c20226c6162656c223a20227d2c205c22646174615c223a207b5c2269645c223a205c2273706f6f665c227d227d7d",
+      "health": -1,
+      "kind": "encode",
+      "name": "body#8",
+      "resource_type": "source",
+      "round_trips": true,
+      "updated": "10:20",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\", \"label\": \"a\\nb\\tc\"}",
+      "created": "10:20",
+      "encoded_hex": "7b2276223a20312c202274797065223a2022666c6f77222c202263726561746564223a202231303a3230222c202275706461746564223a2022313a393939393939393939222c20226865616c7468223a20393232333337323033363835343737353830372c202264617461223a207b226964223a20226e31222c20226c6162656c223a2022615c6e625c7463227d7d",
+      "health": 9223372036854775807,
+      "kind": "encode",
+      "name": "body#9",
+      "resource_type": "flow",
+      "round_trips": true,
+      "updated": "1:999999999",
+      "version": 1
+    },
+    {
+      "body_text": "{ \"id\" : \"n1\" , \"spaced\" : true }",
+      "created": "1:999999999",
+      "encoded_hex": "7b2276223a20312c202274797065223a202273656e646572222c202263726561746564223a2022313a393939393939393939222c202275706461746564223a2022333931333035363030303a313233343536373839222c20226865616c7468223a20302c202264617461223a207b2022696422203a20226e3122202c202273706163656422203a2074727565207d7d",
+      "health": 0,
+      "kind": "encode",
+      "name": "body#10",
+      "resource_type": "sender",
+      "round_trips": true,
+      "updated": "3913056000:123456789",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\", \"dup\": 1, \"dup\": 2}",
+      "created": "3913056000:123456789",
+      "encoded_hex": "7b2276223a20312c202274797065223a20227265636569766572222c202263726561746564223a2022333931333035363030303a313233343536373839222c202275706461746564223a2022303a30222c20226865616c7468223a20312c202264617461223a207b226964223a20226e31222c2022647570223a20312c2022647570223a20327d7d",
+      "health": 1,
+      "kind": "encode",
+      "name": "body#11",
+      "resource_type": "receiver",
+      "round_trips": true,
+      "updated": "0:0",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\", \"emoji\": \"\ud83d\ude00\"}",
+      "created": "0:0",
+      "encoded_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022303a30222c202275706461746564223a202231303a3230222c20226865616c7468223a20313730303030303030302c202264617461223a207b226964223a20226e31222c2022656d6f6a69223a2022f09f9880227d7d",
+      "health": 1700000000,
+      "kind": "encode",
+      "name": "body#12",
+      "resource_type": "node",
+      "round_trips": true,
+      "updated": "10:20",
+      "version": 1
+    },
+    {
+      "body_text": "{ \"id\" : \"n1\" , \"spaced\" : true }",
+      "created": "3048614886:137144118",
+      "encoded_hex": "7b2276223a20312c202274797065223a202273656e646572222c202263726561746564223a2022333034383631343838363a313337313434313138222c202275706461746564223a2022333439353934373936363a333732313933333637222c20226865616c7468223a20312c202264617461223a207b2022696422203a20226e3122202c202273706163656422203a2074727565207d7d",
+      "health": 1,
+      "kind": "encode",
+      "name": "random#0",
+      "resource_type": "sender",
+      "round_trips": true,
+      "updated": "3495947966:372193367",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\", \"n\": 1.50}",
+      "created": "90830183:776050404",
+      "encoded_hex": "7b2276223a20312c202274797065223a2022666c6f77222c202263726561746564223a202239303833303138333a373736303530343034222c202275706461746564223a2022333932313136303332373a393435313839323230222c20226865616c7468223a202d312c202264617461223a207b226964223a20226e31222c20226e223a20312e35307d7d",
+      "health": -1,
+      "kind": "encode",
+      "name": "random#1",
+      "resource_type": "flow",
+      "round_trips": true,
+      "updated": "3921160327:945189220",
+      "version": 1
+    },
+    {
+      "body_text": "{}",
+      "created": "805802656:461045760",
+      "encoded_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a20223830353830323635363a343631303435373630222c202275706461746564223a2022333630383532393831373a343036323634383937222c20226865616c7468223a202d312c202264617461223a207b7d7d",
+      "health": -1,
+      "kind": "encode",
+      "name": "random#2",
+      "resource_type": "node",
+      "round_trips": true,
+      "updated": "3608529817:406264897",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\", \"label\": \"}, \\\"data\\\": {\\\"id\\\": \\\"spoof\\\"}\"}",
+      "created": "3860196783:346816284",
+      "encoded_hex": "7b2276223a20312c202274797065223a2022666c6f77222c202263726561746564223a2022333836303139363738333a333436383136323834222c202275706461746564223a2022333531313239363433303a333832313834343533222c20226865616c7468223a202d312c202264617461223a207b226964223a20226e31222c20226c6162656c223a20227d2c205c22646174615c223a207b5c2269645c223a205c2273706f6f665c227d227d7d",
+      "health": -1,
+      "kind": "encode",
+      "name": "random#3",
+      "resource_type": "flow",
+      "round_trips": true,
+      "updated": "3511296430:382184453",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\", \"label\": \"}, \\\"data\\\": {\\\"id\\\": \\\"spoof\\\"}\"}",
+      "created": "931521661:159023732",
+      "encoded_hex": "7b2276223a20312c202274797065223a2022646576696365222c202263726561746564223a20223933313532313636313a313539303233373332222c202275706461746564223a2022313533333137353532353a363035343935393731222c20226865616c7468223a20393232333337323033363835343737353830372c202264617461223a207b226964223a20226e31222c20226c6162656c223a20227d2c205c22646174615c223a207b5c2269645c223a205c2273706f6f665c227d227d7d",
+      "health": 9223372036854775807,
+      "kind": "encode",
+      "name": "random#4",
+      "resource_type": "device",
+      "round_trips": true,
+      "updated": "1533175525:605495971",
+      "version": 1
+    },
+    {
+      "body_text": "{}",
+      "created": "2895763122:287625545",
+      "encoded_hex": "7b2276223a20312c202274797065223a202273656e646572222c202263726561746564223a2022323839353736333132323a323837363235353435222c202275706461746564223a20223737333732363932353a323336313836393632222c20226865616c7468223a20313730303030303030302c202264617461223a207b7d7d",
+      "health": 1700000000,
+      "kind": "encode",
+      "name": "random#5",
+      "resource_type": "sender",
+      "round_trips": true,
+      "updated": "773726925:236186962",
+      "version": 1
+    },
+    {
+      "body_text": "{ \"id\" : \"n1\" , \"spaced\" : true }",
+      "created": "1059920577:938169971",
+      "encoded_hex": "7b2276223a20312c202274797065223a2022646576696365222c202263726561746564223a2022313035393932303537373a393338313639393731222c202275706461746564223a2022313135333938383632303a373534323536343432222c20226865616c7468223a20302c202264617461223a207b2022696422203a20226e3122202c202273706163656422203a2074727565207d7d",
+      "health": 0,
+      "kind": "encode",
+      "name": "random#6",
+      "resource_type": "device",
+      "round_trips": true,
+      "updated": "1153988620:754256442",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "2068725842:467288408",
+      "encoded_hex": "7b2276223a20312c202274797065223a2022666c6f77222c202263726561746564223a2022323036383732353834323a343637323838343038222c202275706461746564223a2022323934313739343635333a353935323639343633222c20226865616c7468223a202d312c202264617461223a207b226964223a20226e31227d7d",
+      "health": -1,
+      "kind": "encode",
+      "name": "random#7",
+      "resource_type": "flow",
+      "round_trips": true,
+      "updated": "2941794653:595269463",
+      "version": 1
+    },
+    {
+      "body_text": "{ \"id\" : \"n1\" , \"spaced\" : true }",
+      "created": "2446757824:509385314",
+      "encoded_hex": "7b2276223a20312c202274797065223a2022736f75726365222c202263726561746564223a2022323434363735373832343a353039333835333134222c202275706461746564223a20223237333331383430393a373835343336383131222c20226865616c7468223a20302c202264617461223a207b2022696422203a20226e3122202c202273706163656422203a2074727565207d7d",
+      "health": 0,
+      "kind": "encode",
+      "name": "random#8",
+      "resource_type": "source",
+      "round_trips": true,
+      "updated": "273318409:785436811",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\", \"nested\": {\"a\": [1, 2, {\"b\": null}]}}",
+      "created": "789666278:331866134",
+      "encoded_hex": "7b2276223a20312c202274797065223a2022646576696365222c202263726561746564223a20223738393636363237383a333331383636313334222c202275706461746564223a2022313839353135333936353a363632323739353730222c20226865616c7468223a20313730303030303030302c202264617461223a207b226964223a20226e31222c20226e6573746564223a207b2261223a205b312c20322c207b2262223a206e756c6c7d5d7d7d7d",
+      "health": 1700000000,
+      "kind": "encode",
+      "name": "random#9",
+      "resource_type": "device",
+      "round_trips": true,
+      "updated": "1895153965:662279570",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "3634309538:902837596",
+      "encoded_hex": "7b2276223a20312c202274797065223a2022666c6f77222c202263726561746564223a2022333633343330393533383a393032383337353936222c202275706461746564223a2022323731343033383632353a383436343330353338222c20226865616c7468223a20393232333337323033363835343737353830372c202264617461223a207b226964223a20226e31227d7d",
+      "health": 9223372036854775807,
+      "kind": "encode",
+      "name": "random#10",
+      "resource_type": "flow",
+      "round_trips": true,
+      "updated": "2714038625:846430538",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\", \"emoji\": \"\ud83d\ude00\"}",
+      "created": "363596136:463233085",
+      "encoded_hex": "7b2276223a20312c202274797065223a2022736f75726365222c202263726561746564223a20223336333539363133363a343633323333303835222c202275706461746564223a2022313537323632363739343a343534303036353734222c20226865616c7468223a20302c202264617461223a207b226964223a20226e31222c2022656d6f6a69223a2022f09f9880227d7d",
+      "health": 0,
+      "kind": "encode",
+      "name": "random#11",
+      "resource_type": "source",
+      "round_trips": true,
+      "updated": "1572626794:454006574",
+      "version": 1
+    },
+    {
+      "body_text": "{}",
+      "created": "4169944359:593740687",
+      "encoded_hex": "7b2276223a20312c202274797065223a202273656e646572222c202263726561746564223a2022343136393934343335393a353933373430363837222c202275706461746564223a2022313139383436393634383a343930353639393931222c20226865616c7468223a20313730303030303030302c202264617461223a207b7d7d",
+      "health": 1700000000,
+      "kind": "encode",
+      "name": "random#12",
+      "resource_type": "sender",
+      "round_trips": true,
+      "updated": "1198469648:490569991",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\":\"n1\",\"rate\":1e3}",
+      "created": "3941643861:841820460",
+      "encoded_hex": "7b2276223a20312c202274797065223a2022736f75726365222c202263726561746564223a2022333934313634333836313a383431383230343630222c202275706461746564223a2022313032363432383132393a353137373330383036222c20226865616c7468223a20302c202264617461223a207b226964223a226e31222c2272617465223a3165337d7d",
+      "health": 0,
+      "kind": "encode",
+      "name": "random#13",
+      "resource_type": "source",
+      "round_trips": true,
+      "updated": "1026428129:517730806",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\", \"label\": \"caf\u00e9\"}",
+      "created": "337943275:17577191",
+      "encoded_hex": "7b2276223a20312c202274797065223a2022666c6f77222c202263726561746564223a20223333373934333237353a3137353737313931222c202275706461746564223a2022313232353639353937303a333535303137383638222c20226865616c7468223a20313730303030303030302c202264617461223a207b226964223a20226e31222c20226c6162656c223a2022636166c3a9227d7d",
+      "health": 1700000000,
+      "kind": "encode",
+      "name": "random#14",
+      "resource_type": "flow",
+      "round_trips": true,
+      "updated": "1225695970:355017868",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\", \"n\": 1000000.0}",
+      "created": "358555318:797823216",
+      "encoded_hex": "7b2276223a20312c202274797065223a20227265636569766572222c202263726561746564223a20223335383535353331383a373937383233323136222c202275706461746564223a2022333531313439313931333a373031343838333530222c20226865616c7468223a20302c202264617461223a207b226964223a20226e31222c20226e223a20313030303030302e307d7d",
+      "health": 0,
+      "kind": "encode",
+      "name": "random#15",
+      "resource_type": "receiver",
+      "round_trips": true,
+      "updated": "3511491913:701488350",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\", \"n\": 1000000.0}",
+      "created": "4047498849:107379502",
+      "encoded_hex": "7b2276223a20312c202274797065223a202273656e646572222c202263726561746564223a2022343034373439383834393a313037333739353032222c202275706461746564223a2022323235373233363931313a363938313531343633222c20226865616c7468223a20313730303030303030302c202264617461223a207b226964223a20226e31222c20226e223a20313030303030302e307d7d",
+      "health": 1700000000,
+      "kind": "encode",
+      "name": "random#16",
+      "resource_type": "sender",
+      "round_trips": true,
+      "updated": "2257236911:698151463",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\", \"dup\": 1, \"dup\": 2}",
+      "created": "2628367277:931474450",
+      "encoded_hex": "7b2276223a20312c202274797065223a202273656e646572222c202263726561746564223a2022323632383336373237373a393331343734343530222c202275706461746564223a2022333534353932303432323a323038333036383939222c20226865616c7468223a20312c202264617461223a207b226964223a20226e31222c2022647570223a20312c2022647570223a20327d7d",
+      "health": 1,
+      "kind": "encode",
+      "name": "random#17",
+      "resource_type": "sender",
+      "round_trips": true,
+      "updated": "3545920422:208306899",
+      "version": 1
+    },
+    {
+      "body_text": "{ \"id\" : \"n1\" , \"spaced\" : true }",
+      "created": "281523459:270948505",
+      "encoded_hex": "7b2276223a20312c202274797065223a2022666c6f77222c202263726561746564223a20223238313532333435393a323730393438353035222c202275706461746564223a20223136343132323438303a333134343738323935222c20226865616c7468223a20393232333337323033363835343737353830372c202264617461223a207b2022696422203a20226e3122202c202273706163656422203a2074727565207d7d",
+      "health": 9223372036854775807,
+      "kind": "encode",
+      "name": "random#18",
+      "resource_type": "flow",
+      "round_trips": true,
+      "updated": "164122480:314478295",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "4127388408:702971129",
+      "encoded_hex": "7b2276223a20312c202274797065223a202273656e646572222c202263726561746564223a2022343132373338383430383a373032393731313239222c202275706461746564223a2022313534343535373538383a363635383239373035222c20226865616c7468223a20313730303030303030302c202264617461223a207b226964223a20226e31227d7d",
+      "health": 1700000000,
+      "kind": "encode",
+      "name": "random#19",
+      "resource_type": "sender",
+      "round_trips": true,
+      "updated": "1544557588:665829705",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\", \"label\": \"caf\u00e9\"}",
+      "created": "166263766:914519920",
+      "encoded_hex": "7b2276223a20312c202274797065223a2022646576696365222c202263726561746564223a20223136363236333736363a393134353139393230222c202275706461746564223a20223837373539323031373a383630353235383030222c20226865616c7468223a20302c202264617461223a207b226964223a20226e31222c20226c6162656c223a2022636166c3a9227d7d",
+      "health": 0,
+      "kind": "encode",
+      "name": "random#20",
+      "resource_type": "device",
+      "round_trips": true,
+      "updated": "877592017:860525800",
+      "version": 1
+    },
+    {
+      "body_text": "{}",
+      "created": "2604623851:462194682",
+      "encoded_hex": "7b2276223a20312c202274797065223a202273656e646572222c202263726561746564223a2022323630343632333835313a343632313934363832222c202275706461746564223a2022333532333936373134393a313836383636353638222c20226865616c7468223a202d312c202264617461223a207b7d7d",
+      "health": -1,
+      "kind": "encode",
+      "name": "random#21",
+      "resource_type": "sender",
+      "round_trips": true,
+      "updated": "3523967149:186866568",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\", \"n\": 1.50}",
+      "created": "1939734565:984732586",
+      "encoded_hex": "7b2276223a20312c202274797065223a2022736f75726365222c202263726561746564223a2022313933393733343536353a393834373332353836222c202275706461746564223a2022333435393734383832363a373133323630383531222c20226865616c7468223a20313730303030303030302c202264617461223a207b226964223a20226e31222c20226e223a20312e35307d7d",
+      "health": 1700000000,
+      "kind": "encode",
+      "name": "random#22",
+      "resource_type": "source",
+      "round_trips": true,
+      "updated": "3459748826:713260851",
+      "version": 1
+    },
+    {
+      "body_text": "{ \"id\" : \"n1\" , \"spaced\" : true }",
+      "created": "1244291715:257850406",
+      "encoded_hex": "7b2276223a20312c202274797065223a2022736f75726365222c202263726561746564223a2022313234343239313731353a323537383530343036222c202275706461746564223a2022323230383233363139383a323232323532303435222c20226865616c7468223a202d312c202264617461223a207b2022696422203a20226e3122202c202273706163656422203a2074727565207d7d",
+      "health": -1,
+      "kind": "encode",
+      "name": "random#23",
+      "resource_type": "source",
+      "round_trips": true,
+      "updated": "2208236198:222252045",
+      "version": 1
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "1:2",
+      "health": 5,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "valid",
+      "outcome": "decoded",
+      "resource_type": "node",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "1:2",
+      "health": 5,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "type/node",
+      "outcome": "decoded",
+      "resource_type": "node",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "1:2",
+      "health": 5,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "type/device",
+      "outcome": "decoded",
+      "resource_type": "device",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20312c202274797065223a2022646576696365222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "1:2",
+      "health": 5,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "type/source",
+      "outcome": "decoded",
+      "resource_type": "source",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20312c202274797065223a2022736f75726365222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "1:2",
+      "health": 5,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "type/flow",
+      "outcome": "decoded",
+      "resource_type": "flow",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20312c202274797065223a2022666c6f77222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "1:2",
+      "health": 5,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "type/sender",
+      "outcome": "decoded",
+      "resource_type": "sender",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20312c202274797065223a202273656e646572222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "1:2",
+      "health": 5,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "type/receiver",
+      "outcome": "decoded",
+      "resource_type": "receiver",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20312c202274797065223a20227265636569766572222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no integer 'v'",
+      "name": "v_missing",
+      "outcome": "error",
+      "parity_prefix": "envelope has no integer 'v'",
+      "value_hex": "7b2274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "1:2",
+      "health": 5,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "v_zero",
+      "outcome": "decoded",
+      "resource_type": "node",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20302c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d",
+      "version": 0,
+      "version_fits_i64": true
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "1:2",
+      "health": 5,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "v_negative",
+      "outcome": "decoded",
+      "resource_type": "node",
+      "updated": "3:4",
+      "value_hex": "7b2276223a202d312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d",
+      "version": -1,
+      "version_fits_i64": true
+    },
+    {
+      "kind": "decode",
+      "message": "envelope schema version 2 is newer than this registry understands (1). Upgrade this member rather than letting it serve a partial view.",
+      "name": "v_future",
+      "outcome": "error",
+      "parity_prefix": "envelope schema version 2 is newer than this registry understands (1). Upgrade this member rather than letting it serve a partial view.",
+      "value_hex": "7b2276223a20322c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope schema version 99999999999999999999 is newer than this registry understands (1). Upgrade this member rather than letting it serve a partial view.",
+      "name": "v_far_future",
+      "outcome": "error",
+      "parity_prefix": "envelope schema version 99999999999999999999 is newer than this registry understands (1). Upgrade this member rather than letting it serve a partial view.",
+      "value_hex": "7b2276223a2039393939393939393939393939393939393939392c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "1:2",
+      "health": 5,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "v_far_past",
+      "outcome": "decoded",
+      "resource_type": "node",
+      "updated": "3:4",
+      "value_hex": "7b2276223a202d39393939393939393939393939393939393939392c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d",
+      "version": -99999999999999999999,
+      "version_fits_i64": false
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no integer 'v'",
+      "name": "v_float",
+      "outcome": "error",
+      "parity_prefix": "envelope has no integer 'v'",
+      "value_hex": "7b2276223a20312e302c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no integer 'v'",
+      "name": "v_string",
+      "outcome": "error",
+      "parity_prefix": "envelope has no integer 'v'",
+      "value_hex": "7b2276223a202231222c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no integer 'v'",
+      "name": "v_null",
+      "outcome": "error",
+      "parity_prefix": "envelope has no integer 'v'",
+      "value_hex": "7b2276223a206e756c6c2c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no integer 'v'",
+      "name": "v_true",
+      "outcome": "error",
+      "parity_prefix": "envelope has no integer 'v'",
+      "value_hex": "7b2276223a20747275652c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no integer 'v'",
+      "name": "v_false",
+      "outcome": "error",
+      "parity_prefix": "envelope has no integer 'v'",
+      "value_hex": "7b2276223a2066616c73652c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has unknown type None",
+      "name": "type_missing",
+      "outcome": "error",
+      "parity_prefix": "envelope has unknown type None",
+      "value_hex": "7b2276223a20312c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has unknown type 'nod'",
+      "name": "type_unknown",
+      "outcome": "error",
+      "parity_prefix": "envelope has unknown type 'nod'",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f64222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has unknown type 'nodes'",
+      "name": "type_plural",
+      "outcome": "error",
+      "parity_prefix": "envelope has unknown type 'nodes'",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f646573222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has unknown type 'Node'",
+      "name": "type_cased",
+      "outcome": "error",
+      "parity_prefix": "envelope has unknown type 'Node'",
+      "value_hex": "7b2276223a20312c202274797065223a20224e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has unknown type 7",
+      "name": "type_number",
+      "outcome": "error",
+      "parity_prefix": "envelope has unknown type 7",
+      "value_hex": "7b2276223a20312c202274797065223a20372c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has unknown type None",
+      "name": "type_null",
+      "outcome": "error",
+      "parity_prefix": "envelope has unknown type None",
+      "value_hex": "7b2276223a20312c202274797065223a206e756c6c2c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has unknown type {'a': 1}",
+      "name": "type_object",
+      "outcome": "error",
+      "parity_prefix": "envelope has unknown type {'a': 1}",
+      "value_hex": "7b2276223a20312c202274797065223a207b2261223a20317d2c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has unknown type ['node']",
+      "name": "type_array",
+      "outcome": "error",
+      "parity_prefix": "envelope has unknown type ['node']",
+      "value_hex": "7b2276223a20312c202274797065223a205b226e6f6465225d2c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has unknown type ''",
+      "name": "type_empty",
+      "outcome": "error",
+      "parity_prefix": "envelope has unknown type ''",
+      "value_hex": "7b2276223a20312c202274797065223a2022222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no string 'created'",
+      "name": "created_missing",
+      "outcome": "error",
+      "parity_prefix": "envelope has no string 'created'",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no string 'created'",
+      "name": "created_number",
+      "outcome": "error",
+      "parity_prefix": "envelope has no string 'created'",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2031322c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no string 'created'",
+      "name": "created_null",
+      "outcome": "error",
+      "parity_prefix": "envelope has no string 'created'",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a206e756c6c2c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope 'created' is not '<sec>:<nsec>': 'x'",
+      "name": "created_malformed",
+      "outcome": "error",
+      "parity_prefix": "envelope 'created' is not '<sec>:<nsec>': 'x'",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a202278222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope 'created' is not '<sec>:<nsec>': '12'",
+      "name": "created_no_colon",
+      "outcome": "error",
+      "parity_prefix": "envelope 'created' is not '<sec>:<nsec>': '12'",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a20223132222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope 'created' is not '<sec>:<nsec>': ''",
+      "name": "created_empty",
+      "outcome": "error",
+      "parity_prefix": "envelope 'created' is not '<sec>:<nsec>': ''",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope 'created' is not '<sec>:<nsec>': '-1:0'",
+      "name": "created_negative",
+      "outcome": "error",
+      "parity_prefix": "envelope 'created' is not '<sec>:<nsec>': '-1:0'",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a20222d313a30222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope 'created' is not '<sec>:<nsec>': ' 1:2'",
+      "name": "created_spaced",
+      "outcome": "error",
+      "parity_prefix": "envelope 'created' is not '<sec>:<nsec>': ' 1:2'",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a202220313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope 'created' is not '<sec>:<nsec>': '1:2:3'",
+      "name": "created_extra_colon",
+      "outcome": "error",
+      "parity_prefix": "envelope 'created' is not '<sec>:<nsec>': '1:2:3'",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a323a33222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no string 'updated'",
+      "name": "updated_missing",
+      "outcome": "error",
+      "parity_prefix": "envelope has no string 'updated'",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope 'updated' is not '<sec>:<nsec>': 'y'",
+      "name": "updated_malformed",
+      "outcome": "error",
+      "parity_prefix": "envelope 'updated' is not '<sec>:<nsec>': 'y'",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a202279222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "18446744073709551615:999999999",
+      "health": 5,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "cursor_large",
+      "outcome": "decoded",
+      "resource_type": "node",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a202231383434363734343037333730393535313631353a393939393939393939222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no integer 'health'",
+      "name": "health_missing",
+      "outcome": "error",
+      "parity_prefix": "envelope has no integer 'health'",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "1:2",
+      "health": 0,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "health_zero",
+      "outcome": "decoded",
+      "resource_type": "node",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20302c202264617461223a207b226964223a20226e31227d7d",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "1:2",
+      "health": -7,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "health_negative",
+      "outcome": "decoded",
+      "resource_type": "node",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a202d372c202264617461223a207b226964223a20226e31227d7d",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no integer 'health'",
+      "name": "health_float",
+      "outcome": "error",
+      "parity_prefix": "envelope has no integer 'health'",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20332e352c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no integer 'health'",
+      "name": "health_float_integral",
+      "outcome": "error",
+      "parity_prefix": "envelope has no integer 'health'",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20372e302c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no integer 'health'",
+      "name": "health_string",
+      "outcome": "error",
+      "parity_prefix": "envelope has no integer 'health'",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a202235222c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no integer 'health'",
+      "name": "health_null",
+      "outcome": "error",
+      "parity_prefix": "envelope has no integer 'health'",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a206e756c6c2c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no integer 'health'",
+      "name": "health_true",
+      "outcome": "error",
+      "parity_prefix": "envelope has no integer 'health'",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20747275652c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no integer 'health'",
+      "name": "health_false",
+      "outcome": "error",
+      "parity_prefix": "envelope has no integer 'health'",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a2066616c73652c202264617461223a207b226964223a20226e31227d7d"
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "1:2",
+      "health": 9223372036854775807,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "health_max_i64",
+      "outcome": "decoded",
+      "resource_type": "node",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20393232333337323033363835343737353830372c202264617461223a207b226964223a20226e31227d7d",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "1:2",
+      "health": -9223372036854775808,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "health_min_i64",
+      "outcome": "decoded",
+      "resource_type": "node",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a202d393232333337323033363835343737353830382c202264617461223a207b226964223a20226e31227d7d",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "1:2",
+      "health": 99999999999999999999,
+      "health_fits_i64": false,
+      "kind": "decode",
+      "name": "health_beyond_i64",
+      "outcome": "decoded",
+      "resource_type": "node",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a2039393939393939393939393939393939393939392c202264617461223a207b226964223a20226e31227d7d",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no 'data' object",
+      "name": "data_missing",
+      "outcome": "error",
+      "parity_prefix": "envelope has no 'data' object",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20357d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no 'data' object",
+      "name": "data_array",
+      "outcome": "error",
+      "parity_prefix": "envelope has no 'data' object",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a205b5d7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no 'data' object",
+      "name": "data_string",
+      "outcome": "error",
+      "parity_prefix": "envelope has no 'data' object",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a202278227d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no 'data' object",
+      "name": "data_null",
+      "outcome": "error",
+      "parity_prefix": "envelope has no 'data' object",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a206e756c6c7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no 'data' object",
+      "name": "data_number",
+      "outcome": "error",
+      "parity_prefix": "envelope has no 'data' object",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a20377d"
+    },
+    {
+      "body_text": "{}",
+      "created": "1:2",
+      "health": 5,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "data_empty_object",
+      "outcome": "decoded",
+      "resource_type": "node",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b7d7d",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "body_text": "{\"a\": {\"b\": [1, 2]}}",
+      "created": "1:2",
+      "health": 5,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "data_nested",
+      "outcome": "decoded",
+      "resource_type": "node",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b2261223a207b2262223a205b312c20325d7d7d7d",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "body_text": "{ \"id\" : \"n1\" }",
+      "created": "1:2",
+      "health": 5,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "data_spaced",
+      "outcome": "decoded",
+      "resource_type": "node",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b2022696422203a20226e3122207d7d",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "1:2",
+      "health": 5,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "reordered",
+      "outcome": "decoded",
+      "resource_type": "node",
+      "updated": "3:4",
+      "value_hex": "7b2264617461223a207b226964223a20226e31227d2c20226865616c7468223a20352c202275706461746564223a2022333a34222c202263726561746564223a2022313a32222c202274797065223a20226e6f6465222c202276223a20317d",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "1:2",
+      "health": 5,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "duplicate_v",
+      "outcome": "decoded",
+      "resource_type": "node",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20392c202276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "body_text": "{\"id\": \"last\"}",
+      "created": "1:2",
+      "health": 5,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "duplicate_data",
+      "outcome": "decoded",
+      "resource_type": "node",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226669727374227d2c202264617461223a207b226964223a20226c617374227d7d",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "1:2",
+      "health": 5,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "extra_member",
+      "outcome": "decoded",
+      "resource_type": "node",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d2c2022667574757265223a207b22756e6b6e6f776e223a20747275657d7d",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "kind": "decode",
+      "message": "envelope is not a JSON object",
+      "name": "array",
+      "outcome": "error",
+      "parity_prefix": "envelope is not a JSON object",
+      "value_hex": "5b312c20325d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope is not a JSON object",
+      "name": "number",
+      "outcome": "error",
+      "parity_prefix": "envelope is not a JSON object",
+      "value_hex": "37"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope is not a JSON object",
+      "name": "string",
+      "outcome": "error",
+      "parity_prefix": "envelope is not a JSON object",
+      "value_hex": "227465787422"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope is not a JSON object",
+      "name": "null",
+      "outcome": "error",
+      "parity_prefix": "envelope is not a JSON object",
+      "value_hex": "6e756c6c"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope is not a JSON object",
+      "name": "true",
+      "outcome": "error",
+      "parity_prefix": "envelope is not a JSON object",
+      "value_hex": "74727565"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope has no integer 'v'",
+      "name": "empty_object",
+      "outcome": "error",
+      "parity_prefix": "envelope has no integer 'v'",
+      "value_hex": "7b7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope is not valid JSON: expected '{' but the text ended",
+      "name": "empty",
+      "outcome": "error",
+      "parity_prefix": "envelope is not valid JSON: expected '{' but the text ended",
+      "value_hex": ""
+    },
+    {
+      "kind": "decode",
+      "message": "envelope is not valid JSON: expected '{' but the text ended",
+      "name": "whitespace",
+      "outcome": "error",
+      "parity_prefix": "envelope is not valid JSON: expected '{' but the text ended",
+      "value_hex": "202020"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope is not valid JSON: object ended without '}'",
+      "name": "truncated",
+      "outcome": "error",
+      "parity_prefix": "envelope is not valid JSON: object ended without '}'",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f646522"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope is not valid JSON: expected '\"' at offset 1, found 'n'",
+      "name": "not_json",
+      "outcome": "error",
+      "parity_prefix": "envelope is not valid JSON: expected '\"' at offset 1, found 'n'",
+      "value_hex": "7b6e6f74206a736f6e"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope is not valid JSON: expected '\"' at offset 8, found '}'",
+      "name": "trailing_comma",
+      "outcome": "error",
+      "parity_prefix": "envelope is not valid JSON: expected '\"' at offset 8, found '}'",
+      "value_hex": "7b2276223a20312c7d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope is not valid JSON: expected '\"' at offset 1, found \"'\"",
+      "name": "single_quoted",
+      "outcome": "error",
+      "parity_prefix": "envelope is not valid JSON: expected '\"' at offset 1, found \"'\"",
+      "value_hex": "7b2776273a20317d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope is not a JSON object",
+      "name": "nan_bare",
+      "outcome": "error",
+      "parity_prefix": "envelope is not a JSON object",
+      "value_hex": "4e614e"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope is not a JSON object",
+      "name": "infinity_bare",
+      "outcome": "error",
+      "parity_prefix": "envelope is not a JSON object",
+      "value_hex": "496e66696e697479"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope is not a JSON object",
+      "name": "negative_infinity_bare",
+      "outcome": "error",
+      "parity_prefix": "envelope is not a JSON object",
+      "value_hex": "2d496e66696e697479"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope is not a JSON object",
+      "name": "nan_in_array",
+      "outcome": "error",
+      "parity_prefix": "envelope is not a JSON object",
+      "value_hex": "5b4e614e5d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope is not a JSON object",
+      "name": "infinity_in_array",
+      "outcome": "error",
+      "parity_prefix": "envelope is not a JSON object",
+      "value_hex": "5b312c20496e66696e6974795d"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope is not a JSON object",
+      "name": "nan_in_nested_array",
+      "outcome": "error",
+      "parity_prefix": "envelope is not a JSON object",
+      "value_hex": "5b5b7b2261223a204e614e7d5d5d"
+    },
+    {
+      "body_text": "{\"id\": \"n1\", \"n\": NaN}",
+      "created": "1:2",
+      "health": 5,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "nan_in_body",
+      "outcome": "decoded",
+      "resource_type": "node",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31222c20226e223a204e614e7d7d",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "body_text": "{\"id\": \"n1\", \"n\": -Infinity}",
+      "created": "1:2",
+      "health": 5,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "infinity_in_body",
+      "outcome": "decoded",
+      "resource_type": "node",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31222c20226e223a202d496e66696e6974797d7d",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "kind": "decode",
+      "message": "envelope is not valid JSON: expected '{' at offset 0, found '['",
+      "name": "extra_data_after_array",
+      "outcome": "error",
+      "parity_prefix": "envelope is not valid JSON: expected '{' at offset 0, found '['",
+      "value_hex": "5b315d2078"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope is not valid JSON: expected '{' at offset 0, found '7'",
+      "name": "extra_data_after_number",
+      "outcome": "error",
+      "parity_prefix": "envelope is not valid JSON: expected '{' at offset 0, found '7'",
+      "value_hex": "372037"
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "1:2",
+      "health": 5,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "extra_data_after_object",
+      "outcome": "decoded",
+      "resource_type": "node",
+      "updated": "3:4",
+      "value_hex": "7b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d78",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "body_text": "{\"id\": \"n1\"}",
+      "created": "1:2",
+      "health": 5,
+      "health_fits_i64": true,
+      "kind": "decode",
+      "name": "padded",
+      "outcome": "decoded",
+      "resource_type": "node",
+      "updated": "3:4",
+      "value_hex": "20207b2276223a20312c202274797065223a20226e6f6465222c202263726561746564223a2022313a32222c202275706461746564223a2022333a34222c20226865616c7468223a20352c202264617461223a207b226964223a20226e31227d7d2020",
+      "version": 1,
+      "version_fits_i64": true
+    },
+    {
+      "kind": "decode",
+      "message": "envelope is not valid JSON: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
+      "name": "not_utf8",
+      "outcome": "error",
+      "parity_prefix": "envelope is not valid JSON: ",
+      "value_hex": "fffe"
+    },
+    {
+      "kind": "decode",
+      "message": "envelope is not valid JSON: 'utf-8' codec can't decode byte 0xff in position 18: invalid start byte",
+      "name": "not_utf8_tail",
+      "outcome": "error",
+      "parity_prefix": "envelope is not valid JSON: ",
+      "value_hex": "7b2276223a20312c202274797065223a2022ff227d"
+    }
+  ],
+  "envelope_version": 1,
+  "namespace": "/nmos"
+}

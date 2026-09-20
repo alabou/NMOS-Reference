@@ -1204,9 +1204,19 @@ class EtcdRegistryBackend:
             )
         else:
             ops.append(delete_op(placement.key))
-        # The id claim always goes with its resource. A claim outliving the key
-        # it points at is safe -- it can be reclaimed transactionally -- but
-        # leaving one behind for every delete would grow without bound.
+        # This resource's OWN claim goes with it. A Node's descendants keep
+        # theirs until the lease expires: the ranged delete above covers the
+        # subtree, and the claims are flat -- deliberately, because the tree is
+        # keyed by *where* a resource is and the claim answers whether an id
+        # exists *anywhere*.
+        #
+        # Not unbounded, and not worth a revoke to avoid: the claims hang off
+        # the Node's lease, so etcd collects them within one
+        # ``--garbageCollectionInterval``, and the alternative is the hazard
+        # described below. Gathering the descendants from the local store and
+        # deleting their claims in this same transaction would remove the
+        # litter without touching the lease, if the diagnostic noise ever
+        # matters more than the extra operations per delete.
         ops.append(delete_op(placement.claim))
 
         trips.add()
@@ -1218,14 +1228,40 @@ class EtcdRegistryBackend:
 
         await self._await_commit(result.revision, trips)
 
-        if resource_type is ResourceType.NODE:
-            # Best-effort, and after the prefix delete: the lease has nothing
-            # left on it, and racing this against natural expiry is fine --
-            # both outcomes leave the cluster in the state the caller wanted.
-            lease_id = self._leases.pop(resource_id, 0)
-            if lease_id:
-                trips.add()
-                await self.lease.revoke(lease_id)
+        # The Node's lease is deliberately NOT revoked here. It is left to
+        # expire, and the local table drops it when the watch delivers the
+        # deletion -- which has already happened by the time `_await_commit`
+        # returns, since that is exactly what it waited for.
+        #
+        # This looks like an omission and is not. A lease revoke is
+        # **unconditional**: it removes every key attached to the lease,
+        # whenever that key was written. Another member can still be writing
+        # to this lease after the transaction above commits, because
+        # `_ensure_node_lease` reuses ``_leases[node_id]`` without revalidating
+        # it and a member only drops that entry when ITS OWN watch applies the
+        # deletion -- strictly later than this one's commit.
+        #
+        # ``Behaviour - Registration.md:112-114`` actively drives that
+        # sequence: a Node whose heartbeat answers 404 re-registers everything,
+        # and that registration lands on whichever member it is talking to. If
+        # that member is still behind, it writes onto this lease. Revoking here
+        # would then delete a registration that had just been accepted.
+        #
+        # Expiry has no such hazard, and the difference was measured rather
+        # than reasoned about:
+        #
+        # * a ``put`` with a new lease re-attaches the key, so this lease
+        #   expiring cannot take a later re-registration with it;
+        # * a re-registration that reuses this lease renews it, so the keys
+        #   survive for as long as something is heartbeating them.
+        #
+        # What deferring costs is litter: any descendant's ID claim outlives
+        # the resource it named until the lease expires -- one
+        # ``--garbageCollectionInterval``, 12 s by default. It blocks nothing.
+        # An ID cannot be re-registered under a different type during that
+        # window either way, and that refusal comes from the local store's
+        # tombstone, not from the claim: standalone mode, with no etcd at all,
+        # refuses it identically until ``--forgetInterval`` elapses.
         return True
 
     async def heartbeat(self, node_id: str) -> int | None:

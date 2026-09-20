@@ -1,0 +1,35 @@
+[package]
+name = "nmos-registry-etcd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "The etcd backend: key layout, value envelope, and the RegistryBackend that fronts an etcd cluster."
+
+[dependencies]
+nmos-cluster = { path = "../nmos-cluster" }
+nmos-json = { path = "../nmos-json" }
+nmos-etcd = { path = "../nmos-etcd" }
+nmos-registry = { path = "../nmos-registry" }
+nmos-registry-backend = { path = "../nmos-registry-backend" }
+nmos-registry-core = { path = "../nmos-registry-core" }
+async-trait = "0.1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+# The believed-revision and lease tables. `parking_lot` as everywhere else:
+# its guards are `!Send`, so holding one across an await does not compile.
+parking_lot = "0.12"
+
+# `keys` and `placement` remain pure -- no runtime, no cluster -- and are
+# tested as such. `tokio` belongs to `backend` alone.
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+
+[lints]
+workspace = true

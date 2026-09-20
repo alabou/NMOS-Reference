@@ -54,6 +54,20 @@ pub const DEFAULT_PEER_PORT: u16 = 2382;
 /// Every derived member name begins with this, and so does the token.
 pub const MEMBER_NAME_PREFIX: &str = "nmos-registry";
 
+/// The SAN every member's storage-layer certificate shares.
+///
+/// One string doing three jobs: the gRPC target-name override the etcd client
+/// verifies against, etcd's own `--client-cert-allowed-hostname` /
+/// `--peer-cert-allowed-hostname`, and the raft transport's equivalent check.
+///
+/// It lives here, beside the rest of the topology constants, because more than
+/// one entry point needs it -- each backend's `--*CertificateName` default --
+/// and a second copy that drifted would not fail loudly: it would leave one
+/// side accepting certificates the other rejects. `nmos/cluster/layout.py:72`
+/// holds the same value for the same reason, and
+/// `nmos/cluster/tests/test_layout_corpus.py` asserts the two agree.
+pub const DEFAULT_CERTIFICATE_NAME: &str = "Example.Company.Device.Etcd.ABC.example.com";
+
 /// A configuration that cannot be turned into a cluster.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClusterConfigError(pub String);

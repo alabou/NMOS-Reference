@@ -1006,9 +1006,7 @@ async fn an_append_below_the_commit_index_is_answered_with_it() {
             .await
             .expect("commits");
     }
-    let follower = (0..3usize)
-        .find(|&m| m != leader)
-        .expect("a follower");
+    let follower = (0..3usize).find(|&m| m != leader).expect("a follower");
     assert!(
         until(|| cluster.nodes[follower].commit_index() > 1).await,
         "the follower committed nothing, so this proves nothing",

@@ -204,8 +204,7 @@ pub const fn should_send_now(
         return false;
     }
     let has_entries = next_index <= last_index;
-    let can_bump_commit =
-        commit_index > sent_commit && sent_commit < next_index.saturating_sub(1);
+    let can_bump_commit = commit_index > sent_commit && sent_commit < next_index.saturating_sub(1);
     has_entries || can_bump_commit
 }
 

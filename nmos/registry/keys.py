@@ -45,7 +45,7 @@ members. Storing them makes the value the single source of truth for ordering.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, TypeGuard, cast
 
 from nmos.json.engine import JsonEngine
 from nmos.json.spans import JsonSpanError, member_spans
@@ -309,7 +309,7 @@ class Envelope:
         document = {name: parsed for name, (_span, parsed) in members.items()}
 
         version = document.get("v")
-        if not isinstance(version, int):
+        if not _is_integer(version):
             raise KeyError_("envelope has no integer 'v'")
         if version > ENVELOPE_VERSION:
             raise KeyError_(
@@ -337,7 +337,7 @@ class Envelope:
         updated = _cursor(document, "updated")
 
         health = document.get("health")
-        if not isinstance(health, int):
+        if not _is_integer(health):
             raise KeyError_("envelope has no integer 'health'")
 
         return cls(
@@ -348,6 +348,30 @@ class Envelope:
             updated=updated,
             health=health,
         )
+
+
+def _is_integer(value: Any) -> TypeGuard[int]:
+    """Whether a decoded JSON value is an integer, excluding ``bool``.
+
+    A ``TypeGuard`` rather than a plain ``bool`` so the callers keep the
+    narrowing a bare ``isinstance`` gave them: without it, mypy still sees
+    ``Any | None`` after the check and the field cannot be passed on as an
+    ``int``.
+
+    ``isinstance(True, int)`` is true in Python, so a bare ``isinstance`` check
+    accepts ``{"health": true}`` and stores the health as ``1`` — one second
+    after the TAI epoch, which makes the resource expire on the next collection
+    pass. It appears and then vanishes, with nothing saying why.
+
+    Every other integer this registry reads off the wire is protected from that
+    already: ``NInt.value`` refuses a ``bool`` (``nmos/json/types.py:193``), as
+    do the nullable and array forms and ``max_update_rate_ms``
+    (``handlers_query.py:274``). This decoder is the one integer boundary that
+    bypasses the base-type layer — it reads raw JSON straight out of etcd
+    through ``member_spans`` — so the guard has to be spelled out here rather
+    than inherited.
+    """
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _cursor(document: dict[str, Any], field: str) -> TaiCursor:

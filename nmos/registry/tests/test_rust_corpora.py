@@ -28,6 +28,7 @@ from nmos.registry.tests import (
     _cli_corpus,
     _cursor_corpus,
     _envelope_corpus,
+    _keys_corpus,
     _store_corpus,
 )
 
@@ -38,6 +39,17 @@ def _by_position(index: int, _record: dict[str, Any]) -> str:
 
 def _by_text(_index: int, record: dict[str, Any]) -> str:
     return str(record["text"])
+
+
+def _by_kind_and_name(_index: int, record: dict[str, Any]) -> str:
+    """Name a key case the way its own file does.
+
+    The kind is part of the identity: a namespace prefix, a parsed key and a
+    stored value can all legitimately be called ``node``, and keying on the
+    name alone would collapse them -- which the guard's own collision check
+    would then refuse, correctly.
+    """
+    return f"{record['kind']}/{record['name']}"
 
 
 def test_the_store_corpus_matches_the_current_store() -> None:
@@ -72,6 +84,29 @@ def test_the_envelope_corpus_matches_the_current_decoder() -> None:
         build=_envelope_corpus.build,
         module="nmos.registry.tests._envelope_corpus",
         key=_by_position,
+        records_key="cases",
+    )
+
+
+def test_the_key_corpus_matches_the_current_key_layout() -> None:
+    """The etcd key layout and storage envelope, not the POST envelope.
+
+    Distinct from ``_envelope_corpus`` above, which records the *Registration
+    API* envelope a Node posts. This one records what goes into etcd: the key
+    a resource is stored under and the value stored there.
+
+    Drift here is the quietest failure in the port. A raft frame that decodes
+    differently fails to parse and the link drops. A key spelled differently is
+    written successfully and never seen by the watcher -- the resource is in
+    the cluster and invisible on the member that did not write it, with nothing
+    failing anywhere.
+    """
+    check_corpus(
+        name="etcd key",
+        output=_keys_corpus.OUTPUT,
+        build=_keys_corpus.build,
+        module="nmos.registry.tests._keys_corpus",
+        key=_by_kind_and_name,
         records_key="cases",
     )
 

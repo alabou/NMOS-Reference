@@ -1,0 +1,71 @@
+[package]
+name = "nmos-etcd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "A small, explicit etcd v3 gRPC client: the RPCs this registry speaks and no others."
+
+[dependencies]
+nmos-cluster = { path = "../nmos-cluster" }
+
+# The wire messages. `prost` is the runtime half of what
+# `nmos-etcd-codegen` emits; `bytes` is there because every key and value is a
+# `bytes` field mapped to `Bytes`, so the watch path shares the decoded buffer
+# instead of copying it.
+prost = "0.14"
+bytes = "1"
+
+# gRPC. **`default-features = false`, and no `tls-*` feature**, which is the
+# whole point: tonic's own TLS is rustls, and this workspace is OpenSSL by an
+# explicit decision (`plans/20260918T175734Z-rust-tls-openssl-decision.md`) so
+# that one `libssl.so.3` serves both implementations under one future FIPS
+# boundary. Enabling a `tls-*` feature here would quietly put a second TLS
+# stack in the binary and defeat that.
+#
+# The replacement is `Endpoint::connect_with_connector` over a `tokio-openssl`
+# stream -- see `channel.rs`. It also gives a *better* fit for what this client
+# needs than tonic's TLS would: the shared-certificate name override the Python
+# spells as `grpc.ssl_target_name_override` is just the SNI passed to
+# `into_ssl`.
+tonic = { version = "0.14", default-features = false, features = [
+    "codegen",
+    "transport",
+    "channel",
+] }
+# The prost codec, which tonic 0.14 moved out of its own tree. Pinned to the
+# same minor as tonic: the two are released together and a mismatch is a trait
+# that does not line up rather than a version warning.
+tonic-prost = { version = "0.14", default-features = false }
+# The channel cache's lock. `parking_lot` as everywhere else here -- its guards
+# are `!Send`, so holding one across an await does not compile, which is the
+# property this workspace's concurrency model is built on.
+parking_lot = "0.12"
+tower = { workspace = true, features = ["util"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http = "1"
+tokio = { workspace = true, features = ["process"] }
+tokio-stream = "0.1"
+futures-util = { workspace = true }
+tracing = { workspace = true }
+
+# The same pair every other crate here uses, for the same reason.
+openssl = "0.10.81"
+tokio-openssl = "0.6.5"
+
+[dev-dependencies]
+# The live-etcd suite drives async calls from a runtime it builds itself.
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+# Reads the message corpus recorded from the Python. Test-only: nothing in the
+# client serialises JSON -- the registry's own JSON goes through `nmos-json`.
+serde_json = { workspace = true }
+
+[build-dependencies]
+# None. `build.rs` hashes three files with a hand-written SHA-256, exactly as
+# `nmos-types/build.rs` does, so the drift guard cannot itself be a reason the
+# crate fails to build somewhere.
+
+[lints]
+workspace = true

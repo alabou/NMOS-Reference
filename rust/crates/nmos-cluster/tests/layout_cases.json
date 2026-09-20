@@ -714,5 +714,16 @@
       ],
       "tls": true
     }
-  ]
+  ],
+  "constants": {
+    "default_certificate_name": "Example.Company.Device.Etcd.ABC.example.com",
+    "default_client_port": 2381,
+    "default_peer_port": 2382,
+    "member_name_prefix": "nmos-registry",
+    "permitted_sizes": [
+      1,
+      3,
+      5
+    ]
+  }
 }
