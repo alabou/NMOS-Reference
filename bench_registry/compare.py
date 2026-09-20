@@ -9,6 +9,7 @@
     python3 bench_registry/compare.py --targets cpp,standalone,dist1,dist3
     python3 bench_registry/compare.py --targets cpp,standalone,raft1,raft3,raft5
     python3 bench_registry/compare.py --targets rust,rustraft1,rustraft3,rustraft5
+    python3 bench_registry/compare.py --targets standalone,rust,dist1,rustdist1,dist3,rustdist3
 
 Matched observability comes first
 ---------------------------------
@@ -217,6 +218,82 @@ def start_nmos_cpp(quiet: bool) -> Target:
 # This registry
 # ---------------------------------------------------------------------------
 
+def _start_etcd_cluster(
+    name: str, members: int,
+) -> tuple[str, list[subprocess.Popen[bytes]]]:
+    """Bring up a bench etcd cluster, returning its endpoints and processes.
+
+    Shared by the Python and Rust distributed targets rather than written
+    twice. The two must measure the *same* storage layer or the comparison
+    between them is between two clusters, not two registries -- and a second
+    copy that drifted in, say, its fsync setting would make one implementation
+    look faster for a reason that has nothing to do with it.
+
+    Durability knobs, env-only because they exist to answer one question --
+    "how much of the etcd tax is the disk?" -- and must never be reachable
+    from a normal run.
+
+      NMOS_BENCH_ETCD_DATA_ROOT=/dev/shm/...  put the data dir on tmpfs, so the
+          WAL and bbolt file never reach a block device. This is the closest
+          thing etcd has to "memory only": there is no in-memory backend, the
+          storage engine is always bbolt + WAL.
+      NMOS_BENCH_ETCD_NO_FSYNC=1              pass --unsafe-no-fsync, which
+          etcd documents as "unsafe, will cause data loss". It isolates the
+          fsync SYSCALL from the write itself.
+
+    Neither is a supported deployment option. A registry whose etcd loses its
+    WAL on power failure has no authoritative state to recover from, which is
+    the one thing adopting etcd was meant to provide.
+    """
+    cluster_ports = [(_free_port(), _free_port()) for _ in range(members)]
+    endpoints = ",".join(f"127.0.0.1:{c}" for c, _ in cluster_ports)
+
+    data_override = os.environ.get("NMOS_BENCH_ETCD_DATA_ROOT")
+    data_root = (
+        Path(data_override) / f"{name}-etcd" if data_override
+        else WORK / f"{name}-etcd"
+    )
+    if data_root.exists():
+        shutil.rmtree(data_root)
+    data_root.mkdir(parents=True)
+
+    binary = REPO / ".etcd" / "etcd"
+    if not binary.is_file():
+        raise SystemExit("etcd not installed; run ./install-etcd.sh")
+
+    processes: list[subprocess.Popen[bytes]] = []
+    initial = ",".join(
+        f"m{i}=http://127.0.0.1:{p}" for i, (_c, p) in enumerate(cluster_ports)
+    )
+    for index, (client, peer) in enumerate(cluster_ports):
+        processes.append(subprocess.Popen(
+            [
+                str(binary),
+                "--name", f"m{index}",
+                "--data-dir", str(data_root / f"m{index}"),
+                "--listen-client-urls", f"http://127.0.0.1:{client}",
+                "--advertise-client-urls", f"http://127.0.0.1:{client}",
+                "--listen-peer-urls", f"http://127.0.0.1:{peer}",
+                "--initial-advertise-peer-urls", f"http://127.0.0.1:{peer}",
+                "--initial-cluster", initial,
+                "--initial-cluster-state", "new",
+                "--initial-cluster-token", f"bench-{name}",
+                "--log-level", "error",
+            ] + (
+                ["--unsafe-no-fsync"]
+                if os.environ.get("NMOS_BENCH_ETCD_NO_FSYNC") == "1" else []
+            ),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ))
+    for client, _peer in cluster_ports:
+        if not _wait_http(f"http://127.0.0.1:{client}/health"):
+            for process in processes:
+                process.kill()
+            raise SystemExit("bench etcd cluster did not start")
+    return endpoints, processes
+
+
 def start_python(
     name: str, quiet: bool, *, members: int = 0,
 ) -> Target:
@@ -241,66 +318,7 @@ def start_python(
 
     extra: list[subprocess.Popen[bytes]] = []
     if members:
-        cluster_ports = [(_free_port(), _free_port()) for _ in range(members)]
-        endpoints = ",".join(f"127.0.0.1:{c}" for c, _ in cluster_ports)
-        # Durability knobs, env-only because they exist to answer one
-        # question -- "how much of the etcd tax is the disk?" -- and must
-        # never be reachable from a normal run.
-        #
-        #   NMOS_BENCH_ETCD_DATA_ROOT=/dev/shm/...  put the data dir on tmpfs,
-        #       so the WAL and bbolt file never reach a block device. This is
-        #       the closest thing etcd has to "memory only": there is no
-        #       in-memory backend, the storage engine is always bbolt + WAL.
-        #   NMOS_BENCH_ETCD_NO_FSYNC=1              pass --unsafe-no-fsync,
-        #       which etcd documents as "unsafe, will cause data loss". It
-        #       isolates the fsync SYSCALL from the write itself.
-        #
-        # Neither is a supported deployment option. A registry whose etcd
-        # loses its WAL on power failure has no authoritative state to recover
-        # from, which is the one thing adopting etcd was meant to provide.
-        data_override = os.environ.get("NMOS_BENCH_ETCD_DATA_ROOT")
-        data_root = (
-            Path(data_override) / f"{name}-etcd" if data_override
-            else WORK / f"{name}-etcd"
-        )
-        if data_root.exists():
-            shutil.rmtree(data_root)
-        data_root.mkdir(parents=True)
-
-        binary = REPO / ".etcd" / "etcd"
-        if not binary.is_file():
-            raise SystemExit("etcd not installed; run ./install-etcd.sh")
-
-        initial = ",".join(
-            f"m{i}=http://127.0.0.1:{p}" for i, (_c, p) in enumerate(cluster_ports)
-        )
-        for index, (client, peer) in enumerate(cluster_ports):
-            extra.append(subprocess.Popen(
-                [
-                    str(binary),
-                    "--name", f"m{index}",
-                    "--data-dir", str(data_root / f"m{index}"),
-                    "--listen-client-urls", f"http://127.0.0.1:{client}",
-                    "--advertise-client-urls", f"http://127.0.0.1:{client}",
-                    "--listen-peer-urls", f"http://127.0.0.1:{peer}",
-                    "--initial-advertise-peer-urls", f"http://127.0.0.1:{peer}",
-                    "--initial-cluster", initial,
-                    "--initial-cluster-state", "new",
-                    "--initial-cluster-token", f"bench-{name}",
-                    "--log-level", "error",
-                ] + (
-                    ["--unsafe-no-fsync"]
-                    if os.environ.get("NMOS_BENCH_ETCD_NO_FSYNC") == "1" else []
-                ),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            ))
-        for client, _peer in cluster_ports:
-            if not _wait_http(f"http://127.0.0.1:{client}/health"):
-                for process in extra:
-                    process.kill()
-                raise SystemExit("bench etcd cluster did not start")
-
+        endpoints, extra = _start_etcd_cluster(name, members)
         command += [
             # --distributedBackend defaults to raft, and naming --etcd* flags
             # without it is refused rather than reinterpreted. Spelled out
@@ -429,6 +447,82 @@ def _free_pair() -> tuple[int, int]:
                 continue
         return first, first + 1
     raise SystemExit("could not find a consecutive free port pair")
+
+
+def start_rust_dist(name: str, quiet: bool, *, members: int) -> Target:
+    """Start the Rust registry against a bench etcd cluster.
+
+    The Rust counterpart of ``start_python(name, members=N)``, and deliberately
+    the same shape: the SAME etcd cluster helper, the same flags, the same
+    observability switches. The comparison between them is only about the
+    registry if everything underneath it is identical -- which is why the
+    cluster is brought up by shared code rather than by a second copy here.
+
+    ``--etcdExternal`` because the cluster is already running: the benchmark
+    owns its lifetime, not the registry, and a managed member would make the
+    Python and Rust targets differ in who spawns etcd as well as in what
+    speaks to it.
+    """
+    if not RUST_REGISTRY.is_file():
+        raise SystemExit(
+            f"rust registry not built at {RUST_REGISTRY}\n"
+            f"  (cd rust && cargo build --release -p nmos-registry-bin)\n"
+            f"  or set NMOS_RUST_REGISTRY to a release binary"
+        )
+
+    registration_port, query_port, ws_port = (
+        _free_port(), _free_port(), _free_port(),
+    )
+    log_file = WORK / f"{name}.log"
+    stdout_path = WORK / f"{name}.out"
+
+    endpoints, extra = _start_etcd_cluster(name, members)
+
+    command = [
+        str(RUST_REGISTRY),
+        "--registryDisableTLS",
+        "--registryAddr", "127.0.0.1",
+        "--registrationPort", str(registration_port),
+        "--queryPort", str(query_port),
+        "--queryWebSocketPort", str(ws_port),
+        "--logFile", "" if quiet else str(log_file),
+        "--statusInterval", "0" if quiet else "5",
+        "--distributed", "--distributedBackend", "etcd",
+        "--etcdExternal", "--etcdDisableTLS",
+        "--registryAdvertisedHost", "127.0.0.1",
+        "--etcdEndpoints", endpoints,
+        "--etcdNamespace", f"/bench/{name}",
+    ]
+
+    handle = stdout_path.open("wb")
+    environment = dict(os.environ)
+    if os.environ.get("NMOS_ETCD_FAST_PATH"):
+        environment["NMOS_ETCD_FAST_PATH"] = os.environ["NMOS_ETCD_FAST_PATH"]
+    if quiet:
+        environment["NMOS_LOG_LEVEL"] = "WARNING"
+    process = subprocess.Popen(
+        command, cwd=str(REPO), stdout=handle, stderr=subprocess.STDOUT,
+        env=environment,
+    )
+
+    registration = f"http://127.0.0.1:{registration_port}"
+    query = f"http://127.0.0.1:{query_port}"
+    if not _wait_http(f"{query}/x-nmos/query/v1.3/", timeout=90.0):
+        process.kill()
+        for child in extra:
+            child.kill()
+        raise SystemExit(f"{name} did not start; see {stdout_path}")
+
+    return Target(
+        name=name,
+        registration=registration,
+        query=query,
+        websocket=f"ws://127.0.0.1:{ws_port}",
+        process=process,
+        log_paths=[log_file] if not quiet else [],
+        stdout_path=stdout_path,
+        extra=extra,
+    )
 
 
 def start_raft(name: str, quiet: bool, *, members: int) -> Target:
@@ -631,6 +725,19 @@ TAXES = [
      "what tolerating two costs on top of that"),
     ("raft consensus tax", "raft1", "raft3",
      "quorum breadth and a second apply, without the fsync"),
+    # The etcd backend asked the same three questions as the raft one, so the
+    # two storage layers are compared on like measurements. The first row is
+    # the one a deployment choosing etcd actually pays.
+    ("rust etcd tax", "rust", "rustdist1",
+     "client, serialization and fence overhead on the Rust registry"),
+    ("rust etcd consensus tax", "rustdist1", "rustdist3",
+     "etcd's own Raft fsync and quorum breadth, under the Rust registry"),
+    # And the port's own question, asked of the etcd backend: how much of the
+    # Python etcd cost was the registry rather than the database?
+    ("rust recovery (etcd 1)", "dist1", "rustdist1",
+     "the same etcd backend in Rust, one member"),
+    ("rust recovery (etcd 3)", "dist3", "rustdist3",
+     "the same etcd backend in Rust, three members"),
 ]
 
 
@@ -756,6 +863,10 @@ async def main_async(args: argparse.Namespace) -> int:
             elif name == "rust":
                 target = start_rust("rust", args.quiet)
                 key = "rust"
+            elif name.startswith("rustdist"):
+                members = int(name[8:] or "1")
+                target = start_rust_dist(name, args.quiet, members=members)
+                key = name
             elif name.startswith("dist"):
                 members = int(name[4:] or "1")
                 target = start_python(name, args.quiet, members=members)
