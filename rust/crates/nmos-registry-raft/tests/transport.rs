@@ -773,3 +773,59 @@ fn every_request_knows_the_reply_it_expects() {
         None,
     );
 }
+
+/// Starting a transport does not keep the node alive.
+///
+/// The node owns its transport (`RaftNode` holds `Arc<dyn Transport>`) and
+/// `start` hands the transport the node back as its handler. Held strongly
+/// that is a cycle -- transport -> node -> transport -- and `Arc` is reference
+/// counted, not traced, so nothing collects it.
+///
+/// `close` clears the handler, so the cycle was broken in practice. This
+/// asserts the structural property instead, because that is the one a future
+/// refactor can silently remove: after `start` returns, the strong count is
+/// back where it began, whatever anyone later does or forgets to do in
+/// `close`.
+#[tokio::test(flavor = "multi_thread")]
+async fn starting_a_transport_takes_no_strong_reference_to_the_handler() {
+    let probe = std::net::TcpListener::bind(loopback(0)).expect("a port");
+    let addr = probe.local_addr().expect("an address");
+    drop(probe);
+
+    let transport = Arc::new(RaftTransport::new(TransportSettings {
+        local: 0,
+        peers: HashMap::new(),
+        bind: addr,
+        cluster_id: "ownership".to_owned(),
+        member_name: "member-0".to_owned(),
+        incarnation: 1,
+        tls: None,
+        rpc_timeout_ms: 500,
+    }));
+
+    let recorder = Arc::new(Recorder::default());
+    let before = Arc::strong_count(&recorder);
+    transport
+        .start(Arc::clone(&recorder) as Arc<dyn PeerHandler>)
+        .await
+        .expect("listens");
+
+    assert_eq!(
+        Arc::strong_count(&recorder),
+        before,
+        "the transport kept a strong reference to its handler, which with the \
+         node's own `Arc<dyn Transport>` is a cycle that nothing collects",
+    );
+
+    // And it still works through the weak reference: a live handler is
+    // reachable, which is the other half of the property.
+    let watch = Arc::downgrade(&recorder);
+    assert!(watch.upgrade().is_some(), "the handler went early");
+
+    transport.close().await;
+    drop(recorder);
+    assert!(
+        watch.upgrade().is_none(),
+        "the handler outlived every strong handle to it",
+    );
+}

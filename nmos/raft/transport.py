@@ -60,6 +60,7 @@ is the same posture ``nmos/etcd/supervisor.py`` gets from etcd's
 from __future__ import annotations
 
 import asyncio
+import weakref
 import logging
 import ssl
 from dataclasses import dataclass, field
@@ -273,7 +274,21 @@ class RaftTransport:
         self._peer_name = peer_name
         self._rpc_timeout = rpc_timeout
 
-        self._handler: PeerHandler | None = None
+        self._handler_ref: weakref.ref[PeerHandler] | None = None
+        """The node, held **weakly**.
+
+        The node owns this transport -- ``RaftNode`` holds it as ``transport``
+        -- and ``start`` hands the transport the node back as its handler. Held
+        strongly that is a cycle: transport -> node -> transport. CPython's
+        collector would eventually reclaim it, unlike Rust's, but the two
+        implementations must agree on ownership, and a cycle that survives only
+        because a collector exists is one the Rust port cannot have.
+
+        ``close`` does clear it, so the cycle was broken in practice; but that
+        is one line, and a cycle whose safety depends on someone remembering to
+        run a line is a cycle waiting to come back. A weak reference makes it
+        structural: there is nothing to forget.
+        """
         self._server: asyncio.AbstractServer | None = None
         # Every accepted connection's writer. Tracked because
         # ``Server.wait_closed`` waits for the *handlers* to finish, and ours
@@ -305,7 +320,9 @@ class RaftTransport:
     # -- lifecycle ------------------------------------------------------
 
     async def start(self, handler: PeerHandler) -> None:
-        self._handler = handler
+        # Weak, deliberately: see ``_handler_ref``. The caller keeps
+        # ownership; this keeps only a way back.
+        self._handler_ref = weakref.ref(handler)
         self._closing = False
         self._server = await asyncio.start_server(
             self._serve, self._bind[0], self._bind[1], ssl=self._server_ssl,
@@ -318,6 +335,18 @@ class RaftTransport:
                     self._maintain(link),
                     name=f"raft-link-{self._member_name}-{peer}-{stream.name}",
                 )
+
+    @property
+    def _handler(self) -> PeerHandler | None:
+        """The node, if it is still alive.
+
+        ``None`` means it has gone, which is the same situation as one never
+        having been installed -- this member is not serving -- and every use
+        site already had that branch.
+        """
+        if self._handler_ref is None:
+            return None
+        return self._handler_ref()
 
     async def close(self) -> None:
         self._closing = True

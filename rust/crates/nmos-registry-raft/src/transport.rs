@@ -491,7 +491,22 @@ struct Inner {
     tls: Option<Arc<PeerTls>>,
     rpc_timeout_ms: u64,
     links: HashMap<(u64, Stream), Arc<Link>>,
-    handler: Mutex<Option<Arc<dyn PeerHandler>>>,
+    /// The node, held **weakly**.
+    ///
+    /// The node owns this transport (`RaftNode` holds `Arc<dyn Transport>`) and
+    /// `start` hands the transport the node back as its handler. Held strongly
+    /// that is a cycle -- transport -> node -> transport -- and `Arc` is
+    /// reference counted, not traced, so nothing would ever collect it.
+    ///
+    /// `close` does clear it, so the cycle was broken in practice; but that is
+    /// one line, and a cycle whose safety depends on someone remembering to
+    /// run a line is a cycle waiting to come back. Weak makes it structural:
+    /// there is nothing to forget.
+    ///
+    /// `upgrade` returning `None` means the node has gone, which is the same
+    /// situation as one never having been installed -- this member is not
+    /// serving, and every use site already had that branch.
+    handler: Mutex<Option<std::sync::Weak<dyn PeerHandler>>>,
     closing: AtomicBool,
     next_request_id: AtomicU64,
     /// Every accepted connection's task.
@@ -645,7 +660,11 @@ impl Inner {
     }
 
     async fn handler(&self) -> Option<Arc<dyn PeerHandler>> {
-        self.handler.lock().await.clone()
+        self.handler
+            .lock()
+            .await
+            .as_ref()
+            .and_then(std::sync::Weak::upgrade)
     }
 
     /// Route a reply: to its awaiting request, or to the handler.
@@ -1144,7 +1163,9 @@ impl Transport for RaftTransport {
                   concurrent close cannot miss one and leave it running"
     )]
     async fn start(&self, handler: Arc<dyn PeerHandler>) -> std::io::Result<()> {
-        *self.inner.handler.lock().await = Some(handler);
+        // Downgraded on the way in: the caller keeps ownership, this keeps
+        // only a way back. See the field for why that is not optional.
+        *self.inner.handler.lock().await = Some(Arc::downgrade(&handler));
         self.inner.closing.store(false, Ordering::SeqCst);
 
         let listener = tokio::net::TcpListener::bind(self.bind).await?;

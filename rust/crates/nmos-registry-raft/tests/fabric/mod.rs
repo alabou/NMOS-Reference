@@ -36,7 +36,13 @@ use parking_lot::Mutex;
 /// Who can reach whom, and who is listening.
 #[derive(Default)]
 pub struct Fabric {
-    handlers: Mutex<HashMap<u64, Arc<dyn PeerHandler>>>,
+    /// The members, held **weakly**, as `RaftTransport` holds its handler.
+    ///
+    /// A node owns its transport and the transport is handed the node back as
+    /// its handler, so holding it strongly here would be the same cycle the
+    /// real transport avoids -- and a harness that keeps nodes alive cannot be
+    /// used to assert that they are dropped.
+    handlers: Mutex<HashMap<u64, std::sync::Weak<dyn PeerHandler>>>,
     /// Ordered pairs that cannot deliver, as `(from, to)`.
     ///
     /// Directed on purpose: a one-way partition is a real failure mode and the
@@ -144,7 +150,10 @@ impl Fabric {
     }
 
     fn handler(&self, member: u64) -> Option<Arc<dyn PeerHandler>> {
-        self.handlers.lock().get(&member).cloned()
+        self.handlers
+            .lock()
+            .get(&member)
+            .and_then(std::sync::Weak::upgrade)
     }
 
     fn members(&self) -> Vec<u64> {
@@ -221,7 +230,10 @@ pub struct FabricTransport {
 #[async_trait]
 impl Transport for FabricTransport {
     async fn start(&self, handler: Arc<dyn PeerHandler>) -> std::io::Result<()> {
-        self.fabric.handlers.lock().insert(self.local, handler);
+        self.fabric
+            .handlers
+            .lock()
+            .insert(self.local, Arc::downgrade(&handler));
         // Every other member that has already started is announced as up, and
         // this member is announced to them: the fabric has no sockets, so
         // "connected" is simply "both ends are listening".
