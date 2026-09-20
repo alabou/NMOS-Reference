@@ -31,7 +31,8 @@ use std::io::{Read as _, Write as _};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
+use std::time::Duration;
 
 use nmos_registry_bin::tls::{ClientAuth, server_context};
 use openssl::ssl::{Ssl, SslContext};
@@ -80,32 +81,61 @@ fn available() -> bool {
 ///
 /// Bound to port 0 so concurrent tests cannot collide.
 fn serve(context: SslContext, count: usize) -> u16 {
+    let (port, outcomes) = serve_reporting(context, count);
+    // These callers read the client's view instead. Dropping the receiver only
+    // makes the listener's reporting sends fail, which it ignores.
+    drop(outcomes);
+    port
+}
+
+/// `serve`, plus one `bool` per connection saying whether it *accepted*.
+///
+/// Needed wherever the assertion is about what the listener did rather than
+/// about what the client printed. Under TLS 1.3 the client finishes its side
+/// and reports `CONNECTION ESTABLISHED` before the server has looked at the
+/// certificate it asked for, so a refusal reaches the client as a later,
+/// asynchronous alert -- and `openssl s_client`, whose stdin `probe` closes
+/// straight away, is free to send `close_notify` and exit before that alert
+/// arrives.
+///
+/// Measured rather than assumed: under load, 2 runs in 30 of the
+/// `CERT_REQUIRED` probe ended `CONNECTION ESTABLISHED ... DONE` with no alert
+/// line at all, while the listener had refused every single time. The refusal
+/// was never in doubt; only whether the client stayed alive long enough to
+/// print it. Asking the listener removes the race rather than widening the
+/// window in which it is lost.
+fn serve_reporting(context: SslContext, count: usize) -> (u16, mpsc::Receiver<bool>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let port = listener.local_addr().expect("addr").port();
     let context = Arc::new(context);
+    let (report, outcomes) = mpsc::channel();
     std::thread::spawn(move || {
         for _ in 0..count {
             let Ok((stream, _)) = listener.accept() else {
                 return;
             };
             let context = Arc::clone(&context);
+            let report = report.clone();
             std::thread::spawn(move || {
                 let Ok(ssl) = Ssl::new(&context) else {
+                    let _ = report.send(false);
                     return;
                 };
                 // A refused handshake is an ordinary outcome here -- half these
-                // probes exist to cause one -- so the error is dropped rather
-                // than reported.
+                // probes exist to cause one -- so the error is reported rather
+                // than raised.
                 let Ok(mut tls) = ssl.accept(stream) else {
+                    let _ = report.send(false);
                     return;
                 };
+                let _ = report.send(true);
                 let mut buf = [0_u8; 64];
                 let _ = tls.read(&mut buf);
                 let _ = tls.write(b"\n");
             });
         }
     });
-    port
+    (port, outcomes)
 }
 
 /// One `openssl s_client` probe. Returns its combined output.
@@ -351,10 +381,15 @@ fn cert_required_refuses_a_client_that_offers_nothing() {
             .expect("the listener configures");
     assert_eq!(mode, ClientAuth::Required);
 
-    let port = serve(context, 4);
+    let (port, outcomes) = serve_reporting(context, 4);
     let output = probe(port, &[]);
+    // Ask the listener, not the client -- see `serve_reporting` for why the
+    // client's own output cannot answer this reliably.
+    let accepted = outcomes
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the listener reported the handshake outcome");
     assert!(
-        refused_for_missing_certificate(&output),
+        !accepted,
         "a client presenting no certificate was not refused by a \
          CERT_REQUIRED listener\n{output}",
     );
