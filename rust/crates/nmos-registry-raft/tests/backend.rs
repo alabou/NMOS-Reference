@@ -1105,3 +1105,93 @@ async fn the_per_operation_structures_return_to_empty() {
 
     cluster.close_all().await;
 }
+
+/// Does the queue stay bounded when the matcher keeps up over a long run?
+///
+/// The test above covers a burst and a return to empty. This covers the shape
+/// that actually kills a long-running registry: **sustained** traffic, where
+/// growth is not a spike that drains but a level that never comes down.
+///
+/// Neither a leak detector nor a cycle test can see it -- every byte is
+/// reachable and legitimately owned -- so an assertion is the only instrument.
+/// The queue deliberately does not coalesce (divergence D2: merging an add
+/// with a remove would be an observable difference from the Python), which is
+/// exactly why its depth has to be watched rather than assumed.
+///
+/// Drained each round, as the matcher task does in the running registry. What
+/// is asserted is that the **high water mark stays proportional to one round's
+/// work** rather than climbing with the total: a queue that retained anything
+/// per round would show a high water rising with the rounds, and this catches
+/// that whatever the absolute numbers are on the day.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_commit_queue_stays_bounded_under_sustained_load() {
+    const ROUNDS: usize = 12;
+    const PER_ROUND: usize = 8;
+
+    let cluster = Backends::build(3);
+    cluster.start_all().await;
+    assert!(until(|| cluster.ready()).await, "never became ready");
+
+    let mut peaks = Vec::new();
+    for round in 0..ROUNDS {
+        for step in 0..PER_ROUND {
+            let id = format!("22222222-0000-4000-8000-{:012x}", round * PER_ROUND + step);
+            let body = Body::from_value(json!({
+                "id": id, "version": "1000:0", "label": "sustained",
+                "description": "", "tags": {}, "href": "http://example/",
+                "hostname": "example", "caps": {},
+                "api": {
+                    "versions": ["v1.3"],
+                    "endpoints": [
+                        {"host": "example", "port": 80, "protocol": "http"},
+                    ],
+                },
+                "services": [], "clocks": [], "interfaces": [],
+            }));
+            cluster.backends[round % cluster.backends.len()]
+                .register(ResourceType::Node, body)
+                .await
+                .expect("commits")
+                .expect("accepted");
+        }
+
+        // What the matcher task does each pass in the running registry.
+        for backend in &cluster.backends {
+            let registry = backend.registry();
+            drop(registry.drain_commits());
+            peaks.push(registry.commit_high_water());
+        }
+    }
+
+    // The high water is cumulative -- it is not reset between rounds -- so the
+    // property is that it settled rather than tracked the total.
+    let settled = peaks.last().copied().unwrap_or(0);
+    let offered = ROUNDS * PER_ROUND;
+    assert!(
+        settled <= PER_ROUND * cluster.backends.len(),
+        "the commit queue peaked at {settled} while no single round offered \
+         more than {PER_ROUND}: it is retaining work across rounds, which over \
+         a registry's lifetime is unbounded growth that no leak detector will \
+         ever report",
+    );
+    assert!(
+        settled < offered,
+        "the queue peaked at {settled} for {offered} registrations, so its \
+         depth is tracking the total rather than the backlog",
+    );
+
+    for backend in &cluster.backends {
+        assert_eq!(
+            backend.registry().pending_commits(),
+            0,
+            "commits were still queued after the last drain",
+        );
+        assert_eq!(
+            backend.node().pending_waiters(),
+            0,
+            "callers were still owed a reply after every registration returned",
+        );
+    }
+
+    cluster.close_all().await;
+}

@@ -45,6 +45,13 @@ struct Recorder {
     peer_down: AtomicU64,
     last_incarnation: AtomicU64,
     append_replies: AtomicU64,
+    /// Holds `on_forward` open until the test releases it.
+    ///
+    /// `None` by default, so every other test sees an immediate answer. Only
+    /// usable at all because the forward handler is served off the link reader
+    /// -- held open on the reader, as it was until today, this would stall the
+    /// link and the colliding append would never arrive.
+    forward_gate: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
     seen: Mutex<Vec<String>>,
 }
 
@@ -109,6 +116,11 @@ impl PeerHandler for Recorder {
     }
 
     async fn on_forward(&self, _peer: u64, message: &Forward) -> ForwardReply {
+        // Taken in its own scope so the lock is released before the wait.
+        let gate = { self.forward_gate.lock().await.take() };
+        if let Some(gate) = gate {
+            drop(gate.await);
+        }
         self.seen
             .lock()
             .await
@@ -641,25 +653,14 @@ async fn closing_reports_the_peer_down() {
 
 /// A forward and concurrent append traffic each get their own answer.
 ///
-/// **This does not reproduce the id collision**, and saying so matters more
-/// than the test does. Reproducing it needs an `AppendEntriesReply` to arrive
-/// in the window between `request` registering its waiter and the reply to
-/// *its* message coming back -- and `send` spawns its write (see
-/// `RaftTransport::send`), so the order of the two writes is not controllable
-/// from here. Verified by mutation: reverting `resolve` to match on the id
-/// alone leaves this test passing.
+/// The ordinary path, where the two ids do *not* collide: a forward is
+/// answered with a `ForwardReply` and an append reply reaches the handler
+/// rather than being swallowed. The collision itself is reproduced by
+/// `a_reply_of_the_wrong_kind_does_not_satisfy_a_waiter` below.
 ///
-/// A deterministic reproduction needs a peer that speaks the frame protocol by
-/// hand and answers a `Forward` with an `AppendEntriesReply` carrying the same
-/// id. That is worth writing and is not written.
-///
-/// Worth noting which way the odds run: on loopback the window is microseconds,
-/// so a test is unlikely to hit it. Across a real network it is a full round
-/// trip, which makes the hazard *more* likely in production than here.
-///
-/// What this does cover is the ordinary path -- a forward is answered with a
-/// `ForwardReply` and an append reply reaches the handler rather than being
-/// swallowed -- which is the regression that a wrong fix would cause.
+/// Kept separate because this one passes with and without the kind check --
+/// confirmed by mutation -- so on its own it would be a test that looks like
+/// coverage and is not.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_forward_and_an_append_each_get_their_own_answer() {
     let (a, recorder_a, b, recorder_b) = pair("collision").await;
@@ -828,4 +829,94 @@ async fn starting_a_transport_takes_no_strong_reference_to_the_handler() {
         watch.upgrade().is_none(),
         "the handler outlived every strong handle to it",
     );
+}
+
+/// The id collision, reproduced rather than argued about.
+///
+/// Two id spaces meet in one `pending` map: the transport mints ids for
+/// `request`, while `AppendEntries` carries an id of the leader's own minting
+/// for flow control. Both start at one, so they collide -- most readily just
+/// after a leader change, when a member that had been a follower has a low
+/// append sequence and a low request id at the same time.
+///
+/// Matched on the number alone, the `AppendEntriesReply` is handed to the
+/// caller awaiting a `ForwardReply`: that caller sees the wrong message and
+/// gives up -- a registration refused with 503 -- and the append reply never
+/// reaches the node, so the peer's `match_index` stalls for a tick.
+///
+/// **Constructible only because the forward handler is served off the link
+/// reader.** Held open on the reader, as it was until the deadlock fix, this
+/// would stall b's link and the colliding append would never be read at all --
+/// which is why an earlier attempt at this test passed with and without the
+/// fix, and proved nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reply_of_the_wrong_kind_does_not_satisfy_a_waiter() {
+    let (a, recorder_a, b, recorder_b) = pair("wrong-kind").await;
+
+    // Hold the next forward open at b, so its waiter stays registered.
+    let (release, held) = tokio::sync::oneshot::channel();
+    *recorder_b.forward_gate.lock().await = Some(held);
+
+    // The first request of this transport's life takes id 1.
+    let requester = Arc::clone(&a);
+    let forwarding = tokio::spawn(async move {
+        requester
+            .request(
+                1,
+                &Message::Forward(Forward {
+                    verb: "register".to_owned(),
+                    resource_type: "node".to_owned(),
+                    resource_id: "a-node".to_owned(),
+                    body_text: "{\"id\":\"a-node\"}".to_owned(),
+                    request_id: 0,
+                }),
+                Stream::Control,
+                Some(10_000),
+            )
+            .await
+    });
+    assert!(
+        until(|| recorder_b
+            .forward_gate
+            .try_lock()
+            .is_ok_and(|gate| gate.is_none()))
+        .await,
+        "the forward never reached b, so no waiter is outstanding to collide with",
+    );
+
+    // An append carrying the *same* number, from the other id space entirely.
+    a.send(
+        1,
+        &Message::AppendEntries(AppendEntries {
+            term: 1,
+            leader: 0,
+            prev_log_index: 0,
+            prev_log_term: 0,
+            leader_commit: 0,
+            request_id: 1,
+            entries: Vec::new(),
+        }),
+        Stream::Control,
+    );
+
+    assert!(
+        until(|| recorder_a.append_replies.load(Ordering::SeqCst) >= 1).await,
+        "the append reply never reached the handler: it was delivered to the \
+         caller awaiting a ForwardReply instead, which loses the leader's view \
+         of that peer as well as answering the wrong question",
+    );
+
+    // The receiver is alive -- the handler is waiting on it -- so this
+    // cannot fail; naming the result says that rather than discarding it.
+    let _released = release.send(());
+    let reply = forwarding.await.expect("the task ran").expect("a reply");
+    assert!(
+        matches!(reply, Message::ForwardReply(_)),
+        "the forward was answered with {:?}: the append's reply carried the \
+         same number and was handed to this caller",
+        reply.message_type(),
+    );
+
+    a.close().await;
+    b.close().await;
 }

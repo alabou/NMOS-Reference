@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -1447,3 +1448,103 @@ class TestWhatAFollowerWillAccept:
 
 def _stale_id(index: int) -> str:
     return f"{index:08x}-dead-4000-8000-00000000000a"
+
+
+class TestWhatEtcdGatesThatThisDidNot:
+    """Two things `go.etcd.io/raft` does that this had to be told to do.
+
+    Both found by walking etcd's state transitions rather than its mechanisms,
+    after the first comparison pass missed one by comparing only the mechanisms
+    it thought to compare.
+    """
+
+    async def test_a_member_absorbing_a_snapshot_does_not_campaign(
+        self, tmp_path: Path,
+    ) -> None:
+        """etcd's ``promotable()``: ``!IsLearner && !hasNextOrInProgressSnapshot``.
+
+        We had the first half -- ``_voting`` -- and not the second. A member
+        mid-transfer is far behind by definition, so it cannot win a pre-vote
+        the up-to-dateness check is honest about; and campaigning clears its
+        ``_leader``, which stops it answering mutations for no gain at all.
+        The transfer is what will make it current, so waiting is strictly the
+        better move.
+        """
+        cluster = await _cluster(3, tmp_path)
+        try:
+            follower = cluster.members[1]
+            node = follower.node
+            node._role = Role.FOLLOWER
+
+            # A transfer in progress: one partly-assembled snapshot buffer.
+            node._installing[0] = bytearray(b"half a snapshot")
+            # And an election timer that has already expired, so the only thing
+            # standing between this member and a campaign is the new gate.
+            node._deadline = asyncio.get_running_loop().time() - 1.0
+
+            node._tick()
+
+            assert node.role is Role.FOLLOWER, (
+                f"a member absorbing a snapshot campaigned anyway (role "
+                f"{node.role.value}); it cannot win, and by trying it clears "
+                f"its leader and stops answering mutations"
+            )
+            assert node.leader == follower.node.leader, (
+                "campaigning cleared the leader of a member that should have "
+                "been waiting for its transfer"
+            )
+        finally:
+            await cluster.close()
+
+    async def test_a_peer_that_can_be_sent_nothing_still_hears_from_us(
+        self, tmp_path: Path,
+    ) -> None:
+        """A heartbeat here *is* an ``AppendEntries``, so silence is total.
+
+        ``go.etcd.io/raft`` carries heartbeats as their own message type and
+        ``bcastHeartbeat`` reaches every peer whatever its replication state,
+        so a follower waiting for a snapshot still hears from its leader.
+
+        Here the same message carries both, so a peer below the compaction
+        boundary goes through ``_send_snapshot`` -- and when there is no chunk
+        to send, returning silently sent that peer **nothing at all**: no
+        entries and no liveness. Its election timer expires and it campaigns,
+        for as long as the condition lasts.
+        """
+        cluster = await _cluster(3, tmp_path)
+        try:
+            leader = await cluster.elect(timeout=5.0)
+            node = leader.node
+            peer = next(p for p in node._peers if p != node.index)
+            state = node._peers[peer]
+
+            # The state the silence came from: this peer needs a snapshot and
+            # there is none to give it.
+            assert node._snapshot_meta is None, (
+                "a snapshot exists, so this is not the path being tested"
+            )
+            sent: list[Any] = []
+            node._transport.send = (  # type: ignore[method-assign]
+                lambda p, m, **kw: sent.append((p, m))
+            )
+
+            node._send_snapshot(peer, state)
+
+            assert sent, (
+                f"member {peer} needs a snapshot this leader does not have, "
+                f"and was sent nothing at all -- not even a heartbeat, because "
+                f"here they are the same message. It will time out and "
+                f"campaign for as long as that lasts."
+            )
+            _target, message = sent[-1]
+            assert message.prev_log_index == 0, (
+                "a keepalive must be anchored where every log matches, or the "
+                "peer rejects it and the leader learns nothing"
+            )
+            assert not message.entries, "a keepalive carries no entries"
+            assert message.leader_commit == 0, (
+                "a keepalive that carried a commit index would vouch for "
+                "entries it did not send"
+            )
+        finally:
+            await cluster.close()
