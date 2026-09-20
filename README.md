@@ -1,6 +1,6 @@
 # nmos-reference
 
-A Python reference implementation of an **NMOS Node** with **Matrox NMOS extensions**.
+Reference implementations of an **NMOS Node** and an **NMOS Registry**, with **Matrox NMOS extensions**.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
@@ -10,7 +10,13 @@ A Python reference implementation of an **NMOS Node** with **Matrox NMOS extensi
 
 ## What this is
 
-An NMOS Node implementation — covering the AMWA NMOS Interface Specifications (IS-04, IS-05, IS-10, IS-11), a curated set of AMWA Best Current Practices, and selected VSF Technical Recommendations — written in typed Python on top of `asyncio` + `aiohttp`. It is intended as both a working device and a teaching reference.
+Two halves of an NMOS system, in one checkout — the device and the infrastructure it registers with. Both are written in typed Python on top of `asyncio` + `aiohttp`, and both are intended as working software and as a teaching reference.
+
+**An NMOS Node** — covering the AMWA NMOS Interface Specifications (IS-04, IS-05, IS-10, IS-11), a curated set of AMWA Best Current Practices, and selected VSF Technical Recommendations. See [Specification coverage](#specification-coverage).
+
+**An NMOS Registry** — the IS-04 v1.3 Registration API and Query API (HTTP + WebSocket). It runs **standalone**, or **fault-tolerant** as a cluster of 3 or 5 members over either a **native Raft backend** — consensus in-process, nothing to install — or an **etcd backend**, managed by the registry or adopted from an existing deployment. A **performance implementation in Rust** — fully async as well, on `tokio`, but multi-threaded rather than bound to a single event loop — serves the same APIs from the same command line where throughput matters, and Python and Rust members interoperate in one cluster. See [NMOS Registry](#nmos-registry).
+
+The two are independent: the Node speaks to any conformant IS-04 registry, and the registry serves any conformant Node. Shipping both simply means a complete system runs from this checkout alone.
 
 ---
 
@@ -990,7 +996,7 @@ Together with the embedded capabilities-driven NMOS Controller, the streaming en
 
 | Spec | Role |
 |---|---|
-| **IS-04** Discovery & Registration | Node API, Registry client |
+| **IS-04** Discovery & Registration | *Node side:* Node API, Registry client. *Registry side:* Registration API and Query API (HTTP + WebSocket), v1.3 — standalone or as a fault-tolerant cluster |
 | **IS-05** Connection Management | Senders, Receivers, staged/active model |
 | **IS-10** Authorization | OAuth 2.0 Bearer tokens, JWKS, claims |
 | **IS-11** Stream Compatibility | Sender / Receiver capability + constraint support via the Matrox CCF framework (`caps/`) — supported + active constraint sets and parameter constraints; dynamic reconfiguration driven by active constraint sets; per-sub-flow / per-sub-stream configuration for hierarchical mux transports. IS-11 `Input` / `Output` resources are not implemented. |
@@ -1176,9 +1182,15 @@ The test markers are documented in `pyproject.toml`:
 
 ## Compliance Boundary
 
-This repository implements an NMOS Node and a curated set of VSF IPMX / TR-10-x extensions. Its coverage of the broader Matrox specification corpus is bounded by the spec coverage tables above.
+This repository implements an NMOS Node and an NMOS Registry, together with a curated set of VSF IPMX / TR-10-x extensions. Its coverage of the broader Matrox specification corpus is bounded by the spec coverage tables above.
+
+**The registry serves IS-04 v1.3 only.** Both the Registration API and the Query API are `v1.3`, in the Python and the Rust implementation alike; no earlier IS-04 version is offered. The VSF and Matrox extensions listed above are Node-side — the registry stores and serves whatever resources a Node registers, but the extension behaviour itself lives in the Node.
 
 `NMOS-MatroxOnly/` is the broader Matrox documentation corpus. This Python implementation supports only the subset of that corpus that has been validated end-to-end here. See the [NMOS-MatroxOnly](https://github.com/alabou/NMOS-MatroxOnly) repository for the full specification set; the spec coverage tables above list what this implementation exercises.
+
+**Discovery is by explicit address, not DNS-SD.** Neither the Node nor the registry advertises or browses over mDNS / DNS-SD — there is no zeroconf anywhere in the implementation. A Node is pointed at its registry with `--rdsHost`, and Controllers are pointed at the Query API.
+
+That is a deliberate fit for the deployments this project targets rather than an omission, and it is what makes it cloud-friendly. Cloud and container platforms already do service discovery, so a registry that must be *found* by browsing adds a second, redundant mechanism on top of one that is already solved. Neither flavour of DNS-SD fits it well: the mDNS form needs link-local multicast that such networks usually do not carry, and the unicast form needs SRV / PTR / TXT records provisioned in a zone and kept in step with instances that scale, move and are replaced. An address composes with whatever the platform already publishes and needs neither. Explicit addressing is also what makes the multi-member registry rigs here reproducible. The trade is on-premises plug-and-play. Vendors who need DNS-SD discovery must add it.
 
 **IS-05 Bulk interface is intentionally not supported.** The Node implements the per-Sender / per-Receiver IS-05 single-resource endpoints (`/single/...`) but does not expose the `/bulk/...` interface. Bulk operations are out of scope: the Controller drives multi-resource activations as coordinated single-resource calls, which keeps the connection-management state machine uniform across Senders and Receivers and avoids the partial-success semantics of bulk activations. Vendors who need IS-05 Bulk on their own products must add it themselves.
 
