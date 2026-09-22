@@ -265,7 +265,11 @@ def build() -> list[dict[str, Any]]:
 def main() -> None:
     cases = build()
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT.write_text(json.dumps(cases, indent=2, sort_keys=True) + "\n")
+    OUTPUT.write_text(
+        json.dumps(cases, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
     rejected = sum(1 for c in cases if not c["ok"])
     print(f"{len(cases)} cases ({rejected} rejected) -> {OUTPUT}")
 

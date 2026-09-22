@@ -93,7 +93,9 @@ class TestJournalFiles:
         with recorder.step("open_senders", intent="look at senders") as step:
             step.note("rows", 3)
 
-        lines = recorder.journal.jsonl_path.read_text().strip().splitlines()
+        lines = recorder.journal.jsonl_path.read_text(
+            encoding="utf-8",
+        ).strip().splitlines()
         assert len(lines) == 1
         record = json.loads(lines[0])
         assert record["verb"] == "open_senders"
@@ -101,7 +103,7 @@ class TestJournalFiles:
         assert record["observed"]["rows"] == 3
         assert record["outcome"] == StepOutcome.OK
 
-        markdown = recorder.journal.markdown_path.read_text()
+        markdown = recorder.journal.markdown_path.read_text(encoding="utf-8")
         assert "open_senders" in markdown
         assert "look at senders" in markdown
 
@@ -112,7 +114,8 @@ class TestJournalFiles:
         recorder = _recorder(tmp_path, surface)
         with recorder.step("first"):
             pass
-        assert len(recorder.journal.jsonl_path.read_text().strip().splitlines()) == 1
+        written = recorder.journal.jsonl_path.read_text(encoding="utf-8")
+        assert len(written.strip().splitlines()) == 1
 
     def test_screenshots_and_state_written(self, tmp_path: Path) -> None:
         surface = FakeSurface(texts={"main": "  Administrator  sign-in \n"})
@@ -165,7 +168,7 @@ class TestBlockedIsNotFailure:
 
         # The reason must be legible in the human artifact, because a tooltip
         # cannot be photographed.
-        markdown = recorder.journal.markdown_path.read_text()
+        markdown = recorder.journal.markdown_path.read_text(encoding="utf-8")
         assert reason in markdown
 
     def test_guard_alert_recorded_as_guarded(self, tmp_path: Path) -> None:
@@ -374,7 +377,7 @@ class TestWaitRecords:
         record = recorder.journal.records[0]
         assert [w.signal for w in record.waited_on] == [
             WaitSignal.TOGGLE_STARTED, WaitSignal.RESULTS_TERMINAL]
-        markdown = recorder.journal.markdown_path.read_text()
+        markdown = recorder.journal.markdown_path.read_text(encoding="utf-8")
         assert "toggle_started" in markdown
 
     def test_wait_record_adapts_outcome(self) -> None:
@@ -400,7 +403,7 @@ class TestManifest:
             mutating=False,
             debug_tracing=True,
         )
-        manifest = json.loads(path.read_text())
+        manifest = json.loads(path.read_text(encoding="utf-8"))
         assert manifest["fidelity_clean"] is True
         assert manifest["fidelity"]["unattributed"] == 0
         assert manifest["fidelity"]["driver_requests"] == 0
@@ -415,7 +418,7 @@ class TestManifest:
         recorder.journal.finalise(
             target={}, environment={}, fidelity=recorder.ledger,
             sse=SseVerdict.UNCONFIRMED, mutating=False, debug_tracing=True)
-        markdown = recorder.journal.markdown_path.read_text()
+        markdown = recorder.journal.markdown_path.read_text(encoding="utf-8")
         assert "unconfirmed" in markdown
         assert "nothing here evidences live updating" in markdown
 
@@ -424,7 +427,7 @@ class TestManifest:
         recorder.journal.finalise(
             target={}, environment={}, fidelity=recorder.ledger,
             sse=SseVerdict.CONFIRMED, mutating=True, debug_tracing=True)
-        markdown = recorder.journal.markdown_path.read_text()
+        markdown = recorder.journal.markdown_path.read_text(encoding="utf-8")
         assert "This run made changes" in markdown
         assert "left in the state it reached" in markdown
 
@@ -474,7 +477,7 @@ class TestCorrelationKind:
         with recorder.step("sign_in") as step:
             step.touched()
             step.correlation = CorrelationKind.SERVER_ONLY
-        markdown = recorder.journal.markdown_path.read_text()
+        markdown = recorder.journal.markdown_path.read_text(encoding="utf-8")
         assert "loads no JavaScript" in markdown
 
 

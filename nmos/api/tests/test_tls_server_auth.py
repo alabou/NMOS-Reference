@@ -205,7 +205,7 @@ class TestTlsServerAuth:
         # PKI sanity: the `.chain.pem` MUST contain both the leaf and the
         # intermediate `ExampleProductCA.0.0` PEM blocks. Fails fast if the
         # cert bundle on disk is missing the intermediate append.
-        chain_text = server_chain(SERIAL, flavor).read_text()
+        chain_text = server_chain(SERIAL, flavor).read_text(encoding="utf-8")
         begin_count = chain_text.count("-----BEGIN CERTIFICATE-----")
         end_count = chain_text.count("-----END CERTIFICATE-----")
         assert begin_count == end_count
@@ -214,7 +214,7 @@ class TestTlsServerAuth:
             f"found {begin_count} PEM block(s)"
         )
         # Sanity: intermediate CA PEM body overlaps the chain
-        intermediate = product_ca(flavor).read_text()
+        intermediate = product_ca(flavor).read_text(encoding="utf-8")
         intermediate_body = intermediate.split(
             "-----BEGIN CERTIFICATE-----", 1)[1].split(
             "-----END CERTIFICATE-----", 1)[0].strip()
@@ -223,7 +223,7 @@ class TestTlsServerAuth:
         )
         # And the root CA cert body MUST NOT be in the chain (per spec —
         # the root belongs in the client's trust store, not on the wire).
-        root = root_ca(flavor).read_text()
+        root = root_ca(flavor).read_text(encoding="utf-8")
         root_body = root.split(
             "-----BEGIN CERTIFICATE-----", 1)[1].split(
             "-----END CERTIFICATE-----", 1)[0].strip()

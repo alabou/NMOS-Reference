@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -62,6 +63,57 @@ from nmos.raft.errors import RaftError
 # does not understand refuses to start rather than guessing, because guessing
 # here means guessing about whether it has already voted.
 STATE_VERSION = 1
+
+
+if sys.platform == "win32":
+    # Everything in this block exists for the entry-level Windows rig. The
+    # deployment target is Linux and takes the plain rename-then-fsync-the-
+    # directory sequence in ``save`` below, unchanged and unconditional; the
+    # imports here are inside the guard because ``ctypes.wintypes`` does not
+    # merely go unused elsewhere, it raises ``ValueError: _type_ 'v' not
+    # supported`` at import time on a non-Windows build of ``_ctypes``.
+    #
+    # Windows cannot open a directory through ``os.open``, so the POSIX
+    # sequence has no expression there at all. ``MoveFileExW`` is the one call
+    # that covers both halves: ``REPLACE_EXISTING`` is the flag ``os.replace``
+    # itself passes on this platform, and ``WRITE_THROUGH`` is the part that
+    # matters here -- it does not return until the move has reached the disk,
+    # which is what fsyncing the directory buys on POSIX.
+    #
+    # The prototype is bound once, at import, rather than per ``save``: the
+    # call sits on the election path, and re-loading kernel32 on every term
+    # change would be work done inside the window this whole file exists to
+    # keep short.
+    import ctypes
+    from ctypes import wintypes
+    from enum import IntFlag
+
+    class _MoveFileFlag(IntFlag):
+        """The ``MoveFileExW`` flags this needs, from ``winbase.h``."""
+
+        REPLACE_EXISTING = 0x1
+        WRITE_THROUGH = 0x8
+
+    _MOVE_FILE_FLAGS = int(
+        _MoveFileFlag.REPLACE_EXISTING | _MoveFileFlag.WRITE_THROUGH,
+    )
+
+    _move_file_ex = ctypes.WinDLL("kernel32", use_last_error=True).MoveFileExW
+    _move_file_ex.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+    )
+    _move_file_ex.restype = wintypes.BOOL
+
+    def _replace_durably(source: str, target: Path) -> None:
+        """``os.replace``, plus the durability POSIX gets from the fsync.
+
+        Raises ``OSError`` on failure, exactly as ``os.replace`` does, so the
+        caller's cleanup path does not have to know which platform it is on.
+        """
+        if not _move_file_ex(source, str(target), _MOVE_FILE_FLAGS):
+            raise ctypes.WinError(ctypes.get_last_error())
 
 
 class PersistentStateError(RaftError):
@@ -128,7 +180,7 @@ class TermStore:
             return state
 
         try:
-            raw = json.loads(self._path.read_text())
+            raw = json.loads(self._path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             raise PersistentStateError(
                 f"{self._path} is unreadable: {exc}. Refusing to start with no "
@@ -186,7 +238,15 @@ class TermStore:
         The directory is fsynced as well as the file. Without that, the rename
         itself can be lost on a crash even though the data was flushed -- and
         the member would come back with the *previous* term, which is the state
-        this is meant to rule out.
+        this is meant to rule out. Windows cannot fsync a directory and gets
+        the same guarantee from a write-through move instead; see the platform
+        block at the top of this module.
+
+        ``encoding`` and ``newline`` are pinned so the file is the same bytes
+        on every platform. Nothing here is non-ASCII today -- ``json.dumps``
+        escapes it -- but a state file whose contents depend on the locale of
+        whichever machine last wrote it is not a thing to leave to chance in
+        the one file this backend cannot afford to misread.
         """
         payload = json.dumps(
             {
@@ -203,11 +263,16 @@ class TermStore:
             dir=str(directory), prefix=".raft-state-",
         )
         try:
-            with os.fdopen(handle, "w") as stream:
+            with os.fdopen(
+                handle, "w", encoding="utf-8", newline="\n",
+            ) as stream:
                 stream.write(payload)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary, self._path)
+            if sys.platform == "win32":
+                _replace_durably(temporary, self._path)
+            else:
+                os.replace(temporary, self._path)
         except BaseException:
             # Best-effort cleanup; the original file is untouched either way,
             # because the rename is the only thing that publishes the new one.
@@ -217,10 +282,14 @@ class TermStore:
                 pass
             raise
 
-        directory_fd = os.open(str(directory), os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        # The second half of the durable publish. Windows already got it from
+        # the write-through move above and cannot do this at all, so it is the
+        # one step that is genuinely POSIX-only.
+        if sys.platform != "win32":
+            directory_fd = os.open(str(directory), os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
 
         self._writes += 1

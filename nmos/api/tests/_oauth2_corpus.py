@@ -211,7 +211,11 @@ def build() -> dict[str, Any]:
 def main() -> None:
     corpus = build()
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT.write_text(json.dumps(corpus, indent=2) + "\n")
+    OUTPUT.write_text(
+        json.dumps(corpus, indent=2) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
     verified = sum(1 for case in corpus["cases"] if case["verified"])
     print(f"{OUTPUT}: {len(corpus['cases'])} cases, {verified} verifying")
 

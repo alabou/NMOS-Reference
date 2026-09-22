@@ -127,7 +127,7 @@ def build() -> dict[str, Any]:
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "state.json"
         for name, text in _CASES:
-            path.write_text(text)
+            path.write_text(text, encoding="utf-8")
             try:
                 TermStore(path).load()
             except PersistentStateError as exc:
@@ -156,7 +156,11 @@ def build() -> dict[str, Any]:
 def main() -> None:
     corpus = build()
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT.write_text(json.dumps(corpus, indent=2, sort_keys=True) + "\n")
+    OUTPUT.write_text(
+        json.dumps(corpus, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
     print(f"{len(corpus['cases'])} refusals -> {OUTPUT}")
 
 

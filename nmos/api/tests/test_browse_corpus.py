@@ -34,7 +34,7 @@ def _committed_cases() -> dict[str, dict[str, Any]]:
             f"{OUTPUT} is missing.\n"
             f"  python -m nmos.api.tests._browse_corpus",
         )
-    corpus: dict[str, Any] = json.loads(OUTPUT.read_text())
+    corpus: dict[str, Any] = json.loads(OUTPUT.read_text(encoding="utf-8"))
     cases: list[dict[str, Any]] = corpus["cases"]
     return {str(case["name"]): case for case in cases}
 

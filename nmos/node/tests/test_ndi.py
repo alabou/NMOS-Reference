@@ -59,7 +59,7 @@ def _build_config(node: Node, config_name: str) -> None:
     config_path = BUILTIN_DIR / f"{config_name}.json"
     if not config_path.exists():
         pytest.skip(f"{config_name}.json not found")
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         config = json.load(f)
     builder = ConfigBuilder(node, verbose=False)
     for r in config.get("receivers", []):
@@ -174,7 +174,7 @@ class TestNdiReceiverIs04:
         video_layers, data_layers."""
         # Parse config JSON directly — the caps layer constraints come from constraint_sets
         config_path = BUILTIN_DIR / "config6.json"
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             config = json.load(f)
         found_all = False
         for r in config.get("receivers", []):
@@ -208,7 +208,7 @@ class TestNdiSubflowMediaTypes:
         config_path = BUILTIN_DIR / f"{config_name}.json"
         if not config_path.exists():
             pytest.skip(f"{config_name}.json not found")
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             config = json.load(f)
         media_types: set[str] = set()
         for r in config.get("receivers", []):
@@ -306,7 +306,7 @@ class TestNdiSubflowMediaTypes:
         (via layer_compatibility_groups). Config6a exposes both via groups [0]=uncompressed
         and [1]=compressed."""
         config_path = BUILTIN_DIR / "config6a.json"
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             config = json.load(f)
         groups_seen: set[int] = set()
         for r in config.get("receivers", []):

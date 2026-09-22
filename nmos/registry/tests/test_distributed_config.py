@@ -31,12 +31,45 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+@pytest.fixture(autouse=True)
+def posix_resolution_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pin the platform gate for everything that is not about the platform.
+
+    ``_resolve_etcd`` consults ``sys.platform`` once, to decide whether this
+    process may manage an etcd member at all. Everything else in this file --
+    the member list, the co-located port rule, the TLS pairing, the certificate
+    existence checks, endpoint derivation -- happens either side of that gate
+    and is identical on every platform.
+
+    Without this, running the suite on Windows stopped all of them at
+    "--distributed on native Windows requires --etcdEndpoints", a precondition
+    none of them is about: twenty-three tests reported a failure that said
+    nothing about the resolution they exist to pin. Supplying endpoints to get
+    past it would have been worse, because several of them assert what is
+    derived when endpoints are *absent*.
+
+    So the gate is pinned to the deployment target and the tests assert the
+    same thing on both platforms. The Windows rule itself is not skipped here
+    and is not left to Windows: the tests at the end of this file set
+    ``sys.platform`` to ``win32`` inside the test body, which runs after this
+    fixture, so they override it and every platform checks the rule.
+
+    ``tmp_path`` is requested for its ordering, not its value: pytest's own
+    temporary-directory factory branches on ``sys.platform`` and calls
+    ``os.getuid()`` when it believes it is on POSIX, which does not exist on
+    Windows. Naming it here forces it to be built before the patch is applied.
+    """
+    monkeypatch.setattr(sys, "platform", "linux")
+
+
 def _certs(tmp_path: Path) -> list[str]:
     """Three placeholder PEM files -- existence is all the resolver checks."""
     made: list[str] = []
     for name in ("cert.pem", "key.pem", "ca.pem"):
         path = tmp_path / name
-        path.write_text("placeholder")
+        path.write_text("placeholder", encoding="utf-8")
         made.append(str(path))
     return made
 

@@ -109,7 +109,7 @@ class TestConfigsHaveCompatibilityGroups:
         with an explicit layer_compatibility_groups attribute."""
         out: list[tuple[str, str, str, list[int]]] = []
         for cfg_path in sorted(BUILTIN_DIR.glob("config*.json")):
-            with open(cfg_path) as f:
+            with open(cfg_path, encoding="utf-8") as f:
                 cfg = json.load(f)
             for kind in ("senders", "receivers"):
                 for res in cfg.get(kind, []):
@@ -125,7 +125,7 @@ class TestConfigsHaveCompatibilityGroups:
         return out
 
     def _load_config6a(self) -> dict[str, Any]:
-        with open(BUILTIN_DIR / "config6a.json") as f:
+        with open(BUILTIN_DIR / "config6a.json", encoding="utf-8") as f:
             return json.load(f)  # type: ignore[no-any-return]
 
     def test_config6a_receiver_has_group_0_and_1(self) -> None:
@@ -258,7 +258,7 @@ class TestMuxSubflowIntersection:
         node = Node()
         node.init(serial_number="LCGTST")
 
-        with open(BUILTIN_DIR / "config6a.json") as f:
+        with open(BUILTIN_DIR / "config6a.json", encoding="utf-8") as f:
             config = json.load(f)
 
         builder = ConfigBuilder(node, verbose=False)

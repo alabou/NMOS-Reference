@@ -612,7 +612,7 @@ class TestSdpFromParamsTwoLegEmission:
     @pytest.fixture
     def usb_sender_and_activation(self) -> tuple[Any, Any, Any]:
         """Build a node + USB sender (simplest SDP-enabled config)."""
-        with open(BUILTIN_DIR / "config8u.json") as f:
+        with open(BUILTIN_DIR / "config8u.json", encoding="utf-8") as f:
             config = json.load(f)
         node = Node()
         node.init(serial_number="REDTST")
@@ -760,7 +760,7 @@ class TestSdpFromParamsTwoLegEmission:
     def rtp_sender_and_activation(self) -> tuple[Any, Any, Any]:
         """Build a node with an RTP video sender (config1 — simplest RTP)."""
         cfg_path = BUILTIN_DIR / "config1.json"
-        with open(cfg_path) as f:
+        with open(cfg_path, encoding="utf-8") as f:
             config = json.load(f)
         node = Node()
         node.init(serial_number="REDRTPTST")

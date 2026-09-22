@@ -225,7 +225,9 @@ class TestTransportErrorDoesNotClaimLinkDown:
         offenders = [
             f"{path.name}:{n}"
             for path in sorted(streaming.glob("transport_*.py"))
-            for n, line in enumerate(path.read_text().splitlines(), 1)
+            for n, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), 1,
+        )
             if "link_down=True" in line and not line.lstrip().startswith("#")
         ]
         assert not offenders, f"link_down asserted at {offenders}"

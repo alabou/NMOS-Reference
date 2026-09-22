@@ -203,7 +203,9 @@ async def fetch_node(session: aiohttp.ClientSession, index: int, node_id: str,
 def dump_member_logs(size: int) -> None:
     for index in range(size):
         print(f"--- member {index} ---")
-        text = (SCRATCH / f"mixed-m{index}.out").read_text(errors="replace")
+        text = (SCRATCH / f"mixed-m{index}.out").read_text(
+            encoding="utf-8", errors="replace",
+        )
         for line in text.splitlines():
             if "registry: At " not in line:
                 print(f"  {line}")

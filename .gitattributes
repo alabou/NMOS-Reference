@@ -1,0 +1,39 @@
+# Line endings are decided here rather than by whichever machine committed
+# last. Ubuntu is the deployment target and LF is what it gets.
+#
+# Without this the entry-level Windows rig quietly commits CRLF the first time
+# anyone regenerates a committed corpus: the generators in nmos/**/tests/
+# (_messages_corpus.py, _wire_corpus.py, _persist_corpus.py, the codegen ones)
+# and nmos/cluster/tests/_layout_corpus.py all emit through Path.write_text,
+# which translates "\n" on that platform. A one-value change then arrives as a
+# whole-file diff, and the review that was supposed to catch the one value
+# cannot see it. `core.autocrlf` is per-machine and was not going to be set on
+# everyone's; this is.
+* text=auto eol=lf
+
+# Except what Windows itself parses. cmd.exe mishandles LF-only batch files --
+# labels and goto in particular read past the end of the intended line -- so
+# these are checked out with CRLF on every platform.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# And what Linux executes, which must never acquire a CR: a shebang ending in
+# "\r" makes the kernel look for an interpreter whose name ends in a carriage
+# return, and the failure reads "No such file or directory" about a path that
+# is plainly there.
+*.sh text eol=lf
+
+# Byte-identical copies of files maintained in the Matrox SDP project, which
+# are CRLF at the source. Held that way by discipline, as the fake-as modules
+# are -- normalising them here would make every future comparison against
+# upstream a whole-file diff, which is the exact problem this file is for.
+sdp/MatroxSdp.py -text
+sdp/MatroxSdpCheck.py -text
+sdp/MatroxSdpWrite.py -text
+
+# Never transformed, never diffed as text.
+*.woff binary
+*.woff2 binary
+*.png binary
+*.ico binary

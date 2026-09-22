@@ -40,7 +40,7 @@ def _make_node_with_sender() -> Node:
     config_path = Path(__file__).parent.parent.parent / "node" / "config" / "builtin" / "config1.json"
     if config_path.exists():
         import json as _json
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             config = _json.load(f)
         builder = ConfigBuilder(node, verbose=False)
         for s in config.get("senders", []):

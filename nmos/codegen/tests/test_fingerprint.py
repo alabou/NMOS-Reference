@@ -165,7 +165,7 @@ def test_both_trees_describe_the_same_model() -> None:
 
     from nmos.types.generated import MODEL_FINGERPRINT
 
-    rust = json.loads(_RUST_FINGERPRINT_JSON.read_text())
+    rust = json.loads(_RUST_FINGERPRINT_JSON.read_text(encoding="utf-8"))
     assert rust["model_fingerprint"] == MODEL_FINGERPRINT, (
         "the Python and Rust generated trees were built from different models; "
         "regenerate both with: python -m nmos.codegen.generate"

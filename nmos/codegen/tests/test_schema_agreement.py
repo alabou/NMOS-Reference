@@ -144,7 +144,7 @@ def _resolve(name: str, seen: frozenset[str] = frozenset()) -> tuple[set[str], s
         for branch in node.get("allOf", []):
             walk(branch)
 
-    walk(json.loads((SCHEMAS / name).read_text()))
+    walk(json.loads((SCHEMAS / name).read_text(encoding="utf-8")))
     return required, properties
 
 

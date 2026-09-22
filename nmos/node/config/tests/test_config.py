@@ -30,7 +30,7 @@ class TestConfig1:
 
     @pytest.fixture
     def config(self) -> dict:
-        with open(BUILTIN_DIR / "config1.json") as f:
+        with open(BUILTIN_DIR / "config1.json", encoding="utf-8") as f:
             return json.load(f)
 
     def test_config1_loads(self, config: dict) -> None:
@@ -144,7 +144,7 @@ class TestConfig4aMux:
 
     @pytest.fixture
     def config(self) -> dict:
-        with open(BUILTIN_DIR / "config4a_mux.json") as f:
+        with open(BUILTIN_DIR / "config4a_mux.json", encoding="utf-8") as f:
             return json.load(f)
 
     def test_config4a_loads(self, config: dict) -> None:
@@ -736,7 +736,7 @@ class TestLinkedReceiverGroup:
         node.privacy_enabled = True
         from nmos.node.config import ConfigBuilder
 
-        with open(BUILTIN_DIR / "config1.json") as f:
+        with open(BUILTIN_DIR / "config1.json", encoding="utf-8") as f:
             cfg = json.load(f)
         builder = ConfigBuilder(node, verbose=False)
         for r in cfg.get("receivers", []):
@@ -760,7 +760,7 @@ class TestLinkedReceiverGroup:
         node.privacy_enabled = True
         from nmos.node.config import ConfigBuilder
 
-        with open(BUILTIN_DIR / "config7.json") as f:
+        with open(BUILTIN_DIR / "config7.json", encoding="utf-8") as f:
             cfg = json.load(f)
         builder = ConfigBuilder(node, verbose=False)
         for r in cfg.get("receivers", []):
@@ -800,7 +800,7 @@ class TestConstraintPropagationToLinkedReceiver:
         node.privacy_enabled = True
         from nmos.node.config import ConfigBuilder
 
-        with open(BUILTIN_DIR / "config7.json") as f:
+        with open(BUILTIN_DIR / "config7.json", encoding="utf-8") as f:
             cfg = json.load(f)
         builder = ConfigBuilder(node, verbose=False)
 
@@ -919,7 +919,7 @@ def _build_config(node, config_name):
     """Build a config, returning (sender_statics, receiver_statics)."""
     from nmos.node.config import ConfigBuilder
 
-    with open(BUILTIN_DIR / f"{config_name}.json") as f:
+    with open(BUILTIN_DIR / f"{config_name}.json", encoding="utf-8") as f:
         cfg = json.load(f)
     builder = ConfigBuilder(node, verbose=False)
     receiver_statics = []

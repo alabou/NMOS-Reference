@@ -545,7 +545,9 @@ def is_link_down(interface_name: str) -> bool | None:
         return status in _WINDOWS_OPER_STATUS_DOWN
 
     try:
-        with open(f"{_SYSFS_NET}/{interface_name}/flags") as handle:
+        with open(
+            f"{_SYSFS_NET}/{interface_name}/flags", encoding="utf-8",
+        ) as handle:
             flags = int(handle.read().strip(), 16)
     except (OSError, ValueError):
         return None
@@ -553,7 +555,9 @@ def is_link_down(interface_name: str) -> bool | None:
         return True
 
     try:
-        with open(f"{_SYSFS_NET}/{interface_name}/carrier") as handle:
+        with open(
+            f"{_SYSFS_NET}/{interface_name}/carrier", encoding="utf-8",
+        ) as handle:
             return handle.read().strip() != "1"
     except (OSError, ValueError):
         # Reading ``carrier`` fails with ENOENT/EINVAL on some drivers, and
@@ -562,7 +566,9 @@ def is_link_down(interface_name: str) -> bool | None:
         pass
 
     try:
-        with open(f"{_SYSFS_NET}/{interface_name}/operstate") as handle:
+        with open(
+            f"{_SYSFS_NET}/{interface_name}/operstate", encoding="utf-8",
+        ) as handle:
             return handle.read().strip().lower() in _OPERSTATE_DOWN
     except OSError:
         return None

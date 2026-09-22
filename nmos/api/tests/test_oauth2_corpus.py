@@ -46,7 +46,7 @@ def _committed() -> dict[str, Any]:
             f"{OUTPUT} is missing.\n"
             f"  python -m nmos.api.tests._oauth2_corpus",
         )
-    parsed: dict[str, Any] = json.loads(OUTPUT.read_text())
+    parsed: dict[str, Any] = json.loads(OUTPUT.read_text(encoding="utf-8"))
     return parsed
 
 

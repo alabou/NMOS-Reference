@@ -302,7 +302,11 @@ def main() -> None:
     cases = build()
     total = len(_cases())
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT.write_text(json.dumps(cases, indent=2, sort_keys=True) + "\n")
+    OUTPUT.write_text(
+        json.dumps(cases, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
     print(f"{len(cases)} of {total} bodies encoded -> {OUTPUT}")
 
 

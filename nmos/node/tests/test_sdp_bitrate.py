@@ -29,7 +29,7 @@ def _build(config_name: str) -> Node:
     path = BUILTIN_DIR / f"{config_name}.json"
     if not path.exists():
         pytest.skip(f"{config_name}.json not found")
-    cfg = json.load(open(path))
+    cfg = json.load(open(path, encoding="utf-8"))
     builder = ConfigBuilder(node, verbose=False)
     for s in cfg.get("senders", []):
         try:

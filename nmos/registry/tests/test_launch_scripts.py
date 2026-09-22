@@ -62,7 +62,7 @@ def test_at_least_one_launcher_is_checked() -> None:
     "script", _launchers(), ids=lambda p: p.name,
 )
 def test_a_distributed_launcher_names_its_backend(script: Path) -> None:
-    text = script.read_text()
+    text = script.read_text(encoding="utf-8")
     if not _passes_distributed(text):
         return
     assert "--distributedBackend" in text, (

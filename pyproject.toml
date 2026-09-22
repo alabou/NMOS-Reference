@@ -37,15 +37,24 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# ``types-psutil`` supplies stubs for the one optional soft dependency the node
-# imports without declaring: ``Node._resolve_interface_name`` falls back to
-# ``psutil.net_if_addrs()`` between ``netifaces_compat`` and the "eth0" default,
-# guarded by try/except ImportError. Without the stubs mypy types that call as
-# Any, which makes the ``return iface`` on the next line an error under --strict
-# even though psutil itself need never be installed. The stubs alone fix it and
-# type-check the call properly, which an ``ignore_missing_imports`` override
-# would not -- it silences the import but leaves ``iface`` untyped.
-dev = ["pytest", "pytest-asyncio", "pytest-aiohttp", "mypy", "types-psutil"]
+# psutil is deliberately NOT a runtime dependency. The Linux deployment target
+# never needs it: ``Node._resolve_interface_name`` falls back to
+# ``psutil.net_if_addrs()`` between ``netifaces_compat`` and the "eth0"
+# default, guarded by try/except ImportError, and ``capacity.py`` reads
+# ``/proc/<pid>/stat`` directly. It is here because the entry-level Windows rig
+# has neither ``/proc`` nor ``os.sysconf``, so the benchmark imports psutil on
+# that platform only -- a development-time need on a development-time platform,
+# which is not a reason to add a compiled package to what Ubuntu deploys.
+#
+# ``types-psutil`` supplies the stubs, because psutil publishes no inline
+# types: without them mypy types those calls as Any, which makes the
+# ``return iface`` in ``_resolve_interface_name`` an error under --strict. The
+# stubs type-check the call properly, which an ``ignore_missing_imports``
+# override would not -- it silences the import but leaves ``iface`` untyped.
+dev = [
+    "pytest", "pytest-asyncio", "pytest-aiohttp", "mypy",
+    "psutil", "types-psutil",
+]
 # Agent-driven UI driver (nmos/agentui/). Optional: the node runtime never
 # imports it. Installing the package is only half the setup -- pip cannot
 # install a browser, so see requirements-agentui.txt for the second command.

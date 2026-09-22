@@ -308,7 +308,7 @@ def test_a_local_address_is_decided_by_binding_it() -> None:
 # ---------------------------------------------------------------------------
 
 def _script(name: str) -> str:
-    return (REPO_ROOT / name).read_text()
+    return (REPO_ROOT / name).read_text(encoding="utf-8")
 
 
 def test_the_secured_launcher_disables_nothing() -> None:
@@ -384,32 +384,32 @@ def test_the_launchers_point_at_each_other_not_at_the_standalone_one() -> None:
     assert "start-registry-dist-secure.sh" in plain
 
 
+# What these two scripts REFUSE is asserted in test_launcher_contract.py, not
+# here, because that contract is not shell-specific: it runs against the .sh on
+# Linux and the .bat on Windows, which are the files each platform actually
+# uses. Only the syntax check below is genuinely bash's, and it stays.
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "cmd.exe has no syntax-check mode, and the only `bash` on a Windows "
+        "rig is C:\\WINDOWS\\system32\\bash.exe -- WSL. This project uses WSL "
+        "for exactly one thing, bringing up an etcd member, because etcd rates "
+        "windows/amd64 Tier 3; linting the Linux launchers inside Linux would "
+        "make the Windows gate green without testing anything Windows runs. "
+        "The .bat equivalents are covered by test_launcher_contract.py."
+    ),
+)
 @pytest.mark.parametrize("script", [
     "start-registry-dist-secure.sh", "start-registry-dist.sh",
 ])
 def test_the_launchers_are_syntactically_valid(script: str) -> None:
     result = subprocess.run(
-        ["bash", "-n", str(REPO_ROOT / script)], capture_output=True, text=True,
+        ["bash", "-n", str(REPO_ROOT / script)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, result.stderr
-
-
-@pytest.mark.parametrize("argv,expected", [
-    ([], "member index"),
-    (["9", "3"], "0..2"),
-    (["0", "4"], "1, 3 or 5"),
-    (["0", "3", "0"], "start-registry-dist.sh"),
-    (["0", "3", "2", "--nap=1", "--oauth2"], "not allowed"),
-])
-def test_the_secured_launcher_refuses_bad_arguments(
-    argv: list[str], expected: str,
-) -> None:
-    result = subprocess.run(
-        [str(REPO_ROOT / "start-registry-dist-secure.sh"), *argv],
-        capture_output=True, text=True, cwd=REPO_ROOT,
-    )
-    assert result.returncode != 0
-    assert expected in result.stderr
 
 
 # ---------------------------------------------------------------------------

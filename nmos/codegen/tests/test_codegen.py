@@ -99,7 +99,7 @@ class TestGenerateObjectType:
             assert Path(filepath).exists()
 
             # Read the generated file to verify it's valid Python
-            source = Path(filepath).read_text()
+            source = Path(filepath).read_text(encoding="utf-8")
             assert "class NErrorValue:" in source
             assert "class NError:" in source
             assert "class NErrorEnums:" in source

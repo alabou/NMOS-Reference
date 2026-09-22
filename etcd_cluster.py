@@ -144,7 +144,7 @@ def _default_profile() -> str:
     wrong costs a flag rather than a wrong deployment.
     """
     try:
-        release = Path("/proc/sys/kernel/osrelease").read_text()
+        release = Path("/proc/sys/kernel/osrelease").read_text(encoding="utf-8")
     except OSError:
         return PROFILE_LINUX
     return PROFILE_WSL if "microsoft" in release.lower() else PROFILE_LINUX

@@ -49,7 +49,7 @@ def _build_config(node: Any, config_name: str = "config1") -> None:
     if not config_path.exists():
         pytest.skip(f"{config_name}.json not found")
     import json
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         config = json.load(f)
     builder = ConfigBuilder(node, verbose=False)
     for s in config.get("senders", []):

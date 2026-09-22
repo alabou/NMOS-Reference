@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+import time
 from pathlib import Path
 from typing import Any
 
@@ -44,11 +45,43 @@ from nmos.registry.subscriptions import SubscriptionManager
 # Fast enough that a test finishes in milliseconds, with the election window
 # still an order of magnitude above the heartbeat -- the ratio is what stops a
 # healthy leader losing its followers' timers, and compressing it uniformly
-# preserves that.
+# preserves that. The 1 : 6 : 12 below is the same ratio as the production
+# default in ``RaftTiming``, expressed once so that compressing it cannot
+# quietly change it.
+#
+# The floor is not a platform question, it is a clock question. asyncio
+# schedules every timer on ``loop.time()``, which is ``time.monotonic()``, and
+# a heartbeat shorter than that clock's resolution does not exist: the loop
+# clock jumps a whole tick at a time, so a follower can observe a full tick of
+# elapsed time having seen only one heartbeat. On Linux -- the deployment
+# target -- the resolution is nanoseconds, the floor binds, and these are the
+# 5/30/60 ms they have always been. On Windows the measured resolution is
+# 15.625 ms, because CPython <= 3.12 implements ``time.monotonic()`` there as
+# ``GetTickCount64()``; at 5 ms that put forty nominal heartbeat rounds inside
+# one 30 ms election window and the cluster churned leadership under no load.
+# CPython 3.13 moved that platform to ``QueryPerformanceCounter``, so this
+# reverts to the Linux numbers there on its own rather than outliving the
+# defect it exists for.
+_CLOCK_QUANTUM = time.get_clock_info("monotonic").resolution
+
+# Two ticks, not one: at a single tick the nominal and actual heartbeat
+# intervals differ by up to 100%, because a sleep of one quantum lands on
+# either the next tick or the one after it. Two is the smallest value that
+# makes every heartbeat advance the loop clock.
+#
+# On Linux this is inert -- the floor below binds and nothing here changes.
+# On the Windows rig it is the difference between a 1.28-tick heartbeat and a
+# 2-tick one, measured at 312.70s and 342.98s for the 356 tests in nmos/raft:
+# 9.7% of test wall clock to stop sizing the election window against an
+# interval the platform cannot actually deliver.
+_TICKS_PER_HEARTBEAT = 2
+
+_BASE = max(0.005, _TICKS_PER_HEARTBEAT * _CLOCK_QUANTUM)
+
 FAST = RaftTiming(
-    heartbeat=0.005,
-    election_min=0.030,
-    election_max=0.060,
+    heartbeat=_BASE,
+    election_min=6 * _BASE,
+    election_max=12 * _BASE,
 )
 
 

@@ -99,7 +99,7 @@ def check_corpus(
         f"assert against.\n{regenerate}"
     )
 
-    committed_doc = json.loads(output.read_text())
+    committed_doc = json.loads(output.read_text(encoding="utf-8"))
     current_doc = build()
 
     if records_key is None:

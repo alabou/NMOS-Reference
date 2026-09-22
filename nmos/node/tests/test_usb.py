@@ -72,7 +72,7 @@ def _make_node(serial: str = "USBTST") -> Node:
 
 def _build_config8u(node: Node) -> None:
     from nmos.node.config import ConfigBuilder
-    with open(CONFIG8U) as f:
+    with open(CONFIG8U, encoding="utf-8") as f:
         config = json.load(f)
     builder = ConfigBuilder(node, verbose=False)
     for r in config.get("receivers", []):
@@ -310,7 +310,7 @@ class TestUsbSenderIs04:
         # S4 — Sender SHOULD provide urn:x-<ns>:cap:transport:usb_class.
         # Scan the JSON source directly to guarantee we observe the original
         # declaration (pipeline builder may normalise the constraint_sets).
-        with open(CONFIG8U) as f:
+        with open(CONFIG8U, encoding="utf-8") as f:
             cfg = json.load(f)
         found = False
         for s in cfg["senders"]:
@@ -357,7 +357,7 @@ class TestUsbReceiverIs04:
     def test_usb_receiver_media_types_contains_application_usb(self) -> None:
         # R2 — receiver declares application/usb in its constraint_sets.
         # Scan JSON to see the declared media_types.
-        with open(CONFIG8U) as f:
+        with open(CONFIG8U, encoding="utf-8") as f:
             cfg = json.load(f)
         declared: set[str] = set()
         for r in cfg["receivers"]:
@@ -373,7 +373,7 @@ class TestUsbReceiverIs04:
 
     def test_usb_receiver_has_usb_class_capability(self) -> None:
         # R4
-        with open(CONFIG8U) as f:
+        with open(CONFIG8U, encoding="utf-8") as f:
             cfg = json.load(f)
         found = False
         for r in cfg["receivers"]:
@@ -630,7 +630,7 @@ class TestUsbEncryption:
         # contain a=privacy:. This confirms E2's negative case.
         node = _make_node(serial="USBNOPEP")
         # Build without privacy keys
-        with open(CONFIG8U) as f:
+        with open(CONFIG8U, encoding="utf-8") as f:
             cfg = json.load(f)
         stripped_cfg = json.loads(json.dumps(cfg))
         for kind in ("senders", "receivers"):

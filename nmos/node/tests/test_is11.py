@@ -62,7 +62,7 @@ def _build_config(node: Node, config_name: str) -> None:
     config_path = BUILTIN_DIR / f"{config_name}.json"
     if not config_path.exists():
         pytest.skip(f"{config_name}.json not found")
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         config = json.load(f)
     builder = ConfigBuilder(node, verbose=False)
     for s in config.get("senders", []):

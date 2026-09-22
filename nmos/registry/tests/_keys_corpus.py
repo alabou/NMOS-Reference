@@ -698,7 +698,11 @@ def build() -> dict[str, Any]:
 def main() -> None:
     corpus = build()
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT.write_text(json.dumps(corpus, indent=2, sort_keys=True) + "\n")
+    OUTPUT.write_text(
+        json.dumps(corpus, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
     counts: dict[str, int] = {}
     for case in corpus["cases"]:
         counts[case["kind"]] = counts.get(case["kind"], 0) + 1

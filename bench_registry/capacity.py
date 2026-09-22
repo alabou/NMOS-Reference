@@ -138,9 +138,30 @@ def _server_cpu_seconds(pid: int) -> float:
 
     Returns 0.0 when unavailable, which makes the cost column absent rather
     than wrong -- a fabricated number here would be worse than none.
+
+    Windows has neither ``/proc`` nor ``os.sysconf``, and gets the same two
+    numbers out of psutil instead. That import is deliberately inside the
+    branch: psutil is a dev extra, not a runtime dependency, and the Linux
+    deployment target must not acquire a third-party package because the
+    entry-level rig needs one. The ``/proc`` arithmetic below is unchanged and
+    remains the measured path on the platform whose numbers get published.
     """
+    if sys.platform == "win32":
+        import psutil
+
+        try:
+            times = psutil.Process(pid).cpu_times()
+        except psutil.Error:
+            return 0.0
+        return float(times.user + times.system)
+
     try:
-        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()
+        fields = (
+            Path(f"/proc/{pid}/stat")
+            .read_text(encoding="utf-8")
+            .rsplit(") ", 1)[1]
+            .split()
+        )
     except (OSError, IndexError):
         return 0.0
     try:

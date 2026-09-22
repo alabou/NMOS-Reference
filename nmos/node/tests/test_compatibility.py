@@ -469,7 +469,7 @@ class TestConfig1Integration:
             self.node.init(serial_number="TST12345")
 
             config_path = _P(__file__).parent.parent / "config" / "builtin" / "config1.json"
-            with open(config_path) as f:
+            with open(config_path, encoding="utf-8") as f:
                 config = json.load(f)
 
             builder = ConfigBuilder(self.node, verbose=False)
@@ -1377,7 +1377,7 @@ class TestSenderDerivedTransportCaps:
         node = Node()
         node.init(serial_number="TST12345")
         config_path = _P(__file__).parent.parent / "config" / "builtin" / f"{config_name}.json"
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             config = json.load(f)
         builder = ConfigBuilder(node, verbose=False)
         for sender_cfg in config.get("senders", []):

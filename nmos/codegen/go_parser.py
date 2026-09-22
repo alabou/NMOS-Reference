@@ -74,7 +74,7 @@ def _resolve_json_key(raw: str) -> str:
 
 def parse_go_file(filepath: str) -> list[TypeDesc]:
     """Parse a Go file.go and return all TypeDesc definitions."""
-    text = Path(filepath).read_text()
+    text = Path(filepath).read_text(encoding="utf-8")
 
     types: list[TypeDesc] = []
 

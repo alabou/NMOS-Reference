@@ -44,7 +44,7 @@ def _committed() -> list[dict[str, object]]:
             f"{OUTPUT} is missing.\n"
             f"  python -m nmos.codegen.tests._validator_corpus",
         )
-    return list(json.loads(OUTPUT.read_text()))
+    return list(json.loads(OUTPUT.read_text(encoding="utf-8")))
 
 
 def test_the_committed_corpus_matches_what_python_does_now() -> None:
@@ -114,7 +114,7 @@ def test_the_committed_decode_corpus_matches_what_python_does_now() -> None:
             f"  python -m nmos.codegen.tests._decode_corpus",
         )
     fresh = build_decode()
-    committed = list(json.loads(DECODE_OUTPUT.read_text()))
+    committed = list(json.loads(DECODE_OUTPUT.read_text(encoding="utf-8")))
 
     by_key = {(c["resource_type"], c["label"]): c for c in committed}
     drifted = []
@@ -150,7 +150,10 @@ def test_the_committed_float_corpus_matches_what_python_does_now() -> None:
             f"  python -m nmos.codegen.tests._float_corpus",
         )
     fresh = {c["bits"]: c for c in build_float()}
-    committed = {c["bits"]: c for c in json.loads(FLOAT_OUTPUT.read_text())}
+    committed = {
+        c["bits"]: c
+        for c in json.loads(FLOAT_OUTPUT.read_text(encoding="utf-8"))
+    }
 
     drifted = [
         f"bits {bits}: committed {old.get('formatted')!r} "
@@ -173,7 +176,10 @@ def test_the_committed_dump_corpus_matches_what_python_does_now() -> None:
             f"  python -m nmos.codegen.tests._dump_corpus",
         )
     fresh = {c["label"]: c for c in build_dump()}
-    committed = {c["label"]: c for c in json.loads(DUMP_OUTPUT.read_text())}
+    committed = {
+        c["label"]: c
+        for c in json.loads(DUMP_OUTPUT.read_text(encoding="utf-8"))
+    }
 
     drifted = [
         f"{label}: committed {old['dumped']!r} but python now writes "
@@ -195,7 +201,7 @@ def test_the_float_corpus_still_covers_the_truncation_bug() -> None:
     have mangled. If the spread ever narrowed to six-significant-digit values,
     every case would pass under either implementation.
     """
-    cases = json.loads(FLOAT_OUTPUT.read_text())
+    cases = json.loads(FLOAT_OUTPUT.read_text(encoding="utf-8"))
     would_have_been_lossy = sum(
         1
         for c in cases
@@ -219,7 +225,10 @@ def test_the_committed_span_corpus_matches_what_python_does_now() -> None:
             f"  python -m nmos.codegen.tests._span_corpus",
         )
     fresh = {c["source"]: c for c in build_span()}
-    committed = {c["source"]: c for c in json.loads(SPAN_OUTPUT.read_text())}
+    committed = {
+        c["source"]: c
+        for c in json.loads(SPAN_OUTPUT.read_text(encoding="utf-8"))
+    }
 
     drifted = []
     for source, old in committed.items():
@@ -250,7 +259,7 @@ def test_the_span_corpus_keeps_its_fuzz_tier() -> None:
     fuzz tier found five real bugs on its first run. If it ever shrank away,
     the corpus would go back to testing only what someone thought to write.
     """
-    cases = json.loads(SPAN_OUTPUT.read_text())
+    cases = json.loads(SPAN_OUTPUT.read_text(encoding="utf-8"))
     fuzzed = sum(1 for c in cases if c.get("origin") == "fuzz")
     assert fuzzed > 100, f"only {fuzzed} fuzz cases"
 
@@ -270,7 +279,10 @@ def test_the_committed_structural_corpus_matches_what_python_does_now() -> None:
             f"  python -m nmos.codegen.tests._structural_corpus",
         )
     fresh = {c["label"]: c for c in build_structural()}
-    committed = {c["label"]: c for c in json.loads(STRUCTURAL_OUTPUT.read_text())}
+    committed = {
+        c["label"]: c
+        for c in json.loads(STRUCTURAL_OUTPUT.read_text(encoding="utf-8"))
+    }
 
     drifted = []
     for label, old in committed.items():
@@ -300,7 +312,7 @@ def test_the_structural_corpus_keeps_its_depth() -> None:
     fixture that quietly stopped doing so would shrink it back to what the
     top-level corpus already covers -- with no test failing to say so.
     """
-    cases = json.loads(STRUCTURAL_OUTPUT.read_text())
+    cases = json.loads(STRUCTURAL_OUTPUT.read_text(encoding="utf-8"))
 
     def depth(label: str) -> int:
         return len(label.rsplit(":", 1)[-1].split("."))
@@ -367,7 +379,10 @@ def test_the_committed_encode_corpus_matches_what_python_does_now() -> None:
             f"  python -m nmos.codegen.tests._encode_corpus",
         )
     fresh = {c["label"]: c for c in build_encode()}
-    committed = {c["label"]: c for c in json.loads(ENCODE_OUTPUT.read_text())}
+    committed = {
+        c["label"]: c
+        for c in json.loads(ENCODE_OUTPUT.read_text(encoding="utf-8"))
+    }
 
     drifted = []
     for label, old in committed.items():
@@ -395,7 +410,10 @@ def test_the_encode_corpus_still_reaches_the_paths_it_was_built_for() -> None:
     list, so a case that stopped exercising its path is caught as well as one
     that disappeared.
     """
-    cases = {c["label"]: c for c in json.loads(ENCODE_OUTPUT.read_text())}
+    cases = {
+        c["label"]: c
+        for c in json.loads(ENCODE_OUTPUT.read_text(encoding="utf-8"))
+    }
 
     # A default the body never carried, injected by decode and then written.
     flow = cases["flow"]

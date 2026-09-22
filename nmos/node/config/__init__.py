@@ -75,7 +75,7 @@ class ConfigBuilder:
 
         Returns list of static sender IDs.
         """
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = JsonEngine.parse_any(f.read())
 
         sender_ids: list[str] = []
@@ -91,7 +91,7 @@ class ConfigBuilder:
 
         Returns list of static receiver IDs.
         """
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = JsonEngine.parse_any(f.read())
 
         receiver_ids: list[str] = []

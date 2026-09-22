@@ -193,7 +193,7 @@ class TestLoadChain:
 
     def test_not_a_pem(self, tmp_path: Path) -> None:
         path = tmp_path / "junk.pem"
-        path.write_text("not a certificate")
+        path.write_text("not a certificate", encoding="utf-8")
         with pytest.raises(TlsPinError):
             tls_pin.load_chain(str(path))
 

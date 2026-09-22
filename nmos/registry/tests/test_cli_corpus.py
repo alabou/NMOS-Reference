@@ -30,7 +30,7 @@ def _committed() -> dict[str, dict[str, Any]]:
             f"{OUTPUT} is missing.\n"
             f"  python -m nmos.registry.tests._cli_corpus",
         )
-    corpus: dict[str, Any] = json.loads(OUTPUT.read_text())
+    corpus: dict[str, Any] = json.loads(OUTPUT.read_text(encoding="utf-8"))
     flags: list[dict[str, Any]] = corpus["flags"]
     return {str(flag["dest"]): flag for flag in flags}
 

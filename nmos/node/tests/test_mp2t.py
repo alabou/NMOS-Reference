@@ -62,7 +62,7 @@ def _build_config(node: Node, config_name: str) -> None:
     config_path = BUILTIN_DIR / f"{config_name}.json"
     if not config_path.exists():
         pytest.skip(f"{config_name}.json not found")
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         config = json.load(f)
     builder = ConfigBuilder(node, verbose=False)
     for r in config.get("receivers", []):
@@ -708,7 +708,7 @@ class TestMp2tAudioSubFlowRules:
         """
         # Check config11 which has AM824 sub-flow capability
         config_path = BUILTIN_DIR / "config11.json"
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             config = json.load(f)
         for item in config.get("receivers", []):
             if item.get("format") != "urn:x-nmos:format:mux":
@@ -829,7 +829,7 @@ class TestMp2tTransportRestrictions:
     def test_video_mp2t_not_used_as_flow_media_type(self) -> None:
         """video/MP2T is opaque (unsupported) — no config should use it as flow media_type."""
         for path in sorted(BUILTIN_DIR.glob("config*.json")):
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 config = json.load(f)
             for cat in ("senders", "receivers"):
                 for item in config.get(cat, []):
@@ -874,7 +874,7 @@ class TestMp2tTransportRestrictions:
         }
 
         for path in sorted(BUILTIN_DIR.glob("config*.json")):
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 config = json.load(f)
             for cat in ("senders", "receivers"):
                 for item in config.get(cat, []):

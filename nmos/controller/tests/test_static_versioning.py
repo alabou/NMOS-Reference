@@ -38,12 +38,14 @@ _JS_VERSION = re.compile(r'CONTROLLER_JS_VERSION\s*=\s*"(\d+)"')
 def _asset_versions() -> dict[str, str]:
     return {
         path: version
-        for path, version in _ASSET_REF.findall(_BASE_HTML.read_text())
+        for path, version in _ASSET_REF.findall(
+            _BASE_HTML.read_text(encoding="utf-8"),
+        )
     }
 
 
 def _js_version() -> str:
-    match = _JS_VERSION.search(_CONTROLLER_JS.read_text())
+    match = _JS_VERSION.search(_CONTROLLER_JS.read_text(encoding="utf-8"))
     assert match is not None, "CONTROLLER_JS_VERSION not found in controller.js"
     return match.group(1)
 
@@ -51,7 +53,10 @@ def _js_version() -> str:
 def test_every_static_reference_is_versioned() -> None:
     # An unversioned reference is cached indefinitely by the browser and can
     # never be invalidated by a bump, so it must not exist at all.
-    refs = re.findall(r'/controller/static/(\S+?)["\'?]', _BASE_HTML.read_text())
+    refs = re.findall(
+        r'/controller/static/(\S+?)["\'?]',
+        _BASE_HTML.read_text(encoding="utf-8"),
+    )
     versioned = set(_asset_versions())
     unversioned = sorted(set(refs) - versioned)
     assert not unversioned, f"static refs missing ?v=: {unversioned}"

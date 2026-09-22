@@ -427,7 +427,7 @@ class TestStaticDeterminismGuard:
     def test_apply_reads_no_clock_and_no_randomness(self) -> None:
         source = (
             Path(__file__).resolve().parents[1] / "machine.py"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         # Strip docstrings and comments: they discuss these names precisely
         # because the code must not use them.
         code = re.sub(r'""".*?"""', "", source, flags=re.S)

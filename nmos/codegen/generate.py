@@ -146,16 +146,22 @@ def stamp(emitter: Emitter, model: str, emitter_digest: str) -> None:
     if emitter.lang == "python":
         (emitter.output_dir / "__init__.py").write_text(
             _INIT_TEMPLATE.format(model=model, emitter=emitter_digest),
+            encoding="utf-8",
+            newline="\n",
         )
         return
 
     (emitter.output_dir / "fingerprint.rs").write_text(
         _FINGERPRINT_RS.format(model=model, emitter=emitter_digest),
+        encoding="utf-8",
+        newline="\n",
     )
     # A sidecar the Python test can read without parsing Rust or invoking cargo.
     (emitter.output_dir / "fingerprint.json").write_text(
         f'{{\n  "model_fingerprint": "{model}",\n'
         f'  "emitter_fingerprint": "{emitter_digest}"\n}}\n',
+        encoding="utf-8",
+        newline="\n",
     )
 
 

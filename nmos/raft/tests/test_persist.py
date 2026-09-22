@@ -15,10 +15,12 @@ These pin three separable claims:
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
+from nmos.raft import persist
 from nmos.raft.persist import (
     STATE_VERSION,
     PersistentState,
@@ -40,7 +42,8 @@ class TestFreshMember:
         path = tmp_path / "state.json"
         TermStore(path).load()
         assert path.is_file()
-        assert json.loads(path.read_text())["version"] == STATE_VERSION
+        document = json.loads(path.read_text(encoding="utf-8"))
+        assert document["version"] == STATE_VERSION
 
 
 class TestSurvivingARestart:
@@ -106,7 +109,7 @@ class TestAtomicity:
     def test_an_unreadable_file_refuses_to_start(self, tmp_path: Path) -> None:
         """Refusing beats guessing: guessing here means guessing about a vote."""
         path = tmp_path / "state.json"
-        path.write_text("{ this is not json")
+        path.write_text("{ this is not json", encoding="utf-8")
         with pytest.raises(PersistentStateError, match="unreadable"):
             TermStore(path).load()
 
@@ -114,10 +117,13 @@ class TestAtomicity:
         self, tmp_path: Path,
     ) -> None:
         path = tmp_path / "state.json"
-        path.write_text(json.dumps({
-            "version": STATE_VERSION + 1,
-            "term": 1, "voted_for": None, "incarnation": 1,
-        }))
+        path.write_text(
+            json.dumps({
+                "version": STATE_VERSION + 1,
+                "term": 1, "voted_for": None, "incarnation": 1,
+            }),
+            encoding="utf-8",
+        )
         with pytest.raises(PersistentStateError, match="state version"):
             TermStore(path).load()
 
@@ -164,7 +170,7 @@ class TestAtomicity:
         do about it -- at the one moment an operator most needs to be told.
         """
         path = tmp_path / "state.json"
-        path.write_text(json.dumps(document))
+        path.write_text(json.dumps(document), encoding="utf-8")
         with pytest.raises(PersistentStateError, match="already voted"):
             TermStore(path).load()
 
@@ -176,9 +182,72 @@ class TestAtomicity:
     ) -> None:
         """``raw.get`` would raise ``AttributeError`` on all of these."""
         path = tmp_path / "state.json"
-        path.write_text(text)
+        path.write_text(text, encoding="utf-8")
         with pytest.raises(PersistentStateError, match="not an object"):
             TermStore(path).load()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Win32 only")
+class TestWindowsDurability:
+    """The entry-level platform's stand-in for the directory fsync.
+
+    Linux is the deployment target and takes ``os.replace`` plus that fsync;
+    these pin that the Windows substitute keeps *both* halves. Atomicity alone
+    is the half that is easy to get by accident, and it is not the half that
+    prevents a term change from being lost in a crash.
+    """
+
+    def test_the_move_is_replace_existing_and_write_through(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        calls: list[tuple[str, str, int]] = []
+
+        def move_file_ex(source: str, target: str, flags: int) -> int:
+            calls.append((source, target, flags))
+            return 1
+
+        monkeypatch.setattr(persist, "_move_file_ex", move_file_ex)
+
+        persist._replace_durably("temporary", Path("state.json"))
+
+        # MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH, spelled as the
+        # literals ``winbase.h`` defines rather than as the enum under test,
+        # so a wrong value in that enum fails here instead of agreeing with
+        # itself.
+        assert calls == [("temporary", "state.json", 0x1 | 0x8)]
+
+    def test_a_failed_move_raises_rather_than_reporting_success(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A swallowed failure here is a vote that never reached the disk.
+
+        ``os.replace`` raises on the other platform, so this one must too --
+        otherwise ``save`` returns, the member votes, and the file still holds
+        the previous term.
+        """
+        def move_file_ex(_source: str, _target: str, _flags: int) -> int:
+            return 0
+
+        monkeypatch.setattr(persist, "_move_file_ex", move_file_ex)
+
+        with pytest.raises(OSError):
+            persist._replace_durably("temporary", Path("state.json"))
+
+    def test_a_real_save_replaces_an_existing_file(self, tmp_path: Path) -> None:
+        """The same claim as ``TestAtomicity``, through the real Win32 call.
+
+        The two tests above stub the API out; without this one nothing would
+        notice that the real prototype had been declared wrongly.
+        """
+        path = tmp_path / "state.json"
+        store = TermStore(path)
+        store.save(PersistentState(term=1, voted_for=None, incarnation=1))
+        store.save(PersistentState(term=9, voted_for=2, incarnation=3))
+
+        assert TermStore(path).load() == PersistentState(
+            term=9, voted_for=2, incarnation=4,
+        )
+        assert list(tmp_path.iterdir()) == [path]
 
 
 class TestWriteAccounting:

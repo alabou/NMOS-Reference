@@ -83,7 +83,11 @@ def main() -> None:
     # re-serialise a differently-ordered object and compare it against bytes
     # produced from the original. The corpus is deterministic regardless,
     # because the structures above are literals.
-    OUTPUT.write_text(json.dumps(cases, indent=2) + "\n")
+    OUTPUT.write_text(
+        json.dumps(cases, indent=2) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
     print(f"{len(cases)} dump cases -> {OUTPUT}")
 
 

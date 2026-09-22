@@ -33,7 +33,7 @@ def _committed() -> dict[str, object]:
             f"{OUTPUT} is missing.\n"
             f"  python -m nmos.registry.tests._store_corpus",
         )
-    return dict(json.loads(OUTPUT.read_text()))
+    return dict(json.loads(OUTPUT.read_text(encoding="utf-8")))
 
 
 def test_the_committed_corpus_matches_what_python_does_now() -> None:

@@ -152,7 +152,11 @@ def build() -> dict[str, Any]:
 def main() -> None:
     corpus = build()
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT.write_text(json.dumps(corpus, indent=1, sort_keys=True) + "\n")
+    OUTPUT.write_text(
+        json.dumps(corpus, indent=1, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
     print(f"{len(corpus['cases'])} cases -> {OUTPUT}")
 
 

@@ -55,7 +55,7 @@ def _build_config(node: Node, config_name: str) -> None:
     config_path = BUILTIN_DIR / f"{config_name}.json"
     if not config_path.exists():
         pytest.skip(f"{config_name}.json not found")
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         config = json.load(f)
     builder = ConfigBuilder(node, verbose=False)
     # Build receivers first (needed for linked_receiver_group resolution)
@@ -627,7 +627,7 @@ class TestAes3InMpeg2ts:
     def test_mpeg2ts_receiver_has_am824_sub_capability(self) -> None:
         """Config11 mux receiver config has AM824 sub-stream in constraint_sets."""
         config_path = BUILTIN_DIR / "config11.json"
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             config = json.load(f)
         # Check config JSON directly for AM824 in receiver constraint_sets
         found_am824 = False

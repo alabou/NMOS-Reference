@@ -43,7 +43,9 @@ async def client(aiohttp_client, monkeypatch):  # type: ignore
     node.init(serial_number="TST00001")
     cfg = json.loads(
         (Path(__file__).parent.parent.parent
-         / "node" / "config" / "builtin" / "config10.json").read_text())
+         / "node" / "config" / "builtin" / "config10.json").read_text(
+            encoding="utf-8",
+        ))
     builder = ConfigBuilder(node, verbose=False)
     for sender_cfg in cfg.get("senders", []):
         builder._build_sender_pipeline(sender_cfg)

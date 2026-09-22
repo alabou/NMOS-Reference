@@ -72,7 +72,7 @@ def _make_node(serial: str = "RTSPTST") -> Node:
 
 def _build_config11(node: Node) -> None:
     from nmos.node.config import ConfigBuilder
-    with open(CONFIG11) as f:
+    with open(CONFIG11, encoding="utf-8") as f:
         config = json.load(f)
     builder = ConfigBuilder(node, verbose=False)
     for r in config.get("receivers", []):
@@ -299,7 +299,7 @@ class TestRtspSenderIs04:
                     pass
         # Constraint-set-level decode can vary; as a fallback accept any
         # non-empty declaration. The JSON inspection below is the strict check.
-        with open(CONFIG11) as f:
+        with open(CONFIG11, encoding="utf-8") as f:
             cfg = json.load(f)
         json_declared: set[str] = set()
         for s in cfg["senders"]:
@@ -347,7 +347,7 @@ class TestRtspReceiverIs04:
     def test_config11_receiver_media_types_contains_application_rtsp(self) -> None:
         # R3 — validates CB fix: JSON used video/rtsp before, now application/rtsp.
         # Inspect the source JSON since the receiver's Caps has been transformed.
-        with open(CONFIG11) as f:
+        with open(CONFIG11, encoding="utf-8") as f:
             cfg = json.load(f)
         for r in cfg["receivers"]:
             if "mux" not in r.get("format", ""):
@@ -370,7 +370,7 @@ class TestRtspReceiverIs04:
         # must be in the spec set. Sub-flow constraint sets (with
         # urn:x-matrox:cap:meta:layer_enabled) describe individual sub-streams
         # and may use per-format media_types like video/H264 — skip those.
-        with open(CONFIG11) as f:
+        with open(CONFIG11, encoding="utf-8") as f:
             cfg = json.load(f)
         for r in cfg["receivers"]:
             if "mux" not in r.get("format", ""):

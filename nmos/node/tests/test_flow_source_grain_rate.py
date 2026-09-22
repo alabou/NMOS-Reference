@@ -39,7 +39,7 @@ def _grain_rate(core) -> tuple[int, int] | None:
 def _build_node(config_name: str) -> Node:
     node = Node()
     node.init(serial_number="TST00001")
-    config = json.loads((_BUILTIN / config_name).read_text())
+    config = json.loads((_BUILTIN / config_name).read_text(encoding="utf-8"))
     builder = ConfigBuilder(node, verbose=False)
     for sender_cfg in config.get("senders", []):
         builder._build_sender_pipeline(sender_cfg)

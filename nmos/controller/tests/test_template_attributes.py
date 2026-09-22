@@ -126,7 +126,7 @@ def test_no_glued_conditional_markup(template: Path) -> None:
     Reported as ``file:line`` with both offending lines so the fix — add a
     leading space inside the ``{% if %}`` body — is obvious from the failure.
     """
-    source = template.read_text()
+    source = template.read_text(encoding="utf-8")
     lines = source.splitlines()
     # Byte offset of the start of each line, for the in-tag test.
     offsets: list[int] = []
