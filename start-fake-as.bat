@@ -12,7 +12,8 @@ rem                     [--client-id=ID] [--client-secret=S]
 rem                     [--operator=NAME] [--password=PW]
 rem
 rem   --port=P          Listen port (default 9443, same as start-keycloak.sh)
-rem   --tct=T           TLS Certificate Type: 0=RSA (default), 1=ECDSA
+rem   --tct=T           TLS Certificate Type: 0=RSA (default), 1=ECDSA, 2=both
+rem                     (accepted; not implemented -- serves RSA)
 rem   --serial=S        Node serial the issued tokens are scoped to. Repeatable:
 rem                     give it once per node the Controller should be able to
 rem                     drive, and every token carries them all in its aud. The
@@ -122,6 +123,30 @@ goto done
 rem No --serial given: scope tokens to SNX00001, as the shell launcher does.
 if %SERIAL_COUNT%==0 call :add_serial SNX00001
 
+rem Settled before the certificate probe below. The check further down is the
+rem same one, but it sits in the block that also builds the certificate paths
+rem out of %CERTS%, so it could not run until the probe had succeeded -- and an
+rem unsupported --tct then answered "missing build.0\pem\...chain.pem" and
+rem exited 66 (EX_NOINPUT) rather than naming the argument and exiting 64
+rem (EX_USAGE). That block is left as it is: a value reaching it is one this
+rem block already accepted, so its else-arm is unreachable rather than wrong.
+rem
+rem 0, 1 and 2, matching start-fake-as.sh. The two used to disagree here: the
+rem .sh took --tct=2 as a synonym for RSA and this file refused it, so the same
+rem command line worked on one platform and not the other.
+if not "%TCT%"=="0" if not "%TCT%"=="1" if not "%TCT%"=="2" (
+  >&2 echo start-fake-as.bat: unsupported --tct=%TCT%
+  set "EXIT_CODE=64"
+  goto done
+)
+rem TR-10-SEC gives TCT=2 as "Both" and makes supporting both simultaneously
+rem optional. This rig does not: one certificate and one key per listener, so
+rem a TCT=2 run is an RSA run. Accepted rather than refused so existing
+rem invocations keep working -- but never silently.
+if "%TCT%"=="2" (
+  >&2 echo start-fake-as.bat: --tct=2 ^(Both^) is not implemented - serving the RSA certificate only. Use --tct=0 or --tct=1 to choose.
+)
+
 rem Prefer the certificate subset bundled inside this repository, so a
 rem standalone clone of nmos-reference runs without the wider workspace PKI.
 rem SNX00000 is the reserved infrastructure serial: the registry and this
@@ -148,6 +173,10 @@ if defined IPMX_CERT_ROOT (
 set "CERTS=%CERT_ROOT%\build.0"
 
 if "%TCT%"=="0" (
+  set "AS_CERT=%CERTS%\pem\ExampleDeviceServer.ABC.SNX00000.chain.pem"
+  set "AS_KEY=%CERTS%\key\ExampleDeviceServer.ABC.SNX00000.key"
+) else if "%TCT%"=="2" (
+  rem "Both" runs as RSA; the warning above says so.
   set "AS_CERT=%CERTS%\pem\ExampleDeviceServer.ABC.SNX00000.chain.pem"
   set "AS_KEY=%CERTS%\key\ExampleDeviceServer.ABC.SNX00000.key"
 ) else if "%TCT%"=="1" (

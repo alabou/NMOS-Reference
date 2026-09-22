@@ -7,7 +7,7 @@
 #                    [--operator=NAME] [--password=PW]
 #
 #   --port=P          Listen port (default: 9443, same as start-keycloak.sh)
-#   --tct=T           TLS Certificate Type: 0=RSA (default), 1=ECDSA
+#   --tct=T           TLS Certificate Type: 0=RSA (default), 1=ECDSA, 2=both (accepted; not implemented -- serves RSA)
 #   --serial=S        Node serial the issued tokens are scoped to
 #                     (default: SNX00001). Sets the token 'aud' entry and
 #                     the registered redirect URIs. REPEATABLE: give it once
@@ -108,6 +108,29 @@ NODE_SERIAL="${NODE_SERIALS[0]}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
+# Settled before the certificate probe below, because it decides whether the
+# command line was usable at all. It used to be decided by the same `case` that
+# builds the certificate paths, underneath the probe -- so `--tct=9` answered
+# "missing build.0/pem/...chain.pem" and exited 66 (EX_NOINPUT) on a checkout
+# with no resolvable PKI, rather than naming the argument and exiting 64
+# (EX_USAGE). "" for RSA, ".ec" for ECDSA; TCT=2 takes the RSA certificate as
+# TCT=0 does.
+case "$TCT" in
+  0) TCT_INFIX="" ;;
+  # TR-10-SEC gives TCT=2 as "Both", and makes supporting both simultaneously
+  # optional. This rig does not support it: there is one server certificate and
+  # one key per listener, so a TCT=2 run is an RSA run. Accepted rather than
+  # refused so existing invocations keep working -- but never silently, because
+  # a rig that reports a posture it does not have is what every other check
+  # here exists to prevent. The trust side is already dual (ExampleRootCA-bundle
+  # holds both roots); it is the identity side that is still single.
+  2) TCT_INFIX=""
+     echo "start-fake-as.sh: --tct=2 (Both) is not implemented -- serving the" \
+          "RSA certificate only. Use --tct=0 or --tct=1 to choose." >&2 ;;
+  1)   TCT_INFIX=".ec" ;;
+  *) echo "start-fake-as.sh: unsupported --tct=$TCT" >&2; exit 64 ;;
+esac
+
 # Certificates come from the subset bundled inside this repository, so a
 # standalone clone runs with no wider workspace. SNX00000 is the reserved
 # infrastructure serial: the registry and this Authorization Server both
@@ -131,13 +154,9 @@ else
 fi
 CERTS="$CERT_ROOT/build.0"
 
-case "$TCT" in
-  0|2) AS_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00000.chain.pem"
-       AS_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00000.key" ;;
-  1)   AS_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00000.chain.ec.pem"
-       AS_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00000.ec.key" ;;
-  *) echo "start-fake-as.sh: unsupported --tct=$TCT" >&2; exit 64 ;;
-esac
+# $TCT was validated above; $TCT_INFIX is "" or ".ec".
+AS_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00000.chain${TCT_INFIX}.pem"
+AS_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00000${TCT_INFIX}.key"
 
 for f in "$AS_CERT" "$AS_KEY"; do
   if [ ! -f "$f" ]; then

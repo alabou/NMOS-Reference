@@ -15,7 +15,7 @@
 #   --nap=N    Node Access Policy: 1 (Unrestricted RO, mTLS only via
 #              --nodeOptionalClientAuth) or 2 (Restricted RW, default).
 #   --rap=R    Registry Access Policy: 0=HTTP, 1=server-TLS, 2=mTLS.
-#   --tct=T    TLS Cert Type: 0=RSA, 1=ECDSA, 2=both (dual-stack TODO).
+#   --tct=T    TLS Cert Type: 0=RSA (default), 1=ECDSA, 2=both (accepted; not implemented -- serves RSA)
 #   --split-controls
 #              Split IS-05/IS-08/IS-11 onto a SEPARATE TLS listener
 #              (port 7052) with its OWN trust store (CESTCA). The Node
@@ -125,6 +125,49 @@ for arg in "$@"; do
   esac
 done
 
+# Settled before the certificate probe below. These checks used to live in the
+# same `case` statements that build the certificate paths, underneath the
+# probe -- so on a checkout with no resolvable PKI an unsupported value
+# answered "missing ExampleRootCA.pem" and exited 66 (EX_NOINPUT) instead of
+# naming the argument and exiting 64 (EX_USAGE).
+
+# "" for RSA, ".ec" for ECDSA. TCT=2 takes the RSA certificate as TCT=0 does.
+case "$TCT" in
+  0) TCT_INFIX="" ;;
+  # TR-10-SEC gives TCT=2 as "Both", and makes supporting both simultaneously
+  # optional. This rig does not support it: there is one server certificate and
+  # one key per listener, so a TCT=2 run is an RSA run. Accepted rather than
+  # refused so existing invocations keep working -- but never silently, because
+  # a rig that reports a posture it does not have is what every other check
+  # here exists to prevent. The trust side is already dual (ExampleRootCA-bundle
+  # holds both roots); it is the identity side that is still single.
+  2) TCT_INFIX=""
+     echo "start-node1-noauth2.sh: --tct=2 (Both) is not implemented -- serving the" \
+          "RSA certificate only. Use --tct=0 or --tct=1 to choose." >&2 ;;
+  1)   TCT_INFIX=".ec" ;;
+  *) echo "start-node1-noauth2.sh: unsupported --tct=$TCT" >&2; exit 64 ;;
+esac
+
+# NAP=1 (Unrestricted RO) sets the SSL context's verify_mode to
+# CERT_OPTIONAL via --nodeOptionalClientAuth — middleware lets
+# GET/HEAD/OPTIONS through without a peer cert but refuses state-
+# changing methods unless one is presented. NAP=2 leaves the default
+# (CERT_REQUIRED, full Restricted RW).
+NAP_FLAGS=()
+case "$NAP" in
+  1) NAP_FLAGS=(--nodeOptionalClientAuth) ;;
+  2) NAP_FLAGS=() ;;
+  *) echo "start-node1-noauth2.sh: unsupported --nap=$NAP" >&2; exit 64 ;;
+esac
+
+# How the Node presents itself to the Registration API.
+case "$RAP" in
+  0) RDS_MODE="plaintext" ;;
+  1) RDS_MODE="server-tls" ;;
+  2) RDS_MODE="mutual-tls" ;;
+  *) echo "start-node1-noauth2.sh: unsupported --rap=$RAP" >&2; exit 64 ;;
+esac
+
 # Cert directory resolution — override IPMX_CERT_ROOT to point at a
 # different `Certificates/` layout. Default: this repository's own
 # Certificates/ tree.
@@ -196,34 +239,17 @@ if [ -f "$CERT_ROOT/build.1/ExampleRootCA.pem" ] || \
   CA="$CA_MERGED"
 fi
 
-case "$TCT" in
-  0|2) NODE_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00001.chain.pem"
-       NODE_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00001.key" ;;
-  1)   NODE_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00001.chain.ec.pem"
-       NODE_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00001.ec.key" ;;
-  *)   echo "start-node1-noauth2.sh: unsupported --tct=$TCT" >&2; exit 64 ;;
-esac
+# $TCT was validated above; $TCT_INFIX is "" or ".ec".
+NODE_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00001.chain${TCT_INFIX}.pem"
+NODE_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00001${TCT_INFIX}.key"
 
-# NAP=1 (Unrestricted RO) sets the SSL context's verify_mode to
-# CERT_OPTIONAL via --nodeOptionalClientAuth — middleware lets
-# GET/HEAD/OPTIONS through without a peer cert but refuses state-
-# changing methods unless one is presented. NAP=2 leaves the default
-# (CERT_REQUIRED, full Restricted RW).
-NAP_FLAGS=()
-case "$NAP" in
-  1) NAP_FLAGS=(--nodeOptionalClientAuth) ;;
-  2) NAP_FLAGS=() ;;
-  *) echo "start-node1-noauth2.sh: unsupported --nap=$NAP" >&2; exit 64 ;;
-esac
-
-case "$RAP" in
-  0) RDS_FLAGS=(--rdsDisableTLS) ;;
-  1) RDS_FLAGS=() ;;
-  2) RDS_FLAGS=(
+case "$RDS_MODE" in
+  plaintext)  RDS_FLAGS=(--rdsDisableTLS) ;;
+  server-tls) RDS_FLAGS=() ;;
+  mutual-tls) RDS_FLAGS=(
        --rdsClientCertificate "$CERTS/pem/ExampleDeviceClient.ABC.SNX00001.chain.pem"
        --rdsClientKey         "$CERTS/key/ExampleDeviceClient.ABC.SNX00001.key"
      ) ;;
-  *) echo "start-node1-noauth2.sh: unsupported --rap=$RAP" >&2; exit 64 ;;
 esac
 
 # --split-controls: separate trust stores per listener.

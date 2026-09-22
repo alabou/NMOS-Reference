@@ -126,6 +126,61 @@ for arg in "$@"; do
   esac
 done
 
+# Everything the command line can get wrong is settled here, before the script
+# touches the filesystem. It used to be settled further down, where each value
+# was validated by the same `case` that built its certificate path -- so the
+# check could not run until $CERTS existed, and an argument that was never
+# going to be accepted was reported only if the certificate probe happened to
+# succeed first. On a checkout that cannot resolve a PKI, `--tct=9` answered
+# "missing ExampleRootCA.pem": the wrong problem, about the wrong file, in
+# answer to a typo. Worse than the message, the exit code: 64 is EX_USAGE and
+# 66 is EX_NOINPUT, so a wrapper branching on it classified a usage error as a
+# missing input and took the wrong recovery path.
+#
+# So each value is checked once, here, and yields a token that names the choice
+# without naming a path. The paths and flags are built from those tokens after
+# the certificates resolve. Validity is decided in one place; only where the
+# files live is decided later.
+
+# "" for RSA, ".ec" for ECDSA -- the infix this PKI uses for the ECDSA
+# generation of the same identity, in both the chain and the key filename.
+case "$TCT" in
+  0) TCT_INFIX="" ;;
+  1) TCT_INFIX=".ec" ;;
+  *) echo "start-registry.sh: unsupported --tct=$TCT" >&2; exit 64 ;;
+esac
+
+# Whether the Registration listener demands a client certificate. That is the
+# whole of RAP 1 vs RAP 2; see the trust-anchor note further down.
+case "$RAP" in
+  1) REG_WANTS_CLIENT_CERT=0 ;;
+  2) REG_WANTS_CLIENT_CERT=1 ;;
+  0) echo "start-registry.sh: RAP=0 (plain HTTP) is start-registry-bare.sh" >&2
+     exit 64 ;;
+  *) echo "start-registry.sh: unsupported RAP=$RAP" >&2; exit 64 ;;
+esac
+
+# Whether an unauthenticated client may read the Query API.
+case "$NAP" in
+  1) QUERY_ALLOWS_ANONYMOUS_READ=1 ;;
+  2) QUERY_ALLOWS_ANONYMOUS_READ=0 ;;
+  0) echo "start-registry.sh: NAP=0 (plain HTTP) is start-registry-bare.sh" >&2
+     exit 64 ;;
+  *) echo "start-registry.sh: unsupported --nap=$NAP" >&2; exit 64 ;;
+esac
+
+# §"Unrestricted Read Only" is not available under OAuth 2.0: "even read
+# access MUST be explicitly provided by the OAuth 2.0 authorizations". The
+# registry honours that — every read route is wrapped in check_oauth2, so the
+# deployment really is NAP=2 — but silently accepting --nap=1 here would let
+# an operator believe reads were open when they are not.
+if [ "$NAP" = "1" ] && [ "$USE_OAUTH2" = "1" ]; then
+  echo "start-registry.sh: --nap=1 (Unrestricted Read Only) is not allowed" >&2
+  echo "  with --oauth2; the specification requires read access to be granted" >&2
+  echo "  by the OAuth 2.0 authorizations. Use --nap=2, or drop --oauth2." >&2
+  exit 64
+fi
+
 # Cert directory resolution — override IPMX_CERT_ROOT to point at a
 # different `Certificates/` layout. Default: this repository's own
 # Certificates/ tree.
@@ -182,25 +237,19 @@ if [ ! -f "$CA" ]; then
 fi
 
 # SNX00000 is the reserved infrastructure serial in this PKI; the registry is
-# infrastructure rather than a device, so it uses that identity.
-case "$TCT" in
-  0) REG_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00000.chain.pem"
-     REG_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00000.key" ;;
-  1) REG_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00000.chain.ec.pem"
-     REG_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00000.ec.key" ;;
-  *) echo "start-registry.sh: unsupported --tct=$TCT" >&2; exit 64 ;;
-esac
+# infrastructure rather than a device, so it uses that identity. $TCT was
+# validated above; $TCT_INFIX is "" or ".ec".
+REG_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00000.chain${TCT_INFIX}.pem"
+REG_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00000${TCT_INFIX}.key"
 
 # The Registration trust anchor is what selects RAP 1 from RAP 2: with no
 # anchor the listener asks for no client certificate; with one it requires a
 # certificate that chains to it.
-case "$RAP" in
-  1) REG_CA_FLAGS=() ;;
-  2) REG_CA_FLAGS=(--registrationTrustedRootCA "$CA") ;;
-  0) echo "start-registry.sh: RAP=0 (plain HTTP) is start-registry-bare.sh" >&2
-     exit 64 ;;
-  *) echo "start-registry.sh: unsupported RAP=$RAP" >&2; exit 64 ;;
-esac
+if [ "$REG_WANTS_CLIENT_CERT" = "1" ]; then
+  REG_CA_FLAGS=(--registrationTrustedRootCA "$CA")
+else
+  REG_CA_FLAGS=()
+fi
 
 # The Query API's own access policy, classified exactly as a Node's API is —
 # see nmos_registry.py::classify_query_nap, which reuses the rules in
@@ -215,25 +264,13 @@ esac
 #          without provisioning a client certificate into it.
 #   NAP=2  Restricted Read Write. Every request needs a client certificate.
 #
-# NAP=0 (no TLS at all) is start-registry-bare.sh, mirroring RAP=0.
-case "$NAP" in
-  1) QUERY_CA_FLAGS=(--queryTrustedRootCA "$CA" --queryOptionalClientAuth) ;;
-  2) QUERY_CA_FLAGS=(--queryTrustedRootCA "$CA") ;;
-  0) echo "start-registry.sh: NAP=0 (plain HTTP) is start-registry-bare.sh" >&2
-     exit 64 ;;
-  *) echo "start-registry.sh: unsupported --nap=$NAP" >&2; exit 64 ;;
-esac
-
-# §"Unrestricted Read Only" is not available under OAuth 2.0: "even read
-# access MUST be explicitly provided by the OAuth 2.0 authorizations". The
-# registry honours that — every read route is wrapped in check_oauth2, so the
-# deployment really is NAP=2 — but silently accepting --nap=1 here would let
-# an operator believe reads were open when they are not.
-if [ "$NAP" = "1" ] && [ "$USE_OAUTH2" = "1" ]; then
-  echo "start-registry.sh: --nap=1 (Unrestricted Read Only) is not allowed" >&2
-  echo "  with --oauth2; the specification requires read access to be granted" >&2
-  echo "  by the OAuth 2.0 authorizations. Use --nap=2, or drop --oauth2." >&2
-  exit 64
+# NAP=0 (no TLS at all) is start-registry-bare.sh, mirroring RAP=0. Both modes
+# accept the trust anchor; NAP=1 additionally makes the client certificate
+# optional, which is what opens reads to an unauthenticated client. The
+# --nap=1-with---oauth2 refusal is up with the other argument checks.
+QUERY_CA_FLAGS=(--queryTrustedRootCA "$CA")
+if [ "$QUERY_ALLOWS_ANONYMOUS_READ" = "1" ]; then
+  QUERY_CA_FLAGS+=(--queryOptionalClientAuth)
 fi
 
 if [ "$USE_OAUTH2" = "1" ]; then

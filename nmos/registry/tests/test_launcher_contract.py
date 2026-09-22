@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -44,6 +45,45 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 _IS_WINDOWS = sys.platform == "win32"
 SUFFIX = ".bat" if _IS_WINDOWS else ".sh"
+
+# Every case in this file is run with the certificate tree pointed somewhere
+# that cannot exist, which is a second assertion carried by all of them at
+# once: a refusal is a refusal *before* the launcher goes looking for a PKI.
+#
+# It was not always so. The launchers used to validate RAP, NAP, TCT and OAIM
+# inside the same ``case`` statements that built the certificate paths -- below
+# the probe, necessarily, because they consumed what the probe produced. So on
+# any checkout that could not resolve a tree, 20 of these 41 cases answered
+# "missing ExampleRootCA.pem" and exited 66 (EX_NOINPUT) instead of naming the
+# argument and exiting 64 (EX_USAGE). They passed here only because the IPMX
+# workspace happens to keep a PKI one level up, at ``../Certificates``: the
+# contract was right, the machine was carrying it.
+#
+# Pointing at nothing removes the machine from the answer. If anyone moves an
+# argument check back below the probe, every case it covers fails here with
+# 66, on a developer's box as readily as in CI, instead of waiting for a
+# standalone clone to find it.
+#
+# One variable does this on both platforms because every launcher, ``.sh`` and
+# ``.bat`` alike, honours ``IPMX_CERT_ROOT`` first and unconditionally: an
+# explicit root wins over both fallbacks.
+_UNRESOLVABLE_CERT_ROOT = "/nonexistent-pki-for-the-launcher-contract-tests"
+
+
+@pytest.fixture(autouse=True, scope="module")
+def unresolvable_certificate_root() -> Iterator[None]:
+    """Point every launcher in this file at a PKI that is not there.
+
+    Module-scoped rather than session-scoped on purpose. The variable is
+    process-global while it is set, and a session fixture tears down at the end
+    of the run rather than the end of this file -- which would leave
+    ``IPMX_CERT_ROOT`` pointing at nothing for ``test_etcd_cluster_tool.py``,
+    which brings up a real etcd member and needs the real tree.
+    """
+    patch = pytest.MonkeyPatch()
+    patch.setenv("IPMX_CERT_ROOT", _UNRESOLVABLE_CERT_ROOT)
+    yield
+    patch.undo()
 
 
 def _run(name: str, argv: list[str]) -> subprocess.CompletedProcess[str]:

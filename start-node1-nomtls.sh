@@ -16,7 +16,7 @@
 #              per §9.2; any other value is rejected.
 #   --rap=R    Registry Access Policy: 0=HTTP, 1=server-TLS, 2=mTLS.
 #   --oaim=O   OAuth2 Audience ID Mode: 0=serial, 1=cert, 2=either.
-#   --tct=T    TLS Cert Type: 0=RSA, 1=ECDSA, 2=both (dual-stack).
+#   --tct=T    TLS Cert Type: 0=RSA (default), 1=ECDSA, 2=both (accepted; not implemented -- serves RSA)
 #   --split-controls
 #              Split IS-05/IS-08/IS-11 control APIs onto a separate
 #              TLS listener (port 7052) with its own trust store
@@ -124,6 +124,47 @@ if [ "$NAP" != "2" ]; then
   exit 64
 fi
 
+# Settled before the certificate probe below. These checks used to live in the
+# same `case` statements that build the certificate paths, underneath the
+# probe -- so on a checkout with no resolvable PKI an unsupported value
+# answered "missing ExampleRootCA.pem" and exited 66 (EX_NOINPUT) instead of
+# naming the argument and exiting 64 (EX_USAGE). Each value is decided once
+# here, into a token that names the choice without naming a path.
+
+# "" for RSA, ".ec" for ECDSA. TCT=2 takes the RSA certificate as TCT=0 does.
+case "$TCT" in
+  0) TCT_INFIX="" ;;
+  # TR-10-SEC gives TCT=2 as "Both", and makes supporting both simultaneously
+  # optional. This rig does not support it: there is one server certificate and
+  # one key per listener, so a TCT=2 run is an RSA run. Accepted rather than
+  # refused so existing invocations keep working -- but never silently, because
+  # a rig that reports a posture it does not have is what every other check
+  # here exists to prevent. The trust side is already dual (ExampleRootCA-bundle
+  # holds both roots); it is the identity side that is still single.
+  2) TCT_INFIX=""
+     echo "start-node1-nomtls.sh: --tct=2 (Both) is not implemented -- serving the" \
+          "RSA certificate only. Use --tct=0 or --tct=1 to choose." >&2 ;;
+  1)   TCT_INFIX=".ec" ;;
+  *) echo "start-node1-nomtls.sh: unsupported --tct=$TCT" >&2; exit 64 ;;
+esac
+
+case "$OAIM" in
+  0) OAIM_FLAG="serial" ;;
+  1) OAIM_FLAG="cert" ;;
+  2) OAIM_FLAG="either" ;;
+  *) echo "start-node1-nomtls.sh: unsupported --oaim=$OAIM" >&2; exit 64 ;;
+esac
+
+# How the Node presents itself to the Registration API. Named rather than left
+# as the digit, so the block that turns it into flags is exhaustive over values
+# this script chose itself.
+case "$RAP" in
+  0) RDS_MODE="plaintext" ;;
+  1) RDS_MODE="server-tls" ;;
+  2) RDS_MODE="mutual-tls" ;;
+  *) echo "start-node1-nomtls.sh: unsupported --rap=$RAP" >&2; exit 64 ;;
+esac
+
 # Cert directory resolution — override IPMX_CERT_ROOT to point at a
 # different `Certificates/` layout. Default: this repository's own
 # Certificates/ tree.
@@ -185,29 +226,17 @@ if [ ! -f "$CA" ]; then
   cat "$CERTS/ExampleRootCA.pem" "$CERTS/ExampleRootCA.ec.pem" > "$CA"
 fi
 
-case "$TCT" in
-  0|2) NODE_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00001.chain.pem"
-       NODE_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00001.key" ;;
-  1)   NODE_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00001.chain.ec.pem"
-       NODE_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00001.ec.key" ;;
-  *)   echo "start-node1-nomtls.sh: unsupported --tct=$TCT" >&2; exit 64 ;;
-esac
+# $TCT was validated above; $TCT_INFIX is "" or ".ec".
+NODE_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00001.chain${TCT_INFIX}.pem"
+NODE_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00001${TCT_INFIX}.key"
 
-case "$OAIM" in
-  0) OAIM_FLAG="serial" ;;
-  1) OAIM_FLAG="cert" ;;
-  2) OAIM_FLAG="either" ;;
-  *) echo "start-node1-nomtls.sh: unsupported --oaim=$OAIM" >&2; exit 64 ;;
-esac
-
-case "$RAP" in
-  0) RDS_FLAGS=(--rdsDisableTLS) ;;
-  1) RDS_FLAGS=() ;;
-  2) RDS_FLAGS=(
+case "$RDS_MODE" in
+  plaintext)  RDS_FLAGS=(--rdsDisableTLS) ;;
+  server-tls) RDS_FLAGS=() ;;
+  mutual-tls) RDS_FLAGS=(
        --rdsClientCertificate "$CERTS/pem/ExampleDeviceClient.ABC.SNX00001.chain.pem"
        --rdsClientKey         "$CERTS/key/ExampleDeviceClient.ABC.SNX00001.key"
      ) ;;
-  *) echo "start-node1-nomtls.sh: unsupported --rap=$RAP" >&2; exit 64 ;;
 esac
 
 exec python3 nmos_node.py \

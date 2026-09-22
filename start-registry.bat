@@ -112,6 +112,52 @@ rem Checked above, so the arithmetic cannot fail here.
 set /a "QUERY_PORT=REG_PORT - 1" >nul
 set /a "WS_PORT=REG_PORT + 4" >nul 2>&1
 
+rem Every value the command line can get wrong is settled here, before the
+rem certificate probe below touches the disk. These same values are checked
+rem again further down, by the blocks that also build a path or a flag out of
+rem %CERTS% and %CA% -- which is why they could not run until the probe had
+rem succeeded, and why an unsupported --tct or --nap answered "missing
+rem ExampleRootCA.pem" and exited 66 (EX_NOINPUT) instead of naming the
+rem argument and exiting 64 (EX_USAGE) on a machine whose PKI did not resolve.
+rem
+rem Those blocks are deliberately left exactly as they were. A value that
+rem reaches them is one this block already accepted, so nothing about a
+rem successful start changes; their else-arms are now unreachable rather than
+rem wrong. Kept rather than deleted because they are what assigns the paths,
+rem and because cmd expands an undefined variable to its own literal name --
+rem so the "" infix trick the .sh uses would write %TCT_INFIX% into a filename
+rem here rather than nothing.
+if not "%TCT%"=="0" if not "%TCT%"=="1" (
+  >&2 echo start-registry.bat: unsupported --tct=%TCT%
+  set "EXIT_CODE=64"
+  goto done
+)
+if "%RAP%"=="0" (
+  >&2 echo start-registry.bat: RAP=0 ^(plain HTTP^) is start-registry-bare.bat
+  set "EXIT_CODE=64"
+  goto done
+)
+if not "%RAP%"=="1" if not "%RAP%"=="2" (
+  >&2 echo start-registry.bat: unsupported RAP=%RAP%
+  set "EXIT_CODE=64"
+  goto done
+)
+if "%NAP%"=="0" (
+  >&2 echo start-registry.bat: NAP=0 ^(plain HTTP^) is start-registry-bare.bat
+  set "EXIT_CODE=64"
+  goto done
+)
+if not "%NAP%"=="1" if not "%NAP%"=="2" (
+  >&2 echo start-registry.bat: unsupported --nap=%NAP%
+  set "EXIT_CODE=64"
+  goto done
+)
+if "%NAP%"=="1" if "%USE_OAUTH2%"=="1" (
+  >&2 echo start-registry.bat: --nap=1 is not allowed with --oauth2; use --nap=2
+  set "EXIT_CODE=64"
+  goto done
+)
+
 rem Prefer the certificate subset bundled inside this repository, so a
 rem standalone clone of nmos-reference runs without the wider workspace PKI.
 rem That subset ships only the serials the quick-start and tutorials use;

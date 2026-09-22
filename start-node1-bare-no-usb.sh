@@ -133,6 +133,19 @@ if [ ${#IGNORED[@]} -gt 0 ]; then
        "(Config C) or start-node1-nomtls.sh (Config B) instead." >&2
 fi
 
+# Settled here, before any certificate path is derived. It used to be decided
+# only by the `case` at the bottom that also builds the flags, which sits after
+# the CA-derivation block -- and that block calls require_files for anything
+# but RAP=0, exiting 66. So `--rap=9` reported a missing root certificate:
+# EX_NOINPUT for what is plainly EX_USAGE, about a value that was never going
+# to be accepted.
+case "$RAP" in
+  0) RDS_MODE="plaintext" ;;
+  1) RDS_MODE="server-tls" ;;
+  2) RDS_MODE="mutual-tls" ;;
+  *) echo "$(basename "$0"): unsupported --rap=$RAP" >&2; exit 64 ;;
+esac
+
 # Cert directory resolution — override IPMX_CERT_ROOT to point at a
 # different `Certificates/` layout. Default: this repository's own
 # Certificates/ tree.
@@ -172,7 +185,7 @@ require_files() {
 
 # Same reasoning as the other launchers: an outside PKI has the two roots but
 # not the combined file. Skipped for RAP=0, which needs no certificate at all.
-if [ ! -f "$CA" ] && [ "$RAP" != "0" ]; then
+if [ ! -f "$CA" ] && [ "$RDS_MODE" != "plaintext" ]; then
   require_files "$CERTS/ExampleRootCA.pem" "$CERTS/ExampleRootCA.ec.pem"
   CA="$(mktemp -t ExampleRootCA-bundle.XXXXXX)"
   cat "$CERTS/ExampleRootCA.pem" "$CERTS/ExampleRootCA.ec.pem" > "$CA"
@@ -183,17 +196,16 @@ fi
 # given, build_registry_ssl_context() in nmos_node.py falls back to
 # load_default_certs(), and the system store does not contain this test PKI's
 # private root -- every registration attempt would fail verification.
-case "$RAP" in
-  0) RDS_FLAGS=(--rdsDisableTLS) ;;
-  1) require_files "$CA"
+case "$RDS_MODE" in
+  plaintext)  RDS_FLAGS=(--rdsDisableTLS) ;;
+  server-tls) require_files "$CA"
      RDS_FLAGS=(--rdsTrustedRootCA "$CA") ;;
-  2) require_files "$CA" "$RDS_CLIENT_CERT" "$RDS_CLIENT_KEY"
+  mutual-tls) require_files "$CA" "$RDS_CLIENT_CERT" "$RDS_CLIENT_KEY"
      RDS_FLAGS=(
        --rdsTrustedRootCA     "$CA"
        --rdsClientCertificate "$RDS_CLIENT_CERT"
        --rdsClientKey         "$RDS_CLIENT_KEY"
      ) ;;
-  *) echo "$(basename "$0"): unsupported --rap=$RAP" >&2; exit 64 ;;
 esac
 
 exec python3 nmos_node.py \

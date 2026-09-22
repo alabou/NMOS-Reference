@@ -31,7 +31,7 @@
 #   --nap=N    Node Access Policy. Config C pins NAP=2 per §9.2.
 #   --rap=R    Registry Access Policy: 0=HTTP, 1=server-TLS, 2=mTLS.
 #   --oaim=O   OAuth2 Audience ID Mode: 0=serial, 1=cert, 2=either.
-#   --tct=T    TLS Cert Type: 0=RSA, 1=ECDSA, 2=both (dual-stack TODO).
+#   --tct=T    TLS Cert Type: 0=RSA (default), 1=ECDSA, 2=both (accepted; not implemented -- serves RSA)
 #
 # Requires hosts-file entries. This script addresses its peers by DNS name
 # because the certificates carry DNS SANs (XYZ-SNX000nn) and an IP literal
@@ -128,6 +128,54 @@ if [ "$NAP" != "2" ]; then
   exit 64
 fi
 
+# Every remaining argument is settled here, before the script touches the
+# filesystem. These checks used to live in the same `case` statements that
+# built the certificate paths, further down, which put them after the
+# certificate probe: on a checkout that could not resolve a PKI, `--tct=9`
+# answered "missing ExampleRootCA.pem" and exited 66 (EX_NOINPUT) rather than
+# naming the bad argument and exiting 64 (EX_USAGE). Each value is now decided
+# once, into a token that names the choice without naming a path; the paths are
+# built from the tokens once the certificates resolve.
+
+# "" for RSA, ".ec" for ECDSA -- the infix this PKI uses for the ECDSA
+# generation of an identity. TCT=2 selects the RSA certificate as TCT=0 does;
+# it differs elsewhere, not in which file the Node presents.
+case "$TCT" in
+  0) TCT_INFIX="" ;;
+  # TR-10-SEC gives TCT=2 as "Both", and makes supporting both simultaneously
+  # optional. This rig does not support it: there is one server certificate and
+  # one key per listener, so a TCT=2 run is an RSA run. Accepted rather than
+  # refused so existing invocations keep working -- but never silently, because
+  # a rig that reports a posture it does not have is what every other check
+  # here exists to prevent. The trust side is already dual (ExampleRootCA-bundle
+  # holds both roots); it is the identity side that is still single.
+  2) TCT_INFIX=""
+     echo "start-node3.sh: --tct=2 (Both) is not implemented -- serving the" \
+          "RSA certificate only. Use --tct=0 or --tct=1 to choose." >&2 ;;
+  1)   TCT_INFIX=".ec" ;;
+  *)   echo "start-node3.sh: unsupported --tct=$TCT" >&2; exit 64 ;;
+esac
+
+# Never depended on the certificates at all; it is here to keep all argument
+# validation in one place rather than half of it either side of the probe.
+case "$OAIM" in
+  0) OAIM_FLAG="serial" ;;
+  1) OAIM_FLAG="cert" ;;
+  2) OAIM_FLAG="either" ;;
+  *) echo "start-node3.sh: unsupported --oaim=$OAIM" >&2; exit 64 ;;
+esac
+
+# How the Node presents itself to the Registration API. Named rather than left
+# as the digit, so the block that turns it into flags below is exhaustive over
+# values this script chose itself instead of re-listing what the operator may
+# type -- one place to add a mode, not two.
+case "$RAP" in
+  0) RDS_MODE="plaintext" ;;
+  1) RDS_MODE="server-tls" ;;
+  2) RDS_MODE="mutual-tls" ;;
+  *) echo "start-node3.sh: unsupported --rap=$RAP" >&2; exit 64 ;;
+esac
+
 # Cert directory resolution — override IPMX_CERT_ROOT to point at a
 # different `Certificates/` layout. Default: this repository's own
 # Certificates/ tree.
@@ -182,29 +230,17 @@ if [ ! -f "$CA" ]; then
   cat "$CERTS/ExampleRootCA.pem" "$CERTS/ExampleRootCA.ec.pem" > "$CA"
 fi
 
-case "$TCT" in
-  0|2) NODE_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00003.chain.pem"
-       NODE_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00003.key" ;;
-  1)   NODE_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00003.chain.ec.pem"
-       NODE_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00003.ec.key" ;;
-  *)   echo "start-node3.sh: unsupported --tct=$TCT" >&2; exit 64 ;;
-esac
+# $TCT and $RAP were validated above; only the paths are decided here.
+NODE_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00003.chain${TCT_INFIX}.pem"
+NODE_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00003${TCT_INFIX}.key"
 
-case "$OAIM" in
-  0) OAIM_FLAG="serial" ;;
-  1) OAIM_FLAG="cert" ;;
-  2) OAIM_FLAG="either" ;;
-  *) echo "start-node3.sh: unsupported --oaim=$OAIM" >&2; exit 64 ;;
-esac
-
-case "$RAP" in
-  0) RDS_FLAGS=(--rdsDisableTLS) ;;
-  1) RDS_FLAGS=() ;;
-  2) RDS_FLAGS=(
+case "$RDS_MODE" in
+  plaintext)  RDS_FLAGS=(--rdsDisableTLS) ;;
+  server-tls) RDS_FLAGS=() ;;
+  mutual-tls) RDS_FLAGS=(
        --rdsClientCertificate "$CERTS/pem/ExampleDeviceClient.ABC.SNX00003.chain.pem"
        --rdsClientKey         "$CERTS/key/ExampleDeviceClient.ABC.SNX00003.key"
      ) ;;
-  *) echo "start-node3.sh: unsupported --rap=$RAP" >&2; exit 64 ;;
 esac
 
 # --nodeControlPort is deliberately absent, as in start-node2.sh. The

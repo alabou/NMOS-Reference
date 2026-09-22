@@ -24,10 +24,21 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import psutil
 import pytest
 
-from bench_registry import capacity
+# psutil is a dev extra, and this is the only module in ``testpaths`` that
+# needs it. Imported plainly it is not a skipped test but a *collection*
+# error, and pytest aborts the whole session on one of those: a checkout
+# installed from ``requirements.txt`` rather than ``.[dev]`` -- which is the
+# second setup the README documents -- collected nothing at all and reported
+# zero tests run, on the platform that deploys. Skipping is the honest
+# outcome, because what these five pin is the Windows branch, and a machine
+# without psutil is a machine that cannot take it anyway.
+psutil = pytest.importorskip(
+    "psutil", reason="psutil is a dev extra (pip install -e .[dev])",
+)
+
+from bench_registry import capacity  # noqa: E402
 
 
 class TestServerCpuSeconds:

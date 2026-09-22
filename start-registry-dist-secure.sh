@@ -112,6 +112,50 @@ if [ "$INDEX" -ge "$MEMBERS" ]; then
   exit 64
 fi
 
+# The member index and count are checked above, before anything is read from
+# disk. TCT, RAP and NAP are checked here for the same reason: they used to be
+# validated by the same `case` statements that built the certificate paths and
+# the trust-anchor flags, which sit below the certificate probe -- so on a
+# checkout that could not resolve a PKI, `--nap=7` answered "missing
+# ExampleRootCA.pem" and exited 66 (EX_NOINPUT) instead of naming the argument
+# and exiting 64 (EX_USAGE). Each value is decided once here, into a token that
+# names the choice without naming a path.
+
+# "" for RSA, ".ec" for ECDSA. The infix precedes ".chain" in this tree:
+# ExampleDeviceServer.ABC.SNX1000n.etcd.ec.chain.pem.
+case "$TCT" in
+  0) TCT_INFIX="" ;;
+  1) TCT_INFIX=".ec" ;;
+  *) echo "$(basename "$0"): unsupported --tct=$TCT" >&2; exit 64 ;;
+esac
+
+# Whether the Registration listener demands a client certificate.
+case "$RAP" in
+  1) REG_WANTS_CLIENT_CERT=0 ;;
+  2) REG_WANTS_CLIENT_CERT=1 ;;
+  0) echo "$(basename "$0"): RAP=0 (plain HTTP) is start-registry-dist.sh" >&2
+     exit 64 ;;
+  *) echo "$(basename "$0"): unsupported RAP=$RAP" >&2; exit 64 ;;
+esac
+
+# Whether an unauthenticated client may read the Query API.
+case "$NAP" in
+  1) QUERY_ALLOWS_ANONYMOUS_READ=1 ;;
+  2) QUERY_ALLOWS_ANONYMOUS_READ=0 ;;
+  0) echo "$(basename "$0"): NAP=0 (plain HTTP) is start-registry-dist.sh" >&2
+     exit 64 ;;
+  *) echo "$(basename "$0"): unsupported --nap=$NAP" >&2; exit 64 ;;
+esac
+
+# TR-10-SEC §"Unrestricted Read Only": read access MUST be granted by the
+# OAuth 2.0 authorizations, so NAP=1 cannot be claimed alongside --oauth2.
+if [ "$NAP" = "1" ] && [ "$USE_OAUTH2" = "1" ]; then
+  echo "$(basename "$0"): --nap=1 (Unrestricted Read Only) is not allowed" >&2
+  echo "  with --oauth2; the specification requires read access to be granted" >&2
+  echo "  by the OAuth 2.0 authorizations. Use --nap=2, or drop --oauth2." >&2
+  exit 64
+fi
+
 PYTHON="./.venv/bin/python"
 [ -x "$PYTHON" ] || PYTHON="$(command -v python3)"
 
@@ -140,13 +184,9 @@ fi
 SERIAL="SNX1000${INDEX}"
 ETCD_PEM="$CERT_ROOT/build.0.etcd/pem"
 ETCD_KEY="$CERT_ROOT/build.0.etcd/key"
-case "$TCT" in
-  0) CERT="$ETCD_PEM/ExampleDeviceServer.ABC.$SERIAL.etcd.chain.pem"
-     KEY="$ETCD_KEY/ExampleDeviceServer.ABC.$SERIAL.etcd.key" ;;
-  1) CERT="$ETCD_PEM/ExampleDeviceServer.ABC.$SERIAL.etcd.ec.chain.pem"
-     KEY="$ETCD_KEY/ExampleDeviceServer.ABC.$SERIAL.etcd.ec.key" ;;
-  *) echo "$(basename "$0"): unsupported --tct=$TCT" >&2; exit 64 ;;
-esac
+# $TCT was validated above; $TCT_INFIX is "" or ".ec".
+CERT="$ETCD_PEM/ExampleDeviceServer.ABC.$SERIAL.etcd${TCT_INFIX}.chain.pem"
+KEY="$ETCD_KEY/ExampleDeviceServer.ABC.$SERIAL.etcd${TCT_INFIX}.key"
 for path in "$CERT" "$KEY"; do
   [ -f "$path" ] || { echo "$(basename "$0"): missing $path" >&2; exit 66; }
 done
@@ -172,29 +212,17 @@ fi
 # Identical to start-registry.sh: the Registration trust anchor is what selects
 # RAP 1 from RAP 2, and the Query anchor plus --queryOptionalClientAuth select
 # NAP 1 from NAP 2.
-case "$RAP" in
-  1) REG_CA_FLAGS=() ;;
-  2) REG_CA_FLAGS=(--registrationTrustedRootCA "$CA") ;;
-  0) echo "$(basename "$0"): RAP=0 (plain HTTP) is start-registry-dist.sh" >&2
-     exit 64 ;;
-  *) echo "$(basename "$0"): unsupported RAP=$RAP" >&2; exit 64 ;;
-esac
+# RAP, NAP and the --nap=1-with---oauth2 refusal were settled with the other
+# argument checks; only the flags are built here.
+if [ "$REG_WANTS_CLIENT_CERT" = "1" ]; then
+  REG_CA_FLAGS=(--registrationTrustedRootCA "$CA")
+else
+  REG_CA_FLAGS=()
+fi
 
-case "$NAP" in
-  1) QUERY_CA_FLAGS=(--queryTrustedRootCA "$CA" --queryOptionalClientAuth) ;;
-  2) QUERY_CA_FLAGS=(--queryTrustedRootCA "$CA") ;;
-  0) echo "$(basename "$0"): NAP=0 (plain HTTP) is start-registry-dist.sh" >&2
-     exit 64 ;;
-  *) echo "$(basename "$0"): unsupported --nap=$NAP" >&2; exit 64 ;;
-esac
-
-# TR-10-SEC §"Unrestricted Read Only": read access MUST be granted by the
-# OAuth 2.0 authorizations, so NAP=1 cannot be claimed alongside --oauth2.
-if [ "$NAP" = "1" ] && [ "$USE_OAUTH2" = "1" ]; then
-  echo "$(basename "$0"): --nap=1 (Unrestricted Read Only) is not allowed" >&2
-  echo "  with --oauth2; the specification requires read access to be granted" >&2
-  echo "  by the OAuth 2.0 authorizations. Use --nap=2, or drop --oauth2." >&2
-  exit 64
+QUERY_CA_FLAGS=(--queryTrustedRootCA "$CA")
+if [ "$QUERY_ALLOWS_ANONYMOUS_READ" = "1" ]; then
+  QUERY_CA_FLAGS+=(--queryOptionalClientAuth)
 fi
 
 if [ "$USE_OAUTH2" = "1" ]; then

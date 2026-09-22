@@ -166,6 +166,46 @@ if %INDEX% GEQ %MEMBERS% (
   exit /b 64
 )
 
+REM Every value the command line can get wrong is settled here, before the
+REM certificate probe below touches the disk. The member index and count are
+REM already checked above; TCT, RAP and NAP were not, because the blocks that
+REM validate them also build a path or a flag out of !CERT_ROOT! and !CA!, so
+REM they could not run until the probe had succeeded. On a machine whose PKI
+REM did not resolve that made an unsupported --nap answer "missing
+REM ...etcd.chain.pem" and exit 66 (EX_NOINPUT) rather than naming the
+REM argument and exiting 64 (EX_USAGE).
+REM
+REM The blocks below are deliberately left exactly as they were: a value that
+REM reaches them is one this block already accepted, so nothing about a
+REM successful start changes, and their else-arms are now unreachable rather
+REM than wrong.
+if not "%TCT%"=="0" if not "%TCT%"=="1" (
+  echo %ME%: unsupported --tct=%TCT% 1>&2
+  exit /b 64
+)
+if "%RAP%"=="0" (
+  echo %ME%: RAP=0 ^(plain HTTP^) is start-registry-dist.bat 1>&2
+  exit /b 64
+)
+if not "%RAP%"=="1" if not "%RAP%"=="2" (
+  echo %ME%: unsupported RAP=%RAP% 1>&2
+  exit /b 64
+)
+if "%NAP%"=="0" (
+  echo %ME%: NAP=0 ^(plain HTTP^) is start-registry-dist.bat 1>&2
+  exit /b 64
+)
+if not "%NAP%"=="1" if not "%NAP%"=="2" (
+  echo %ME%: unsupported --nap=%NAP% 1>&2
+  exit /b 64
+)
+if "%NAP%"=="1" if "%USE_OAUTH2%"=="1" (
+  echo %ME%: --nap=1 ^(Unrestricted Read Only^) is not allowed 1>&2
+  echo   with --oauth2; the specification requires read access to be granted 1>&2
+  echo   by the OAuth 2.0 authorizations. Use --nap=2, or drop --oauth2. 1>&2
+  exit /b 64
+)
+
 set "SERIAL=SNX1000%INDEX%"
 
 REM --- certificates ----------------------------------------------------------

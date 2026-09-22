@@ -18,7 +18,8 @@ rem
 rem   --nap=N   Node Access Policy. Config C pins NAP=2 per 9.2.
 rem   --rap=R   Registry Access Policy: 0=HTTP, 1=server-TLS, 2=mTLS.
 rem   --oaim=O  OAuth2 Audience ID Mode: 0=serial, 1=cert, 2=either.
-rem   --tct=T   TLS Cert Type: 0=RSA (default), 1=ECDSA.
+rem   --tct=T   TLS Cert Type: 0=RSA (default), 1=ECDSA, 2=both
+rem             (accepted; not implemented -- serves RSA).
 rem
 rem Requires hosts-file entries. This node addresses its peers by DNS name
 rem because the certificates carry DNS SANs (XYZ-SNX000nn) and an IP literal
@@ -122,6 +123,43 @@ if errorlevel 1 (
 )
 rem Checked above, so the arithmetic cannot fail here.
 set /a "RDS_QUERY_PORT=RDS_REG_PORT - 1" >nul
+
+rem Every value the command line can get wrong is settled here, before the
+rem certificate probe below touches the disk. These same values are checked
+rem again further down, by the blocks that also build a path or a flag out of
+rem %CERTS% -- which is why they could not run until the probe had succeeded,
+rem and why an unsupported --tct, --oaim or --rap answered "missing
+rem ExampleRootCA.pem" and exited 66 (EX_NOINPUT) instead of naming the
+rem argument and exiting 64 (EX_USAGE) on a machine whose PKI did not resolve.
+rem
+rem Those blocks are deliberately left exactly as they were. A value reaching
+rem them is one this block already accepted, so nothing about a successful
+rem start changes; their else-arms are now unreachable rather than wrong.
+rem Kept rather than folded into this one because they are what assigns the
+rem paths, and cmd expands an undefined variable to its own literal name --
+rem so the "" infix the .sh uses would write %TCT_INFIX% into a filename here.
+if not "%TCT%"=="0" if not "%TCT%"=="1" if not "%TCT%"=="2" (
+  >&2 echo start-node1.bat: unsupported --tct=%TCT%
+  set "EXIT_CODE=64"
+  goto done
+)
+rem TR-10-SEC gives TCT=2 as "Both" and makes supporting both simultaneously
+rem optional. This rig does not: one certificate and one key per listener, so
+rem a TCT=2 run is an RSA run. Accepted rather than refused so existing
+rem invocations keep working -- but never silently.
+if "%TCT%"=="2" (
+  >&2 echo start-node1.bat: --tct=2 ^(Both^) is not implemented - serving the RSA certificate only. Use --tct=0 or --tct=1 to choose.
+)
+if not "%OAIM%"=="0" if not "%OAIM%"=="1" if not "%OAIM%"=="2" (
+  >&2 echo start-node1.bat: unsupported --oaim=%OAIM%
+  set "EXIT_CODE=64"
+  goto done
+)
+if not "%RAP%"=="0" if not "%RAP%"=="1" if not "%RAP%"=="2" (
+  >&2 echo start-node1.bat: unsupported --rap=%RAP%
+  set "EXIT_CODE=64"
+  goto done
+)
 
 rem Prefer the certificate subset bundled inside this repository, so a
 rem standalone clone of nmos-reference runs without the wider workspace PKI.
