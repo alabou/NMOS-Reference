@@ -18,6 +18,8 @@ Two halves of an NMOS system, in one checkout — the device and the infrastruct
 
 The two are independent: the Node speaks to any conformant IS-04 registry, and the registry serves any conformant Node. Shipping both simply means a complete system runs from this checkout alone.
 
+**A dual-implementation reference stack.** The registry exists twice — Python as the specification and teaching reference, Rust where throughput matters — and the second implementation is not a rewrite that replaces the first. Both are maintained, both must accept and reject exactly the same things down to the error text, and because a mixed Python/Rust cluster has to agree byte for byte, each is a running conformance test of the other. The Node is Python only.
+
 ---
 
 ## Highlights
