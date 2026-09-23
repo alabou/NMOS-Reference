@@ -211,13 +211,6 @@ set "NODE_CERT_ARGS="
 if not "%TCT%"=="1" set "NODE_CERT_ARGS=--nodeCertificate "%CERTS%\pem\ExampleDeviceServer.ABC.SNX00003.chain.pem" --nodeKey "%CERTS%\key\ExampleDeviceServer.ABC.SNX00003.key""
 if not "%TCT%"=="0" set "NODE_CERT_ARGS=%NODE_CERT_ARGS% --nodeCertificate "%CERTS%\pem\ExampleDeviceServer.ABC.SNX00003.chain.ec.pem" --nodeKey "%CERTS%\key\ExampleDeviceServer.ABC.SNX00003.ec.key""
 
-if not exist "%NODE_CERT%" (
-  >&2 echo start-node3.bat: missing "%NODE_CERT%"
-  >&2 echo Set IPMX_CERT_ROOT to a Certificates tree carrying SNX00003.
-  set "EXIT_CODE=66"
-  goto done
-)
-
 if "%OAIM%"=="0" (
   set "OAIM_FLAG=serial"
 ) else if "%OAIM%"=="1" (

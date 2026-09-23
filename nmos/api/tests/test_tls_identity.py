@@ -21,11 +21,13 @@ from __future__ import annotations
 
 import socket
 import ssl
-import subprocess
+import sys
 import threading
 from pathlib import Path
 
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives.asymmetric import ec
 
 from nmos.cert_check import CertCheckError
 from nmos.tls_identity import (
@@ -190,11 +192,13 @@ def _presented_algorithm(port: int, cipher: str) -> str:
         with client.wrap_socket(raw) as tls:
             der = tls.getpeercert(binary_form=True)
     assert der is not None
-    text = subprocess.run(
-        ["openssl", "x509", "-inform", "DER", "-noout", "-text"],
-        input=der, capture_output=True, check=True,
-    ).stdout.decode()
-    return "ecdsa" if "id-ecPublicKey" in text else "rsa"
+    # Read the algorithm off the certificate rather than out of
+    # ``openssl x509 -text``. The binary is not present on every platform this
+    # suite runs on -- the library always is, because it is what served the
+    # handshake above -- and matching "id-ecPublicKey" in a text dump pinned
+    # OpenSSL's output formatting, which is not an interface it promises.
+    public_key = x509.load_der_x509_certificate(der).public_key()
+    return "ecdsa" if isinstance(public_key, ec.EllipticCurvePublicKey) else "rsa"
 
 
 @requires_pki
@@ -358,8 +362,26 @@ class TestRejectionIsRecognised:
     Driven against live rejections on both TLS versions so that an OpenSSL or
     aiohttp upgrade which renames an alert fails here loudly, rather than
     silently turning the identity fallback into a no-op.
+
+    Only the live-rejection test needs a peer; the rest classify exceptions
+    built here and run everywhere.
     """
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason=(
+            "needs the openssl command-line tool, which Windows does not have. "
+            "The library is present and serves TLS here, but no Python binding "
+            "reaches SSL_CTX_set1_client_sigalgs_list -- stdlib ssl exposes no "
+            "signature-algorithm API, pyOpenSSL none, and cryptography's "
+            "bindings offer SSL_CTX_set1_sigalgs_list (our own) but not the "
+            "client variant nor SSL_CTX_ctrl to reach it by hand -- so the "
+            "CertificateRequest cannot be restricted from inside the process. "
+            "Provoking the rejection another way, an unknown issuer say, would "
+            "exercise a different branch of is_peer_rejected_identity than the "
+            "one this pins, so it is skipped rather than substituted."
+        ),
+    )
     @pytest.mark.parametrize("tls12", [True, False], ids=["tls1.2", "tls1.3"])
     def test_a_real_rejection_is_recognised(self, tls12: bool) -> None:
         exc = _rejected_by("ECDSA+SHA256", tls12)
