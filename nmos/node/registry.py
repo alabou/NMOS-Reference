@@ -30,6 +30,13 @@ import aiohttp
 
 from nmos.api.tr10_tls import apply_tr10_tls_restrictions
 from nmos.json.engine import JsonEngine
+from nmos.tls_identity import (
+    PeerRejectedAllIdentities,
+    client_identity_order,
+    is_peer_rejected_identity,
+    leaf_public_key_algorithm,
+    pair_identities,
+)
 from nmos.node import _get_flow_core, _get_resource_core, _get_source_core
 from nmos.enums import Http, Https
 
@@ -48,8 +55,11 @@ class RegistryConfig:
     tls: bool
     certificate_name: str = ""
     trusted_root_ca: tuple[str, ...] = ()
-    client_certificate: str = ""
-    client_key: str = ""
+    # Repeatable, as the trust anchors are: TR-10-SEC TCT=2 (Both) configures
+    # one identity per certificate type. The Nth key pairs with the Nth
+    # certificate.
+    client_certificate: tuple[str, ...] = ()
+    client_key: tuple[str, ...] = ()
 
 
 def _config_of(target: Any) -> RegistryConfig:
@@ -104,13 +114,79 @@ class RegistryClient:
         self._target = selector.current
         self._config = _config_of(self._target)
         self._base_url = self._build_base_url()
+        # Ordered ECDSA first; see nmos/tls_identity.py.
+        self._identities = client_identity_order(pair_identities(
+            self._config.client_certificate, self._config.client_key,
+            cert_flag="--rdsClientCertificate", key_flag="--rdsClientKey",
+        ))
+        self._identity_index = 0
+        self._identity_failures: list[tuple[str, BaseException]] = []
 
     def _adopt(self, target: Any) -> None:
-        """Point this client at a different registry."""
+        """Point this client at a registry, possibly the one already in use.
+
+        Called on every pass of ``run``'s session loop, including the passes
+        that only rotate the client identity, so the identity state is reset
+        for a *new* target and carried across otherwise. Starting from ECDSA
+        again at a new peer is right -- what one registry refused says nothing
+        about the next -- but restarting at the same peer would loop forever
+        between two identities it has already refused.
+        """
+        moved = target != self._target
         self._target = target
         self._config = _config_of(target)
         self._base_url = self._build_base_url()
         self._failures = 0
+        self._identities = client_identity_order(pair_identities(
+            self._config.client_certificate, self._config.client_key,
+            cert_flag="--rdsClientCertificate", key_flag="--rdsClientKey",
+        ))
+        if moved:
+            self._identity_index = 0
+            self._identity_failures = []
+
+    def _rotate_identity(self, exc: BaseException) -> bool:
+        """Was this the peer refusing one identity, with another still untried?
+
+        True means the caller should return so ``run`` rebuilds the session
+        with the next identity. The session has to be rebuilt because the
+        identity is attached to the connector, not to the request.
+
+        A single configured identity never rotates: TLS 1.2 reports a refused
+        certificate with the same generic alert it uses for "no shared cipher",
+        so retrying on it would double the cost of failures that have nothing
+        to do with certificates.
+        """
+        if len(self._identities) <= 1 or not is_peer_rejected_identity(exc):
+            return False
+        certificate = self._identities[self._identity_index][0]
+        self._identity_failures.append(
+            (leaf_public_key_algorithm(certificate) or "unreadable", exc),
+        )
+        if self._identity_index + 1 >= len(self._identities):
+            return False
+        self._identity_index += 1
+        log.warning(
+            "Registry: %s refused our %s client certificate - offering %s",
+            self._target.label,
+            self._identity_failures[-1][0],
+            leaf_public_key_algorithm(
+                self._identities[self._identity_index][0],
+            ) or "the next",
+        )
+        return True
+
+    def _identity_exhausted(self, exc: BaseException) -> BaseException:
+        """The exception to count, once no identity is left to try.
+
+        Replaces the raw TLS error with one naming every flavour offered.
+        TLS 1.3 reports only "certificate required", which reads as "none
+        configured" -- the wrong diagnosis, and the one an operator would act
+        on first.
+        """
+        if self._identity_failures and is_peer_rejected_identity(exc):
+            return PeerRejectedAllIdentities(self._identity_failures)
+        return exc
 
     @staticmethod
     def _is_registry_unresponsive(exc: BaseException) -> bool:
@@ -132,6 +208,18 @@ class RegistryClient:
         move this Node off a registry everyone else still considers healthy.
         """
         if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+            return True
+        if isinstance(exc, PeerRejectedAllIdentities):
+            # Every client identity we hold was refused by this registry --
+            # not one of them, which is merely a signal to offer the next.
+            #
+            # Counted as the registry's fault on purpose. Once the identities
+            # are exhausted the two possible causes -- our certificates being
+            # unusable, or *this* registry's trust store lacking our issuer --
+            # cannot be told apart from here, and the second is exactly the
+            # "could affect just one Registration API in a cluster" case the
+            # specification gives as the reason to try another member. Moving
+            # on is the only way to find out which it was.
             return True
         if isinstance(exc, aiohttp.ClientConnectionError):
             return True
@@ -180,8 +268,13 @@ class RegistryClient:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         apply_tr10_tls_restrictions(ctx)
 
-        if self._config.client_certificate and self._config.client_key:
-            ctx.load_cert_chain(self._config.client_certificate, self._config.client_key)
+        # Exactly one identity per context: a client context holding two does
+        # not answer the peer's CertificateRequest with the one it asked for,
+        # so the choice is made by offering them in turn instead. See
+        # nmos/tls_identity.py.
+        if self._identities:
+            certificate, key = self._identities[self._identity_index]
+            ctx.load_cert_chain(certificate, key)
 
         if self._config.trusted_root_ca:
             for ca in self._config.trusted_root_ca:
@@ -313,7 +406,9 @@ class RegistryClient:
                     log.warning(f"Registry: DELETE failed: {exc}")
                     self._node.publish_manager.reset_trackers()
                     need_initial_delete = True
-                    if self._note_failure(exc):
+                    if self._rotate_identity(exc):
+                        return   # run() rebuilds with the next identity
+                    if self._note_failure(self._identity_exhausted(exc)):
                         return
                     try:
                         await asyncio.sleep(1.0)
@@ -330,7 +425,9 @@ class RegistryClient:
                 log.warning(f"Registry: update failed: {exc}")
                 self._node.publish_manager.reset_trackers()
                 need_initial_delete = True
-                if self._note_failure(exc):
+                if self._rotate_identity(exc):
+                    return   # run() rebuilds with the next identity
+                if self._note_failure(self._identity_exhausted(exc)):
                     return
                 try:
                     await asyncio.sleep(1.0)
@@ -357,7 +454,9 @@ class RegistryClient:
                 log.warning(f"Registry: heartbeat failed: {exc}")
                 self._node.publish_manager.reset_trackers()
                 need_initial_delete = True
-                if self._note_failure(exc):
+                if self._rotate_identity(exc):
+                    return   # run() rebuilds with the next identity
+                if self._note_failure(self._identity_exhausted(exc)):
                     return
                 try:
                     await asyncio.sleep(1.0)

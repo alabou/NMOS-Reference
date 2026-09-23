@@ -25,8 +25,8 @@ DEFAULT = target_from_scalars(
     tls=True,
     certificate_name="Example.Company.Device.Server.example.com",
     trusted_root_ca=("GlobalRoot.pem",),
-    client_certificate="client.chain.pem",
-    client_key="client.key",
+    client_certificate=("client.chain.pem",),
+    client_key=("client.key",),
 )
 
 
@@ -39,7 +39,7 @@ class TestSpecParsing:
         assert t.tls is True
         assert t.certificate_name == DEFAULT.certificate_name
         assert t.trusted_root_ca == ("GlobalRoot.pem",)
-        assert t.client_certificate == "client.chain.pem"
+        assert t.client_certificate == ("client.chain.pem",)
 
     def test_ports_override_individually(self) -> None:
         """The WSL2 rig: members share an address and differ by port block."""
@@ -70,6 +70,37 @@ class TestSpecParsing:
     def test_whitespace_is_tolerated(self) -> None:
         t = parse_rds_spec(" host = a , queryPort = 9000 ", DEFAULT)
         assert t.host == "a" and t.query_port == 9000
+
+    def test_repeated_cert_and_key_accumulate_in_pairs(self) -> None:
+        """TR-10-SEC TCT=2: one identity per certificate type on one target."""
+        t = parse_rds_spec(
+            "host=a,cert=rsa.pem,key=rsa.key,cert=ec.pem,key=ec.key", DEFAULT,
+        )
+        assert t.client_certificate == ("rsa.pem", "ec.pem")
+        assert t.client_key == ("rsa.key", "ec.key")
+
+    def test_the_first_cert_replaces_the_inherited_default(self) -> None:
+        """Same rule as ``ca``, and for the same reason: an entry naming its
+        own identity describes a different PKI, so keeping the scalar flag's
+        certificate alongside it would present something unasked for."""
+        t = parse_rds_spec("host=a,cert=own.pem,key=own.key", DEFAULT)
+        assert t.client_certificate == ("own.pem",)
+        assert t.client_key == ("own.key",)
+
+    def test_a_cert_without_a_matching_key_is_refused(self) -> None:
+        """Refused rather than zipped: a mismatch here would otherwise pair a
+        certificate with the wrong key, which fails much later and further
+        away, at a handshake."""
+        with pytest.raises(RdsSpecError) as excinfo:
+            parse_rds_spec("host=a,cert=rsa.pem,key=rsa.key,cert=ec.pem", DEFAULT)
+        assert "one key per certificate" in str(excinfo.value)
+
+    def test_replacing_only_the_key_is_refused(self) -> None:
+        """``cert`` and ``key`` track their overrides separately, so naming one
+        without the other is caught here rather than silently pairing the new
+        key with the inherited certificate."""
+        with pytest.raises(RdsSpecError):
+            parse_rds_spec("host=a,key=lonely.key,key=second.key", DEFAULT)
 
     @pytest.mark.parametrize(
         "spec,message",

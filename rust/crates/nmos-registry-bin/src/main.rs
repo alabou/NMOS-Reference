@@ -142,11 +142,9 @@ async fn main() -> std::io::Result<()> {
     // to correspond to one of our own server certificate's identities. With no
     // certificate this is empty and every audience check fails, which is the
     // correct reading of an unconfigured deployment rather than an oversight.
-    let tls_server_cert_names = if args.registry_certificate.is_empty() {
-        Vec::new()
-    } else {
-        identity::server_cert_names(Path::new(&args.registry_certificate))
-    };
+    // Unioned across every configured identity: with TCT=2 either flavour may
+    // be presented, so a token naming the names of either has to be accepted.
+    let tls_server_cert_names = identity::server_cert_names_union(&args.registry_certificate);
 
     // Shared with the refresh task below: the handle is cloned into the router
     // now and written to whenever a fetch succeeds. It starts empty, which
@@ -176,9 +174,12 @@ async fn main() -> std::io::Result<()> {
     // Query and the WebSocket deliberately share one: a subscription's `secure`
     // attribute describes one negotiated mode for the pair, so splitting their
     // TLS configuration would make that attribute unrepresentable.
+    // Paired once and shared by both listeners: a count mismatch is a usage
+    // error, so it is reported by `validate_startup_certs` before anything
+    // binds rather than twice from here.
+    let identities = cli::identities(&args.registry_certificate, &args.registry_key);
     let registration_tls = context_for(
-        &args.registry_certificate,
-        &args.registry_key,
+        &identities,
         args.registry_disable_tls,
         &args.registration_trusted_root_ca,
         args.registration_optional_client_auth,
@@ -186,8 +187,7 @@ async fn main() -> std::io::Result<()> {
     )
     .map_err(std::io::Error::other)?;
     let query_tls = context_for(
-        &args.registry_certificate,
-        &args.registry_key,
+        &identities,
         args.registry_disable_tls,
         &args.query_trusted_root_ca,
         args.query_optional_client_auth,

@@ -539,10 +539,10 @@
   },
   {
    "choices": null,
-   "default": "",
+   "default": null,
    "dest": "registryCertificate",
    "group": "Registry Server",
-   "kind": "value",
+   "kind": "append",
    "options": [
     "--registryCertificate"
    ]
@@ -559,10 +559,10 @@
   },
   {
    "choices": null,
-   "default": "",
+   "default": null,
    "dest": "registryKey",
    "group": "Registry Server",
-   "kind": "value",
+   "kind": "append",
    "options": [
     "--registryKey"
    ]

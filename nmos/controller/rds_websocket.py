@@ -43,6 +43,13 @@ from typing import Any
 import aiohttp
 
 from nmos.api.tr10_tls import apply_tr10_tls_restrictions
+from nmos.tls_identity import (
+    PeerRejectedAllIdentities,
+    client_identity_order,
+    is_peer_rejected_identity,
+    leaf_public_key_algorithm,
+    pair_identities,
+)
 from nmos.controller.cache import ResourceCache, ResourceKind
 from nmos.enums import Http, Https
 
@@ -70,8 +77,11 @@ class RdsWebSocketConfig:
     ws_port: int = 0      # Defaults to query_port when zero
     tls: bool = True
     trusted_root_ca: tuple[str, ...] = ()
-    client_certificate: str = ""
-    client_key: str = ""
+    # Repeatable, as the trust anchors are: TR-10-SEC TCT=2 (Both) configures
+    # one identity per certificate type. The Nth key pairs with the Nth
+    # certificate.
+    client_certificate: tuple[str, ...] = ()
+    client_key: tuple[str, ...] = ()
 
 
 class RdsWebSocketClient:
@@ -160,20 +170,47 @@ class RdsWebSocketClient:
         target = self._selector.current
         return target, self._config_for(target)
 
+    def identities_for(
+        self, cfg: RdsWebSocketConfig,
+    ) -> list[tuple[str, str]]:
+        """This target's client identities, ECDSA first.
+
+        See ``nmos/tls_identity.py``: a client context may hold only one, so
+        the rest are reached by offering them in turn.
+        """
+        return client_identity_order(pair_identities(
+            cfg.client_certificate, cfg.client_key,
+            cert_flag="--rdsClientCertificate", key_flag="--rdsClientKey",
+        ))
+
     def _build_ssl_context(
-        self, cfg: RdsWebSocketConfig | None = None,
+        self,
+        cfg: RdsWebSocketConfig | None = None,
+        identity: tuple[str, str] | None = None,
     ) -> ssl.SSLContext | None:
+        """The context for one target and one of its identities.
+
+        Every value here is read from ``cfg``, not ``self._config``. It used to
+        resolve ``cfg`` and then read the certificate, key and trust anchors
+        from ``self._config`` regardless -- so after failing over to a target
+        that names its own ``cert=``/``key=``/``ca=`` (which ``--rds`` allows
+        per entry) this presented the *original* target's identity and trusted
+        the original target's roots. ``nmos/node/registry.py`` has always done
+        this correctly via ``_adopt``/``_config_of``.
+        """
         cfg = cfg if cfg is not None else self._config
         if not cfg.tls:
             return None
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         apply_tr10_tls_restrictions(ctx)
-        if self._config.client_certificate and self._config.client_key:
-            ctx.load_cert_chain(
-                self._config.client_certificate, self._config.client_key,
-            )
-        if self._config.trusted_root_ca:
-            for ca in self._config.trusted_root_ca:
+        if identity is None:
+            candidates = self.identities_for(cfg)
+            identity = candidates[0] if candidates else None
+        if identity is not None:
+            certificate, key = identity
+            ctx.load_cert_chain(certificate, key)
+        if cfg.trusted_root_ca:
+            for ca in cfg.trusted_root_ca:
                 ctx.load_verify_locations(ca)
         else:
             ctx.load_default_certs()
@@ -201,6 +238,13 @@ class RdsWebSocketClient:
     ) -> None:
         backoff = INITIAL_BACKOFF_S
         failures = 0
+        # Which client identity this subscriber is currently offering, and
+        # what the ones before it were refused with. Per subscriber, because
+        # each owns its own session; reset whenever the target changes, since
+        # what one registry refused says nothing about the next.
+        identity_index = 0
+        identity_failures: list[tuple[str, BaseException]] = []
+        offered_to: Any = None
 
         while not dg.is_done:
             # Re-read before every attempt. If another subscriber -- or the
@@ -212,7 +256,16 @@ class RdsWebSocketClient:
             # registry it actually came from rather than the one selected by
             # the time it is applied.
             epoch = self._generation()
-            ssl_ctx = self._build_ssl_context(cfg)
+            identities = self.identities_for(cfg)
+            if target != offered_to:
+                offered_to = target
+                identity_index = 0
+                identity_failures = []
+            identity = (
+                identities[min(identity_index, len(identities) - 1)]
+                if identities else None
+            )
+            ssl_ctx = self._build_ssl_context(cfg, identity)
             connector_ssl: bool | ssl.SSLContext = (
                 ssl_ctx if ssl_ctx is not None else False
             )
@@ -242,6 +295,29 @@ class RdsWebSocketClient:
             except asyncio.CancelledError:
                 return
             except Exception as exc:
+                # A refused identity is not evidence about the registry: it
+                # may simply prefer the other flavour. Offer the next one and
+                # reconnect at once, without counting an attempt against the
+                # target. Only once every identity has been refused does this
+                # fall through and count -- see nmos/tls_identity.py's
+                # PeerRejectedAllIdentities.
+                if len(identities) > 1 and is_peer_rejected_identity(exc):
+                    refused = leaf_public_key_algorithm(
+                        identities[identity_index][0],
+                    ) or "unreadable"
+                    identity_failures.append((refused, exc))
+                    if identity_index + 1 < len(identities):
+                        identity_index += 1
+                        log.warning(
+                            "rds_ws[%s]: %s refused our %s client certificate"
+                            " - offering %s",
+                            kind, getattr(target, "label", "registry"), refused,
+                            leaf_public_key_algorithm(
+                                identities[identity_index][0],
+                            ) or "the next",
+                        )
+                        continue
+                    exc = PeerRejectedAllIdentities(identity_failures)
                 log.warning("rds_ws[%s]: %s; reconnect in %.1fs", kind, exc, backoff)
                 failures += 1
                 if (

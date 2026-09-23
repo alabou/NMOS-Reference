@@ -54,6 +54,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable
 
+from nmos.tls_identity import leaf_public_key_algorithm, load_identities
+
 REPO = Path(__file__).resolve().parent
 """This checkout. All material is sourced from here — never from a wider
 workspace — so a standalone clone runs the rig unchanged."""
@@ -115,6 +117,79 @@ def _split_audiences(argv: list[str]) -> tuple[list[str], list[str]]:
     return audiences, passthrough
 
 
+def _split_identities(argv: list[str]) -> tuple[list[tuple[str, str]], list[str]]:
+    """Pull every ``--cert``/``--key`` out of ``argv``, paired by position.
+
+    The same shape as :func:`_split_audiences`, for the same reason: the flag
+    stays the one the rig already knows rather than gaining a second spelling.
+
+    Two of different types is TR-10-SEC TCT=2 ("Both") -- the listener then
+    presents whichever flavour each client asks for. The vendored server takes
+    a single pair and loads it once, which is why this wrapper exists.
+    """
+    certificates: list[str] = []
+    keys: list[str] = []
+    passthrough: list[str] = []
+    index = 0
+    while index < len(argv):
+        argument = argv[index]
+        for flag, collected in (("--cert", certificates), ("--key", keys)):
+            if argument == flag:
+                if index + 1 >= len(argv):
+                    raise ValueError(f"{flag} requires a value")
+                collected.append(argv[index + 1])
+                index += 2
+                break
+            if argument.startswith(f"{flag}="):
+                collected.append(argument.split("=", 1)[1])
+                index += 1
+                break
+        else:
+            passthrough.append(argument)
+            index += 1
+            continue
+    if len(certificates) != len(keys):
+        raise ValueError(
+            f"--cert was given {len(certificates)} time(s) but --key "
+            f"{len(keys)} time(s); pass one key per certificate, in the same "
+            f"order",
+        )
+    return list(zip(certificates, keys)), passthrough
+
+
+def _load_every_identity(
+    fake_as: ModuleType, identities: list[tuple[str, str]],
+) -> None:
+    """Rebind ``_build_ssl_context`` so the listener holds every identity.
+
+    The vendored method loads exactly one pair. Rebinding rather than editing
+    it keeps ``fake-as/`` byte-identical to the validator's copy, which is the
+    whole reason this file exists -- the same technique
+    :func:`_widen_audience` uses on ``mint_token``.
+
+    It *extends* the original's context rather than building its own, so every
+    policy the vendored server applies -- the minimum TLS version among them --
+    is inherited instead of restated. A wrapper holding a second opinion about
+    TR-10-SEC policy is exactly the drift keeping ``fake-as/`` byte-identical
+    is meant to prevent.
+
+    Given one identity this is not installed at all, so a single-pair run is
+    the vendored code path untouched.
+    """
+    server_class: Any = getattr(fake_as, "FakeAuthorizationServer")
+    original: Any = server_class._build_ssl_context  # noqa: SLF001
+
+    def build_with_every_identity(self: Any) -> Any:
+        context = original(self)
+        # The first pair is already loaded by the original. Adding the rest to
+        # the same context is the serving direction: OpenSSL slots an identity
+        # by key type and picks per handshake from what the client offered.
+        load_identities(context, identities[1:])
+        return context
+
+    server_class._build_ssl_context = build_with_every_identity  # noqa: SLF001
+
+
 def _widen_audience(fake_as: ModuleType, audiences: list[str]) -> None:
     """Rebind ``mint_token`` so every issued token carries ``audiences``.
 
@@ -152,6 +227,7 @@ def main() -> int:
 
     try:
         audiences, passthrough = _split_audiences(sys.argv[1:])
+        identities, passthrough = _split_identities(passthrough)
     except ValueError as exc:
         print(f"multi_aud_as.py: {exc}", file=sys.stderr)
         return Exit.USAGE
@@ -167,13 +243,29 @@ def main() -> int:
     fake_as = _load_module(FAKE_AS_MAIN, "ipmx_fake_as")
 
     _widen_audience(fake_as, audiences)
+    if len(identities) > 1:
+        _load_every_identity(fake_as, identities)
 
     # Forward one --default-aud so the server's own default_aud_entry (which
-    # it also uses to build token templates) matches aud[0].
+    # it also uses to build token templates) matches aud[0], and one
+    # --cert/--key pair because the vendored parser declares both required.
+    # The rest are loaded onto the context by the rebind above.
     sys.argv = [str(FAKE_AS_MAIN), *passthrough, AUD_FLAG, audiences[0]]
+    for certificate, key in identities[:1]:
+        sys.argv += ["--cert", certificate, "--key", key]
 
     print(f"multi_aud_as: every token will carry aud={audiences}",
           file=sys.stderr)
+    if len(identities) > 1:
+        print(
+            "multi_aud_as: serving "
+            + ", ".join(
+                leaf_public_key_algorithm(certificate) or "unreadable"
+                for certificate, _ in identities
+            )
+            + " identities -- each client is served the one it asks for",
+            file=sys.stderr,
+        )
     return int(asyncio.run(fake_as._amain()))
 
 

@@ -233,6 +233,53 @@ fn every_implemented_flag_has_pythons_arity() {
 }
 
 #[test]
+fn every_implemented_flag_has_pythons_repeatability() {
+    // `every_implemented_flag_has_pythons_arity` above cannot see this: it
+    // computes `flag.kind != "flag"`, which is true for both `value` and
+    // `append`, so a flag made repeatable on one side and not the other passes
+    // it silently. The two would then disagree about what
+    // `--registryCertificate a --registryCertificate b` means -- one keeps
+    // both, the other keeps the last -- and a TCT=2 launch script would
+    // configure one identity on one implementation and two on the other.
+    //
+    // The only thing that caught that before this test was a *compile* error
+    // in the defaults map, which is luck rather than coverage: it depended on
+    // the flag happening to be listed there.
+    let corpus = corpus();
+    let command = Args::command();
+    let mut repeatable: BTreeSet<String> = BTreeSet::new();
+    for arg in command.get_arguments() {
+        if matches!(arg.get_action(), clap::ArgAction::Append)
+            && let Some(long) = arg.get_long()
+        {
+            repeatable.insert(format!("--{long}"));
+        }
+    }
+
+    let mut wrong = Vec::new();
+    for flag in &corpus.flags {
+        let Some(long) = flag.options.iter().find(|o| o.starts_with("--")) else {
+            continue;
+        };
+        if clap_flags().get(long.as_str()).is_none() {
+            continue; // deferred, not implemented here yet
+        }
+        let python_repeats = flag.kind == "append";
+        let we_repeat = repeatable.contains(long.as_str());
+        if python_repeats != we_repeat {
+            wrong.push(format!(
+                "{long}: python append={python_repeats}, ours={we_repeat}",
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "repeatability differs:\n  {}",
+        wrong.join("\n  "),
+    );
+}
+
+#[test]
 fn every_implemented_flag_has_pythons_choices() {
     let corpus = corpus();
     let ours = clap_flags();
@@ -271,8 +318,11 @@ fn every_implemented_flag_has_pythons_default() {
 
     let actual: BTreeMap<&str, String> = BTreeMap::from([
         ("--registryAddr", parsed.registry_addr.clone()),
-        ("--registryCertificate", parsed.registry_certificate.clone()),
-        ("--registryKey", parsed.registry_key.clone()),
+        // --registryCertificate and --registryKey are absent from this map on
+        // purpose: they are repeatable now, so their recorded default is
+        // `null` rather than a string, and `every_implemented_flag_has_pythons_default`
+        // skips null defaults anyway. Their arity is covered by
+        // `every_implemented_flag_has_pythons_repeatability` below.
         (
             "--registrySerialNumber",
             parsed.registry_serial_number.clone(),

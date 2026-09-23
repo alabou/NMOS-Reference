@@ -126,6 +126,18 @@ fi
 case "$TCT" in
   0) TCT_INFIX="" ;;
   1) TCT_INFIX=".ec" ;;
+  # TR-10-SEC's "Both" is refused here rather than elsewhere because this
+  # launcher hands ONE identity to two different consumers: the registry
+  # listeners and the cluster backend. etcd cannot hold two -- gRPC's
+  # ssl_channel_credentials takes one certificate_chain, and the etcd binary
+  # takes a singular --cert-file -- so a TCT=2 run would leave the listeners
+  # dual and the backend single. That would make the reported certificate type
+  # a property of the storage backend, which it is not. Use start-registry.sh
+  # for a TCT=2 registry.
+  2) echo "$(basename "$0"): --tct=2 (Both) is not available with a clustered" \
+          "backend; the cluster identity cannot be dual. Use" \
+          "start-registry.sh for TCT=2." >&2
+     exit 64 ;;
   *) echo "$(basename "$0"): unsupported --tct=$TCT" >&2; exit 64 ;;
 esac
 

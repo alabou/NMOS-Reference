@@ -31,7 +31,7 @@ use openssl::stack::Stack;
 use openssl::x509::store::X509StoreBuilder;
 use openssl::x509::{X509, X509StoreContext};
 
-use crate::cli::Args;
+use crate::cli::{self, Args};
 
 /// A configuration that cannot be served.
 ///
@@ -269,17 +269,35 @@ pub fn validate_startup_certs(args: &Args) -> Result<(), ConfigError> {
         ));
     }
 
-    let certificate = Path::new(&args.registry_certificate);
-    let key = Path::new(&args.registry_key);
-    for (role, path) in [
-        ("--registryCertificate", certificate),
-        ("--registryKey", key),
-    ] {
-        if !path.is_file() {
-            return Err(ConfigError(format!(
-                "CONFIG: {role} is not accessible: {}",
-                repr(&path.to_string_lossy()),
-            )));
+    // Both options are repeatable, so they must pair up. Checked before any
+    // file is opened: a count mismatch is a usage error, and reporting it as a
+    // missing file would name the wrong problem. Worded exactly as
+    // `nmos_registry.py` words it -- `tests/config_parity.rs` runs both
+    // binaries over the same argv and compares this line to the other's.
+    if args.registry_certificate.len() != args.registry_key.len() {
+        return Err(ConfigError(format!(
+            "CONFIG: --registryCertificate was given {} time(s) but \
+             --registryKey {} time(s); pass one key per certificate, in the \
+             same order",
+            args.registry_certificate.len(),
+            args.registry_key.len(),
+        )));
+    }
+
+    // Certificate then key within each pair, so a single-identity
+    // configuration produces exactly the diagnostics it did before these
+    // options became repeatable.
+    for (certificate, key) in cli::identities(&args.registry_certificate, &args.registry_key) {
+        for (role, path) in [
+            ("--registryCertificate", certificate.as_path()),
+            ("--registryKey", key.as_path()),
+        ] {
+            if !path.is_file() {
+                return Err(ConfigError(format!(
+                    "CONFIG: {role} is not accessible: {}",
+                    repr(&path.to_string_lossy()),
+                )));
+            }
         }
     }
 
@@ -327,17 +345,23 @@ pub fn validate_startup_certs(args: &Args) -> Result<(), ConfigError> {
     }
 
     if !args.trusted_root_ca.is_empty() {
-        check_certificate(
-            &args.trusted_root_ca,
-            certificate,
-            key,
-            &args.registry_serial_number,
-        )
-        .map_err(|error| {
-            ConfigError(format!(
-                "CONFIG: --registryCertificate is not valid: {error}"
-            ))
-        })?;
+        // Per identity: each must chain to a configured root and each key must
+        // match its own certificate. Two identities of different types chain
+        // to different roots in this PKI, so --trustedRootCA has to carry
+        // both -- named here rather than at a peer's handshake.
+        for (certificate, key) in cli::identities(&args.registry_certificate, &args.registry_key) {
+            check_certificate(
+                &args.trusted_root_ca,
+                certificate.as_path(),
+                key.as_path(),
+                &args.registry_serial_number,
+            )
+            .map_err(|error| {
+                ConfigError(format!(
+                    "CONFIG: --registryCertificate is not valid: {error}"
+                ))
+            })?;
+        }
     }
     Ok(())
 }

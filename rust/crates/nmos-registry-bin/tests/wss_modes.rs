@@ -131,8 +131,7 @@ async fn start(tls: Tls, client_auth_required: bool, oauth2: bool, keys: SharedJ
         Tls::Optional | Tls::Required => vec![root_ca()],
     };
     let (context, _, _) = server_context(
-        &server_chain(),
-        &server_key(),
+        &[(server_chain(), server_key())],
         &anchors,
         tls == Tls::Optional,
         None,

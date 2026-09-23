@@ -192,6 +192,60 @@ runs standalone — see the note under
 [External dependencies of the launch scripts](#external-dependencies-of-the-launch-scripts).
 `nmos_node.py --help` documents the full flag surface.
 
+### Certificate type (`--tct`) — RSA, ECDSA, or both
+
+TR-10-SEC §"TLS Certificate Type (TCT)" lets a device be configured as RSA (0,
+the default), ECDSA (1), or **Both** (2). The launchers take `--tct=N`, and the
+Node advertises the result in its `tct-config` tag.
+
+`--tct=2` gives a listener two identities at once. OpenSSL slots a certificate
+by key type, so it holds an RSA and an ECDSA identity together and serves each
+client whichever its ClientHello can verify:
+
+```bash
+./start-registry.sh 2 --tct=2      # registry presents both
+./start-node1.sh XYZ-SNX00000 9443 XYZ-SNX00000 8444 --rap=2 --tct=2
+./start-fake-as.sh --tct=2
+```
+
+Under the hood the certificate and key options are simply **repeatable** —
+`--nodeCertificate a.pem --nodeKey a.key --nodeCertificate b.pem --nodeKey
+b.key` — the *n*th key pairing with the *n*th certificate. The order they are
+given in carries no preference; OpenSSL chooses per handshake from what the
+client offered, never from the order they were loaded.
+
+#### Enabling it is not backward compatible for peers with a single-root trust store
+
+**Read this before turning `--tct=2` on in an existing deployment.** Most
+modern clients list `ecdsa_secp256r1_sha256` ahead of the RSA schemes, so a
+dual listener will usually present its **ECDSA** certificate. In this PKI the
+two flavours chain to *different* roots that share a subject name, so a peer
+trusting only `ExampleRootCA.pem` gets:
+
+```
+SSLCertVerificationError: certificate verify failed: unable to get local issuer
+certificate
+```
+
+against a server that worked for it when it was RSA-only. Every peer must trust
+both roots — `Certificates/build.0/ExampleRootCA-bundle.pem` carries them, which
+is why the bundled launchers have never hit this.
+
+#### What `--tct=2` does not cover
+
+* **Client certificates adapt by retrying, not by negotiation.** A TLS client
+  cannot answer a server's `CertificateRequest` with whichever identity was
+  asked for: neither Python's `ssl` module nor Rust's `openssl` crate exposes a
+  client-certificate callback. So a client holding two identities offers them
+  in turn — ECDSA first — and only when a peer has refused *all* of them does
+  that count as one failure against that peer, which then follows the ordinary
+  registry-failover rule.
+* **The clustered backends stay single-identity.** `--tct=2` is refused by
+  `start-registry-dist-secure.sh`, because that launcher hands one identity to
+  both the registry listeners and the etcd backend, and etcd cannot hold two —
+  gRPC takes a single `certificate_chain` and the etcd binary a singular
+  `--cert-file`. Use `start-registry.sh` for a TCT=2 registry.
+
 ### Required before any TLS configuration: hosts-file entries
 
 **You anti-virus may prevent you from testing NMOS-Reference with TLS** Some anti-virus software performs HTTPS scanning, in which it intercepts HTTPS communications within and outside the computer and inserts itself into the communication path and the TLS trust chain. This can prevent Nodes from communicating and authenticating themselves as expected.

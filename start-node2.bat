@@ -22,7 +22,7 @@ rem   --nap=N   Node Access Policy. Config C pins NAP=2 per 9.2.
 rem   --rap=R   Registry Access Policy: 0=HTTP, 1=server-TLS, 2=mTLS.
 rem   --oaim=O  OAuth2 Audience ID Mode: 0=serial, 1=cert, 2=either.
 rem   --tct=T   TLS Cert Type: 0=RSA (default), 1=ECDSA, 2=both
-rem             (accepted; not implemented -- serves RSA).
+rem             (presents whichever each client asks for).
 rem
 rem Requires hosts-file entries. This node addresses its peers by DNS name
 rem because the certificates carry DNS SANs (XYZ-SNX000nn) and an IP literal
@@ -146,13 +146,6 @@ if not "%TCT%"=="0" if not "%TCT%"=="1" if not "%TCT%"=="2" (
   set "EXIT_CODE=64"
   goto done
 )
-rem TR-10-SEC gives TCT=2 as "Both" and makes supporting both simultaneously
-rem optional. This rig does not: one certificate and one key per listener, so
-rem a TCT=2 run is an RSA run. Accepted rather than refused so existing
-rem invocations keep working -- but never silently.
-if "%TCT%"=="2" (
-  >&2 echo start-node2.bat: --tct=2 ^(Both^) is not implemented - serving the RSA certificate only. Use --tct=0 or --tct=1 to choose.
-)
 if not "%OAIM%"=="0" if not "%OAIM%"=="1" if not "%OAIM%"=="2" (
   >&2 echo start-node2.bat: unsupported --oaim=%OAIM%
   set "EXIT_CODE=64"
@@ -205,20 +198,14 @@ if not exist "%CA%" (
   )
 )
 
-if "%TCT%"=="0" (
-  set "NODE_CERT=%CERTS%\pem\ExampleDeviceServer.ABC.SNX00002.chain.pem"
-  set "NODE_KEY=%CERTS%\key\ExampleDeviceServer.ABC.SNX00002.key"
-) else if "%TCT%"=="2" (
-  set "NODE_CERT=%CERTS%\pem\ExampleDeviceServer.ABC.SNX00002.chain.pem"
-  set "NODE_KEY=%CERTS%\key\ExampleDeviceServer.ABC.SNX00002.key"
-) else if "%TCT%"=="1" (
-  set "NODE_CERT=%CERTS%\pem\ExampleDeviceServer.ABC.SNX00002.chain.ec.pem"
-  set "NODE_KEY=%CERTS%\key\ExampleDeviceServer.ABC.SNX00002.ec.key"
-) else (
-  >&2 echo start-node2.bat: unsupported --tct=%TCT%
-  set "EXIT_CODE=64"
-  goto done
-)
+rem One --nodeCertificate/--nodeKey pair per identity. TR-10-SEC
+rem TCT=2 ("Both") is the two-pair case: the listener holds an RSA
+rem and an ECDSA identity at once and serves each client whichever
+rem its ClientHello can verify. cmd has no arrays, so the pairs are
+rem accumulated into one variable rather than iterated.
+set "NODE_CERT_ARGS="
+if not "%TCT%"=="1" set "NODE_CERT_ARGS=--nodeCertificate "%CERTS%\pem\ExampleDeviceServer.ABC.SNX00002.chain.pem" --nodeKey "%CERTS%\key\ExampleDeviceServer.ABC.SNX00002.key""
+if not "%TCT%"=="0" set "NODE_CERT_ARGS=%NODE_CERT_ARGS% --nodeCertificate "%CERTS%\pem\ExampleDeviceServer.ABC.SNX00002.chain.ec.pem" --nodeKey "%CERTS%\key\ExampleDeviceServer.ABC.SNX00002.ec.key""
 
 if "%OAIM%"=="0" (
   set "OAIM_FLAG=serial"
@@ -257,8 +244,7 @@ echo Node SNX00002: Config C ^(mTLS + OAuth 2.0^), NAP=%NAP% RAP=%RAP% OAIM=%OAI
   --nodeSerialNumber SNX00002 ^
   --nodeAddr XYZ-SNX00002 ^
   --nodePort 7052 ^
-  --nodeCertificate "%NODE_CERT%" ^
-  --nodeKey "%NODE_KEY%" ^
+  %NODE_CERT_ARGS% ^
   --nodeTrustedRootCA "%CA%" ^
   --nodeClientCertificate "%CERTS%\pem\ExampleDeviceClient.ABC.SNX00002.chain.pem" ^
   --nodeClientKey "%CERTS%\key\ExampleDeviceClient.ABC.SNX00002.key" ^

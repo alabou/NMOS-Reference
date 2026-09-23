@@ -27,7 +27,7 @@
 //! change in what the registry decides, only in how the answer reaches the
 //! code that decides it.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use nmos_registry_http::security::PeerIdentity;
 use openssl::nid::Nid;
@@ -100,6 +100,29 @@ pub fn server_cert_names(chain: &Path) -> Vec<String> {
         .as_ref()
         .map(names_of)
         .unwrap_or_default()
+}
+
+/// Every name any configured identity can be known by, in first-seen order.
+///
+/// With TR-10-SEC TCT=2 ("Both") the listener may present either flavour
+/// depending on what the client offered, so a token naming the names of
+/// *either* has to be accepted. Taking the first certificate's names alone
+/// would reject a perfectly good token whenever the other identity was the one
+/// served -- a failure that would come and go with the client's cipher
+/// preferences, which is close to undiagnosable.
+///
+/// The counterpart of `union_dns_identities` in `nmos/tls_identity.py`.
+#[must_use]
+pub fn server_cert_names_union(chains: &[PathBuf]) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for chain in chains {
+        for name in server_cert_names(chain) {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+    names
 }
 
 /// Read the peer's identity off a completed TLS session.

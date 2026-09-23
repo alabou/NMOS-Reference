@@ -51,7 +51,14 @@ from aiohttp import web
 from aiohttp.log import access_logger as aiohttp_access_logger
 
 from nmos.api.tr10_tls import apply_tr10_tls_restrictions
+from nmos.cert_check import CertCheckError
 from nmos.cluster.layout import DEFAULT_CERTIFICATE_NAME
+from nmos.tls_identity import (
+    has_identity,
+    load_identities,
+    pair_identities,
+    union_dns_identities,
+)
 from nmos.registry.distributed import DistributedBackend
 from nmos.node.security_tags import NAP, RAAM, RAP
 
@@ -93,10 +100,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     g = p.add_argument_group("Registry Server")
     g.add_argument("--registryAddr", type=_host_arg, default="127.0.0.1",
                    help="Bind address for all registry listeners")
-    g.add_argument("--registryCertificate", default="",
+    g.add_argument("--registryCertificate", action="append", default=None,
                    help="Server certificate (*.chain.pem), shared by both "
-                        "interfaces")
-    g.add_argument("--registryKey", default="", help="Server private key")
+                        "interfaces. May be repeated: the Nth key pairs with "
+                        "the Nth certificate. Two of different types is "
+                        "TR-10-SEC TCT=2 (Both) -- the listeners then present "
+                        "whichever flavour each client asks for. Order "
+                        "carries no preference.")
+    g.add_argument("--registryKey", action="append", default=None,
+                   help="Server private key; one per --registryCertificate.")
     g.add_argument("--registryDisableTLS", action="store_true",
                    help="Disable TLS on all registry listeners. Registration "
                         "then runs under TR-10-SEC RAP=0 (Unrestricted "
@@ -357,8 +369,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     })
 
     # ``action="append"`` leaves the attribute None when the flag is omitted;
-    # normalise so every CA option is uniformly a list[str].
+    # normalise so every CA and identity option is uniformly a list[str].
+    #
+    # The certificate/key options are here because they became repeatable for
+    # TR-10-SEC TCT=2 (Both). Leaving one out does not fail at startup; it
+    # fails wherever that option is iterated, as "NoneType is not iterable".
     for attr in (
+        "registryCertificate",
+        "registryKey",
         "registrationTrustedRootCA",
         "queryTrustedRootCA",
         "oauth2TrustedRootCA",
@@ -463,7 +481,7 @@ def _server_context(
     """
     if args.registryDisableTLS:
         return None
-    if not args.registryCertificate or not args.registryKey:
+    if not has_identity(args.registryCertificate, args.registryKey):
         logging.warning(
             "TLS requested but no --registryCertificate/--registryKey "
             "supplied — running without TLS",
@@ -472,7 +490,13 @@ def _server_context(
 
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     apply_tr10_tls_restrictions(ctx, gcrl_path=getattr(args, "gcrl", None))
-    ctx.load_cert_chain(args.registryCertificate, args.registryKey)
+    # Every configured identity into the one context: OpenSSL slots them by
+    # key type and serves each client the flavour it asked for. One function
+    # builds both listeners, so Registration and Query gain this together.
+    load_identities(ctx, pair_identities(
+        args.registryCertificate, args.registryKey,
+        cert_flag="--registryCertificate", key_flag="--registryKey",
+    ))
 
     if trusted_root_ca:
         for ca in trusted_root_ca:
@@ -591,8 +615,8 @@ def classify_registration_rap(args: argparse.Namespace) -> RAP:
     authentication (1), and an anchor makes it Restricted Registration over
     mutual TLS (2).
     """
-    if args.registryDisableTLS or not (
-        args.registryCertificate and args.registryKey
+    if args.registryDisableTLS or not has_identity(
+        args.registryCertificate, args.registryKey,
     ):
         return RAP.UNRESTRICTED_HTTP
     if args.registrationTrustedRootCA:
@@ -620,8 +644,8 @@ def classify_query_nap(args: argparse.Namespace) -> NAP:
     Every read route is wrapped in ``check_oauth2``, so the deployment really
     is 2, and reporting 1 would misdescribe it.
     """
-    if args.registryDisableTLS or not (
-        args.registryCertificate and args.registryKey
+    if args.registryDisableTLS or not has_identity(
+        args.registryCertificate, args.registryKey,
     ):
         return NAP.UNRESTRICTED_RW
     if args.queryOptionalClientAuth and not args.oauth2:
@@ -1012,8 +1036,8 @@ async def main(args: argparse.Namespace) -> None:
     registry = Registry(store, query_id=str(uuid.uuid4()))
     registry.attach_subscriptions(SubscriptionManager(registry))
 
-    tls_enabled = not args.registryDisableTLS and bool(
-        args.registryCertificate and args.registryKey,
+    tls_enabled = not args.registryDisableTLS and has_identity(
+        args.registryCertificate, args.registryKey,
     )
 
     # Identities from our own server certificate, used for the OAuth 2.0
@@ -1021,7 +1045,9 @@ async def main(args: argparse.Namespace) -> None:
     cert_names: list[str] = []
     if tls_enabled:
         try:
-            cert_names = list(cert_dns_identities(args.registryCertificate))
+            # Unioned: with TCT=2 either flavour may be presented, so a
+            # token naming the names of either has to be accepted.
+            cert_names = union_dns_identities(args.registryCertificate)
         except Exception as exc:
             logging.warning(
                 "registry: cannot read identities from %s: %s",
@@ -1184,18 +1210,33 @@ def validate_startup_certs(args: argparse.Namespace) -> None:
     if args.registryDisableTLS:
         return
 
-    if not args.registryCertificate or not args.registryKey:
+    if not has_identity(args.registryCertificate, args.registryKey):
         raise SystemExit(
             "CONFIG: TLS is enabled but --registryCertificate / --registryKey "
             "were not supplied. Pass both, or run with --registryDisableTLS.",
         )
 
-    for role, path in (
-        ("--registryCertificate", args.registryCertificate),
-        ("--registryKey", args.registryKey),
-    ):
-        if not os.path.isfile(path):
-            raise SystemExit(f"CONFIG: {role} is not accessible: {path!r}")
+    # Both options are repeatable, so they must pair up. Checked before any
+    # file is opened: a count mismatch is a usage error, and reporting it as a
+    # missing file would name the wrong problem.
+    try:
+        registry_identities = pair_identities(
+            args.registryCertificate, args.registryKey,
+            cert_flag="--registryCertificate", key_flag="--registryKey",
+        )
+    except CertCheckError as exc:
+        raise SystemExit(f"CONFIG: {exc}") from exc
+
+    # Certificate then key within each pair, so a single-identity
+    # configuration produces exactly the diagnostics it did before these
+    # options became repeatable.
+    for certificate, key in registry_identities:
+        for role, path in (
+            ("--registryCertificate", certificate),
+            ("--registryKey", key),
+        ):
+            if not os.path.isfile(path):
+                raise SystemExit(f"CONFIG: {role} is not accessible: {path!r}")
 
     interface_cas = [
         ("--registrationTrustedRootCA", args.registrationTrustedRootCA),
@@ -1228,17 +1269,22 @@ def validate_startup_certs(args: argparse.Namespace) -> None:
                     ) from exc
 
     if args.trustedRootCA:
-        try:
-            check_certificate(
-                args.trustedRootCA,
-                args.registryCertificate,
-                args.registryKey,
-                args.registrySerialNumber,
-            )
-        except CertCheckError as exc:
-            raise SystemExit(
-                f"CONFIG: --registryCertificate is not valid: {exc}",
-            ) from exc
+        # Per identity: each must chain to a configured root and each key
+        # must match its own certificate. Two identities of different types
+        # chain to different roots in this PKI, so --trustedRootCA has to
+        # carry both -- named here rather than at a peer's handshake.
+        for certificate, key in registry_identities:
+            try:
+                check_certificate(
+                    args.trustedRootCA,
+                    certificate,
+                    key,
+                    args.registrySerialNumber,
+                )
+            except CertCheckError as exc:
+                raise SystemExit(
+                    f"CONFIG: --registryCertificate is not valid: {exc}",
+                ) from exc
 
 
 def run() -> None:

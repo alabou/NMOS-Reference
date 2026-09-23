@@ -179,6 +179,17 @@ REM The blocks below are deliberately left exactly as they were: a value that
 REM reaches them is one this block already accepted, so nothing about a
 REM successful start changes, and their else-arms are now unreachable rather
 REM than wrong.
+rem TR-10-SEC's "Both" is refused here rather than elsewhere because this
+rem launcher hands ONE identity to two consumers: the registry listeners and
+rem the cluster backend. etcd cannot hold two -- gRPC's ssl_channel_credentials
+rem takes one certificate_chain and the etcd binary takes a singular
+rem --cert-file -- so a TCT=2 run would leave the listeners dual and the
+rem backend single, making the reported certificate type a property of the
+rem storage backend, which it is not.
+if "%TCT%"=="2" (
+  echo %ME%: --tct=2 ^(Both^) is not available with a clustered backend; the cluster identity cannot be dual. Use start-registry.bat for TCT=2. 1>&2
+  exit /b 64
+)
 if not "%TCT%"=="0" if not "%TCT%"=="1" (
   echo %ME%: unsupported --tct=%TCT% 1>&2
   exit /b 64

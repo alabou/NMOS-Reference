@@ -48,6 +48,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Iterable, Iterator
 
+from nmos.tls_identity import as_paths
+
 __all__ = [
     "RegistryTarget",
     "RegistrySelector",
@@ -87,8 +89,11 @@ class RegistryTarget:
     tls: bool = True
     certificate_name: str = ""
     trusted_root_ca: tuple[str, ...] = ()
-    client_certificate: str = ""
-    client_key: str = ""
+    # Tuples for the same reason ``trusted_root_ca`` is one: the certificate
+    # options became repeatable for TR-10-SEC TCT=2 (Both). The Nth key pairs
+    # with the Nth certificate.
+    client_certificate: tuple[str, ...] = ()
+    client_key: tuple[str, ...] = ()
 
     @property
     def label(self) -> str:
@@ -126,6 +131,15 @@ _KNOWN = (
     "ca", "cert", "key", "disableTLS",
 )
 
+_REPEATABLE = frozenset({"ca", "cert", "key"})
+"""Fields that may appear more than once in one ``--rds`` entry.
+
+``ca`` because a target may trust several roots; ``cert``/``key`` because an
+identity may be given per certificate type (TR-10-SEC TCT=2). All three share
+the rule that the first occurrence replaces whatever was inherited from the
+scalar flags rather than adding to it.
+"""
+
 
 def parse_rds_spec(spec: str, default: RegistryTarget) -> RegistryTarget:
     """Parse one ``--rds`` value into a target, filling gaps from ``default``.
@@ -157,8 +171,12 @@ def parse_rds_spec(spec: str, default: RegistryTarget) -> RegistryTarget:
     cert_name = default.certificate_name
     cas: list[str] = list(default.trusted_root_ca)
     cas_overridden = False
-    client_cert = default.client_certificate
-    client_key = default.client_key
+    # ``as_paths`` rather than ``list``: a caller that still passes a bare
+    # string would otherwise inherit one path per character.
+    client_cert: list[str] = as_paths(default.client_certificate)
+    cert_overridden = False
+    client_key: list[str] = as_paths(default.client_key)
+    key_overridden = False
     tls = default.tls
     seen: set[str] = set()
 
@@ -174,7 +192,7 @@ def parse_rds_spec(spec: str, default: RegistryTarget) -> RegistryTarget:
                 f"unknown --rds field {name!r}; expected one of: "
                 f"{', '.join(_KNOWN)}",
             )
-        if name != "ca" and name in seen:
+        if name not in _REPEATABLE and name in seen:
             raise RdsSpecError(f"--rds field {name!r} given more than once")
         seen.add(name)
 
@@ -196,14 +214,33 @@ def parse_rds_spec(spec: str, default: RegistryTarget) -> RegistryTarget:
                 cas_overridden = True
             cas.append(raw)
         elif name == "cert":
-            client_cert = raw
+            # Same first-occurrence-replaces rule as ``ca``, and for the same
+            # reason: an entry naming its own identity is describing a
+            # different PKI, so inheriting the scalar flag's certificate
+            # alongside it would present something the operator did not ask
+            # for. Tracked separately from ``key`` so that replacing one
+            # without the other is caught by the count check below rather than
+            # producing a mismatched pair.
+            if not cert_overridden:
+                client_cert = []
+                cert_overridden = True
+            client_cert.append(raw)
         elif name == "key":
-            client_key = raw
+            if not key_overridden:
+                client_key = []
+                key_overridden = True
+            client_key.append(raw)
         elif name == "disableTLS":
             tls = not _bool(name, raw)
 
     if not host:
         raise RdsSpecError("--rds requires host=<address>")
+
+    if len(client_cert) != len(client_key):
+        raise RdsSpecError(
+            f"--rds names {len(client_cert)} cert= and {len(client_key)} key= "
+            f"field(s); give one key per certificate, in the same order",
+        )
 
     return RegistryTarget(
         host=host,
@@ -213,8 +250,8 @@ def parse_rds_spec(spec: str, default: RegistryTarget) -> RegistryTarget:
         tls=tls,
         certificate_name=cert_name,
         trusted_root_ca=tuple(cas),
-        client_certificate=client_cert,
-        client_key=client_key,
+        client_certificate=tuple(client_cert),
+        client_key=tuple(client_key),
     )
 
 
@@ -320,8 +357,8 @@ def target_from_scalars(
     tls: bool,
     certificate_name: str = "",
     trusted_root_ca: Iterable[str] = (),
-    client_certificate: str = "",
-    client_key: str = "",
+    client_certificate: Iterable[str] = (),
+    client_key: Iterable[str] = (),
 ) -> RegistryTarget:
     """Build the default target from the scalar ``--rds*`` flags."""
     return RegistryTarget(
@@ -332,8 +369,8 @@ def target_from_scalars(
         tls=tls,
         certificate_name=certificate_name,
         trusted_root_ca=tuple(trusted_root_ca),
-        client_certificate=client_certificate,
-        client_key=client_key,
+        client_certificate=tuple(client_certificate),
+        client_key=tuple(client_key),
     )
 
 

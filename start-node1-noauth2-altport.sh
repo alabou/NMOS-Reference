@@ -95,19 +95,14 @@ done
 # here, into a token that names the choice without naming a path.
 
 # "" for RSA, ".ec" for ECDSA. TCT=2 takes the RSA certificate as TCT=0 does.
+# One infix per identity the Node presents. TR-10-SEC gives TCT=2 as "Both":
+# the listener then holds an RSA and an ECDSA identity at once and serves each
+# client whichever its ClientHello can verify. TCT=2 selects the RSA
+# certificate as TCT=0 does *and* the ECDSA one; it is not a third flavour.
 case "$TCT" in
-  0) TCT_INFIX="" ;;
-  # TR-10-SEC gives TCT=2 as "Both", and makes supporting both simultaneously
-  # optional. This rig does not support it: there is one server certificate and
-  # one key per listener, so a TCT=2 run is an RSA run. Accepted rather than
-  # refused so existing invocations keep working -- but never silently, because
-  # a rig that reports a posture it does not have is what every other check
-  # here exists to prevent. The trust side is already dual (ExampleRootCA-bundle
-  # holds both roots); it is the identity side that is still single.
-  2) TCT_INFIX=""
-     echo "start-node1-noauth2-altport.sh: --tct=2 (Both) is not implemented -- serving the" \
-          "RSA certificate only. Use --tct=0 or --tct=1 to choose." >&2 ;;
-  1)   TCT_INFIX=".ec" ;;
+  0) TCT_INFIXES=("") ;;
+  1) TCT_INFIXES=(".ec") ;;
+  2) TCT_INFIXES=("" ".ec") ;;
   *) echo "start-node1-noauth2-altport.sh: unsupported --tct=$TCT" >&2; exit 64 ;;
 esac
 
@@ -172,9 +167,14 @@ if [ ! -f "$CA" ]; then
   cat "$CERTS/ExampleRootCA.pem" "$CERTS/ExampleRootCA.ec.pem" > "$CA"
 fi
 
-# $TCT was validated above; $TCT_INFIX is "" or ".ec".
-NODE_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00001.chain${TCT_INFIX}.pem"
-NODE_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00001${TCT_INFIX}.key"
+# $TCT was validated above; one --nodeCertificate/--nodeKey pair per
+# identity. Repeating the flags is how TCT=2 reaches the listener --
+# see nmos/tls_identity.py for why one context holds them all.
+NODE_CERT_ARGS=()
+for infix in "${TCT_INFIXES[@]}"; do
+  NODE_CERT_ARGS+=(--nodeCertificate "$CERTS/pem/ExampleDeviceServer.ABC.SNX00001.chain${infix}.pem")
+  NODE_CERT_ARGS+=(--nodeKey "$CERTS/key/ExampleDeviceServer.ABC.SNX00001${infix}.key")
+done
 
 # NAP=1 is "Unrestricted Read Only": the TLS layer accepts a client without a
 # certificate and the application enforces one on state-changing verbs.
@@ -206,8 +206,7 @@ exec python3 nmos_node.py \
   --nodeSerialNumber SNX00001 \
   --nodeAddr XYZ-SNX00001 \
   --nodePort "$NODE_PORT" \
-  --nodeCertificate "$NODE_CERT" \
-  --nodeKey         "$NODE_KEY" \
+  "${NODE_CERT_ARGS[@]}" \
   --nodeTrustedRootCA "$CA" \
   --nodeControlPort "$CONTROL_UI_PORT" \
   --controllerAdminPassword admin \

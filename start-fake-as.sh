@@ -7,7 +7,8 @@
 #                    [--operator=NAME] [--password=PW]
 #
 #   --port=P          Listen port (default: 9443, same as start-keycloak.sh)
-#   --tct=T           TLS Certificate Type: 0=RSA (default), 1=ECDSA, 2=both (accepted; not implemented -- serves RSA)
+#   --tct=T           TLS Certificate Type: 0=RSA (default), 1=ECDSA,
+#                     2=both (presents whichever each client asks for)
 #   --serial=S        Node serial the issued tokens are scoped to
 #                     (default: SNX00001). Sets the token 'aud' entry and
 #                     the registered redirect URIs. REPEATABLE: give it once
@@ -115,19 +116,15 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # with no resolvable PKI, rather than naming the argument and exiting 64
 # (EX_USAGE). "" for RSA, ".ec" for ECDSA; TCT=2 takes the RSA certificate as
 # TCT=0 does.
+# One infix per identity the Authorization Server presents. TR-10-SEC gives
+# TCT=2 as "Both": the listener then holds an RSA and an ECDSA identity at once
+# and serves each client whichever its ClientHello can verify. TCT=2 needs
+# multi_aud_as.py, which is selected below -- the vendored server loads one
+# pair, and it is kept byte-identical to the validator's copy.
 case "$TCT" in
-  0) TCT_INFIX="" ;;
-  # TR-10-SEC gives TCT=2 as "Both", and makes supporting both simultaneously
-  # optional. This rig does not support it: there is one server certificate and
-  # one key per listener, so a TCT=2 run is an RSA run. Accepted rather than
-  # refused so existing invocations keep working -- but never silently, because
-  # a rig that reports a posture it does not have is what every other check
-  # here exists to prevent. The trust side is already dual (ExampleRootCA-bundle
-  # holds both roots); it is the identity side that is still single.
-  2) TCT_INFIX=""
-     echo "start-fake-as.sh: --tct=2 (Both) is not implemented -- serving the" \
-          "RSA certificate only. Use --tct=0 or --tct=1 to choose." >&2 ;;
-  1)   TCT_INFIX=".ec" ;;
+  0) TCT_INFIXES=("") ;;
+  1) TCT_INFIXES=(".ec") ;;
+  2) TCT_INFIXES=("" ".ec") ;;
   *) echo "start-fake-as.sh: unsupported --tct=$TCT" >&2; exit 64 ;;
 esac
 
@@ -154,16 +151,19 @@ else
 fi
 CERTS="$CERT_ROOT/build.0"
 
-# $TCT was validated above; $TCT_INFIX is "" or ".ec".
-AS_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00000.chain${TCT_INFIX}.pem"
-AS_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00000${TCT_INFIX}.key"
-
-for f in "$AS_CERT" "$AS_KEY"; do
-  if [ ! -f "$f" ]; then
-    echo "start-fake-as.sh: missing $f" >&2
-    echo "  Set IPMX_CERT_ROOT to a Certificates/ tree carrying SNX00000." >&2
-    exit 66
-  fi
+# $TCT was validated above; one --cert/--key pair per infix.
+CERT_ARGS=()
+for infix in "${TCT_INFIXES[@]}"; do
+  as_cert="$CERTS/pem/ExampleDeviceServer.ABC.SNX00000.chain${infix}.pem"
+  as_key="$CERTS/key/ExampleDeviceServer.ABC.SNX00000${infix}.key"
+  for f in "$as_cert" "$as_key"; do
+    if [ ! -f "$f" ]; then
+      echo "start-fake-as.sh: missing $f" >&2
+      echo "  Set IPMX_CERT_ROOT to a Certificates/ tree carrying SNX00000." >&2
+      exit 66
+    fi
+  done
+  CERT_ARGS+=(--cert "$as_cert" --key "$as_key")
 done
 
 # The Authorization Server ships vendored in this repository, so a checkout
@@ -207,8 +207,11 @@ done
 # whole list: ipmx_fake_as.py takes --default-aud as a single string, and
 # fake-as/ stays byte-identical to the validator's copy rather than growing a
 # local edit.
+# ... and for --tct=2, which needs a second identity on one listener. Without
+# this the certificate posture would depend on how many audiences were
+# configured: one serial would quietly serve RSA only while two served both.
 AS_ENTRY="$FAKE_AS"
-if [ ${#NODE_SERIALS[@]} -gt 1 ]; then
+if [ ${#NODE_SERIALS[@]} -gt 1 ] || [ ${#TCT_INFIXES[@]} -gt 1 ]; then
   AS_ENTRY="$SCRIPT_DIR/multi_aud_as.py"
   if [ ! -f "$AS_ENTRY" ]; then
     echo "start-fake-as.sh: missing $AS_ENTRY" >&2
@@ -226,8 +229,7 @@ echo
 exec python3 "$AS_ENTRY" \
   --host XYZ-SNX00000 \
   --port "$AS_PORT" \
-  --cert "$AS_CERT" \
-  --key  "$AS_KEY" \
+  "${CERT_ARGS[@]}" \
   --api-selector realms/TR-10-SEC \
   "${AUD_ARGS[@]}" \
   --client-id "$CLIENT_ID" \

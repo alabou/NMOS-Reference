@@ -24,7 +24,8 @@
 #   --oauth2        Require OAuth 2.0 on the Query API as well as TLS.
 #   --as-host=H     Authorization server host (default: XYZ-SNX00000)
 #   --as-port=P     Authorization server port (default: 9443)
-#   --tct=T         TLS Certificate Type: 0=RSA (default), 1=ECDSA
+#   --tct=T         TLS Certificate Type: 0=RSA (default), 1=ECDSA,
+#                   2=both (presents whichever each client asks for)
 #   --nap=N         Query API access policy (default: 2)
 #                     1  Unrestricted Read Only  -- reads open to any
 #                        client trusting the registry cert; subscription
@@ -144,9 +145,14 @@ done
 
 # "" for RSA, ".ec" for ECDSA -- the infix this PKI uses for the ECDSA
 # generation of the same identity, in both the chain and the key filename.
+# One infix per identity the registry presents. TR-10-SEC gives TCT=2 as
+# "Both": both listeners then hold an RSA and an ECDSA identity at once --
+# _server_context builds them from one certificate list -- and serve each
+# client whichever its ClientHello can verify.
 case "$TCT" in
-  0) TCT_INFIX="" ;;
-  1) TCT_INFIX=".ec" ;;
+  0) TCT_INFIXES=("") ;;
+  1) TCT_INFIXES=(".ec") ;;
+  2) TCT_INFIXES=("" ".ec") ;;
   *) echo "start-registry.sh: unsupported --tct=$TCT" >&2; exit 64 ;;
 esac
 
@@ -238,9 +244,14 @@ fi
 
 # SNX00000 is the reserved infrastructure serial in this PKI; the registry is
 # infrastructure rather than a device, so it uses that identity. $TCT was
-# validated above; $TCT_INFIX is "" or ".ec".
-REG_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00000.chain${TCT_INFIX}.pem"
-REG_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00000${TCT_INFIX}.key"
+# validated above; one --registryCertificate/--registryKey pair per identity.
+REG_CERT_ARGS=()
+for infix in "${TCT_INFIXES[@]}"; do
+  REG_CERT_ARGS+=(--registryCertificate \
+    "$CERTS/pem/ExampleDeviceServer.ABC.SNX00000.chain${infix}.pem")
+  REG_CERT_ARGS+=(--registryKey \
+    "$CERTS/key/ExampleDeviceServer.ABC.SNX00000${infix}.key")
+done
 
 # The Registration trust anchor is what selects RAP 1 from RAP 2: with no
 # anchor the listener asks for no client certificate; with one it requires a
@@ -289,8 +300,7 @@ registry_runtime_command python3 nmos_registry.py
 exec "${REGISTRY_CMD[@]}" \
   --registryAddr "${NMOS_REGISTRY_ADDR:-127.0.0.1}" \
   --registrySerialNumber SNX00000 \
-  --registryCertificate "$REG_CERT" \
-  --registryKey         "$REG_KEY" \
+  "${REG_CERT_ARGS[@]}" \
   --registrationPort    "$REG_PORT" \
   --queryPort           "$QUERY_PORT" \
   --queryWebSocketPort  "$WS_PORT" \

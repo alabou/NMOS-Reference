@@ -187,7 +187,7 @@ const NO_ANCHORS: &[&Path] = &[];
 
 fn plain_context() -> SslContext {
     let (context, _, mode) =
-        server_context(&server_chain(), &server_key(), NO_ANCHORS, false, None)
+        server_context(&[(server_chain(), server_key())], NO_ANCHORS, false, None)
             .expect("the listener configures");
     assert_eq!(mode, ClientAuth::None, "no anchor was given");
     context
@@ -377,7 +377,7 @@ fn cert_required_refuses_a_client_that_offers_nothing() {
         return;
     }
     let (context, _, mode) =
-        server_context(&server_chain(), &server_key(), &[&anchor], false, None)
+        server_context(&[(server_chain(), server_key())], &[&anchor], false, None)
             .expect("the listener configures");
     assert_eq!(mode, ClientAuth::Required);
 
@@ -407,7 +407,7 @@ fn cert_optional_admits_a_client_that_offers_nothing() {
         eprintln!("skipping: no root CA in the PKI");
         return;
     }
-    let (context, _, mode) = server_context(&server_chain(), &server_key(), &[&anchor], true, None)
+    let (context, _, mode) = server_context(&[(server_chain(), server_key())], &[&anchor], true, None)
         .expect("the listener configures");
     assert_eq!(mode, ClientAuth::Optional);
 
@@ -435,8 +435,7 @@ fn a_missing_gcrl_refuses_to_configure_a_listener() {
     // SEC-14.3.3.5-3 fail-closed, at the point it actually matters: not in a
     // helper, but on the path that builds a listening socket.
     let error = server_context(
-        &server_chain(),
-        &server_key(),
+        &[(server_chain(), server_key())],
         NO_ANCHORS,
         false,
         Some(Path::new("/nonexistent/gcrl.pem")),

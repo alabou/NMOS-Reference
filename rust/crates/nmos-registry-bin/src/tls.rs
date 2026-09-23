@@ -73,7 +73,7 @@
 //! the two behave alike; closing it is one line on each side and belongs to a
 //! decision taken for both at once.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use openssl::ssl::{
     SslContext, SslContextBuilder, SslFiletype, SslMethod, SslOptions, SslVerifyMode, SslVersion,
@@ -391,8 +391,7 @@ pub fn apply_tr10_restrictions(builder: &mut SslContextBuilder) -> Result<Policy
 /// The certificate, key, trust anchor or CRL could not be loaded, or OpenSSL
 /// refused the policy.
 pub fn server_context(
-    chain: &Path,
-    key: &Path,
+    identities: &[(PathBuf, PathBuf)],
     trust_anchors: &[impl AsRef<Path>],
     optional_client_auth: bool,
     gcrl: Option<&Path>,
@@ -405,10 +404,22 @@ pub fn server_context(
     let mut builder = SslContextBuilder::new(SslMethod::tls_server())?;
     let report = apply_tr10_restrictions(&mut builder)?;
 
-    // The server's own identity: leaf + intermediates, then the key.
-    builder.set_certificate_chain_file(chain)?;
-    builder.set_private_key_file(key, SslFiletype::PEM)?;
-    builder.check_private_key()?;
+    // The server's own identities: leaf + intermediates, then the key, once
+    // per pair. `--registryCertificate` and `--registryKey` are repeatable so
+    // that a device can be TR-10-SEC TCT=2 ("Both"): OpenSSL slots a
+    // certificate by key type, holds an RSA and an ECDSA identity at once, and
+    // serves each client whichever its ClientHello can verify.
+    //
+    // `check_private_key` belongs INSIDE this loop. It validates only the slot
+    // the most recent pair populated, so one call after the loop would stop
+    // checking every identity but the last -- and a mismatched key would then
+    // surface at a peer's handshake rather than here, which is the whole
+    // failure `validate_startup_certs` exists to prevent.
+    for (chain, key) in identities {
+        builder.set_certificate_chain_file(chain)?;
+        builder.set_private_key_file(key, SslFiletype::PEM)?;
+        builder.check_private_key()?;
+    }
 
     // `--registrationTrustedRootCA` and `--queryTrustedRootCA` are both
     // repeatable, and `_server_context` loads every one of them before setting

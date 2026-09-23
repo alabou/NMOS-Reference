@@ -56,12 +56,17 @@ pub struct Args {
     pub registry_addr: String,
 
     /// Server certificate (PEM) used by both listeners.
-    #[arg(long = "registryCertificate", default_value = "")]
-    pub registry_certificate: String,
+    ///
+    /// May be repeated: the Nth key pairs with the Nth certificate. Two of
+    /// different types is TR-10-SEC TCT=2 ("Both") -- the listeners then
+    /// present whichever flavour each client asks for. Order carries no
+    /// preference.
+    #[arg(long = "registryCertificate")]
+    pub registry_certificate: Vec<PathBuf>,
 
-    /// Private key (PEM) for the server certificate.
-    #[arg(long = "registryKey", default_value = "")]
-    pub registry_key: String,
+    /// Private key (PEM); one per `--registryCertificate`.
+    #[arg(long = "registryKey")]
+    pub registry_key: Vec<PathBuf>,
 
     /// Serve plain HTTP.
     ///
@@ -407,6 +412,26 @@ impl Args {
     pub const fn tls(&self) -> bool {
         !self.registry_disable_tls
     }
+}
+
+/// Pair each certificate with its key, by position.
+///
+/// The counterpart of `pair_identities` in `nmos/tls_identity.py`, and pairs
+/// the same way: the Nth key belongs to the Nth certificate. Order carries no
+/// preference -- OpenSSL selects per handshake from what the client offered,
+/// never from the order these were loaded in.
+///
+/// A count mismatch is truncated here rather than reported, because
+/// `cert_check::validate_startup_certs` has already refused it by name before
+/// anything reaches this function. Truncating rather than panicking keeps a
+/// misuse from taking the process down at a point that could not explain why.
+#[must_use]
+pub fn identities(certificates: &[PathBuf], keys: &[PathBuf]) -> Vec<(PathBuf, PathBuf)> {
+    certificates
+        .iter()
+        .zip(keys.iter())
+        .map(|(chain, key)| (chain.clone(), key.clone()))
+        .collect()
 }
 
 #[cfg(test)]

@@ -33,6 +33,13 @@ from typing import Any
 import aiohttp
 
 from nmos.api.tr10_tls import apply_tr10_tls_restrictions
+from nmos.tls_identity import (
+    PeerRejectedAllIdentities,
+    client_identity_order,
+    is_peer_rejected_identity,
+    leaf_public_key_algorithm,
+    pair_identities,
+)
 from nmos.controller.cache import ResourceCache, ResourceKind
 
 log = logging.getLogger(__name__)
@@ -54,8 +61,11 @@ class RdsQueryConfig:
     port: int
     tls: bool = True
     trusted_root_ca: tuple[str, ...] = ()
-    client_certificate: str = ""
-    client_key: str = ""
+    # Repeatable, as the trust anchors are: TR-10-SEC TCT=2 (Both) configures
+    # one identity per certificate type. The Nth key pairs with the Nth
+    # certificate.
+    client_certificate: tuple[str, ...] = ()
+    client_key: tuple[str, ...] = ()
 
 
 class RdsQueryClient:
@@ -69,15 +79,30 @@ class RdsQueryClient:
         scheme = "https" if self._config.tls else "http"
         return f"{scheme}://{self._config.host}:{self._config.port}/x-nmos/query/{QUERY_API_VERSION}"
 
-    def _build_ssl_context(self) -> ssl.SSLContext | None:
+    def _identities(self) -> list[tuple[str, str]]:
+        """This registry's client identities, ECDSA first."""
+        return client_identity_order(pair_identities(
+            self._config.client_certificate, self._config.client_key,
+            cert_flag="--rdsClientCertificate", key_flag="--rdsClientKey",
+        ))
+
+    def _build_ssl_context(
+        self, identity: tuple[str, str] | None = None,
+    ) -> ssl.SSLContext | None:
         if not self._config.tls:
             return None
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         apply_tr10_tls_restrictions(ctx)
-        if self._config.client_certificate and self._config.client_key:
-            ctx.load_cert_chain(
-                self._config.client_certificate, self._config.client_key,
-            )
+        # Exactly one identity per context: a client context holding two does
+        # not answer the peer's CertificateRequest with the one it asked for,
+        # so the choice is made by offering them in turn. See
+        # nmos/tls_identity.py.
+        if identity is None:
+            candidates = self._identities()
+            identity = candidates[0] if candidates else None
+        if identity is not None:
+            certificate, key = identity
+            ctx.load_cert_chain(certificate, key)
         if self._config.trusted_root_ca:
             for ca in self._config.trusted_root_ca:
                 ctx.load_verify_locations(ca)
@@ -91,10 +116,6 @@ class RdsQueryClient:
         Silently skips kinds that fail to fetch (registry temporarily
         unavailable) — the WebSocket will retry via reconnect.
         """
-        ssl_ctx = self._build_ssl_context()
-        connector: aiohttp.TCPConnector = aiohttp.TCPConnector(
-            ssl=ssl_ctx if ssl_ctx is not None else False,
-        )
         timeout = aiohttp.ClientTimeout(total=QUERY_TIMEOUT)
 
         # ``sources`` is pulled because BCP-008 monitor resources are
@@ -119,6 +140,53 @@ class RdsQueryClient:
             ("flows", "flow"),
         )
 
+        # One attempt per client identity. The identity is attached to the
+        # connector rather than to a request, so offering the next one means a
+        # new session -- and the whole bootstrap is re-run, which is safe
+        # because ``replace_all`` is idempotent per kind.
+        # ``[None]`` is one attempt with no client certificate, which is the
+        # ordinary unauthenticated case rather than a missing identity.
+        identities: list[tuple[str, str] | None] = list(self._identities()) or [None]
+        failures: list[tuple[str, BaseException]] = []
+        for attempt, identity in enumerate(identities):
+            rejected = await self._bootstrap_once(
+                cache, kinds, timeout, identity,
+            )
+            if rejected is None:
+                return
+            if identity is not None:
+                failures.append((
+                    leaf_public_key_algorithm(identity[0]) or "unreadable",
+                    rejected,
+                ))
+            if attempt + 1 < len(identities):
+                log.warning(
+                    "rds_query: registry refused our %s client certificate "
+                    "- offering the next", failures[-1][0],
+                )
+        if failures:
+            # Named rather than swallowed. Six identical "bootstrap failed"
+            # warnings and an empty cache was the old behaviour, and it told
+            # the operator nothing about why.
+            raise PeerRejectedAllIdentities(failures)
+
+    async def _bootstrap_once(
+        self,
+        cache: ResourceCache,
+        kinds: tuple[tuple[str, ResourceKind], ...],
+        timeout: aiohttp.ClientTimeout,
+        identity: tuple[str, str] | None,
+    ) -> BaseException | None:
+        """One pass over every kind. Returns the rejection that stopped it.
+
+        ``None`` means the pass completed -- individual kinds may still have
+        been skipped, which is the pre-existing "registry temporarily
+        unavailable" behaviour the WebSocket retries.
+        """
+        ssl_ctx = self._build_ssl_context(identity)
+        connector: aiohttp.TCPConnector = aiohttp.TCPConnector(
+            ssl=ssl_ctx if ssl_ctx is not None else False,
+        )
         async with aiohttp.ClientSession(
             connector=connector, timeout=timeout,
         ) as session:
@@ -131,7 +199,13 @@ class RdsQueryClient:
                         path, len(resources),
                     )
                 except Exception as exc:
+                    # A refused identity stops the pass: every remaining kind
+                    # would be refused for the same reason, and the caller has
+                    # another identity to offer.
+                    if is_peer_rejected_identity(exc):
+                        return exc
                     log.warning("rds_query: bootstrap %s failed: %s", path, exc)
+        return None
 
     async def _fetch_list(
         self, session: aiohttp.ClientSession, path: str,

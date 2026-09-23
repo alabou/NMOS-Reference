@@ -19,7 +19,8 @@ rem
 rem   --oauth2      Require OAuth 2.0 on the Query API in addition to TLS.
 rem   --as-host=H   Authorization server host (default XYZ-SNX00000)
 rem   --as-port=P   Authorization server port (default 9443)
-rem   --tct=T       TLS Certificate Type: 0=RSA (default), 1=ECDSA
+rem   --tct=T       TLS Certificate Type: 0=RSA (default), 1=ECDSA,
+rem                 2=both (presents whichever each client asks for)
 rem   --nap=N       Query API access policy (default 2)
 rem                   1  Unrestricted Read Only -- reads open to any client
 rem                      trusting the registry cert; subscription create and
@@ -127,7 +128,7 @@ rem wrong. Kept rather than deleted because they are what assigns the paths,
 rem and because cmd expands an undefined variable to its own literal name --
 rem so the "" infix trick the .sh uses would write %TCT_INFIX% into a filename
 rem here rather than nothing.
-if not "%TCT%"=="0" if not "%TCT%"=="1" (
+if not "%TCT%"=="0" if not "%TCT%"=="1" if not "%TCT%"=="2" (
   >&2 echo start-registry.bat: unsupported --tct=%TCT%
   set "EXIT_CODE=64"
   goto done
@@ -200,17 +201,14 @@ if not exist "%CA%" (
 )
 
 rem SNX00000 is the reserved infrastructure serial in this PKI.
-if "%TCT%"=="0" (
-  set "REG_CERT=%CERTS%\pem\ExampleDeviceServer.ABC.SNX00000.chain.pem"
-  set "REG_KEY=%CERTS%\key\ExampleDeviceServer.ABC.SNX00000.key"
-) else if "%TCT%"=="1" (
-  set "REG_CERT=%CERTS%\pem\ExampleDeviceServer.ABC.SNX00000.chain.ec.pem"
-  set "REG_KEY=%CERTS%\key\ExampleDeviceServer.ABC.SNX00000.ec.key"
-) else (
-  >&2 echo start-registry.bat: unsupported --tct=%TCT%
-  set "EXIT_CODE=64"
-  goto done
-)
+rem One --registryCertificate/--registryKey pair per identity. TR-10-SEC
+rem TCT=2 ("Both") is the two-pair case: both listeners then hold an RSA
+rem and an ECDSA identity at once and serve each client whichever its
+rem ClientHello can verify. cmd has no arrays, so the pairs accumulate
+rem into one variable rather than being iterated.
+set "REG_CERT_ARGS="
+if not "%TCT%"=="1" set "REG_CERT_ARGS=--registryCertificate "%CERTS%\pem\ExampleDeviceServer.ABC.SNX00000.chain.pem" --registryKey "%CERTS%\key\ExampleDeviceServer.ABC.SNX00000.key""
+if not "%TCT%"=="0" set "REG_CERT_ARGS=%REG_CERT_ARGS% --registryCertificate "%CERTS%\pem\ExampleDeviceServer.ABC.SNX00000.chain.ec.pem" --registryKey "%CERTS%\key\ExampleDeviceServer.ABC.SNX00000.ec.key""
 
 rem The Registration trust anchor is what selects RAP 1 from RAP 2.
 if "%RAP%"=="1" (
@@ -271,8 +269,7 @@ echo NMOS Registry: RAP=%RAP% registration %REG_PORT%, query %QUERY_PORT%, webso
 "%PYTHON_EXE%" %PYTHON_SELECTOR% "%SCRIPT_DIR%nmos_registry.py" ^
   --registryAddr 127.0.0.1 ^
   --registrySerialNumber SNX00000 ^
-  --registryCertificate "%REG_CERT%" ^
-  --registryKey "%REG_KEY%" ^
+  %REG_CERT_ARGS% ^
   --registrationPort "%REG_PORT%" ^
   --queryPort "%QUERY_PORT%" ^
   --queryWebSocketPort "%WS_PORT%" ^

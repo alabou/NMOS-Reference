@@ -17,11 +17,13 @@ Two specs govern this and are quoted where they apply:
 from __future__ import annotations
 
 import asyncio
+import ssl
 
 import aiohttp
 import pytest
 
 from nmos.node.registry import RegistryClient, _NotFoundError, _RegistryError
+from nmos.tls_identity import PeerRejectedAllIdentities
 from nmos.rds_targets import RegistrySelector, build_targets, target_from_scalars
 
 DEFAULT = target_from_scalars(
@@ -144,3 +146,81 @@ class TestHeartbeatFirstOnFailover:
         dg = type("DG", (), {"is_done": True})()
         await c._registration_loop(dg, probe_first=False)
         assert calls == []
+
+
+class TestIdentityRotationBeforeFailover:
+    """TR-10-SEC TCT=2: the unit of failure is the *registry*, not one
+    certificate.
+
+    A registry that refuses one identity may simply prefer the other flavour,
+    so that alone is no evidence about the registry. Only once every identity
+    has been offered and refused does the target count as failed -- and then it
+    counts, because the cause could equally be this registry's trust store
+    lacking our issuer, which is exactly the "could affect just one
+    Registration API" case :118 gives as the reason to try another member.
+    """
+
+    REJECTION = ssl.SSLError(
+        "[SSL: TLSV13_ALERT_CERTIFICATE_REQUIRED] tlsv13 alert certificate "
+        "required",
+    )
+
+    def _dual(self) -> RegistryClient:
+        client = _client()
+        client._identities = [("ec.pem", "ec.key"), ("rsa.pem", "rsa.key")]
+        client._identity_index = 0
+        client._identity_failures = []
+        return client
+
+    def test_the_first_refusal_rotates_rather_than_failing_the_registry(
+        self,
+    ) -> None:
+        client = self._dual()
+        assert client._rotate_identity(self.REJECTION) is True
+        assert client._identity_index == 1, "should now offer the second"
+
+    def test_the_last_refusal_does_not_rotate(self) -> None:
+        client = self._dual()
+        client._rotate_identity(self.REJECTION)          # ECDSA refused
+        assert client._rotate_identity(self.REJECTION) is False
+        assert len(client._identity_failures) == 2
+
+    def test_exhaustion_becomes_a_registry_failure(self) -> None:
+        """So the ordinary FAILOVER_AFTER logic then applies to the target."""
+        client = self._dual()
+        client._rotate_identity(self.REJECTION)
+        client._rotate_identity(self.REJECTION)
+        counted = client._identity_exhausted(self.REJECTION)
+        assert isinstance(counted, PeerRejectedAllIdentities)
+        assert client._is_registry_unresponsive(counted) is True
+
+    def test_a_single_identity_never_rotates(self) -> None:
+        """TLS 1.2 reports a refused certificate with the same alert it uses
+        for 'no shared cipher', so retrying on it would double the cost of
+        failures that have nothing to do with certificates."""
+        client = _client()
+        client._identities = [("only.pem", "only.key")]
+        assert client._rotate_identity(self.REJECTION) is False
+
+    def test_an_unrelated_failure_never_rotates(self) -> None:
+        client = self._dual()
+        assert client._rotate_identity(TimeoutError("timed out")) is False
+        assert client._identity_index == 0
+
+    def test_moving_to_another_registry_starts_from_ecdsa_again(self) -> None:
+        """What one registry refused says nothing about the next."""
+        client = self._dual()
+        client._rotate_identity(self.REJECTION)
+        assert client._identity_index == 1
+        client._adopt(client._selector.fail(client._target))
+        assert client._identity_index == 0
+        assert client._identity_failures == []
+
+    def test_staying_on_the_same_registry_keeps_the_rotation(self) -> None:
+        """``run`` re-adopts the current target on every session rebuild,
+        including the rebuild that rotates the identity. Resetting there would
+        loop forever between two identities the peer has already refused."""
+        client = self._dual()
+        client._rotate_identity(self.REJECTION)
+        client._adopt(client._target)
+        assert client._identity_index == 1

@@ -46,8 +46,7 @@ use crate::tls::{ClientAuth, TlsError, server_context};
 /// A certificate, key or CRL that is present but unusable. Absent ones are the
 /// plaintext case above and are not errors.
 pub fn context_for(
-    certificate: &str,
-    key: &str,
+    identities: &[(PathBuf, PathBuf)],
     disable_tls: bool,
     trust_anchors: &[PathBuf],
     optional_client_auth: bool,
@@ -58,7 +57,7 @@ pub fn context_for(
         // requires TLS for a compliant deployment.
         return Ok(None);
     }
-    if certificate.is_empty() || key.is_empty() {
+    if identities.is_empty() {
         tracing::warn!(
             "TLS requested but no --registryCertificate/--registryKey supplied \
              \u{2014} running without TLS",
@@ -66,8 +65,7 @@ pub fn context_for(
         return Ok(None);
     }
     let (context, report, mode) = server_context(
-        Path::new(certificate),
-        Path::new(key),
+        identities,
         trust_anchors,
         optional_client_auth,
         gcrl,
@@ -190,8 +188,10 @@ mod tests {
     async fn listener_reporting_identity(optional_client_auth: bool) -> u16 {
         let anchor = certs().join("ExampleRootCA.pem");
         let (context, _, _) = server_context(
-            &certs().join("pem/ExampleDeviceServer.ABC.SNX00000.chain.pem"),
-            &certs().join("key/ExampleDeviceServer.ABC.SNX00000.key"),
+            &[(
+                certs().join("pem/ExampleDeviceServer.ABC.SNX00000.chain.pem"),
+                certs().join("key/ExampleDeviceServer.ABC.SNX00000.key"),
+            )],
             &[&anchor],
             optional_client_auth,
             None,

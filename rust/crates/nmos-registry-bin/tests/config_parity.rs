@@ -165,6 +165,7 @@ fn every_config_refusal_matches_the_python_word_for_word() {
     let chain = certs.join("pem/ExampleDeviceServer.ABC.SNX00000.chain.pem");
     let key = certs.join("key/ExampleDeviceServer.ABC.SNX00000.key");
     let ec_key = certs.join("key/ExampleDeviceServer.ABC.SNX00000.ec.key");
+    let ec_chain = certs.join("pem/ExampleDeviceServer.ABC.SNX00000.chain.ec.pem");
     let root = certs.join("ExampleRootCA.pem");
 
     let s = |path: &Path| path.to_string_lossy().into_owned();
@@ -236,6 +237,26 @@ fn every_config_refusal_matches_the_python_word_for_word() {
                 s(&chain),
                 "--registryKey".into(),
                 s(&ec_key),
+                "--registrySerialNumber".into(),
+                "SNX00000".into(),
+                "--trustedRootCA".into(),
+                s(&root),
+            ],
+        ),
+        // Both options are repeatable now, for TR-10-SEC TCT=2 ("Both"), so
+        // they can disagree about how many identities were configured. The
+        // count is checked before any file is opened -- reporting a usage
+        // error as a missing file would name the wrong problem -- and both
+        // implementations have to say so in the same words.
+        (
+            "certificate and key counts differ",
+            vec![
+                "--registryCertificate".into(),
+                s(&chain),
+                "--registryCertificate".into(),
+                s(&ec_chain),
+                "--registryKey".into(),
+                s(&key),
                 "--registrySerialNumber".into(),
                 "SNX00000".into(),
                 "--trustedRootCA".into(),

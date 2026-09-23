@@ -186,8 +186,7 @@ async fn start(
         Tls::Optional | Tls::Required => vec![root_ca(flavor)],
     };
     let (context, _, _) = server_context(
-        &server_chain(flavor),
-        &server_key(flavor),
+        &[(server_chain(flavor), server_key(flavor))],
         &anchors,
         tls == Tls::Optional,
         None,

@@ -36,6 +36,13 @@ from aiohttp import web
 
 from nmos.api.tr10_tls import apply_tr10_tls_restrictions
 from nmos.ip import Addr, new_addr_from_string
+from nmos.tls_identity import (
+    client_identity_order,
+    has_identity,
+    load_identities,
+    pair_identities,
+    union_dns_identities,
+)
 
 # Access-log format for the node API: aiohttp's default plus ``%Tf`` — the
 # time taken to serve each request, in seconds (floating fraction). aiohttp's
@@ -142,8 +149,13 @@ def parse_args() -> argparse.Namespace:
     g.add_argument("--rdsTrustedRootCA", action="append", default=None,
                    help="Trusted root CA for RDS server (PEM path; "
                         "may be repeated to trust multiple roots)")
-    g.add_argument("--rdsClientCertificate", default="", help="Client certificate (*.chain.pem)")
-    g.add_argument("--rdsClientKey", default="", help="Client private key")
+    g.add_argument("--rdsClientCertificate", action="append", default=None,
+                   help="Client certificate (*.chain.pem). May be repeated: "
+                        "the Nth key pairs with the Nth certificate, which is "
+                        "how TR-10-SEC TCT=2 (Both) is configured. Order "
+                        "carries no preference.")
+    g.add_argument("--rdsClientKey", action="append", default=None,
+                   help="Client private key; one per --rdsClientCertificate.")
     g.add_argument("--rdsDisableTLS", action="store_true", help="Disable TLS for registry")
     g.add_argument(
         "--rdsDistributed", action="store_true",
@@ -179,8 +191,14 @@ def parse_args() -> argparse.Namespace:
     g.add_argument("--nodeAddr", type=_host_arg, default="127.0.0.1",
                    help="Node server bind address")
     g.add_argument("--nodePort", type=int, default=5050, help="Node server port")
-    g.add_argument("--nodeCertificate", default="", help="Server certificate (*.chain.pem)")
-    g.add_argument("--nodeKey", default="", help="Server private key")
+    g.add_argument("--nodeCertificate", action="append", default=None,
+                   help="Server certificate (*.chain.pem). May be repeated: "
+                        "the Nth key pairs with the Nth certificate. Two of "
+                        "different types is TR-10-SEC TCT=2 (Both) -- the "
+                        "listener then presents whichever flavour each client "
+                        "asks for. Order carries no preference.")
+    g.add_argument("--nodeKey", action="append", default=None,
+                   help="Server private key; one per --nodeCertificate.")
     g.add_argument("--nodeTrustedRootCA", action="append", default=None,
                    help="Trusted root CA for client auth (PEM path; "
                         "may be repeated to trust multiple roots)")
@@ -197,24 +215,27 @@ def parse_args() -> argparse.Namespace:
                         "when --controlTrustedRootCA is set. Defaults to "
                         "--nodePort + 1 when 0 and --controlTrustedRootCA "
                         "is set.")
-    g.add_argument("--nodeClientCertificate", default="",
+    g.add_argument("--nodeClientCertificate", action="append", default=None,
                    help="Client certificate the embedded controller presents "
                         "to remote Node-level endpoints (Node API, Node "
                         "Reservation acquire/renew/release/keepalive) for "
-                        "mTLS. Empty = no client cert presented (no mTLS on "
+                        "mTLS. Omitted = no client cert presented (no mTLS on "
                         "this path). Distinct from --rdsClientCertificate, "
-                        "which is RDS-only.")
-    g.add_argument("--nodeClientKey", default="",
-                   help="Private key for --nodeClientCertificate.")
-    g.add_argument("--controlClientCertificate", default="",
+                        "which is RDS-only. May be repeated; the Nth key "
+                        "pairs with the Nth certificate.")
+    g.add_argument("--nodeClientKey", action="append", default=None,
+                   help="Private key; one per --nodeClientCertificate.")
+    g.add_argument("--controlClientCertificate", action="append", default=None,
                    help="Client certificate the embedded controller presents "
                         "to remote IS-05/IS-11 endpoints for mTLS. Falls "
-                        "back to --nodeClientCertificate when empty (matches "
-                        "the --controlTrustedRootCA fallback semantics). "
-                        "Empty everywhere = no client cert presented.")
-    g.add_argument("--controlClientKey", default="",
-                   help="Private key for --controlClientCertificate. Falls "
-                        "back to --nodeClientKey when empty.")
+                        "back to --nodeClientCertificate when not given "
+                        "(matches the --controlTrustedRootCA fallback "
+                        "semantics); certificate and key fall back together, "
+                        "never one without the other. Omitted everywhere = no "
+                        "client cert presented. May be repeated.")
+    g.add_argument("--controlClientKey", action="append", default=None,
+                   help="Private key; one per --controlClientCertificate. "
+                        "Falls back to --nodeClientKey when not given.")
     g.add_argument("--nodeDisableTLS", action="store_true", help="Disable TLS on node server")
     g.add_argument("--nodeOptionalClientAuth", action="store_true",
                    help="Allow unauthenticated clients read-only access "
@@ -343,13 +364,26 @@ def parse_args() -> argparse.Namespace:
 
     # ``action="append"`` leaves the attribute as ``None`` when the
     # flag is omitted; normalise to an empty list so callers can treat
-    # every CA option uniformly as ``list[str]``.
+    # every CA and identity option uniformly as ``list[str]``.
+    #
+    # The certificate/key options join the CA options here because they became
+    # repeatable for TR-10-SEC TCT=2 (Both). Omitting one from this tuple does
+    # not fail at startup -- it fails later, wherever that option is iterated,
+    # with ``TypeError: 'NoneType' is not iterable``.
     for attr in (
         "rdsTrustedRootCA",
         "nodeTrustedRootCA",
         "controlTrustedRootCA",
         "oauth2TrustedRootCA",
         "trustedRootCA",
+        "rdsClientCertificate",
+        "rdsClientKey",
+        "nodeCertificate",
+        "nodeKey",
+        "nodeClientCertificate",
+        "nodeClientKey",
+        "controlClientCertificate",
+        "controlClientKey",
     ):
         if getattr(ns, attr) is None:
             setattr(ns, attr, [])
@@ -465,13 +499,19 @@ def build_server_ssl_context(args: argparse.Namespace) -> ssl.SSLContext | None:
     if args.nodeDisableTLS:
         return None
 
-    if not args.nodeCertificate or not args.nodeKey:
+    if not has_identity(args.nodeCertificate, args.nodeKey):
         logging.warning("TLS enabled but no certificate/key provided — running without TLS")
         return None
 
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     apply_tr10_tls_restrictions(ctx, gcrl_path=getattr(args, "gcrl", None))
-    ctx.load_cert_chain(args.nodeCertificate, args.nodeKey)
+    # Every configured identity into the one context: OpenSSL slots them by key
+    # type and serves each client the flavour it asked for. See
+    # nmos/tls_identity.py for why the client direction cannot do this.
+    load_identities(ctx, pair_identities(
+        args.nodeCertificate, args.nodeKey,
+        cert_flag="--nodeCertificate", key_flag="--nodeKey",
+    ))
 
     if args.nodeTrustedRootCA:
         for ca in args.nodeTrustedRootCA:
@@ -531,12 +571,15 @@ def build_control_server_ssl_context(
         return None
     if args.nodeDisableTLS:
         return None
-    if not args.nodeCertificate or not args.nodeKey:
+    if not has_identity(args.nodeCertificate, args.nodeKey):
         return None
 
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     apply_tr10_tls_restrictions(ctx, gcrl_path=getattr(args, "gcrl", None))
-    ctx.load_cert_chain(args.nodeCertificate, args.nodeKey)
+    load_identities(ctx, pair_identities(
+        args.nodeCertificate, args.nodeKey,
+        cert_flag="--nodeCertificate", key_flag="--nodeKey",
+    ))
     for ca in args.controlTrustedRootCA:
         ctx.load_verify_locations(ca)
     if args.nodeOptionalClientAuth:
@@ -554,8 +597,19 @@ def build_registry_ssl_context(args: argparse.Namespace) -> ssl.SSLContext | Non
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     apply_tr10_tls_restrictions(ctx, gcrl_path=getattr(args, "gcrl", None))
 
-    if args.rdsClientCertificate and args.rdsClientKey:
-        ctx.load_cert_chain(args.rdsClientCertificate, args.rdsClientKey)
+    # One identity, even when several are configured. A client context holding
+    # two does NOT answer the server's CertificateRequest with the one it asked
+    # for -- it picks by its own rule and then fails if the peer wanted the
+    # other -- so loading them all here would be worse than loading one. The
+    # remaining identities are reached by retrying the request with a context
+    # built from each in turn; see nmos/tls_identity.py.
+    identities = client_identity_order(pair_identities(
+        args.rdsClientCertificate, args.rdsClientKey,
+        cert_flag="--rdsClientCertificate", key_flag="--rdsClientKey",
+    ))
+    if identities:
+        certificate, key = identities[0]
+        ctx.load_cert_chain(certificate, key)
 
     cas = _ca_list(args.rdsTrustedRootCA, args.trustedRootCA)
     if cas:
@@ -774,8 +828,7 @@ async def go_controller_server(
     # above are the correct surface.
     def _build_outbound(
         ca_list: list[str],
-        cert: str,
-        key: str,
+        identities: list[tuple[str, str]],
     ) -> ssl.SSLContext:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         apply_tr10_tls_restrictions(ctx, gcrl_path=getattr(args, "gcrl", None))
@@ -784,27 +837,39 @@ async def go_controller_server(
                 ctx.load_verify_locations(ca)
         else:
             ctx.load_default_certs()
-        if cert and key:
-            ctx.load_cert_chain(cert, key)
+        # One identity, as in build_registry_ssl_context: a client context
+        # holding several does not answer the peer's CertificateRequest with
+        # the one it asked for. See nmos/tls_identity.py.
+        if identities:
+            certificate, key = identities[0]
+            ctx.load_cert_chain(certificate, key)
         return ctx
 
     node_outbound_ssl: ssl.SSLContext | None = None
     control_outbound_ssl: ssl.SSLContext | None = None
     if not args.nodeDisableTLS:
+        node_identities = client_identity_order(pair_identities(
+            args.nodeClientCertificate, args.nodeClientKey,
+            cert_flag="--nodeClientCertificate", key_flag="--nodeClientKey",
+        ))
         node_outbound_ssl = _build_outbound(
             _ca_list(args.nodeTrustedRootCA, args.trustedRootCA),
-            args.nodeClientCertificate,
-            args.nodeClientKey,
+            node_identities,
         )
         if args.controlTrustedRootCA:
-            control_cert = (
-                args.controlClientCertificate or args.nodeClientCertificate
-            )
-            control_key = args.controlClientKey or args.nodeClientKey
+            # Certificate and key fall back to the Node pair **together**.
+            # Falling back field by field would pair a --controlClientCertificate
+            # with a --nodeClientKey when only one of the two was given, which
+            # load_cert_chain would then reject at startup for a reason that
+            # names neither flag.
+            control_identities = client_identity_order(pair_identities(
+                args.controlClientCertificate, args.controlClientKey,
+                cert_flag="--controlClientCertificate",
+                key_flag="--controlClientKey",
+            )) or node_identities
             control_outbound_ssl = _build_outbound(
                 _ca_list(args.controlTrustedRootCA, args.trustedRootCA),
-                control_cert,
-                control_key,
+                control_identities,
             )
 
     cache = ResourceCache()
@@ -1176,8 +1241,10 @@ async def main(args: argparse.Namespace) -> None:
     # claims are fully correct. Populating from the cert at startup
     # is the prerequisite both modes share.
     if not args.nodeDisableTLS and args.nodeCertificate:
-        from nmos.cert_check import cert_dns_identities
-        node.tls_server_cert_names = cert_dns_identities(
+        # Unioned across every configured identity, not taken from the first.
+        # With TCT=2 the listener may present either flavour, so a token naming
+        # the names of either one has to be accepted.
+        node.tls_server_cert_names = union_dns_identities(
             args.nodeCertificate,
         )
         if node.tls_server_cert_names:
@@ -1354,17 +1421,31 @@ def validate_startup_certs(args: argparse.Namespace) -> None:
     )
 
     # Step 1: cert + key required and accessible.
-    if not args.nodeCertificate or not args.nodeKey:
+    if not has_identity(args.nodeCertificate, args.nodeKey):
         raise SystemExit(
             "CONFIG: --nodeCertificate and --nodeKey are required when "
             "TLS is enabled (use --nodeDisableTLS to opt out).",
         )
-    for label, path in (
-        ("--nodeCertificate", args.nodeCertificate),
-        ("--nodeKey", args.nodeKey),
-    ):
-        if not os.path.isfile(path):
-            raise SystemExit(f"CONFIG: {label} is not accessible: {path!r}")
+    # Step 1a: the two options are repeatable, so they must pair up. Checked
+    # before anything is opened -- a count mismatch is a usage error, and
+    # reporting it as a missing file would name the wrong problem.
+    try:
+        node_identities = pair_identities(
+            args.nodeCertificate, args.nodeKey,
+            cert_flag="--nodeCertificate", key_flag="--nodeKey",
+        )
+    except CertCheckError as exc:
+        raise SystemExit(f"CONFIG: {exc}") from exc
+    # Cert then key within each pair, so a single-identity configuration
+    # produces exactly the diagnostics it did before this option became
+    # repeatable.
+    for certificate, key in node_identities:
+        for label, path in (
+            ("--nodeCertificate", certificate),
+            ("--nodeKey", key),
+        ):
+            if not os.path.isfile(path):
+                raise SystemExit(f"CONFIG: {label} is not accessible: {path!r}")
 
     # Step 2: every --nodeTrustedRootCA entry must chain to the union
     # of --trustedRootCA entries. Each list may carry more than one
@@ -1404,19 +1485,26 @@ def validate_startup_certs(args: argparse.Namespace) -> None:
                 raise SystemExit(
                     f"CONFIG: --trustedRootCA is not accessible: {path!r}",
                 )
-        try:
-            check_certificate(
-                args.trustedRootCA,
-                args.nodeCertificate,
-                args.nodeKey,
-                args.nodeSerialNumber,
-            )
-        except CertCheckError as exc:
-            raise SystemExit(
-                f"CONFIG: --nodeCertificate is not valid based on "
-                f"--trustedRootCA and node serial number "
-                f"{args.nodeSerialNumber!r}: {exc}",
-            ) from exc
+        # Per identity: each must chain to a configured root and carry the
+        # serial in its SAN, and each key must match its own certificate.
+        # With two identities that chain to different roots -- which is the
+        # case in this PKI, where the ECDSA generation has its own root --
+        # --trustedRootCA has to carry both, or the one that is missing is
+        # named here rather than at a peer's handshake.
+        for certificate, key in node_identities:
+            try:
+                check_certificate(
+                    args.trustedRootCA,
+                    certificate,
+                    key,
+                    args.nodeSerialNumber,
+                )
+            except CertCheckError as exc:
+                raise SystemExit(
+                    f"CONFIG: --nodeCertificate is not valid based on "
+                    f"--trustedRootCA and node serial number "
+                    f"{args.nodeSerialNumber!r}: {exc}",
+                ) from exc
 
 
 if __name__ == "__main__":

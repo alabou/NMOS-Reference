@@ -15,7 +15,7 @@
 #   --nap=N    Node Access Policy: 1 (Unrestricted RO, mTLS only via
 #              --nodeOptionalClientAuth) or 2 (Restricted RW, default).
 #   --rap=R    Registry Access Policy: 0=HTTP, 1=server-TLS, 2=mTLS.
-#   --tct=T    TLS Cert Type: 0=RSA (default), 1=ECDSA, 2=both (accepted; not implemented -- serves RSA)
+#   --tct=T    TLS Cert Type: 0=RSA (default), 1=ECDSA, 2=both (presents whichever each client asks for)
 #   --split-controls
 #              Split IS-05/IS-08/IS-11 onto a SEPARATE TLS listener
 #              (port 7052) with its OWN trust store (CESTCA). The Node
@@ -132,19 +132,14 @@ done
 # naming the argument and exiting 64 (EX_USAGE).
 
 # "" for RSA, ".ec" for ECDSA. TCT=2 takes the RSA certificate as TCT=0 does.
+# One infix per identity the Node presents. TR-10-SEC gives TCT=2 as "Both":
+# the listener then holds an RSA and an ECDSA identity at once and serves each
+# client whichever its ClientHello can verify. TCT=2 selects the RSA
+# certificate as TCT=0 does *and* the ECDSA one; it is not a third flavour.
 case "$TCT" in
-  0) TCT_INFIX="" ;;
-  # TR-10-SEC gives TCT=2 as "Both", and makes supporting both simultaneously
-  # optional. This rig does not support it: there is one server certificate and
-  # one key per listener, so a TCT=2 run is an RSA run. Accepted rather than
-  # refused so existing invocations keep working -- but never silently, because
-  # a rig that reports a posture it does not have is what every other check
-  # here exists to prevent. The trust side is already dual (ExampleRootCA-bundle
-  # holds both roots); it is the identity side that is still single.
-  2) TCT_INFIX=""
-     echo "start-node1-noauth2.sh: --tct=2 (Both) is not implemented -- serving the" \
-          "RSA certificate only. Use --tct=0 or --tct=1 to choose." >&2 ;;
-  1)   TCT_INFIX=".ec" ;;
+  0) TCT_INFIXES=("") ;;
+  1) TCT_INFIXES=(".ec") ;;
+  2) TCT_INFIXES=("" ".ec") ;;
   *) echo "start-node1-noauth2.sh: unsupported --tct=$TCT" >&2; exit 64 ;;
 esac
 
@@ -239,9 +234,14 @@ if [ -f "$CERT_ROOT/build.1/ExampleRootCA.pem" ] || \
   CA="$CA_MERGED"
 fi
 
-# $TCT was validated above; $TCT_INFIX is "" or ".ec".
-NODE_CERT="$CERTS/pem/ExampleDeviceServer.ABC.SNX00001.chain${TCT_INFIX}.pem"
-NODE_KEY="$CERTS/key/ExampleDeviceServer.ABC.SNX00001${TCT_INFIX}.key"
+# $TCT was validated above; one --nodeCertificate/--nodeKey pair per
+# identity. Repeating the flags is how TCT=2 reaches the listener --
+# see nmos/tls_identity.py for why one context holds them all.
+NODE_CERT_ARGS=()
+for infix in "${TCT_INFIXES[@]}"; do
+  NODE_CERT_ARGS+=(--nodeCertificate "$CERTS/pem/ExampleDeviceServer.ABC.SNX00001.chain${infix}.pem")
+  NODE_CERT_ARGS+=(--nodeKey "$CERTS/key/ExampleDeviceServer.ABC.SNX00001${infix}.key")
+done
 
 case "$RDS_MODE" in
   plaintext)  RDS_FLAGS=(--rdsDisableTLS) ;;
@@ -281,8 +281,7 @@ exec python3 nmos_node.py \
   --nodeSerialNumber SNX00001 \
   --nodeAddr XYZ-SNX00001 \
   --nodePort 7051 \
-  --nodeCertificate "$NODE_CERT" \
-  --nodeKey         "$NODE_KEY" \
+  "${NODE_CERT_ARGS[@]}" \
   --nodeTrustedRootCA "$NODE_TRUST_CA" \
   "${SPLIT_FLAGS[@]}" \
   --nodeControlPort 5050 \

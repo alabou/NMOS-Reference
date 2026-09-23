@@ -15,6 +15,9 @@ from __future__ import annotations
 
 from argparse import Namespace
 
+import pytest
+
+from nmos.api.tests._tls_helpers import PKI_AVAILABLE, server_chain, server_key
 from nmos.node.security_tags import (
     NAP,
     OAIM,
@@ -65,8 +68,8 @@ def _ns(**overrides) -> Namespace:
 def test_config_a_full_restricted_rw() -> None:
     """A typical Configuration A: TLS + mTLS, no OAuth2, default OAIM, RSA cert."""
     args = _ns(
-        nodeCertificate="/p/ExampleDeviceServer.ABC.SNX00001.chain.pem",
-        nodeKey="/p/ExampleDeviceServer.ABC.SNX00001.key",
+        nodeCertificate=[str(server_chain("SNX00001", "rsa"))],
+        nodeKey=[str(server_key("SNX00001", "rsa"))],
         nodeTrustedRootCA=["/p/ExampleRootCA.pem"],
     )
     cfg = compute_security_tags(args)
@@ -90,13 +93,50 @@ def test_config_a_unrestricted_ro_via_optional_client_auth() -> None:
     assert compute_security_tags(args).nap is NAP.UNRESTRICTED_RO
 
 
+@pytest.mark.skipif(not PKI_AVAILABLE, reason="PKI not present")
 def test_config_a_ecdsa_cert_emits_tct_ecdsa() -> None:
     args = _ns(
-        nodeCertificate="/p/ExampleDeviceServer.ABC.SNX00001.chain.ec.pem",
-        nodeKey="/p/ExampleDeviceServer.ABC.SNX00001.ec.key",
+        nodeCertificate=[str(server_chain("SNX00001", "ec"))],
+        nodeKey=[str(server_key("SNX00001", "ec"))],
         nodeTrustedRootCA=["/p/ExampleRootCA.ec.pem"],
     )
     assert compute_security_tags(args).tct is TCT.ECDSA
+
+
+@pytest.mark.skipif(not PKI_AVAILABLE, reason="PKI not present")
+class TestCertificateTypeIsReadFromTheCertificates:
+    """TCT reflects what the Node will actually present, not what the files
+    are called: an operator's certificates need not follow this PKI's ``.ec.``
+    convention, and a filename cannot express "both" at all."""
+
+    def _tct(self, *flavors: str) -> TCT:
+        return compute_security_tags(_ns(
+            nodeCertificate=[str(server_chain("SNX00001", f)) for f in flavors],
+            nodeKey=[str(server_key("SNX00001", f)) for f in flavors],
+            nodeTrustedRootCA=["/p/ExampleRootCA.pem"],
+        )).tct
+
+    def test_both_flavours_emit_tct_both(self) -> None:
+        assert self._tct("rsa", "ec") is TCT.BOTH
+
+    def test_the_order_does_not_change_the_answer(self) -> None:
+        """Load order carries no meaning; a set is the honest model."""
+        assert self._tct("ec", "rsa") is TCT.BOTH
+
+    def test_two_of_one_flavour_is_that_flavour_not_both(self) -> None:
+        """A re-provisioning overlap presents two RSA certificates. Reporting
+        BOTH there would advertise a posture the Node does not have."""
+        assert self._tct("rsa", "rsa") is TCT.RSA
+        assert self._tct("ec", "ec") is TCT.ECDSA
+
+    def test_an_unreadable_certificate_falls_back_to_the_default(self) -> None:
+        """Unreachable in production -- validate_startup_certs exits first --
+        but it must not raise if it is ever reached."""
+        assert compute_security_tags(_ns(
+            nodeCertificate=["/p/does-not-exist.pem"],
+            nodeKey=["/p/does-not-exist.key"],
+            nodeTrustedRootCA=["/p/ExampleRootCA.pem"],
+        )).tct is TCT.RSA
 
 
 # ---------------------------------------------------------------------------

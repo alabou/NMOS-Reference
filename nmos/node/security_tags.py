@@ -36,6 +36,8 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any
 
+from nmos.tls_identity import as_paths, leaf_public_key_algorithm
+
 # ---------------------------------------------------------------------------
 # Tag URNs (TR-10-SEC §8)
 # ---------------------------------------------------------------------------
@@ -252,18 +254,35 @@ def _compute_oaim(args: Any) -> OAIM:
 
 
 def _compute_tct(args: Any) -> TCT:
-    """Infer TCT from the cert-file flavor.
+    """Read TCT off the certificates this Node is configured to present.
 
-    The Certificates/build.0/ workspace uses two filename conventions for
-    server certs: ``ExampleDeviceServer.ABC.<serial>.chain.pem`` for RSA
-    and ``ExampleDeviceServer.ABC.<serial>.chain.ec.pem`` for ECDSA.
-    Reference-node currently accepts a single cert/key pair, so TCT
-    reflects which flavor is mounted. TCT=2 (Both simultaneously) is a
-    deferred feature — see Phase 0b item 3 in the plan; until it lands,
-    this function never returns ``TCT.BOTH``.
+    TR-10-SEC §12.5 describes TCT as a property of the certificates
+    themselves, so it is read from them: the leaf's public key is asked
+    what it is. An earlier version matched ``".ec."`` in the filename,
+    which worked only for this PKI's naming convention and could not
+    express TCT=2 at all — an operator's own certificates are under no
+    obligation to be named like ours.
+
+    Derived from ``--nodeCertificate`` alone. The client-side identities
+    (``--nodeClientCertificate`` and friends) are a separate concern: the
+    tag describes what this Node presents *as a server*, which is what a
+    peer inspecting it can observe.
+
+    Two certificates of the same type — a re-provisioning overlap, say —
+    are that one type, not BOTH. Set semantics give that for free.
+
+    Unreadable certificates classify as RSA, the default. In production
+    that is unreachable: ``validate_startup_certs`` has already exited
+    over a certificate it could not read by the time this runs.
     """
-    cert = getattr(args, "nodeCertificate", "") or ""
-    if ".ec." in cert or cert.endswith(".ec.pem") or cert.endswith(".ec.chain.pem"):
+    algorithms = {
+        leaf_public_key_algorithm(path)
+        for path in as_paths(getattr(args, "nodeCertificate", None))
+    }
+    algorithms.discard(None)
+    if "rsa" in algorithms and "ecdsa" in algorithms:
+        return TCT.BOTH
+    if algorithms == {"ecdsa"}:
         return TCT.ECDSA
     return TCT.RSA
 
