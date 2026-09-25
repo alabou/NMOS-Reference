@@ -13,6 +13,7 @@ Per NMOS With Node Reservation spec + NMOS With OAuth2.0 spec.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Any, Callable, Awaitable
 
 from aiohttp import web
@@ -24,17 +25,35 @@ from nmos.api.response import error_response, CORS_HEADERS
 Handler = Callable[[web.Request], Awaitable[web.Response]]
 
 
+class BearerError(StrEnum):
+    """Values of the Bearer challenge's ``error`` attribute (RFC 6750 §3.1)."""
+
+    INVALID_REQUEST = "invalid_request"
+    INVALID_TOKEN = "invalid_token"
+    INSUFFICIENT_SCOPE = "insufficient_scope"
+
+
 def _oauth_error_response(
     status: int,
     debug: str,
     realm: str,
     request: web.Request,
+    error: BearerError | None = None,
 ) -> web.Response:
-    """Build an OAuth2/exclusive auth error using the shared JSON engine path."""
+    """Build an OAuth2/exclusive auth error using the shared JSON engine path.
+
+    ``error`` adds the RFC 6750 §3 ``error`` attribute to the Bearer
+    challenge. Leave it unset when the request carried no credentials:
+    RFC 6750 §3.1 says the resource server SHOULD NOT include an error
+    code in that case.
+    """
+    challenge = f'Bearer realm="{realm}"'
+    if error is not None:
+        challenge += f', error="{error.value}"'
     return error_response(
         status,
         debug,
-        headers={"WWW-Authenticate": f'Bearer realm="{realm}"'},
+        headers={"WWW-Authenticate": challenge},
         request=request,
     )
 
@@ -160,7 +179,13 @@ def check_oauth2(
             from nmos.oauth2 import validate_token_with_claims, validate_access
             keys = getattr(node, "oauth2_keys", None)
             if keys is None:
-                return error_response(401, "no OAuth2 public keys available", request=request)
+                return _oauth_error_response(
+                    401,
+                    "no OAuth2 public keys available",
+                    "nmos-oauth2",
+                    request,
+                    error=BearerError.INVALID_TOKEN,
+                )
 
             ok, claims = validate_token_with_claims(token, keys)
             if not ok:
@@ -169,6 +194,7 @@ def check_oauth2(
                     "bearer token is not authorized",
                     "nmos-oauth2",
                     request,
+                    error=BearerError.INVALID_TOKEN,
                 )
 
             # Check access — returns (allowed, valid_token) per spec pseudocode
@@ -184,6 +210,7 @@ def check_oauth2(
                     return _oauth_error_response(
                         401, "client certificate does not match client_id",
                         "nmos-oauth2", request,
+                        error=BearerError.INVALID_TOKEN,
                     )
 
             allowed, valid_token = validate_access(
@@ -197,9 +224,18 @@ def check_oauth2(
                     "bearer token is invalid or malformed",
                     "nmos-oauth2",
                     request,
+                    error=BearerError.INVALID_TOKEN,
                 )
             if not allowed:
-                return error_response(403, "insufficient permissions", request=request)
+                # RFC 6750 §3: a token that does not enable access MUST get
+                # the Bearer challenge too, not only the 401 cases.
+                return _oauth_error_response(
+                    403,
+                    "insufficient permissions",
+                    "nmos-oauth2",
+                    request,
+                    error=BearerError.INSUFFICIENT_SCOPE,
+                )
 
             return await handler(request)
         return wrapper

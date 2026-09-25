@@ -555,6 +555,50 @@ class TestHttpStatusCodes:
         resp = await client.get("/x-nmos/node/v1.3/self", headers=_auth_header(token))
         assert resp.status == 403
 
+    @pytest.mark.asyncio
+    async def test_403_includes_bearer_challenge(
+        self, client: TestClient, mock_as: MockAuthorizationServer,
+    ) -> None:
+        """RFC 6750 §3: a token that does not enable access gets the challenge on 403 too."""
+        token = mock_as.make_read_only_token(NODE_SERIAL, ["connection"])
+        resp = await client.get("/x-nmos/node/v1.3/self", headers=_auth_header(token))
+        assert resp.status == 403
+        assert resp.headers.get("WWW-Authenticate") == (
+            'Bearer realm="nmos-oauth2", error="insufficient_scope"'
+        )
+
+    @pytest.mark.asyncio
+    async def test_401_for_presented_token_carries_invalid_token(
+        self, client: TestClient, mock_as: MockAuthorizationServer,
+    ) -> None:
+        token = mock_as.make_expired_token(NODE_SERIAL)
+        resp = await client.get("/x-nmos/node/v1.3/self", headers=_auth_header(token))
+        assert resp.status == 401
+        assert resp.headers.get("WWW-Authenticate") == (
+            'Bearer realm="nmos-oauth2", error="invalid_token"'
+        )
+
+    @pytest.mark.asyncio
+    async def test_401_without_credentials_has_no_error(self, client: TestClient) -> None:
+        """RFC 6750 §3.1: no error code when the request carried no credentials."""
+        resp = await client.get("/x-nmos/node/v1.3/self")
+        assert resp.status == 401
+        assert resp.headers.get("WWW-Authenticate") == 'Bearer realm="nmos-oauth2"'
+
+    @pytest.mark.asyncio
+    async def test_401_without_public_keys_includes_bearer_challenge(
+        self, aiohttp_client: Any, mock_as: MockAuthorizationServer,
+    ) -> None:
+        node = _make_oauth2_node(mock_as)
+        node.set_oauth2_public_keys(None)
+        client = await aiohttp_client(create_app(node))
+        token = mock_as.make_read_only_token(NODE_SERIAL, ["node"])
+        resp = await client.get("/x-nmos/node/v1.3/self", headers=_auth_header(token))
+        assert resp.status == 401
+        assert resp.headers.get("WWW-Authenticate") == (
+            'Bearer realm="nmos-oauth2", error="invalid_token"'
+        )
+
 
 # ---------------------------------------------------------------------------
 # Scope-to-API Mapping Tests
