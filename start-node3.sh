@@ -82,26 +82,6 @@ require_port() {
   fi
 }
 
-# The query port is derived as RDS_REG_PORT-1 at the exec below.
-require_port "<rds-registration-port>" "$RDS_REG_PORT" 2 65535
-# Ports arrive on the command line, and arithmetic is no defence: $(( )) treats
-# a bare name as a variable and re-evaluates its VALUE as an expression, so a
-# non-numeric port becomes 0 and a derived port -1 -- which argparse then
-# accepts as a perfectly good int, leaving the failure to surface much later as
-# a bind error with nothing pointing back here. Check the value itself, with a
-# minimum that leaves room for the ports derived from it.
-require_port() {
-  case "$2" in
-    ''|*[!0-9]*)
-      echo "$(basename "$0"): $1 must be a whole number, got '$2'" >&2
-      exit 64 ;;
-  esac
-  if [ "$2" -lt "$3" ] || [ "$2" -gt "$4" ]; then
-    echo "$(basename "$0"): $1 must be between $3 and $4, got '$2'" >&2
-    exit 64
-  fi
-}
-
 if [ -n "${AS_PORT:-}" ]; then
   require_port "<as-port>" "$AS_PORT" 1 65535
 fi
@@ -203,26 +183,37 @@ else
 fi
 CERTS="$CERT_ROOT/build.0"
 
-# One file holding both roots -- the RSA and the ECDSA generation of the same
-# CA -- so either certificate flavour validates against a single
-# --trustedRootCA. It ships in Certificates/ next to the two roots it is built
-# from, rather than being written to a scratch path at every start-up.
-CA="$CERTS/ExampleRootCA-bundle.pem"
-if [ ! -f "$CA" ]; then
-  # A PKI supplied from outside this checkout -- IPMX_CERT_ROOT, or the
-  # workspace tree the IPMX security test suite drives these launchers with --
-  # carries the two roots but not the combined file, so derive it from them.
-  # mktemp rather than a fixed path: /tmp/ExampleRootCA-bundle.pem used to be
-  # shared by every launcher and rewritten on each start-up.
-  for root in "$CERTS/ExampleRootCA.pem" "$CERTS/ExampleRootCA.ec.pem"; do
-    if [ ! -f "$root" ]; then
-      echo "$(basename "$0"): missing $root" >&2
-      echo "  Set IPMX_CERT_ROOT to a Certificates/ tree that carries it." >&2
-      exit 66
-    fi
-  done
-  CA="$(mktemp -t ExampleRootCA-bundle.XXXXXX)"
-  cat "$CERTS/ExampleRootCA.pem" "$CERTS/ExampleRootCA.ec.pem" > "$CA"
+# Trust follows the certificate type, like the identities below: TR-10-SEC
+# §12.5 makes the TCT "common to all certificates and Root CAs of the
+# device", so a TCT=0 Node trusts the RSA root only, a TCT=1 Node the ECDSA
+# root only, and only a TCT=2 Node both.
+CA_ROOTS=()
+for infix in "${TCT_INFIXES[@]}"; do
+  CA_ROOTS+=("$CERTS/ExampleRootCA${infix}.pem")
+done
+for root in "${CA_ROOTS[@]}"; do
+  if [ ! -f "$root" ]; then
+    echo "$(basename "$0"): missing $root" >&2
+    echo "  Set IPMX_CERT_ROOT to a Certificates/ tree that carries it." >&2
+    exit 66
+  fi
+done
+CA="${CA_ROOTS[0]}"
+if [ "${#CA_ROOTS[@]}" -gt 1 ]; then
+  # TCT=2: one file holding both roots -- the RSA and the ECDSA generation of
+  # the same CA -- so either certificate flavour validates against a single
+  # --trustedRootCA. It ships in Certificates/ next to the two roots it is
+  # built from, rather than being written to a scratch path at every start-up.
+  CA="$CERTS/ExampleRootCA-bundle.pem"
+  if [ ! -f "$CA" ]; then
+    # A PKI supplied from outside this checkout -- IPMX_CERT_ROOT, or the
+    # workspace tree the IPMX security test suite drives these launchers with --
+    # carries the two roots but not the combined file, so derive it from them.
+    # mktemp rather than a fixed path: /tmp/ExampleRootCA-bundle.pem used to be
+    # shared by every launcher and rewritten on each start-up.
+    CA="$(mktemp -t ExampleRootCA-bundle.XXXXXX)"
+    cat "${CA_ROOTS[@]}" > "$CA"
+  fi
 fi
 
 # $TCT was validated above; one --nodeCertificate/--nodeKey pair per
@@ -234,13 +225,24 @@ for infix in "${TCT_INFIXES[@]}"; do
   NODE_CERT_ARGS+=(--nodeKey "$CERTS/key/ExampleDeviceServer.ABC.SNX00003${infix}.key")
 done
 
+# The client identities follow the same infixes: TR-10-SEC applies the
+# certificate type "to both endpoint and client accesses, and to server and
+# client certificates" (§11), so a TCT=1 Node authenticates with its
+# ECDSA certificate and a TCT=2 Node holds both -- one pair per identity, as
+# for the listener above.
+NODE_CLIENT_ARGS=()
+RDS_CLIENT_ARGS=()
+for infix in "${TCT_INFIXES[@]}"; do
+  NODE_CLIENT_ARGS+=(--nodeClientCertificate "$CERTS/pem/ExampleDeviceClient.ABC.SNX00003.chain${infix}.pem")
+  NODE_CLIENT_ARGS+=(--nodeClientKey "$CERTS/key/ExampleDeviceClient.ABC.SNX00003${infix}.key")
+  RDS_CLIENT_ARGS+=(--rdsClientCertificate "$CERTS/pem/ExampleDeviceClient.ABC.SNX00003.chain${infix}.pem")
+  RDS_CLIENT_ARGS+=(--rdsClientKey "$CERTS/key/ExampleDeviceClient.ABC.SNX00003${infix}.key")
+done
+
 case "$RDS_MODE" in
   plaintext)  RDS_FLAGS=(--rdsDisableTLS) ;;
   server-tls) RDS_FLAGS=() ;;
-  mutual-tls) RDS_FLAGS=(
-       --rdsClientCertificate "$CERTS/pem/ExampleDeviceClient.ABC.SNX00003.chain.pem"
-       --rdsClientKey         "$CERTS/key/ExampleDeviceClient.ABC.SNX00003.key"
-     ) ;;
+  mutual-tls) RDS_FLAGS=("${RDS_CLIENT_ARGS[@]}") ;;
 esac
 
 # --nodeControlPort is deliberately absent, as in start-node2.sh. The
@@ -257,8 +259,7 @@ exec python3 nmos_node.py \
   --nodePort 7053 \
   "${NODE_CERT_ARGS[@]}" \
   --nodeTrustedRootCA "$CA" \
-  --nodeClientCertificate "$CERTS/pem/ExampleDeviceClient.ABC.SNX00003.chain.pem" \
-  --nodeClientKey         "$CERTS/key/ExampleDeviceClient.ABC.SNX00003.key" \
+  "${NODE_CLIENT_ARGS[@]}" \
   --oauth2 \
   --oauth2Host "${AS_HOST}" \
   --oauth2Port "${AS_PORT}" \

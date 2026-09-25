@@ -81,26 +81,6 @@ require_port() {
   fi
 }
 
-# The query port is derived as RDS_REG_PORT-1 at the exec below.
-require_port "<rds-registration-port>" "$RDS_REG_PORT" 2 65535
-# Ports arrive on the command line, and arithmetic is no defence: $(( )) treats
-# a bare name as a variable and re-evaluates its VALUE as an expression, so a
-# non-numeric port becomes 0 and a derived port -1 -- which argparse then
-# accepts as a perfectly good int, leaving the failure to surface much later as
-# a bind error with nothing pointing back here. Check the value itself, with a
-# minimum that leaves room for the ports derived from it.
-require_port() {
-  case "$2" in
-    ''|*[!0-9]*)
-      echo "$(basename "$0"): $1 must be a whole number, got '$2'" >&2
-      exit 64 ;;
-  esac
-  if [ "$2" -lt "$3" ] || [ "$2" -gt "$4" ]; then
-    echo "$(basename "$0"): $1 must be between $3 and $4, got '$2'" >&2
-    exit 64
-  fi
-}
-
 if [ -n "${AS_PORT:-}" ]; then
   require_port "<as-port>" "$AS_PORT" 1 65535
 fi
@@ -195,43 +175,37 @@ else
 fi
 CERTS="$CERT_ROOT/build.0"
 
-# Global CA bundle for --trustedRootCA. Reference-node validates that
-# every per-role trust root (e.g. --nodeTrustedRootCA) chains under
-# this global bundle, so when --split-controls is set we must add the
-# build.1 / build.2 roots here too — even though their *application
-# role* is solely per-listener mTLS client validation. The bundle's
-# membership at config-parse time is decoupled from how the device
-# actually selects per-role trust at TLS-handshake time.
-CA="$CERTS/ExampleRootCA-bundle.pem"
-if [ ! -f "$CA" ]; then
-  # A PKI supplied from outside this checkout -- IPMX_CERT_ROOT, or the
-  # workspace tree the IPMX security test suite drives these launchers with --
-  # carries the two roots but not the combined file, so derive it from them.
-  # mktemp rather than a fixed path: /tmp/ExampleRootCA-bundle.pem used to be
-  # shared by every launcher and rewritten on each start-up.
-  for root in "$CERTS/ExampleRootCA.pem" "$CERTS/ExampleRootCA.ec.pem"; do
-    if [ ! -f "$root" ]; then
-      echo "$(basename "$0"): missing $root" >&2
-      echo "  Set IPMX_CERT_ROOT to a Certificates/ tree that carries it." >&2
-      exit 66
-    fi
-  done
-  CA="$(mktemp -t ExampleRootCA-bundle.XXXXXX)"
-  cat "$CERTS/ExampleRootCA.pem" "$CERTS/ExampleRootCA.ec.pem" > "$CA"
-fi
-# build.1 / build.2 exist only in a wider PKI reached through IPMX_CERT_ROOT.
-# When they are present their roots have to join the bundle, so the file has to
-# be derived -- via mktemp, so no fixed scratch path is baked in.
-if [ -f "$CERT_ROOT/build.1/ExampleRootCA.pem" ] || \
-   [ -f "$CERT_ROOT/build.2/ExampleRootCA.pem" ]; then
-  CA_MERGED="$(mktemp -t ExampleRootCA-bundle.XXXXXX)"
-  cat "$CA" > "$CA_MERGED"
-  for extra in build.1 build.2; do
-    if [ -f "$CERT_ROOT/$extra/ExampleRootCA.pem" ]; then
-      cat "$CERT_ROOT/$extra/ExampleRootCA.pem" >> "$CA_MERGED"
-    fi
-  done
-  CA="$CA_MERGED"
+# Trust follows the certificate type, like the identities below: TR-10-SEC
+# §12.5 makes the TCT "common to all certificates and Root CAs of the
+# device", so a TCT=0 Node trusts the RSA root only, a TCT=1 Node the ECDSA
+# root only, and only a TCT=2 Node both.
+CA_ROOTS=()
+for infix in "${TCT_INFIXES[@]}"; do
+  CA_ROOTS+=("$CERTS/ExampleRootCA${infix}.pem")
+done
+for root in "${CA_ROOTS[@]}"; do
+  if [ ! -f "$root" ]; then
+    echo "$(basename "$0"): missing $root" >&2
+    echo "  Set IPMX_CERT_ROOT to a Certificates/ tree that carries it." >&2
+    exit 66
+  fi
+done
+CA="${CA_ROOTS[0]}"
+if [ "${#CA_ROOTS[@]}" -gt 1 ]; then
+  # TCT=2: one file holding both roots -- the RSA and the ECDSA generation of
+  # the same CA -- so either certificate flavour validates against a single
+  # --trustedRootCA. It ships in Certificates/ next to the two roots it is
+  # built from, rather than being written to a scratch path at every start-up.
+  CA="$CERTS/ExampleRootCA-bundle.pem"
+  if [ ! -f "$CA" ]; then
+    # A PKI supplied from outside this checkout -- IPMX_CERT_ROOT, or the
+    # workspace tree the IPMX security test suite drives these launchers with --
+    # carries the two roots but not the combined file, so derive it from them.
+    # mktemp rather than a fixed path: /tmp/ExampleRootCA-bundle.pem used to be
+    # shared by every launcher and rewritten on each start-up.
+    CA="$(mktemp -t ExampleRootCA-bundle.XXXXXX)"
+    cat "${CA_ROOTS[@]}" > "$CA"
+  fi
 fi
 
 # $TCT was validated above; one --nodeCertificate/--nodeKey pair per
@@ -243,33 +217,53 @@ for infix in "${TCT_INFIXES[@]}"; do
   NODE_CERT_ARGS+=(--nodeKey "$CERTS/key/ExampleDeviceServer.ABC.SNX00001${infix}.key")
 done
 
+# The client identities follow the same infixes: TR-10-SEC applies the
+# certificate type "to both endpoint and client accesses, and to server and
+# client certificates" (§11), so a TCT=1 Node authenticates with its
+# ECDSA certificate and a TCT=2 Node holds both -- one pair per identity, as
+# for the listener above.
+RDS_CLIENT_ARGS=()
+for infix in "${TCT_INFIXES[@]}"; do
+  RDS_CLIENT_ARGS+=(--rdsClientCertificate "$CERTS/pem/ExampleDeviceClient.ABC.SNX00001.chain${infix}.pem")
+  RDS_CLIENT_ARGS+=(--rdsClientKey "$CERTS/key/ExampleDeviceClient.ABC.SNX00001${infix}.key")
+done
+
 case "$RDS_MODE" in
   plaintext)  RDS_FLAGS=(--rdsDisableTLS) ;;
   server-tls) RDS_FLAGS=() ;;
-  mutual-tls) RDS_FLAGS=(
-       --rdsClientCertificate "$CERTS/pem/ExampleDeviceClient.ABC.SNX00001.chain.pem"
-       --rdsClientKey         "$CERTS/key/ExampleDeviceClient.ABC.SNX00001.key"
-     ) ;;
+  mutual-tls) RDS_FLAGS=("${RDS_CLIENT_ARGS[@]}") ;;
 esac
 
 # --split-controls: separate trust stores per listener.
 # NESTCA = root used for incoming TLS client auth on Node IS-04 API.
 # CESTCA = root used for incoming TLS client auth on IS-05/IS-08/IS-11.
-# Without --split-controls, both listeners share --nodeTrustedRootCA.
+# Without --split-controls, both listeners share --nodeTrustedRootCA. The two
+# follow the certificate type like every other root, one flag per root (the
+# trust flags are repeatable). build.1 / build.2 exist only in a wider PKI
+# reached through IPMX_CERT_ROOT.
+#
+# Reference-node validates that every per-role trust root chains under the
+# global --trustedRootCA set, so the per-listener roots join that set too --
+# even though their *application role* is solely per-listener mTLS client
+# validation. Only under --split-controls: adding them whenever they were
+# present made every other configuration trust extra CAs.
 SPLIT_FLAGS=()
-NODE_TRUST_CA="$CA"
+NODE_TRUST_ARGS=(--nodeTrustedRootCA "$CA")
+GLOBAL_TRUST_ARGS=(--trustedRootCA "$CA")
 if [ "$SPLIT_CONTROLS" = "1" ]; then
-  NESTCA="$CERT_ROOT/build.1/ExampleRootCA.pem"
-  CESTCA="$CERT_ROOT/build.2/ExampleRootCA.pem"
-  if [ ! -f "$NESTCA" ] || [ ! -f "$CESTCA" ]; then
-    echo "start-node1-noauth2.sh: --split-controls needs build.1 + build.2 trust roots" >&2
-    exit 64
-  fi
-  NODE_TRUST_CA="$NESTCA"
-  SPLIT_FLAGS=(
-    --controlTrustedRootCA "$CESTCA"
-    --controlPort 7052
-  )
+  NODE_TRUST_ARGS=()
+  for infix in "${TCT_INFIXES[@]}"; do
+    NESTCA="$CERT_ROOT/build.1/ExampleRootCA${infix}.pem"
+    CESTCA="$CERT_ROOT/build.2/ExampleRootCA${infix}.pem"
+    if [ ! -f "$NESTCA" ] || [ ! -f "$CESTCA" ]; then
+      echo "start-node1-noauth2.sh: --split-controls needs build.1 + build.2 trust roots" >&2
+      exit 64
+    fi
+    NODE_TRUST_ARGS+=(--nodeTrustedRootCA "$NESTCA")
+    SPLIT_FLAGS+=(--controlTrustedRootCA "$CESTCA")
+    GLOBAL_TRUST_ARGS+=(--trustedRootCA "$NESTCA" --trustedRootCA "$CESTCA")
+  done
+  SPLIT_FLAGS+=(--controlPort 7052)
 fi
 
 GCRL_FLAGS=()
@@ -282,7 +276,7 @@ exec python3 nmos_node.py \
   --nodeAddr XYZ-SNX00001 \
   --nodePort 7051 \
   "${NODE_CERT_ARGS[@]}" \
-  --nodeTrustedRootCA "$NODE_TRUST_CA" \
+  "${NODE_TRUST_ARGS[@]}" \
   "${SPLIT_FLAGS[@]}" \
   --nodeControlPort 5050 \
   --controllerAdminPassword admin \
@@ -291,7 +285,7 @@ exec python3 nmos_node.py \
   --rdsRegistrationPort "${RDS_REG_PORT}" \
   --rdsQueryPort        "${RDS_QUERY_PORT}" \
   "${RDS_FLAGS[@]}" \
-  --trustedRootCA "$CA" \
+  "${GLOBAL_TRUST_ARGS[@]}" \
   "${GCRL_FLAGS[@]}" \
   --debug-in-depth \
   --nodeConfig config10

@@ -145,26 +145,37 @@ else
 fi
 CERTS="$CERT_ROOT/build.0"
 
-# One file holding both roots -- the RSA and the ECDSA generation of the same
-# CA -- so either certificate flavour validates against a single
-# --trustedRootCA. It ships in Certificates/ next to the two roots it is built
-# from, rather than being written to a scratch path at every start-up.
-CA="$CERTS/ExampleRootCA-bundle.pem"
-if [ ! -f "$CA" ]; then
-  # A PKI supplied from outside this checkout -- IPMX_CERT_ROOT, or the
-  # workspace tree the IPMX security test suite drives these launchers with --
-  # carries the two roots but not the combined file, so derive it from them.
-  # mktemp rather than a fixed path: /tmp/ExampleRootCA-bundle.pem used to be
-  # shared by every launcher and rewritten on each start-up.
-  for root in "$CERTS/ExampleRootCA.pem" "$CERTS/ExampleRootCA.ec.pem"; do
-    if [ ! -f "$root" ]; then
-      echo "$(basename "$0"): missing $root" >&2
-      echo "  Set IPMX_CERT_ROOT to a Certificates/ tree that carries it." >&2
-      exit 66
-    fi
-  done
-  CA="$(mktemp -t ExampleRootCA-bundle.XXXXXX)"
-  cat "$CERTS/ExampleRootCA.pem" "$CERTS/ExampleRootCA.ec.pem" > "$CA"
+# Trust follows the certificate type, like the identities below: TR-10-SEC
+# §12.5 makes the TCT "common to all certificates and Root CAs of the
+# device", so a TCT=0 Node trusts the RSA root only, a TCT=1 Node the ECDSA
+# root only, and only a TCT=2 Node both.
+CA_ROOTS=()
+for infix in "${TCT_INFIXES[@]}"; do
+  CA_ROOTS+=("$CERTS/ExampleRootCA${infix}.pem")
+done
+for root in "${CA_ROOTS[@]}"; do
+  if [ ! -f "$root" ]; then
+    echo "$(basename "$0"): missing $root" >&2
+    echo "  Set IPMX_CERT_ROOT to a Certificates/ tree that carries it." >&2
+    exit 66
+  fi
+done
+CA="${CA_ROOTS[0]}"
+if [ "${#CA_ROOTS[@]}" -gt 1 ]; then
+  # TCT=2: one file holding both roots -- the RSA and the ECDSA generation of
+  # the same CA -- so either certificate flavour validates against a single
+  # --trustedRootCA. It ships in Certificates/ next to the two roots it is
+  # built from, rather than being written to a scratch path at every start-up.
+  CA="$CERTS/ExampleRootCA-bundle.pem"
+  if [ ! -f "$CA" ]; then
+    # A PKI supplied from outside this checkout -- IPMX_CERT_ROOT, or the
+    # workspace tree the IPMX security test suite drives these launchers with --
+    # carries the two roots but not the combined file, so derive it from them.
+    # mktemp rather than a fixed path: /tmp/ExampleRootCA-bundle.pem used to be
+    # shared by every launcher and rewritten on each start-up.
+    CA="$(mktemp -t ExampleRootCA-bundle.XXXXXX)"
+    cat "${CA_ROOTS[@]}" > "$CA"
+  fi
 fi
 
 # $TCT was validated above; one --nodeCertificate/--nodeKey pair per
@@ -184,13 +195,21 @@ else
   NAP_FLAGS=()
 fi
 
+# The client identities follow the same infixes: TR-10-SEC applies the
+# certificate type "to both endpoint and client accesses, and to server and
+# client certificates" (§11), so a TCT=1 Node authenticates with its
+# ECDSA certificate and a TCT=2 Node holds both -- one pair per identity, as
+# for the listener above.
+RDS_CLIENT_ARGS=()
+for infix in "${TCT_INFIXES[@]}"; do
+  RDS_CLIENT_ARGS+=(--rdsClientCertificate "$CERTS/pem/ExampleDeviceClient.ABC.SNX00001.chain${infix}.pem")
+  RDS_CLIENT_ARGS+=(--rdsClientKey "$CERTS/key/ExampleDeviceClient.ABC.SNX00001${infix}.key")
+done
+
 case "$RDS_MODE" in
   plaintext)  RDS_FLAGS=(--rdsDisableTLS) ;;
   server-tls) RDS_FLAGS=() ;;
-  mutual-tls) RDS_FLAGS=(
-       --rdsClientCertificate "$CERTS/pem/ExampleDeviceClient.ABC.SNX00001.chain.pem"
-       --rdsClientKey         "$CERTS/key/ExampleDeviceClient.ABC.SNX00001.key"
-     ) ;;
+  mutual-tls) RDS_FLAGS=("${RDS_CLIENT_ARGS[@]}") ;;
 esac
 
 RDS_ARGS=()
