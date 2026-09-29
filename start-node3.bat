@@ -2,14 +2,13 @@
 setlocal EnableExtensions DisableDelayedExpansion
 if not defined PYTHONUTF8 set PYTHONUTF8=1
 
-rem Windows counterpart of start-node3.sh, built to the Config C contract.
+rem Windows equivalent of start-node3.sh.
 rem
-rem Configuration C (mTLS + OAuth 2.0) -- TR-10-SEC 12.3 RAAM=2.
+rem Configuration C (mTLS + OAuth 2.0) -- TR-10-SEC 12.3 RAAM=2. Third node.
 rem
-rem Unlike start-node3.sh -- which runs this node against a plaintext
-rem registry (--rdsDisableTLS) and carries no client certificate -- this
-rem launcher mirrors start-node2.bat, so node 3 joins the same secured rig
-rem as nodes 1 and 2.
+rem The peer of start-node1.bat and start-node2.bat: same argument contract,
+rem same policy matrix, same flag surface, with SNX00003 substituted
+rem throughout. The three differ only in serial, port and node configuration.
 rem
 rem No Controller UI here: node 1 serves one on 5050 and shows every node
 rem it discovers through the registry, this one included.
@@ -187,14 +186,35 @@ if defined IPMX_CERT_ROOT (
 )
 set "CERTS=%CERT_ROOT%\build.0"
 
-rem One trust store carrying both the RSA and ECDSA roots, matching what the
-rem shell launchers use. Prefer the copy that ships in Certificates\ and derive
-rem one only when the resolved PKI has none -- a workspace tree, or an
-rem IPMX_CERT_ROOT pointing elsewhere. Deriving unconditionally wrote a single
-rem shared %TEMP% path from every launcher, so two starting at once could have
-rem one truncate the file while the other's Python was still reading it.
-set "CA=%CERTS%\ExampleRootCA-bundle.pem"
-if not exist "%CA%" (
+rem Trust follows the certificate type, like the identities below: TR-10-SEC
+rem 12.5 makes the TCT "common to all certificates and Root CAs of the
+rem device", so a TCT=0 Node trusts the RSA root only, a TCT=1 Node the ECDSA
+rem root only, and only a TCT=2 Node both.
+if not "%TCT%"=="1" (
+  call :require_root "%CERTS%\ExampleRootCA.pem"
+  if errorlevel 1 (
+    set "EXIT_CODE=66"
+    goto done
+  )
+)
+if not "%TCT%"=="0" (
+  call :require_root "%CERTS%\ExampleRootCA.ec.pem"
+  if errorlevel 1 (
+    set "EXIT_CODE=66"
+    goto done
+  )
+)
+if "%TCT%"=="0" set "CA=%CERTS%\ExampleRootCA.pem"
+if "%TCT%"=="1" set "CA=%CERTS%\ExampleRootCA.ec.pem"
+rem TCT=2: one file holding both roots, so either certificate flavour validates
+rem against a single --trustedRootCA. Prefer the copy that ships in
+rem Certificates\ and derive one only when the resolved PKI has none -- a
+rem workspace tree, or an IPMX_CERT_ROOT pointing elsewhere. Deriving
+rem unconditionally wrote a single shared %TEMP% path from every launcher, so
+rem two starting at once could have one truncate the file while the other's
+rem Python was still reading it.
+if "%TCT%"=="2" set "CA=%CERTS%\ExampleRootCA-bundle.pem"
+if "%TCT%"=="2" if not exist "%CA%" (
   call :derive_ca
   if errorlevel 1 (
     set "EXIT_CODE=66"
@@ -210,6 +230,18 @@ rem accumulated into one variable rather than iterated.
 set "NODE_CERT_ARGS="
 if not "%TCT%"=="1" set "NODE_CERT_ARGS=--nodeCertificate "%CERTS%\pem\ExampleDeviceServer.ABC.SNX00003.chain.pem" --nodeKey "%CERTS%\key\ExampleDeviceServer.ABC.SNX00003.key""
 if not "%TCT%"=="0" set "NODE_CERT_ARGS=%NODE_CERT_ARGS% --nodeCertificate "%CERTS%\pem\ExampleDeviceServer.ABC.SNX00003.chain.ec.pem" --nodeKey "%CERTS%\key\ExampleDeviceServer.ABC.SNX00003.ec.key""
+
+rem The client identities follow the same TCT: TR-10-SEC applies the
+rem certificate type "to both endpoint and client accesses, and to server and
+rem client certificates" (11), so a TCT=1 Node authenticates with its ECDSA
+rem certificate and a TCT=2 Node holds both -- one pair per identity, as for
+rem the listener above.
+set "NODE_CLIENT_ARGS="
+set "RDS_CLIENT_ARGS="
+if not "%TCT%"=="1" set "NODE_CLIENT_ARGS=--nodeClientCertificate "%CERTS%\pem\ExampleDeviceClient.ABC.SNX00003.chain.pem" --nodeClientKey "%CERTS%\key\ExampleDeviceClient.ABC.SNX00003.key""
+if not "%TCT%"=="0" set "NODE_CLIENT_ARGS=%NODE_CLIENT_ARGS% --nodeClientCertificate "%CERTS%\pem\ExampleDeviceClient.ABC.SNX00003.chain.ec.pem" --nodeClientKey "%CERTS%\key\ExampleDeviceClient.ABC.SNX00003.ec.key""
+if not "%TCT%"=="1" set "RDS_CLIENT_ARGS=--rdsClientCertificate "%CERTS%\pem\ExampleDeviceClient.ABC.SNX00003.chain.pem" --rdsClientKey "%CERTS%\key\ExampleDeviceClient.ABC.SNX00003.key""
+if not "%TCT%"=="0" set "RDS_CLIENT_ARGS=%RDS_CLIENT_ARGS% --rdsClientCertificate "%CERTS%\pem\ExampleDeviceClient.ABC.SNX00003.chain.ec.pem" --rdsClientKey "%CERTS%\key\ExampleDeviceClient.ABC.SNX00003.ec.key""
 
 if "%OAIM%"=="0" (
   set "OAIM_FLAG=serial"
@@ -228,7 +260,7 @@ if "%RAP%"=="0" (
 ) else if "%RAP%"=="1" (
   set "RDS_FLAGS="
 ) else if "%RAP%"=="2" (
-  set RDS_FLAGS=--rdsClientCertificate "%CERTS%\pem\ExampleDeviceClient.ABC.SNX00003.chain.pem" --rdsClientKey "%CERTS%\key\ExampleDeviceClient.ABC.SNX00003.key"
+  set RDS_FLAGS=%RDS_CLIENT_ARGS%
 ) else (
   >&2 echo start-node3.bat: unsupported --rap=%RAP%
   set "EXIT_CODE=64"
@@ -250,8 +282,7 @@ echo Node SNX00003: Config C ^(mTLS + OAuth 2.0^), NAP=%NAP% RAP=%RAP% OAIM=%OAI
   --nodePort 7053 ^
   %NODE_CERT_ARGS% ^
   --nodeTrustedRootCA "%CA%" ^
-  --nodeClientCertificate "%CERTS%\pem\ExampleDeviceClient.ABC.SNX00003.chain.pem" ^
-  --nodeClientKey "%CERTS%\key\ExampleDeviceClient.ABC.SNX00003.key" ^
+  %NODE_CLIENT_ARGS% ^
   --oauth2 ^
   --oauth2Host "%AS_HOST%" ^
   --oauth2Port "%AS_PORT%" ^
@@ -270,20 +301,19 @@ echo Node SNX00003: Config C ^(mTLS + OAuth 2.0^), NAP=%NAP% RAP=%RAP% OAIM=%OAI
 set "EXIT_CODE=%ERRORLEVEL%"
 goto done
 
-rem Build the combined trust store from the two roots of the resolved PKI.
+rem A trust root the selected TCT needs; missing is EX_NOINPUT, as in the .sh.
+:require_root
+if exist "%~1" exit /b 0
+>&2 echo start-node3.bat: missing "%~1"
+>&2 echo   Set IPMX_CERT_ROOT to a Certificates tree that carries it.
+exit /b 1
+
+rem Build the combined trust store from the two roots of the resolved PKI,
+rem both already confirmed present by :require_root.
 rem A subroutine rather than an inline block: each line here is parsed as it
 rem runs, so the CA path set below is visible to the copy that follows. Inside
 rem a parenthesised block under DisableDelayedExpansion it would not be.
 :derive_ca
-if not exist "%CERTS%\ExampleRootCA.pem" (
-  >&2 echo start-node3.bat: missing "%CERTS%\ExampleRootCA.pem"
-  >&2 echo   Set IPMX_CERT_ROOT to a Certificates tree that carries the roots.
-  exit /b 1
-)
-if not exist "%CERTS%\ExampleRootCA.ec.pem" (
-  >&2 echo start-node3.bat: missing "%CERTS%\ExampleRootCA.ec.pem"
-  exit /b 1
-)
 rem A name of its own per run, so concurrent launchers cannot overwrite each
 rem other's bundle while it is being read.
 set "CA=%TEMP%\ExampleRootCA-bundle.%RANDOM%%RANDOM%.pem"
