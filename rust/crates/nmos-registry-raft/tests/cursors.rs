@@ -25,7 +25,9 @@ use std::collections::HashSet;
 
 use nmos_registry_core::cursor::TaiCursor;
 use nmos_registry_core::resource_type::ResourceType;
-use nmos_registry_raft::cursors::{CursorAllocator, MAX_OWNERS, OWNER_BITS, owner_of};
+use nmos_registry_raft::cursors::{
+    CursorAllocator, MAX_OWNERS, OWNER_BITS, RESERVATION_WINDOW_SECONDS, owner_of,
+};
 
 const SENDER: ResourceType = ResourceType::Sender;
 const RECEIVER: ResourceType = ResourceType::Receiver;
@@ -177,12 +179,15 @@ fn a_cluster_under_skew_produces_one_increasing_sequence() {
 
 #[test]
 fn the_sequence_survives_a_member_that_never_hears_the_others() {
-    // Uniqueness must not depend on observation, only ordering does.
+    // Between members, uniqueness must not depend on observation.
     //
     // A partitioned member keeps allocating. Its cursors may interleave with
     // the majority's once it rejoins, but they must never *equal* one -- that
     // is the difference between a client seeing records out of order and a
     // client never seeing one at all.
+    //
+    // Between two incarnations of *one* member it is not observation but the
+    // reservation that keeps them apart; see the restart tests below.
     let mut connected = allocator(0);
     let mut isolated = allocator(1);
 
@@ -279,3 +284,126 @@ fn the_lane_width_divides_the_second() {
 /// public constant would invite code to depend on the nanosecond field being a
 /// measurement -- which, as the module docs say, it is not.
 const NANOS_PER_SECOND: u64 = 1_000_000_000;
+
+// -- restarts ---------------------------------------------------------------
+//
+// Owner bits separate members, not incarnations: a restarted member allocates
+// in the lane it always did, so something else has to keep it from minting a
+// cursor its predecessor minted. That is the reservation, carried across the
+// restart in the state file and handed back through `resume`.
+
+/// What `RaftNode::allocate_cursor` does, with the disk left out.
+fn hand_out(allocator: &mut CursorAllocator, resource_type: ResourceType) -> TaiCursor {
+    let cursor = allocator.allocate(resource_type);
+    if let Some(needed) = allocator.reservation_needed(cursor) {
+        allocator.confirm_reservation(needed);
+    }
+    cursor
+}
+
+fn ahead_of_the_clock() -> TaiCursor {
+    TaiCursor::new(TaiCursor::now().seconds + 60, 0)
+}
+
+#[test]
+fn an_allocator_that_is_not_resumed_mints_its_predecessors_cursor() {
+    // The mechanism `resume` exists for, pinned so the fix stays falsifiable.
+    //
+    // Once the log is ahead of the clock -- the wall clock stepped back, or a
+    // peer's runs fast -- an allocation depends on nothing but the log prefix
+    // observed. Two incarnations that observed the same prefix therefore agree
+    // exactly. Were that ever to stop being true, the test below would pass
+    // whether or not `resume` did anything.
+    let ahead = ahead_of_the_clock();
+    let (mut before, mut after) = (allocator(1), allocator(1));
+    before.observe(SENDER, ahead);
+    after.observe(SENDER, ahead);
+    assert_eq!(before.allocate(SENDER), after.allocate(SENDER));
+}
+
+#[test]
+fn a_resumed_allocator_starts_above_everything_handed_out_before() {
+    let ahead = ahead_of_the_clock();
+    let mut before = allocator(1);
+    before.observe(SENDER, ahead);
+    let handed_out: Vec<TaiCursor> = (0..20).map(|_| hand_out(&mut before, SENDER)).collect();
+
+    let mut after = allocator(1);
+    after.resume(before.reservation());
+    after.observe(SENDER, ahead); // the same prefix, replayed
+    let highest = *handed_out.iter().max().expect("handed out");
+    assert!(after.allocate(SENDER) > highest);
+}
+
+#[test]
+fn the_bound_holds_for_every_type() {
+    // One bound for all types: it need only be above everything out.
+    let mut before = allocator(0);
+    before.observe(SENDER, ahead_of_the_clock());
+    hand_out(&mut before, SENDER);
+    let reservation = before.reservation().expect("reserved");
+
+    let mut after = allocator(0);
+    after.resume(Some(reservation));
+    for &resource_type in &ResourceType::ALL {
+        assert!(
+            after.allocate(resource_type) > reservation,
+            "{resource_type:?}"
+        );
+    }
+}
+
+#[test]
+fn resuming_nothing_leaves_the_clock_in_charge() {
+    // A first start, or a state file written before reservations existed.
+    let mut allocator = allocator(2);
+    allocator.resume(None);
+    assert_eq!(allocator.reservation(), None);
+    assert!(allocator.allocate(SENDER) < TaiCursor::new(TaiCursor::now().seconds + 1, 0));
+}
+
+// -- reservations -----------------------------------------------------------
+
+#[test]
+fn the_first_cursor_needs_a_reservation_one_window_past_it() {
+    let mut allocator = allocator(0);
+    let cursor = allocator.allocate(SENDER);
+    assert_eq!(
+        allocator.reservation_needed(cursor),
+        Some(TaiCursor::new(
+            cursor.seconds + RESERVATION_WINDOW_SECONDS,
+            cursor.nanoseconds,
+        )),
+    );
+}
+
+#[test]
+fn cursors_under_a_durable_reservation_need_no_write() {
+    // The disk is out of every allocation but about one per window.
+    let mut allocator = allocator(0);
+    hand_out(&mut allocator, SENDER);
+    for _ in 0..100 {
+        let cursor = allocator.allocate(SENDER);
+        assert_eq!(allocator.reservation_needed(cursor), None);
+    }
+}
+
+#[test]
+fn a_cursor_beyond_the_reservation_needs_a_new_one() {
+    let mut allocator = allocator(0);
+    hand_out(&mut allocator, SENDER);
+    let reserved = allocator.reservation().expect("reserved");
+    allocator.observe(SENDER, TaiCursor::new(reserved.seconds + 5, 0));
+
+    let beyond = allocator.allocate(SENDER);
+    let needed = allocator.reservation_needed(beyond).expect("a new bound");
+    assert!(needed > beyond);
+}
+
+#[test]
+fn a_reservation_never_moves_backwards() {
+    let mut allocator = allocator(0);
+    allocator.confirm_reservation(TaiCursor::new(100, 0));
+    allocator.confirm_reservation(TaiCursor::new(50, 0));
+    assert_eq!(allocator.reservation(), Some(TaiCursor::new(100, 0)));
+}

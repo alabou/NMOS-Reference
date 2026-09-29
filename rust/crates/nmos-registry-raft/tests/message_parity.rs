@@ -40,8 +40,8 @@ use std::path::Path;
 
 use nmos_registry_raft::messages::{
     AppendEntries, AppendEntriesReply, Forward, ForwardReply, Hello, HelloAck, InstallSnapshot,
-    InstallSnapshotReply, Message, Ping, Promote, Propose, ProposeReply, RequestVote,
-    RequestVoteReply, WireEntry, decode_message,
+    InstallSnapshotReply, Message, Ping, Promote, Propose, ProposeReply, ReadIndex, ReadIndexReply,
+    RequestVote, RequestVoteReply, WireEntry, decode_message,
 };
 use nmos_registry_raft::wire::{MessageType, Stream};
 use serde_json::Value;
@@ -182,11 +182,6 @@ fn build(name: &str, fields: &Value) -> Message {
             candidate: u(fields, "candidate"),
             last_log_index: u(fields, "last_log_index"),
             last_log_term: u(fields, "last_log_term"),
-            probe: b(fields, "probe"),
-            amnesiac: list(fields, "amnesiac")
-                .iter()
-                .map(|v| v.as_u64().expect("an amnesiac member index"))
-                .collect(),
             pre_vote: b(fields, "pre_vote"),
         }),
         "RequestVoteReply" => Message::RequestVoteReply(RequestVoteReply {
@@ -222,16 +217,28 @@ fn build(name: &str, fields: &Value) -> Message {
             data: bytes(fields, "data"),
             done: b(fields, "done"),
             ownership: bytes(fields, "ownership"),
+            request_id: u(fields, "request_id"),
         }),
         "InstallSnapshotReply" => Message::InstallSnapshotReply(InstallSnapshotReply {
             term: u(fields, "term"),
             bytes_received: u(fields, "bytes_received"),
             done: b(fields, "done"),
+            commit_index: u(fields, "commit_index"),
+            request_id: u(fields, "request_id"),
         }),
         "Promote" => Message::Promote(Promote {
             term: u(fields, "term"),
             leader: u(fields, "leader"),
             through_index: u(fields, "through_index"),
+        }),
+        "ReadIndex" => Message::ReadIndex(ReadIndex {
+            request_id: u(fields, "request_id"),
+        }),
+        "ReadIndexReply" => Message::ReadIndexReply(ReadIndexReply {
+            ok: b(fields, "ok"),
+            index: u(fields, "index"),
+            reason: s(fields, "reason"),
+            request_id: u(fields, "request_id"),
         }),
         "Propose" => Message::Propose(Propose {
             proposals: list(fields, "proposals")
@@ -286,6 +293,8 @@ fn type_of(value: u64) -> MessageType {
         0x14 => MessageType::InstallSnapshot,
         0x15 => MessageType::InstallSnapshotReply,
         0x16 => MessageType::Promote,
+        0x17 => MessageType::ReadIndex,
+        0x18 => MessageType::ReadIndexReply,
         0x20 => MessageType::Propose,
         0x21 => MessageType::ProposeReply,
         0x22 => MessageType::Forward,
@@ -373,7 +382,7 @@ fn the_corpus_covers_every_message_type_but_pong() {
     covered.dedup();
 
     let mut expected: Vec<u64> = vec![
-        0x01, 0x02, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x20, 0x21, 0x22, 0x23,
+        0x01, 0x02, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x20, 0x21, 0x22, 0x23,
         0x30, // Pong (0x31) is Ping's twin and is deliberately not sampled.
     ];
     expected.sort_unstable();

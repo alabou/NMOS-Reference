@@ -25,9 +25,11 @@ rolling restart -- this design's upgrade and resize procedure -- is that
 scenario once per member.
 
 The fix: a member that has ever acknowledged entries does not vote until it has
-been caught up and explicitly promoted. While non-voting it grants no votes,
-starts no elections, and reports ``catching_up`` so the leader does not count
-its acknowledgements toward a commit.
+been caught up and explicitly promoted. While non-voting its vote does not
+count -- it still answers, saying ``voting=False``, and a candidate counts such
+a grant only where its own round proves that no quorum of voters can exist
+(see "When every voter has forgotten") -- and it reports ``catching_up`` so the
+leader does not count its acknowledgements toward a commit.
 
 Why "ever acknowledged" and not "has restarted"
 -----------------------------------------------
@@ -64,8 +66,10 @@ from nmos.raft.batcher import Pending, ProposalBatcher
 from nmos.raft.cluster import RaftLayout
 from nmos.raft.cursors import CursorAllocator
 from nmos.raft.errors import (
+    RaftCursorReservationFailed,
     RaftInvariantViolated,
     RaftLogCompacted,
+    RaftProtocolError,
     RaftUnavailable,
 )
 from nmos.raft.log import Entry, RaftLog
@@ -78,6 +82,8 @@ from nmos.raft.messages import (
     Promote,
     Propose,
     ProposeReply,
+    ReadIndex,
+    ReadIndexReply,
     RequestVote,
     RequestVoteReply,
     WireEntry,
@@ -91,10 +97,17 @@ from nmos.raft.operations import (
 )
 from nmos.raft.ownership import OwnershipTable
 from nmos.raft.persist import PersistentState, TermStore
-from nmos.raft.snapshot import SnapshotMeta, SnapshotStore, decode_snapshot, install
+from nmos.raft.snapshot import (
+    SnapshotAbandoned,
+    SnapshotMeta,
+    SnapshotStore,
+    decode_snapshot,
+    install,
+)
 from nmos.raft.transport import Transport
 from nmos.raft.wire import Stream
 from nmos.registry.fence import RevisionFence
+from nmos.registry.types import ResourceType, TaiCursor
 
 log = logging.getLogger(__name__)
 
@@ -215,6 +228,15 @@ class _PeerState:
     happened here -- never sends it at all until the next heartbeat.
     """
 
+    heard_request: int = 0
+    """The highest append this peer has answered in this leadership.
+
+    What a read waits for (``RaftNode._confirm_reads``): a reply, in this
+    term, to an append sent after the read was recorded is this peer saying
+    the leader still leads -- etcd's heartbeat context, echoed back
+    (``read_only.go``, ``recvAck``), with the append sequence as the position.
+    """
+
     reply_floor: int = 0
     """Correlation ids at or below this belong to a superseded exchange.
 
@@ -252,16 +274,87 @@ class _PeerState:
     snapshot_offset: int = 0
     """How much of the snapshot this peer has confirmed receiving."""
 
-    snapshot_in_flight: bool = False
-    """A chunk is out and unanswered.
+    sending: tuple[SnapshotMeta, bytes] | None = None
+    """The snapshot this peer's transfer is *of*, pinned when it starts.
 
-    Without this the transfer is driven from two places at once -- the
-    replication tick and the previous chunk's reply -- so two chunks go out
-    carrying the same offset, the follower sees the second as out of order,
-    restarts from zero, and the pair loop forever making no progress. The
-    symptom is a member that never catches up while the leader appears busy
-    sending it everything it needs.
+    An offset means something only relative to one byte sequence, and
+    compaction replaces this member's snapshot whenever it likes. Slicing the
+    current one at a saved offset spliced the head of one snapshot to the tail
+    of the next -- the chaos soak's splice detector measured it, and when the
+    result happened to decode it installed: replicas that had lost
+    acknowledged writes while reporting themselves caught up. Pinned here,
+    every chunk and the completion's credit come from the one snapshot the
+    transfer began with, as etcd's server streams one point-in-time snapshot
+    per transfer (``server/etcdserver/snapshot_merge.go:36-39``). Released
+    when the transfer completes or is abandoned; ``bytes`` is immutable, so a
+    pin shares the payload rather than copying it.
     """
+
+    snapshot_request: int = 0
+    """The id of the chunk out and unanswered, or 0 when none is.
+
+    One chunk at a time, and only its reply drives the transfer. Without the
+    first, the transfer was driven from two places at once -- the replication
+    tick and the previous chunk's reply -- so two chunks went out carrying the
+    same offset and the pair looped for ever. A flag alone was not enough for
+    the second: a reconnect is reported for the CONTROL connection while
+    chunks travel on BULK, so resetting on a reconnect cleared the flag while
+    the last chunk was still in flight *and still answered* -- and that
+    answer, taken as the one awaited, started a second stream beside the new
+    one (seed 60195). The id says which reply is awaited; ``reply_floor``
+    fences everything sent before a reset.
+    """
+
+    snapshot_sent_at: float = 0.0
+    """When the chunk in flight was sent.
+
+    Overdue matters as much as outstanding: a chunk lost with its BULK
+    connection draws no answer, and nothing else ever clears it while CONTROL
+    stays up. ``election_min`` is the backstop, as for appends.
+    """
+
+
+@dataclass
+class _Assembly:
+    """A snapshot being received: which one, and the bytes of it so far.
+
+    Reassembling by offset alone accepted the next chunk of *any* snapshot the
+    sender happened to be slicing -- the head of one and the tail of another,
+    joined because the offsets lined up. The identity is what makes an offset
+    mean something: a chunk continues this assembly only if it belongs to the
+    same transfer.
+    """
+
+    identity: tuple[int, int, int, int]
+    """``(term, leader, last_index, last_term)`` of the chunk that began it."""
+
+    data: bytearray = field(default_factory=bytearray)
+
+
+@dataclass
+class _Read:
+    """A read waiting for a quorum to confirm that this member still leads.
+
+    etcd's ``readIndexRequest`` (``read_only.go``). ``index`` is the commit
+    index it reads at, unknown until this leader has committed an entry of
+    its own term; ``after`` the append sequence then, since only a reply to
+    a later append is evidence gathered after the read began.
+    """
+
+    future: asyncio.Future[int]
+    index: int | None = None
+    after: int = 0
+
+
+def _holds(assembled: bytearray, offset: int, chunk: bytes) -> bool:
+    """Is ``chunk``, at ``offset``, already part of ``assembled``?
+
+    Decided by the bytes, not the offset: a copy is the same bytes at the same
+    place. Anything else at an offset already passed is no copy, and keeping
+    the buffer for it would be a splice.
+    """
+    end = offset + len(chunk)
+    return end <= len(assembled) and assembled[offset:end] == chunk
 
 
 class RaftNode:
@@ -297,6 +390,9 @@ class RaftNode:
         self._term = state.term
         self._voted_for = state.voted_for
         self._incarnation = state.incarnation
+        # Before anything can allocate: the previous incarnation may have
+        # handed out any cursor up to this, and this one must start above it.
+        machine.cursors.resume(state.cursor_reservation)
 
         self._role = Role.FOLLOWER
         self._leader: int | None = None
@@ -312,21 +408,23 @@ class RaftNode:
         # commit. Making it wait for a promotion would deadlock a cold start.
         self._voting = state.incarnation == 1 or layout.size == 1
 
-        # Peers positively observed answering ``voting=False``. Evidence, not
-        # belief: a peer that has simply not replied is absent from this set
-        # and is therefore treated as a voter, which is what keeps a partition
-        # from being mistaken for a cluster that has forgotten everything.
-        # Cleared whenever a leader is heard from, so it can never go stale and
-        # justify a recovery the cluster does not need.
-        self._observed_amnesiac: set[int] = set()
-
         self._votes: set[int] = set()
         self._pre_votes: set[int] = set()
         self._pre_refusals: set[int] = set()
+        # Who has forgotten, as the *current* round has proved it: peers whose
+        # reply to this candidacy said ``voting=False`` -- see "When every voter
+        # has forgotten" below. Reset with the votes, never carried from one
+        # round to the next. A peer that has not replied is absent and so counts
+        # as a voter, which is what keeps a partition from looking like a
+        # cluster that has forgotten everything.
+        self._forgotten: set[int] = set()
+        self._pre_forgotten: set[int] = set()
         # Correlates an append with its reply, so the flow-control pause
         # in ``_send_append`` releases on the right answer.
         self._append_sequence = 0
         self._waiters: dict[ProposalId, asyncio.Future[Outcome]] = {}
+        self._reads: list[_Read] = []
+        """Reads waiting for a quorum to confirm this leadership (``read_index``)."""
         # Seeded from the incarnation, NOT from zero. A restarted member's
         # entries outlive it: they are still in the cluster's log and will
         # apply after it comes back. Starting the sequence again at zero mints
@@ -356,7 +454,7 @@ class RaftNode:
         self._snapshot: bytes = b""
         self._snapshot_meta: SnapshotMeta | None = None
         # Inbound transfers, by the leader sending them.
-        self._installing: dict[int, bytearray] = {}
+        self._installing: dict[int, _Assembly] = {}
 
         # How far this member has applied, for callers that must not answer
         # until a particular index is visible here. Reused verbatim from the
@@ -366,6 +464,12 @@ class RaftNode:
         self._forwarder: Any | None = None
         self._closing = False
         self._leader_changed = asyncio.Event()
+        # The broken invariant this member stopped on, once it has (``_fail``),
+        # and the signal its owner waits on to end the process.
+        self._failure: RaftInvariantViolated | None = None
+        self._failed = asyncio.Event()
+        # The one close in progress, which every caller awaits (``close``).
+        self._closer: asyncio.Task[None] | None = None
 
     # -- introspection ---------------------------------------------------
 
@@ -384,6 +488,24 @@ class RaftNode:
     @property
     def voting(self) -> bool:
         return self._voting
+
+    @property
+    def failure(self) -> RaftInvariantViolated | None:
+        """The broken invariant this member stopped on, or ``None`` (``_fail``)."""
+        return self._failure
+
+    async def wait_for_failure(self) -> RaftInvariantViolated:
+        """Return once this member has stopped itself on a broken invariant.
+
+        For the process that owns it, which must then exit: the member takes no
+        further part, and only a restart -- which brings it back with nothing,
+        to be caught up as a non-voting learner -- makes it whole again
+        (``RaftInvariantViolated``). ``nmos_registry.py`` runs this in its task
+        group, so the failure ends the process with status 1.
+        """
+        while self._failure is None:
+            await self._failed.wait()
+        return self._failure
 
     @property
     def incarnation(self) -> int:
@@ -421,7 +543,45 @@ class RaftNode:
 
     @property
     def cursors(self) -> CursorAllocator:
+        """The allocator, for observing and for diagnostics.
+
+        Not for allocating: ``allocate_cursor`` is, because it makes the
+        reservation durable before the cursor leaves this member. A cursor taken
+        from here directly is one a restart can hand out again.
+        """
         return self._machine.cursors
+
+    def allocate_cursor(self, resource_type: ResourceType) -> TaiCursor:
+        """The next paging cursor for ``resource_type``, reserved durably.
+
+        About once per ``RESERVATION_WINDOW_SECONDS`` of cursor progress the
+        cursor lies beyond the reservation on disk, and a new bound is written
+        -- synchronously, beside the term and vote, for the reason ``persist.py``
+        gives -- before the cursor is returned. Every other call is the
+        allocator's arithmetic alone.
+
+        Raises:
+            RaftCursorReservationFailed: The bound could not be written. The
+                cursor is not returned, so nothing that could repeat it after a
+                restart has left this member; the allocator simply moves past
+                it.
+        """
+        cursors = self._machine.cursors
+        cursor = cursors.allocate(resource_type)
+        needed = cursors.reservation_needed(cursor)
+        if needed is not None:
+            try:
+                self._terms.save(PersistentState(
+                    term=self._term, voted_for=self._voted_for,
+                    incarnation=self._incarnation, cursor_reservation=needed,
+                ))
+            except OSError as exc:
+                raise RaftCursorReservationFailed(
+                    f"could not reserve paging cursors up to {needed} in "
+                    f"{self._terms.path}: {exc}",
+                ) from exc
+            cursors.confirm_reservation(needed)
+        return cursor
 
     @property
     def ownership(self) -> OwnershipTable:
@@ -501,6 +661,21 @@ class RaftNode:
         )
 
     async def close(self) -> None:
+        """Stop, releasing every waiter.
+
+        Every call awaits the same close. A member that stops itself (``_fail``)
+        begins closing on its own, and its owner closes it again on the way out;
+        two closes running at once would each tear down the transport while the
+        other was still iterating its links. Shielded, so a caller cancelled
+        while waiting leaves the close to finish rather than half done.
+        """
+        if self._closer is None:
+            self._closer = asyncio.get_running_loop().create_task(
+                self._close(), name=f"raft-close-{self._layout.local.name}",
+            )
+        await asyncio.shield(self._closer)
+
+    async def _close(self) -> None:
         self._closing = True
         for task in (self._ticker, self._applier):
             if task is not None:
@@ -515,6 +690,7 @@ class RaftNode:
         self._ticker = None
         self._applier = None
         self._batcher.fail_all(RaftUnavailable("member is shutting down"))
+        self._fail_reads("member is shutting down")
         for future in self._waiters.values():
             if not future.done():
                 future.set_exception(RaftUnavailable("member is shutting down"))
@@ -565,30 +741,29 @@ class RaftNode:
             return
         if now < self._deadline:
             return
-        if self._installing:
-            # **Absorbing a snapshot is not a moment to campaign.**
-            #
-            # ``go.etcd.io/raft`` gates every campaign on ``promotable()``
-            # (``raft.go:853``), which is ``!IsLearner &&
-            # !hasNextOrInProgressSnapshot()`` (``raft.go:1946``). The first
-            # half is ``_voting`` below; this is the second, which was missing.
-            #
-            # A member mid-transfer is by definition far behind, so it cannot
-            # win a pre-vote the up-to-dateness check is honest about -- and
-            # campaigning clears its ``_leader``, which stops it answering
-            # mutations for no gain. The transfer is also what will make it
-            # current, so waiting is strictly the better move.
-            self._reset_election_timer()
-            return
-        if self._voting or self._cluster_has_forgotten():
-            # Pre-Vote first, always. Winning the real election is the *only*
-            # thing a term increment buys, so asking first costs one round trip
-            # and saves every disruption a doomed campaign would cause.
-            self._pre_campaign()
-        else:
-            # Cannot vote, and no evidence yet that the cluster has lost its
-            # voters. Ask, rather than campaign: see the section above.
-            self._probe_for_forgotten_peers()
+        # **No snapshot gate here, deliberately.** One stood here -- "absorbing
+        # a snapshot is not a moment to campaign" -- modelled on etcd's
+        # ``promotable()``, which refuses while ``hasNextOrInProgressSnapshot()``
+        # (``raft.go:1946-1949``). But that is a *complete* snapshot pending
+        # application (``log.go:287-291``: ``unstable.snapshot != nil``, set only
+        # by ``restore``); etcd has no partial transfers to gate on, and this
+        # member installs a completed one synchronously, so etcd's state never
+        # exists here. What the gate actually tested was a *partial* buffer --
+        # and every chunk and every keepalive from a live leader resets the
+        # timer, so by the time the gate was reached the transfer had stopped.
+        # It could only ever block a campaign the silence called for: the chaos
+        # soak measured clusters with no leader because the one voter able to
+        # lead held an abandoned buffer and never campaigned. A far-behind
+        # member's pre-vote simply fails, which changes nothing.
+        #
+        # Pre-Vote first, always -- and for a member that has forgotten too.
+        # Winning the real election is the *only* thing a term increment buys,
+        # so asking first costs one round trip and saves every disruption a
+        # doomed campaign would cause. A pre-vote changes nothing a peer can
+        # observe, so it is also how a member that has forgotten learns whether
+        # enough others have for a recovery election to be winnable; a separate
+        # "probe" once did that, feeding evidence that outlived its round.
+        self._pre_campaign()
 
     # -- elections -------------------------------------------------------
     #
@@ -615,7 +790,7 @@ class RaftNode:
     #     there, the ordinary rules protect real data and must not be relaxed;
     #   * once a voting quorum is provably impossible, let members that have
     #     forgotten vote again, but only for a candidate approved by **every**
-    #     member not known to have forgotten.
+    #     member not proven to have forgotten.
     #
     # The second clause is what makes it sound rather than merely convenient.
     # Any entry that survives does so on a member that still has its log; that
@@ -623,28 +798,40 @@ class RaftNode:
     # lacking the entry; and since its approval is required, such a candidate
     # cannot win. Entries held only by members that forgot are gone either way.
     #
+    # **What counts as proof** is the part that has to be right, and once was
+    # not. A member has forgotten, for the election of term T, only if its own
+    # reply to this candidacy says ``voting=False`` at term T. That reply is
+    # binding: the member has adopted T, and ``on_promote`` refuses a promotion
+    # from an earlier term, so it stays non-voting until a leader of T or later
+    # promotes it -- and no such leader can exist while T is being decided. The
+    # candidate does the arithmetic, over nothing but such replies and its own
+    # condition (``_won``). The voters do none: a member that has forgotten
+    # grants on log currency like any other, because its grant counts only
+    # where the round itself has proved recovery warranted.
+    #
+    # Evidence gathered any other way goes stale. This was once decided on
+    # observations kept between rounds -- a peer seen answering ``voting=False``
+    # at some point -- which a candidate also sent the voters to re-check. But
+    # a member is promoted back to voting by its leader without anyone else
+    # hearing of it, so an observation could be false by the time it was used:
+    # the Rust chaos soak measured a candidate counting as forgotten a member it
+    # had itself promoted, which had since led a term, and winning without the
+    # committed entries that member held (seeds 59925, 110797, 111540). A reply
+    # refused under a leader lease carries the voter's lower term, so it proves
+    # nothing -- correctly, since a leader exists.
+    #
+    # A pre-vote round predicts the election by the same arithmetic over its
+    # own replies, counting as forgotten only members that *granted* while
+    # saying ``voting=False``. Nothing in a pre-vote is binding, so the
+    # prediction must never promise a recovery the real round would refuse: a
+    # refusal may come from under a live leader's lease, and a term raised for
+    # a doomed recovery is the very disruption pre-vote exists to prevent.
+    #
     # Worked through on five members with three forgetful ones, where a
     # committed entry survives on one of the two remaining: the candidate that
     # lacks it needs that member's approval and is refused, so the candidate
     # that has it is the only one that can win. See
-    # ``TestForgottenQuorumRecovery`` in ``test_consensus.py``.
-
-    def _cluster_has_forgotten(self, also: set[int] | None = None) -> bool:
-        """Is a quorum of voters provably impossible?
-
-        Counts only members *known* to have forgotten -- this member if it has,
-        plus peers observed saying so, plus ``also`` when evaluating a
-        candidate's claim. Everything else counts as a voter, including members
-        nobody has heard from, because an unreachable member is not evidence of
-        anything and treating it as one is how a partition turns into a
-        cluster that elects itself a second leader.
-        """
-        forgotten = set(self._observed_amnesiac)
-        forgotten |= also or set()
-        if not self._voting:
-            forgotten.add(self._layout.local.index)
-        forgotten &= {member.index for member in self._layout.members}
-        return self._layout.size - len(forgotten) < self._layout.quorum
+    # ``TestForgottenEvidenceIsBinding`` in ``test_consensus.py``.
 
     def _leader_lease_holds(self) -> bool:
         """Is this member currently being served by a leader it believes in?
@@ -664,27 +851,6 @@ class RaftNode:
         )
         return elapsed < self._timing.election_min
 
-    def _probe_for_forgotten_peers(self) -> None:
-        """Ask every peer whether it can vote, without standing for election.
-
-        A member that has forgotten cannot campaign until it knows how many
-        others have too, and cannot learn that without asking. Asking by
-        campaigning would raise the term on every attempt while never
-        succeeding -- which is precisely the runaway this replaces.
-
-        Sent at the current term and granting nothing, so it disturbs neither
-        an election in progress nor a healthy leader.
-        """
-        request = RequestVote(
-            term=self._term, candidate=self._layout.local.index,
-            last_log_index=self._log.last_index,
-            last_log_term=self._log.last_term,
-            probe=True,
-        )
-        for peer in self._peers:
-            self._transport.send(peer, request)
-        self._reset_election_timer()
-
     def _reset_election_timer(self) -> None:
         self._deadline = (
             asyncio.get_running_loop().time() + self._timing.election_timeout()
@@ -694,7 +860,54 @@ class RaftNode:
         self._terms.save(PersistentState(
             term=self._term, voted_for=self._voted_for,
             incarnation=self._incarnation,
+            # The bound already durable, carried over: this save is about the
+            # term, and must not erase the reservation the last one recorded.
+            cursor_reservation=self._machine.cursors.reservation,
         ))
+
+    def _fail(self, error: RaftInvariantViolated) -> None:
+        """Stop this member for good: a broken invariant stays broken.
+
+        Fail-stop, the position ``RaftInvariantViolated`` documents and the one
+        ``go.etcd.io/raft`` takes with ``Panicf``: continuing from a state proven
+        impossible can only spread the damage. So before this returns, every
+        part that could spread it has stopped -- leadership, whose heartbeats
+        would carry a commit index this member no longer vouches for; elections;
+        applying; and every caller waiting on an answer, told "unavailable" (a
+        503 the Node retries) because this member will never apply its entry.
+        The transport then closes, which is when peers see the member gone, and
+        the owner is told (``wait_for_failure``) so the process can exit: a
+        restart -- automatic under a service manager -- brings the member back
+        with nothing, and the leader catches it up as a non-voting learner.
+
+        Once only: a second violation found while stopping says nothing new.
+        """
+        if self._failure is not None:
+            return
+        self._failure = error
+        log.error(
+            "raft: %s stops: consensus invariant violated: %s",
+            self._layout.local.name, error,
+        )
+        self._closing = True
+        if self._ticker is not None:
+            self._ticker.cancel()
+        self._relinquish("consensus invariant violated")
+        # Released here, unlike ``_relinquish``, which releases nothing because
+        # a later leader may yet commit what a caller waits on: this member will
+        # never apply it, whoever commits it.
+        reason = f"member stopped: consensus invariant violated: {error}"
+        self._batcher.fail_all(RaftUnavailable(reason))
+        self._fail_reads(reason)
+        for future in self._waiters.values():
+            if not future.done():
+                future.set_exception(RaftUnavailable(reason))
+        self._waiters.clear()
+        self._failed.set()
+        if self._closer is None:
+            self._closer = asyncio.get_running_loop().create_task(
+                self._close(), name=f"raft-close-{self._layout.local.name}",
+            )
 
     def _relinquish(self, reason: str) -> None:
         """Stop leading without changing term or vote.
@@ -716,23 +929,43 @@ class RaftNode:
         self._votes.clear()
         self._pre_votes.clear()
         self._pre_refusals.clear()
-        self._batcher.fail_all(RaftUnavailable(reason))
+        self._forgotten.clear()
+        self._pre_forgotten.clear()
+        # Nothing is released, as etcd releases nothing when a leader steps
+        # down: a proposal still queued is routed by this member's role when it
+        # drains, and one already appended waits for its entry -- which a later
+        # leader may yet commit -- or for its caller to stop waiting
+        # (``_wait_for``). Failing them here told callers "unavailable" about
+        # entries that went on to commit.
+        #
+        # Reads are the exception, as they are in etcd, whose server fails a
+        # read with ``ErrLeaderChanged`` when the leader changes
+        # (``read/read.go:170-193``): a read is confirmed by a quorum that this
+        # member *still* leads, and it no longer does.
+        self._fail_reads(f"no longer the leader: {reason}")
         self._reset_election_timer()
 
     def _step_down(self, term: int) -> None:
-        """Adopt a higher term and return to following."""
-        was_leader = self._role is Role.LEADER
+        """Adopt a higher term and return to following.
+
+        Releases no proposal, for the reason ``_relinquish`` gives; fails any
+        read, for the reason it gives too.
+        """
+        self._fail_reads("no longer the leader: a later term began")
         self._term = term
+        # Every partial snapshot was sent in an earlier term, and no chunk of
+        # an earlier term is accepted any more, so none of them can finish.
+        # Kept, each was memory held for the life of the member.
+        self._installing.clear()
         self._voted_for = None
         self._role = Role.FOLLOWER
         self._leader = None
         self._votes.clear()
         self._pre_votes.clear()
         self._pre_refusals.clear()
+        self._forgotten.clear()
+        self._pre_forgotten.clear()
         self._persist()
-        if was_leader:
-            # In-flight proposals cannot commit under a term we no longer own.
-            self._batcher.fail_all(RaftUnavailable("no longer the leader"))
 
     def _pre_campaign(self) -> None:
         """Ask whether this member would win, before claiming a term.
@@ -755,6 +988,7 @@ class RaftNode:
         self._leader = None
         self._pre_votes = {self._layout.local.index}
         self._pre_refusals = set()
+        self._pre_forgotten = set()
         self._reset_election_timer()
 
         log.debug(
@@ -770,7 +1004,6 @@ class RaftNode:
             term=self._term + 1, candidate=self._layout.local.index,
             last_log_index=self._log.last_index,
             last_log_term=self._log.last_term,
-            amnesiac=tuple(sorted(self._observed_amnesiac)),
             pre_vote=True,
         )
         for peer in self._peers:
@@ -784,7 +1017,7 @@ class RaftNode:
         would stop predicting anything and the term increment it exists to
         avoid would happen anyway.
         """
-        return self._won(votes=self._pre_votes)
+        return self._won(self._pre_votes, self._pre_forgotten)
 
     def _campaign(self) -> None:
         """Start an election. Only ever called with a reachable quorum.
@@ -804,9 +1037,12 @@ class RaftNode:
         """
         self._role = Role.CANDIDATE
         self._term += 1
+        # As in ``_step_down``: a new term ends every transfer of the old one.
+        self._installing.clear()
         self._voted_for = self._layout.local.index
         self._persist()
         self._votes = {self._layout.local.index}
+        self._forgotten = set()
         self._leader = None
         self._reset_election_timer()
 
@@ -815,7 +1051,7 @@ class RaftNode:
             self._layout.local.name, self._term,
         )
 
-        if self._won():
+        if self._won(self._votes, self._forgotten):
             self._become_leader()
             return
 
@@ -823,24 +1059,11 @@ class RaftNode:
             term=self._term, candidate=self._layout.local.index,
             last_log_index=self._log.last_index,
             last_log_term=self._log.last_term,
-            # The evidence travels with the request so a voter that has
-            # forgotten can re-do the arithmetic itself rather than take this
-            # candidate's word for the state of the cluster.
-            amnesiac=tuple(sorted(self._observed_amnesiac)),
         )
         for peer in self._peers:
             self._transport.send(peer, request)
 
     def on_request_vote(self, peer: int, message: RequestVote) -> RequestVoteReply:
-        if message.probe:
-            # A question, not a request. Answered at whatever term we hold, and
-            # deliberately without adopting the asker's term or touching the
-            # election timer: a probe must be able to survey a cluster without
-            # changing it.
-            return RequestVoteReply(
-                term=self._term, granted=False, voting=self._voting,
-            )
-
         if self._leader_lease_holds():
             # Raft §6's disruption problem, and the reason etcd's check-quorum
             # tests assert "votes are rejected when there is a current
@@ -869,17 +1092,12 @@ class RaftNode:
         if message.term > self._term:
             self._step_down(message.term)
 
-        # A member that has forgotten its log normally refuses. It votes only
-        # once the candidate's evidence, together with its own condition,
-        # proves no quorum of voters can exist -- at which point no committed
-        # entry can still be protected by refusing. The arithmetic is re-done
-        # here rather than trusted, so a candidate cannot talk a voter into it.
-        may_vote = self._voting or self._cluster_has_forgotten(
-            set(message.amnesiac),
-        )
-
+        # A member that has forgotten grants on the same terms as any other --
+        # log currency, one vote per term -- and says what it is in the reply.
+        # Whether that grant counts is the candidate's to decide, from this
+        # round's replies alone: see "When every voter has forgotten".
         granted = False
-        if message.term == self._term and may_vote:
+        if message.term == self._term:
             already = self._voted_for
             free = already is None or already == message.candidate
             current = self._log.is_at_least_as_current_as(
@@ -915,12 +1133,8 @@ class RaftNode:
         member's own term when refusing, so a candidate standing on a stale
         term learns to step down.
         """
-        may_vote = self._voting or self._cluster_has_forgotten(
-            set(message.amnesiac),
-        )
         granted = (
-            may_vote
-            and message.term > self._term
+            message.term > self._term
             and self._log.is_at_least_as_current_as(
                 message.last_log_index, message.last_log_term,
             )
@@ -931,15 +1145,6 @@ class RaftNode:
         )
 
     def on_request_vote_reply(self, peer: int, message: RequestVoteReply) -> None:
-        # Recorded before anything else, and for probes and pre-votes too:
-        # this is the only way a member learns which of its peers have
-        # forgotten, and a reply that arrives after the round it belonged to
-        # is still evidence.
-        if message.voting:
-            self._observed_amnesiac.discard(peer)
-        else:
-            self._observed_amnesiac.add(peer)
-
         if message.pre_vote:
             self._on_pre_vote_reply(peer, message)
             return
@@ -948,11 +1153,17 @@ class RaftNode:
             self._step_down(message.term)
             return
         if self._role is not Role.CANDIDATE or message.term != self._term:
+            # Including a reply that arrives after its round is over: it is
+            # evidence about that round and no other. Keeping such a reply was
+            # how a member promoted since came to be counted as forgotten.
             return
+        if not message.voting:
+            # Binding -- this term's answer from the member itself.
+            self._forgotten.add(peer)
         if message.granted:
             self._votes.add(peer)
-            if self._won():
-                self._become_leader()
+        if self._won(self._votes, self._forgotten):
+            self._become_leader()
 
     def _on_pre_vote_reply(self, peer: int, message: RequestVoteReply) -> None:
         """Count a pre-vote, or learn that this member is behind.
@@ -971,6 +1182,10 @@ class RaftNode:
             return
         if message.granted and message.term == self._term + 1:
             self._pre_votes.add(peer)
+            if not message.voting:
+                # From a grant only: see "When every voter has forgotten" for
+                # why a pre-vote must never over-predict a recovery.
+                self._pre_forgotten.add(peer)
             if self._won_pre_vote():
                 self._campaign()
             return
@@ -1024,31 +1239,34 @@ class RaftNode:
         still_possible = self._layout.size - len(self._pre_refusals)
         return still_possible < self._layout.quorum
 
-    def _won(self, votes: set[int] | None = None) -> bool:
-        """Has this candidate collected enough of the right votes?
+    def _won(self, votes: set[int], forgotten: set[int]) -> bool:
+        """Has this round collected enough of the right votes?
 
-        Ordinarily a quorum, unchanged. Once a quorum of voters is impossible,
-        a quorum of votes is necessary but no longer sufficient: every member
-        not known to have forgotten must also have granted, because those are
-        the only members whose up-to-dateness check still means anything and
-        the surviving copy of a committed entry can only be on one of them.
+        Ordinarily a quorum of grants from members that can vote: a grant from
+        one that has forgotten says only that the candidate is as current as an
+        empty log, which proves nothing. Once the round's own replies prove a
+        quorum of voters impossible -- ``forgotten``, plus this member if it has
+        forgotten too -- a quorum of grants of any kind is necessary but not
+        sufficient: every member not proven to have forgotten must also have
+        granted, because those are the only members whose up-to-dateness check
+        still means anything, and the surviving copy of a committed entry can
+        only be on one of them. See "When every voter has forgotten".
 
         Members nobody has heard from count among those, and they cannot have
         granted -- so a partitioned cluster never satisfies this, which is the
         intended answer.
         """
-        tally = self._votes if votes is None else votes
-        if len(tally) < self._layout.quorum:
-            return False
-        if not self._cluster_has_forgotten():
-            return True
-        forgotten = set(self._observed_amnesiac)
+        members = {member.index for member in self._layout.members}
+        proven = forgotten & members
         if not self._voting:
-            forgotten.add(self._layout.local.index)
-        remembering = {
-            member.index for member in self._layout.members
-        } - forgotten
-        return remembering <= tally
+            proven.add(self._layout.local.index)
+        granted = votes & members
+        quorum = self._layout.quorum
+        if len(granted - proven) >= quorum:
+            return True
+        if self._layout.size - len(proven) >= quorum:
+            return False
+        return len(granted) >= quorum and members - proven <= granted
 
     def _become_leader(self) -> None:
         self._role = Role.LEADER
@@ -1059,10 +1277,6 @@ class RaftNode:
         # takes part in -- for no reason, since it is now the member the others
         # are being caught up *from*.
         self._voting = True
-        # Whatever was observed about who had forgotten belonged to the
-        # election just concluded. Keeping it would let a cluster that has
-        # since recovered still believe its voters were gone.
-        self._observed_amnesiac.clear()
         # Figure 2: nextIndex and matchIndex are "reinitialized after
         # election". Everything below describes *this leader's* relationship
         # with the peer, so it has the same lifetime and is reset with them.
@@ -1083,7 +1297,9 @@ class RaftNode:
         #
         # Nothing is lost by resetting: `catching_up` is authoritative from the
         # peer's own reply and arrives on the very next one, and that reply now
-        # sets `promote_through` against *this* leader's commit index.
+        # sets `promote_through` against *this* leader's log (see
+        # `on_append_entries_reply` for why its last index and not its commit
+        # index).
         #
         # `up` and `incarnation` are deliberately kept. They are observations
         # about the peer itself rather than about this leadership, and
@@ -1114,11 +1330,13 @@ class RaftNode:
             # about this one's, and this leader has just reset everything they
             # would report on.
             peer.reply_floor = self._append_sequence
+            peer.heard_request = 0
             # Likewise a snapshot this member was sending in an earlier term:
             # the new transfer starts from zero, and a carried-over offset
             # would have the leader resume a stream the peer is not expecting.
             peer.snapshot_offset = 0
-            peer.snapshot_in_flight = False
+            peer.snapshot_request = 0
+            peer.sending = None
         log.info(
             "raft: %s is leader for term %d",
             self._layout.local.name, self._term,
@@ -1266,10 +1484,18 @@ class RaftNode:
         self._leader = message.leader
         self._reset_election_timer()
         self._heard_from_leader_at = asyncio.get_running_loop().time()
-        # There is a leader, so a quorum of voters existed. Any evidence to the
-        # contrary is out of date, and stale evidence is the one thing that
-        # could justify the recovery path above when it is not warranted.
-        self._observed_amnesiac.clear()
+
+        contradiction = self._contradicting_committed(message)
+        if contradiction is not None:
+            # A leader that contradicts what this member has committed proves
+            # committed data lost from the cluster (``_contradicting_committed``).
+            # Nothing brings this member back into step -- it refuses every
+            # append anchored at its commit point, and would serve its stale
+            # store until the leader's snapshot passed that point -- so it
+            # stops, as for any broken invariant (``_fail``), answering nothing
+            # a leader could count: request id 0 is under every reply floor.
+            self._fail(RaftInvariantViolated(contradiction))
+            return self._append_reject(catching_up=not self._voting)
 
         if message.prev_log_index < self._commit_index:
             # A delayed or duplicated append anchored below what this member
@@ -1301,16 +1527,42 @@ class RaftNode:
             )
 
         if message.entries:
-            self._log.append_replicated(
-                [
+            try:
+                entries = [
                     Entry(
                         term=wire.term, index=wire.index, payload=wire.payload,
                         value=decode_operation(wire.payload),
                     )
                     for wire in message.entries
-                ],
-                committed=self._commit_index,
-            )
+                ]
+            except RaftProtocolError as exc:
+                # Refused at the edge, in the reply, rather than inside apply,
+                # which runs synchronously and has nowhere to fail -- as the
+                # Rust member refuses it. Raised past this handler, it made the
+                # transport drop the whole connection instead.
+                log.warning("raft: undecodable entry: %s", exc)
+                return self._refusal(message)
+            try:
+                self._log.append_replicated(
+                    entries, committed=self._commit_index,
+                )
+            except ValueError as exc:
+                # Entries that do not follow what this log holds: a refusal,
+                # which the leader answers by trying again from where it points,
+                # as the Rust member refuses it. Raised past this handler, it
+                # was logged as a failed connection, and the connection dropped.
+                log.warning("raft: replicated append refused: %s", exc)
+                return self._refusal(message)
+            except RaftInvariantViolated as exc:
+                # An entry here conflicting at or below the commit index. No
+                # message can reach that -- ``prev_log_index < commit_index``
+                # was answered above, so every entry here lies beyond the commit
+                # index -- which is what makes it a broken invariant rather
+                # than a refusal. Raised past this handler, it failed the link
+                # the message came by, and the next one repeated it. The member
+                # stops instead, and answers nothing a leader could count.
+                self._fail(exc)
+                return self._append_reject(catching_up=not self._voting)
 
         # Figure 2, AppendEntries receiver rule 5, verbatim: "If leaderCommit >
         # commitIndex, set commitIndex = min(leaderCommit, index of last new
@@ -1365,6 +1617,49 @@ class RaftNode:
             catching_up=not self._voting, request_id=message.request_id,
         )
 
+    def _contradicting_committed(self, message: AppendEntries) -> str | None:
+        """Where this leader's append contradicts an entry committed here, or ``None``.
+
+        Raft makes it impossible: a leader holds every entry committed before
+        its term (Leader Completeness, section 5.4.3), and Log Matching makes
+        its entries at those indexes the ones committed here. So a disagreement
+        proves committed data lost from the cluster -- which the non-voting
+        rejoin and the recovery election's veto exist to prevent, so it means a
+        defect. ``go.etcd.io/raft`` treats the same observation as corruption
+        and panics (``maybeAppend``, ``log.go:117-121``).
+
+        Checked wherever this member still can: the anchor, and every entry the
+        message carries, that lie from the snapshot boundary -- whose term is
+        kept -- up to the commit index. Below the boundary nothing is left to
+        compare, and the leader's next append, anchored at the commit point, is
+        where it shows. Before the ``prev_log_index < commit_index`` answer,
+        deliberately: that answer credits the leader with ``match = commit``
+        without looking, and an anchor that matches below the commit point can
+        still carry entries contradicting it. At most a batch of comparisons.
+        """
+        floor = self._log.snapshot_index
+        ceiling = min(self._commit_index, self._log.last_index)
+        claims = [(message.prev_log_index, message.prev_log_term)]
+        claims += [(wire.index, wire.term) for wire in message.entries]
+        for index, term in claims:
+            if floor <= index <= ceiling:
+                held = self._log.term_at(index)
+                if held != term:
+                    return (
+                        f"leader {message.leader} of term {message.term} holds "
+                        f"index {index} at term {term}, committed here at term "
+                        f"{held}: committed data was lost from the cluster"
+                    )
+        return None
+
+    def _refusal(self, message: AppendEntries) -> AppendEntriesReply:
+        """A plain refusal of ``message``: it names the append, and credits nothing."""
+        return AppendEntriesReply(
+            term=self._term, success=False, match_index=0, conflict_index=0,
+            conflict_term=0, catching_up=not self._voting,
+            request_id=message.request_id,
+        )
+
     def _append_reject(self, *, catching_up: bool) -> AppendEntriesReply:
         return AppendEntriesReply(
             term=self._term, success=False, match_index=0,
@@ -1411,13 +1706,48 @@ class RaftNode:
         was_catching_up = state.catching_up
         state.catching_up = message.catching_up
         if message.catching_up and not was_catching_up:
-            # Newly noticed: it must reach everything committed as of now
-            # before its acknowledgements count again.
-            state.promote_through = self._commit_index
+            # Newly noticed: it must hold everything committed as of now
+            # before its vote counts again -- and "everything committed" is
+            # bounded by this leader's *last* index, not by its commit index.
+            #
+            # The two differ exactly after an election. A new leader holds
+            # every committed entry (Leader Completeness), but it learns that an
+            # entry is committed only once one of its own term commits above
+            # it; until then an entry an earlier leader committed looks, from
+            # here, like one nobody committed. The chaos soak measured the
+            # consequence of barring at the commit index: a leader committed an
+            # entry with one follower and restarted before telling it; that
+            # follower won the next term, still believing the commit index
+            # below the entry, and promoted the restarted member at that bar
+            # without it; the promoted member then voted in a candidate that
+            # had never had the entry, which wrote over it. The module
+            # docstring's own scenario, through the promotion rather than the
+            # vote.
+            #
+            # Entries committed after the member restarted do not need waiting
+            # for -- a member catching up is never counted, so they were
+            # committed on a majority without it -- but nothing here can tell
+            # them from the others, and they are in this log, so the whole log
+            # is the bar. etcd's server judges a learner ready against the same
+            # point, the leader's own ``Match`` (``server/etcdserver/server.go``,
+            # ``isLearnerReady``).
+            state.promote_through = self._log.last_index
             log.info(
                 "raft: member %d is catching up through index %d",
                 peer, state.promote_through,
             )
+
+        # Whatever it said, the peer answered in this term -- a read's
+        # confirmation, but only from a member that votes. etcd counts voters'
+        # acknowledgements alone (``maybeAdvance(r.trk.Voters)``,
+        # ``raft.go:1604-1605``; ``CommittedIndex`` over the voters' acks,
+        # ``read_only.go:79-81``), as this leader counts only voters toward a
+        # commit and toward check-quorum. Judged by the flag this reply
+        # carries, not the one before it: the first reply of a member that
+        # restarted with nothing is the one that says so.
+        if not message.catching_up:
+            state.heard_request = max(state.heard_request, message.request_id)
+        self._confirm_reads()
 
         if not message.success and message.conflict_index <= state.match_index:
             # Stale, and safe to say so only because of ``reply_floor``.
@@ -1457,7 +1787,20 @@ class RaftNode:
             # already returned unless ``conflict_index > match_index`` -- so a
             # floor could never be the larger term, and adding it would be a
             # line that looks load-bearing and is not.
-            state.next_index = max(1, message.conflict_index)
+            resume = max(1, message.conflict_index)
+            if resume >= state.next_index:
+                # Nothing learned: the peer asks to resume where this leader
+                # already is, or past it. Sent again at once, the same append
+                # draws the same refusal -- and it was, forever, at zero delay:
+                # 124,991 appends inside one millisecond of cluster time in the
+                # Rust soak (seed 111504), from a follower whose committed
+                # snapshot contradicts this log at its boundary, which only lost
+                # committed data (amnesia past the budget) can produce. etcd
+                # re-sends only when a rejection lowers ``Next`` (``MaybeDecrTo``,
+                # ``tracker/progress.go:226-254``); here the next heartbeat is
+                # the next probe.
+                return
+            state.next_index = resume
             # The window just moved backwards, so anything recorded as told to
             # this peer above its new end was told through a message it
             # rejected. ``go.etcd.io/raft`` clamps the same way whenever
@@ -1486,9 +1829,20 @@ class RaftNode:
         #     pr.Match = n
         #     pr.Next = max(pr.Next, n+1)   // invariant: Match < Next
         #
-        advanced = message.match_index > state.match_index
+        #
+        # And never past this leader's own log: a follower cannot hold more of
+        # it than it holds, as the snapshot-reply path already says
+        # (``on_install_snapshot_reply``). In a correct run the two agree -- a
+        # follower vouches for a window this leader sent, or for its commit
+        # index, which Leader Completeness puts inside this log. Where they do
+        # not, committed data has been lost, and the unbounded credit put
+        # ``next_index`` past the end of the log: ``_send_append`` then raised
+        # out of every tick, and the follower was never sent an anchor it could
+        # check against what it committed (``_contradicting_committed``).
+        vouched = min(message.match_index, self._log.last_index)
+        advanced = vouched > state.match_index
         if advanced:
-            state.match_index = message.match_index
+            state.match_index = vouched
         # ``Match < Next``, which etcd states as an invariant on the same line
         # it advances them (``tracker/progress.go:211``). Enforced on every
         # success rather than only on an advance, because the two can be driven
@@ -1647,6 +2001,7 @@ class RaftNode:
         self._commit_index = candidate
         self._schedule_apply()
         self._replicate()
+        self._arm_reads()
 
     # -- applying --------------------------------------------------------
 
@@ -1704,13 +2059,21 @@ class RaftNode:
                 await self._apply_committed()
             except asyncio.CancelledError:
                 raise
-            except RaftInvariantViolated:
+            except RaftInvariantViolated as exc:
                 # Past the catch-all below, deliberately. That handler exists
                 # so one bad apply cannot kill a member, and it is right for
                 # everything transient -- but an invariant that is broken stays
                 # broken, and logging it once per wake-up would be a silent
                 # failure wearing the costume of a handled one.
-                raise
+                #
+                # Re-raising it was no better: it ended this task and nothing
+                # else. Nobody awaits the task before ``close``, which gathers
+                # it with ``return_exceptions=True``, and the reference kept to
+                # it stops asyncio reporting it -- so the member went on
+                # leading, voting and serving a store that no longer moved,
+                # with not one line logged. It stops instead (``_fail``).
+                self._fail(exc)
+                return
             except Exception:
                 log.exception("raft: applying committed entries failed")
 
@@ -1771,6 +2134,180 @@ class RaftNode:
             if future is not None and not future.done():
                 future.set_result(outcome)
 
+    def _wait_for(
+        self, proposal: ProposalId, future: asyncio.Future[Outcome],
+    ) -> None:
+        """Hold ``future`` until its entry applies -- or its caller stops waiting.
+
+        A waiter used to leave only when its entry applied, so a forwarded
+        proposal that never became an entry here -- its ``Propose`` never
+        delivered, refused by a member no longer leading, or accepted and then
+        overwritten -- kept one for the life of the member: 1,046 of them in 40
+        chaos-soak runs, every one's caller long gone. etcd removes the waiter
+        when the client's context ends (``v3_server.go:1117``, ``:1129``, "GC
+        wait"); a caller's deadline cancelling this future is that here. The
+        entry may still commit, with nobody waiting: what a caller answered
+        "unavailable" was told to expect.
+        """
+        self._waiters[proposal] = future
+
+        def release(done: asyncio.Future[Outcome]) -> None:
+            if self._waiters.get(proposal) is done:
+                del self._waiters[proposal]
+
+        future.add_done_callback(release)
+
+    # -- reading ---------------------------------------------------------
+
+    async def read_index(self, *, timeout: float) -> int:
+        """The index a read here must have applied before it may answer.
+
+        etcd's ReadIndex in its default, quorum-confirmed mode
+        (``ReadOnlySafe``, ``raft.go:58-70``): the commit index as it stood when
+        the read began, released only once a quorum has confirmed, after that
+        moment, that the leader giving it still leads. A member that has
+        applied through it holds every write acknowledged before the read
+        began, so an answer from its own store -- a 400, a 404 -- is one the
+        leader would have given.
+
+        On the leader the read is served here; a follower asks its leader
+        (``on_read_index``). Raises ``RaftUnavailable`` when there is no leader,
+        when leadership is lost before a quorum confirms, or at ``timeout``.
+        """
+        if self._role is not Role.LEADER:
+            return await self._ask_leader_for_read_index(timeout)
+        try:
+            return await asyncio.wait_for(self._begin_read(), timeout)
+        except asyncio.TimeoutError as exc:
+            raise RaftUnavailable(
+                "no quorum confirmed this member's leadership in time",
+            ) from exc
+
+    async def _ask_leader_for_read_index(self, timeout: float) -> int:
+        leader = self._leader
+        if leader is None:
+            # etcd drops the request with no leader (``raft.go:1764-1768``); a
+            # caller here is told at once rather than left to its deadline.
+            raise RaftUnavailable("no leader elected")
+        # A silent leader or a failed link raises ``RaftUnavailable`` from the
+        # transport, which resolves a request only with the kind it expects
+        # (``EXPECTED_REPLY``).
+        reply: ReadIndexReply = await self._transport.request(
+            leader, ReadIndex(request_id=0), timeout=timeout,
+        )
+        if not reply.ok:
+            raise RaftUnavailable(
+                f"member {leader} gave no read index: {reply.reason}",
+            )
+        return reply.index
+
+    async def on_read_index(self, peer: int, message: ReadIndex) -> ReadIndexReply:
+        """A member asking this one, as its leader, for a read index.
+
+        Waits for confirmation, or for leadership to end, and for nothing else:
+        a leader that cannot hear a quorum stands down within an election
+        window (check-quorum), which fails every read waiting on it. The asker
+        bounds its own wait; etcd's leader holds reads the same way.
+        """
+        if self._role is not Role.LEADER:
+            return ReadIndexReply(
+                ok=False, index=0, reason="not the leader",
+                request_id=message.request_id,
+            )
+        try:
+            index = await self._begin_read()
+        except RaftUnavailable as exc:
+            return ReadIndexReply(
+                ok=False, index=0, reason=str(exc), request_id=message.request_id,
+            )
+        return ReadIndexReply(
+            ok=True, index=index, reason="", request_id=message.request_id,
+        )
+
+    def _begin_read(self) -> asyncio.Future[int]:
+        """Record a read on this leader; the future is its confirmed index."""
+        future: asyncio.Future[int] = asyncio.get_running_loop().create_future()
+        if self._layout.size == 1:
+            # A lone voter is answered at once, at its commit index, as etcd
+            # answers one (``raft.go:1355-1361``): there is nobody to confirm
+            # anything with, and it has acknowledged nothing it has not
+            # committed.
+            future.set_result(self._commit_index)
+            return future
+        self._reads.append(_Read(future=future))
+        self._arm_reads()
+        return future
+
+    def _committed_in_current_term(self) -> bool:
+        """etcd's ``committedEntryInCurrentTerm`` (``raft.go:2065-2070``).
+
+        Until a leader commits an entry of its own term it cannot know how far
+        earlier terms committed (Raft §8), so its commit index is no bound on
+        what a read must see: etcd postpones reads until then
+        (``raft.go:1365-1367``).
+        """
+        try:
+            return self._log.term_at(self._commit_index) == self._term
+        except RaftLogCompacted:
+            return False
+
+    def _arm_reads(self) -> None:
+        """Give every postponed read its index, and ask a quorum to confirm it.
+
+        Armed at the commit index and the append sequence of this moment, then
+        a heartbeat to every peer at once -- etcd broadcasts one per read
+        (``sendMsgReadIndexResponse``, ``raft.go:2146-2156``) -- whose replies,
+        carrying later ids, are the confirmation ``_confirm_reads`` counts.
+        """
+        if self._role is not Role.LEADER or not self._committed_in_current_term():
+            return
+        armed = False
+        for read in self._reads:
+            if read.index is None:
+                read.index = self._commit_index
+                read.after = self._append_sequence
+                armed = True
+        if armed:
+            self._replicate()
+            self._confirm_reads()
+
+    def _confirm_reads(self) -> None:
+        """Release every read a quorum has confirmed.
+
+        A read is confirmed when this member and enough voters to make a quorum
+        have answered, in this term, an append sent after it was armed -- etcd's
+        ``maybeAdvance`` over the voters' echoed positions
+        (``raft.go:1600-1609``). Members catching up are not voters here, as
+        they are not for commitment or check-quorum. A read whose caller has
+        gone is simply dropped.
+        """
+        if not self._reads:
+            return
+        quorum = self._layout.quorum
+        waiting: list[_Read] = []
+        for read in self._reads:
+            if read.future.done():
+                continue
+            if read.index is None:
+                waiting.append(read)
+                continue
+            confirmed = 1 + sum(
+                1 for peer in self._peers.values()
+                if not peer.catching_up and peer.heard_request > read.after
+            )
+            if confirmed >= quorum:
+                read.future.set_result(read.index)
+            else:
+                waiting.append(read)
+        self._reads = waiting
+
+    def _fail_reads(self, reason: str) -> None:
+        """Fail every read waiting here: see ``_relinquish``."""
+        for read in self._reads:
+            if not read.future.done():
+                read.future.set_exception(RaftUnavailable(reason))
+        self._reads = []
+
     # -- proposing -------------------------------------------------------
 
     def propose(self, operation: RegistryOperation) -> asyncio.Future[Outcome]:
@@ -1789,7 +2326,7 @@ class RaftNode:
             for item in batch:
                 proposal = self._next_proposal()
                 operations.append(_rebind(item.operation, proposal))
-                self._waiters[proposal] = item.future
+                self._wait_for(proposal, item.future)
             self._append_local(operations)
             self._replicate()
             # A single-member cluster has no peers to hear from, so nothing
@@ -1811,7 +2348,7 @@ class RaftNode:
         for item in batch:
             proposal = self._next_proposal()
             operation = _rebind(item.operation, proposal)
-            self._waiters[proposal] = item.future
+            self._wait_for(proposal, item.future)
             payloads.append(encode_operation(operation))
         self._transport.send(
             leader, Propose(proposals=tuple(payloads), request_id=0),
@@ -1884,16 +2421,25 @@ class RaftNode:
                 # disowned; a reply it already sent must not be read as news
                 # about the one that replaced it.
                 state.reply_floor = self._append_sequence
-                # A reconnect invalidates anything that was in flight: neither
-                # the chunk nor the append it was waiting on will ever be
-                # answered, and holding the pause open would strand the peer.
-                state.snapshot_in_flight = False
+                # A reconnect ends the exchange: whatever was in flight is
+                # disowned (``reply_floor`` above fences its replies, which on
+                # BULK may yet arrive), and holding the pause open would strand
+                # the peer.
+                state.snapshot_request = 0
                 state.pending_request = 0
                 state.snapshot_offset = 0
+                state.sending = None
                 state.sent_commit = 0
                 self._send_append(peer, state)
         else:
             state.catching_up = False
+            # A transfer from this peer may never resume, and held its buffer
+            # for the life of the member if it did not. Nothing is lost by
+            # dropping it: a reconnected leader restarts at offset 0, and if
+            # the leader's own link survived -- links are directed -- its next
+            # chunk finds no buffer, is answered with 0, and it starts over. A
+            # restart, never a splice and never a stall.
+            self._installing.pop(peer, None)
 
     # -- compaction ------------------------------------------------------
 
@@ -1949,9 +2495,10 @@ class RaftNode:
         # 12. A follower installing it set ``last_applied = 11`` over a store
         # that already held entry 12's registration, replayed 12, computed
         # ``creates=False`` where the proposer had said ``True``, and raised
-        # ``DivergenceDetected``. That member then stops applying for good:
-        # committed at 14, applied stuck at 11, a private view of the registry
-        # that no amount of further replication repairs.
+        # ``DivergenceDetected`` -- a tripwire since removed, see
+        # ``machine.py`` -- and stopped applying for good: committed at 14,
+        # applied stuck at 11. Replaying entries a snapshot already contains is
+        # wrong whatever apply does about it: not every operation is idempotent.
         #
         # So the snapshot is labelled ``applied``, always, because that is what
         # it contains. The ``min(matchIndex)`` bound keeps its real job --
@@ -1978,6 +2525,16 @@ class RaftNode:
         )
         try:
             payload = await self._snapshots.finish(capture)
+        except SnapshotAbandoned:
+            # A snapshot was installed while this one was being serialised
+            # (``StateMachine.install_snapshot`` abandons the capture). It is
+            # newer than anything this walk could produce, and it is already
+            # held, so there is nothing to store and nothing to discard.
+            log.debug(
+                "raft: %s stopped a snapshot through index %d: a later one "
+                "was installed", self._layout.local.name, applied,
+            )
+            return
         except Exception:
             self._snapshots.abandon()
             log.exception("raft: taking a snapshot failed")
@@ -2039,24 +2596,42 @@ class RaftNode:
             self._send_keepalive(peer, state)
             return
 
-        if state.snapshot_in_flight:
-            # One chunk at a time. See ``_PeerState.snapshot_in_flight``. The
-            # chunk is on BULK, which a slow transfer can occupy for a long
-            # time, so the liveness signal goes separately on CONTROL.
-            self._send_keepalive(peer, state)
-            return
+        now = asyncio.get_running_loop().time()
+        if state.snapshot_request:
+            if now - state.snapshot_sent_at < self._timing.election_min:
+                # One chunk at a time. See ``_PeerState.snapshot_request``. The
+                # chunk is on BULK, which a slow transfer can occupy for a long
+                # time, so the liveness signal goes separately on CONTROL.
+                self._send_keepalive(peer, state)
+                return
+            # Overdue: lost with its connection, or its reply was. Sent again
+            # under a new id, so should the first answer arrive after all it
+            # is not the one awaited. See ``_PeerState.snapshot_sent_at``.
+            state.snapshot_request = 0
+
+        if state.snapshot_offset == 0 or state.sending is None:
+            # A transfer starts -- or restarts, the follower having thrown its
+            # buffer away -- so it is of the snapshot as it stands now, pinned
+            # for its whole length. See ``_PeerState.sending``.
+            state.sending = (meta, self._snapshot)
+            state.snapshot_offset = 0
+        sent_meta, payload = state.sending
 
         offset = state.snapshot_offset
-        chunk = self._snapshot[offset:offset + self._timing.snapshot_chunk]
-        done = offset + len(chunk) >= len(self._snapshot)
-        state.snapshot_in_flight = True
+        chunk = payload[offset:offset + self._timing.snapshot_chunk]
+        done = offset + len(chunk) >= len(payload)
+        # From the append sequence, so the floor a reset raises fences chunks
+        # and appends alike.
+        self._append_sequence += 1
+        state.snapshot_request = self._append_sequence
+        state.snapshot_sent_at = now
         self._transport.send(
             peer,
             InstallSnapshot(
                 term=self._term, leader=self._layout.local.index,
-                last_index=meta.last_index, last_term=meta.last_term,
+                last_index=sent_meta.last_index, last_term=sent_meta.last_term,
                 offset=offset, data=bytes(chunk), done=done,
-                ownership=b"",
+                ownership=b"", request_id=state.snapshot_request,
             ),
             # BULK, so a multi-megabyte transfer cannot head-of-line-block the
             # heartbeats that keep this member's leadership alive.
@@ -2102,35 +2677,112 @@ class RaftNode:
         installed snapshot is a registry describing a state that never existed,
         and the whole point of this path is that the member using it cannot
         tell the difference on its own.
+
+        Every answer carries this member's commit index and names the chunk it
+        answers (``InstallSnapshotReply``): the first is how the leader learns
+        to stop sending a snapshot this member already holds, the second how it
+        tells the answer to the chunk in flight from one that outlived its
+        transfer.
         """
-        if message.term < self._term:
+
+        def answer(received: int, *, done: bool = False) -> InstallSnapshotReply:
             return InstallSnapshotReply(
-                term=self._term, bytes_received=0, done=False,
+                term=self._term, bytes_received=received, done=done,
+                commit_index=self._commit_index, request_id=message.request_id,
             )
+
+        if message.term < self._term:
+            return answer(0)
         if message.term > self._term:
             self._step_down(message.term)
         self._role = Role.FOLLOWER
         self._leader = message.leader
         self._reset_election_timer()
 
-        buffer = self._installing.get(peer)
-        if message.offset == 0 or buffer is None:
-            buffer = bytearray()
-            self._installing[peer] = buffer
-        if message.offset != len(buffer):
-            # A chunk out of order, or a retransmission from a different
-            # offset. Restart rather than splice: a snapshot assembled from
-            # mismatched pieces would parse and be wrong.
-            self._installing[peer] = bytearray()
+        if (
+            self._log.snapshot_index <= message.last_index <= self._commit_index
+            and self._log.term_at(message.last_index) != message.last_term
+        ):
+            # Not held at all: the leader's snapshot ends on an entry committed
+            # here at another term -- committed data lost from the cluster, as
+            # in ``_contradicting_committed``. The member stops (``_fail``) and
+            # credits nothing: request id 0 is under every reply floor.
+            held = self._log.term_at(message.last_index)
+            self._installing.pop(peer, None)
+            self._fail(RaftInvariantViolated(
+                f"leader {message.leader} of term {message.term} sent a "
+                f"snapshot through index {message.last_index} at term "
+                f"{message.last_term}, committed here at term {held}: "
+                f"committed data was lost from the cluster",
+            ))
             return InstallSnapshotReply(
                 term=self._term, bytes_received=0, done=False,
+                commit_index=0, request_id=0,
             )
-        buffer += message.data
+
+        if message.last_index <= self._commit_index:
+            # Already held: everything this snapshot covers is committed here,
+            # and installing it would replace the state machine with older
+            # state while ``_commit_index`` correctly stays put -- committed
+            # entries un-applied, the one thing a state machine may never do.
+            # Against the **commit index**, not the compaction boundary:
+            # ``snapshot_index <= commit_index`` always, so the boundary let
+            # through every snapshot landing in between. ``go.etcd.io/raft``
+            # ignores it on exactly this line (``raft.go:1861``) and answers
+            # with its commit index (``raft.go:1850-1853``), logged at Info:
+            # it is a race between a leader's decision and this member's
+            # progress, not a fault. Decided from the metadata at the first
+            # chunk, rather than after a whole transfer has been assembled to
+            # be thrown away.
+            self._installing.pop(peer, None)
+            log.info(
+                "raft: %s ignored a snapshot through %d from member %d: "
+                "committed through %d already",
+                self._layout.local.name, message.last_index, peer,
+                self._commit_index,
+            )
+            return answer(0)
+
+        identity = (
+            message.term, message.leader, message.last_index, message.last_term,
+        )
+        assembly = self._installing.get(peer)
+        if message.offset == 0:
+            # Only a first chunk may begin a transfer, and it always may: the
+            # sender has started over, whatever it was sending before.
+            assembly = _Assembly(identity)
+            self._installing[peer] = assembly
+        elif (
+            assembly is not None
+            and assembly.identity == identity
+            and _holds(assembly.data, message.offset, message.data)
+        ):
+            # A copy of a chunk this member already holds. The leader sends a
+            # chunk again once its answer is overdue, and a chunk that was slow
+            # rather than lost arrives as well as its copy -- first, since one
+            # connection carries both. Answered with what is assembled, which
+            # is where the leader resumes; the copy is the chunk in flight, so
+            # its answer is the one the leader acts on. Treated as a mismatch,
+            # as it once was, it threw the transfer away and the leader began
+            # again from nothing: 343 of 362 follower resets in chaos-soak seed
+            # 140692, whose members needing a snapshot never finished one.
+            return answer(len(assembly.data))
+        elif (
+            assembly is None
+            or assembly.identity != identity
+            or message.offset != len(assembly.data)
+        ):
+            # A chunk out of order, one disagreeing with what is held at its
+            # offset, or -- the case an offset alone cannot see -- the next
+            # chunk of a *different* snapshot. Restart rather than splice: a
+            # snapshot assembled from mismatched pieces can parse and be wrong.
+            self._installing.pop(peer, None)
+            return answer(0)
+        assembly.data += message.data
+        buffer = assembly.data
 
         if not message.done:
-            return InstallSnapshotReply(
-                term=self._term, bytes_received=len(buffer), done=False,
-            )
+            return answer(len(buffer))
 
         try:
             meta, ownership, records = decode_snapshot(bytes(buffer))
@@ -2142,11 +2794,11 @@ class RaftNode:
         except Exception:
             log.exception("raft: refusing a snapshot that did not install")
             self._installing.pop(peer, None)
-            return InstallSnapshotReply(
-                term=self._term, bytes_received=0, done=False,
-            )
+            return answer(0)
 
-        impossible = self._why_the_snapshot_cannot_be_real(meta, message.term)
+        impossible = self._why_the_snapshot_cannot_be_real(
+            meta, message.term, sent_as=(message.last_index, message.last_term),
+        )
         if impossible is not None:
             # openraft's issue-1892 lesson, in their words: "rejects
             # protocol-impossible input early, instead of corrupting its
@@ -2164,12 +2816,21 @@ class RaftNode:
                 peer, impossible,
             )
             self._installing.pop(peer, None)
-            return InstallSnapshotReply(
-                term=self._term, bytes_received=0, done=False,
-            )
+            return answer(0)
 
         self._machine.install_snapshot(store, ownership, meta.last_index)
         self._log.reset_to_snapshot(meta.last_index, meta.last_term)
+        # Kept as this member's own snapshot. The log now starts at the
+        # snapshot's boundary, so the entries below it exist on this member
+        # only as these bytes -- and a member that cannot hand them on strands
+        # every follower that needs them, should it ever lead. Only compaction
+        # used to set these, so a leader that had caught up by snapshot and not
+        # compacted since could send its stranded followers nothing but
+        # keepalives, for as long as it led: the chaos soak's commonest
+        # liveness failure. etcd keeps an applied snapshot as the storage's own
+        # (``storage.go:218-237``) and serves that (``raft.go:672``).
+        self._snapshot = bytes(buffer)
+        self._snapshot_meta = meta
         # The fence jumps rather than advances: everything through this index
         # is now visible, however little of it arrived as entries.
         asyncio.get_running_loop().create_task(
@@ -2181,47 +2842,41 @@ class RaftNode:
             "raft: %s installed a snapshot through index %d (%d resources)",
             self._layout.local.name, meta.last_index, meta.resources,
         )
-        return InstallSnapshotReply(
-            term=self._term, bytes_received=len(buffer), done=True,
-        )
+        return answer(len(buffer), done=True)
 
     def _why_the_snapshot_cannot_be_real(
-        self, meta: SnapshotMeta, sender_term: int,
+        self, meta: SnapshotMeta, sender_term: int, *,
+        sent_as: tuple[int, int],
     ) -> str | None:
         """Is this snapshot's metadata possible at all? ``None`` if it is.
 
         Two checks, both about metadata rather than content -- the content
         already had to decode and install before we got here.
 
-        A snapshot cannot describe a term above the one its sender holds: the
-        sender built it from entries it had committed, and it cannot have
-        committed an entry from a term it has not reached.
+        A snapshot's own header must describe the transfer that carried it, and
+        it cannot describe a term above the one its sender holds: the sender
+        built it from entries it had committed, and it cannot have committed an
+        entry from a term it has not reached.
 
-        Nor can it move this member's snapshot boundary *backwards*. Everything
-        below the boundary is already applied, so accepting an older snapshot
-        would un-apply committed state -- the one thing a state machine may
-        never do.
+        A snapshot this member already holds -- one at or below its commit
+        index -- is not impossible, only unneeded, and is answered before any
+        of this (``on_install_snapshot``).
         """
+        if (meta.last_index, meta.last_term) != sent_as:
+            # The payload's own header and the transfer that carried it
+            # describe different snapshots. The leader credits what it sent
+            # *as*; installing what the bytes say would leave the two members
+            # disagreeing about what this one holds -- a phantom match on one
+            # side, a hole on the other.
+            return (
+                f"its contents describe a snapshot through ({meta.last_index}, "
+                f"t{meta.last_term}) but it was sent as one through "
+                f"({sent_as[0]}, t{sent_as[1]})"
+            )
         if meta.last_term > sender_term:
             return (
                 f"it covers term {meta.last_term} but arrived from a member "
                 f"at term {sender_term}"
-            )
-        if meta.last_index <= self._commit_index:
-            # Against the **commit index**, not the compaction boundary.
-            # ``snapshot_index <= commit_index`` always, so comparing against
-            # the boundary let through every snapshot landing in between --
-            # and installing one of those replaces the state machine with older
-            # state while ``_commit_index`` correctly stays put, leaving
-            # committed entries un-applied. That is the one thing a state
-            # machine may never do.
-            #
-            # ``go.etcd.io/raft`` refuses on exactly this line
-            # (``raft.go:1861``): ``if s.Metadata.Index <= r.raftLog.committed
-            # { return false }``.
-            return (
-                f"it ends at index {meta.last_index}, at or below what is "
-                f"already committed here ({self._commit_index})"
             )
         return None
 
@@ -2231,11 +2886,27 @@ class RaftNode:
         if message.term > self._term:
             self._step_down(message.term)
             return
-        if self._role is not Role.LEADER:
+        if self._role is not Role.LEADER or message.term != self._term:
+            # A reply is evidence only about the exchange it answers, and one
+            # from an earlier term answers a transfer this leadership never
+            # made. Its correlation id is below the floor this leadership
+            # raised on beginning, so it would be fenced below as well; the
+            # term is checked first, as ``on_append_entries_reply`` checks its
+            # replies.
+            # Believed, a stale ``done`` credited the peer with *this* leader's
+            # current snapshot -- measured as a member credited with index 504
+            # from a term-78 reply about a snapshot through 500, whose genuine
+            # rejections were then discarded as stale for good. etcd drops every
+            # lower-term message before per-type handling (``raft.go:1133-1186``).
             return
         state = self._peers.get(peer)
-        meta = self._snapshot_meta
-        if state is None or meta is None:
+        if state is None:
+            return
+        if message.request_id <= state.reply_floor:
+            # Sent before a reset -- a reconnect, or this leadership beginning
+            # -- and so about an exchange this leader has disowned, possibly
+            # with an incarnation of the peer that no longer exists. Fenced as
+            # ``on_append_entries_reply`` fences its own.
             return
 
         # A peer working through a transfer is answering, and must count toward
@@ -2244,18 +2915,48 @@ class RaftNode:
         # so it sets ``RecentActive`` on the same line.
         state.last_heard_at = asyncio.get_running_loop().time()
 
-        state.snapshot_in_flight = False
+        # The follower's own statement of what it holds, credited whichever
+        # chunk this answers: its committed prefix is this leader's, so the
+        # credit is true however stale the reply (see
+        # ``InstallSnapshotReply.commit_index``). Bounded by this leader's log,
+        # which a complete leader's commit-holding peers cannot exceed.
+        credited = min(message.commit_index, self._log.last_index)
+        if credited > state.match_index:
+            state.match_index = credited
+            state.next_index = max(state.next_index, credited + 1)
 
-        if message.done:
-            state.next_index = meta.last_index + 1
-            state.match_index = meta.last_index
+        if message.request_id != state.snapshot_request:
+            # Not the reply to the chunk in flight -- a first copy answered
+            # after an overdue one was sent again. It drives nothing: a second
+            # stream beside the first is how the transfer once forked.
+            return
+        state.snapshot_request = 0
+
+        pinned = state.sending
+        if message.done or (
+            pinned is not None and message.commit_index >= pinned[0].last_index
+        ):
+            # Installed -- or already held, which etcd calls an ignored
+            # snapshot: either way the follower has everything the transfer
+            # covers, and replication resumes from what it has said it holds.
+            state.sending = None
             state.snapshot_offset = 0
+            state.next_index = state.match_index + 1
             self._send_append(peer, state)
             return
 
-        # ``bytes_received`` is how much the follower has assembled, so it is
-        # both the acknowledgement and the offset to resume from -- including
-        # zero, which is the follower saying it threw the transfer away.
+        if message.bytes_received == 0:
+            # The follower threw the transfer away. It starts again, from a
+            # fresh pin -- but at the next heartbeat, not now: a refusal that
+            # recurs would otherwise ping-pong at network speed. etcd pauses a
+            # failed snapshot's peer the same way (``MsgAppFlowPaused``,
+            # ``raft.go:1618-1628``).
+            state.sending = None
+            state.snapshot_offset = 0
+            return
+
+        # How much the follower has assembled: the acknowledgement, and the
+        # offset to resume from.
         state.snapshot_offset = message.bytes_received
         self._send_snapshot(peer, state)
 

@@ -407,8 +407,9 @@ fn cert_optional_admits_a_client_that_offers_nothing() {
         eprintln!("skipping: no root CA in the PKI");
         return;
     }
-    let (context, _, mode) = server_context(&[(server_chain(), server_key())], &[&anchor], true, None)
-        .expect("the listener configures");
+    let (context, _, mode) =
+        server_context(&[(server_chain(), server_key())], &[&anchor], true, None)
+            .expect("the listener configures");
     assert_eq!(mode, ClientAuth::Optional);
 
     let port = serve(context, 4);

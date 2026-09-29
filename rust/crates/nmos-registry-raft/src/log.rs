@@ -22,7 +22,7 @@
 //! arithmetic the node needs available and correct; `commit.rs` holds the rule
 //! itself, with the reasoning next to it.
 
-use crate::errors::RaftLogCompacted;
+use crate::errors::{RaftInvariantViolated, RaftLogCompacted};
 
 /// One log entry: where it sits, what it says, and what it means.
 ///
@@ -225,7 +225,9 @@ impl<T> RaftLog<T> {
         entries: Vec<(Vec<u8>, T)>,
     ) -> Result<(u64, u64), AppendError> {
         if entries.is_empty() {
-            return Err(AppendError("append() needs at least one entry".to_owned()));
+            return Err(AppendError::Refused(
+                "append() needs at least one entry".to_owned(),
+            ));
         }
         let first = self.last_index().saturating_add(1);
         for (offset, (payload, value)) in entries.into_iter().enumerate() {
@@ -276,24 +278,24 @@ impl<T> RaftLog<T> {
             if entry.index <= self.last_index() {
                 let existing_term = self
                     .get(entry.index)
-                    .map_err(|e| AppendError(e.to_string()))?
+                    .map_err(|e| AppendError::Refused(e.to_string()))?
                     .term;
                 if existing_term == entry.term {
                     continue;
                 }
                 if entry.index <= committed {
-                    return Err(AppendError(format!(
+                    return Err(AppendError::Invariant(RaftInvariantViolated(format!(
                         "entry {} arrived as term {} but is held here as term \
                          {existing_term}, and index {committed} is committed -- \
                          accepting it would discard committed state",
                         entry.index, entry.term,
-                    )));
+                    ))));
                 }
                 self.truncate_suffix(entry.index)
-                    .map_err(|e| AppendError(e.to_string()))?;
+                    .map_err(|e| AppendError::Refused(e.to_string()))?;
             }
             if entry.index != self.last_index().saturating_add(1) {
-                return Err(AppendError(format!(
+                return Err(AppendError::Refused(format!(
                     "entry {} does not follow {}; replication must be contiguous",
                     entry.index,
                     self.last_index(),
@@ -447,11 +449,24 @@ impl<T> RaftLog<T> {
 
 /// An append that could not be made.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AppendError(pub String);
+pub enum AppendError {
+    /// Nothing to append from: no entries, entries that do not follow what
+    /// this log holds, or an index below what it has discarded. A refusal --
+    /// the leader tries again from where the reply points.
+    Refused(String),
+    /// A conflict at or below the commit index. Accepting it would discard
+    /// committed state, which Log Matching says cannot happen: a broken
+    /// invariant, on which the member stops (`RaftNode::fail`). The Python
+    /// raises `RaftInvariantViolated` at the same line.
+    Invariant(RaftInvariantViolated),
+}
 
 impl std::fmt::Display for AppendError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        match self {
+            Self::Refused(why) => f.write_str(why),
+            Self::Invariant(violated) => write!(f, "{violated}"),
+        }
     }
 }
 
@@ -459,7 +474,7 @@ impl std::error::Error for AppendError {}
 
 #[cfg(test)]
 mod tests {
-    use super::{Entry, RaftLog};
+    use super::{AppendError, Entry, RaftLog};
 
     fn log_of(terms: &[u64]) -> RaftLog<&'static str> {
         let mut log = RaftLog::new();
@@ -503,6 +518,34 @@ mod tests {
         assert!(
             error.to_string().contains("discard committed"),
             "refused for the wrong reason: {error}",
+        );
+        // And as a broken invariant, on which the member stops -- not a
+        // refusal, which the leader would simply retry.
+        assert!(
+            matches!(error, AppendError::Invariant(_)),
+            "a conflict with committed state was classed as a refusal: {error:?}",
+        );
+    }
+
+    /// Entries that do not follow what the log holds are a refusal, which the
+    /// leader retries from where the reply points -- never a stop.
+    #[test]
+    fn a_gap_is_refused_not_a_broken_invariant() {
+        let mut log = log_of(&[1, 1]);
+        let error = log
+            .append_replicated(
+                vec![Entry {
+                    term: 1,
+                    index: 5,
+                    payload: Vec::new(),
+                    value: "beyond",
+                }],
+                2,
+            )
+            .expect_err("a gap was appended");
+        assert!(
+            matches!(error, AppendError::Refused(_)),
+            "a gap was classed as a broken invariant: {error:?}",
         );
     }
 

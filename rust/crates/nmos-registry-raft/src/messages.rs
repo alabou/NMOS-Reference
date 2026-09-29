@@ -241,23 +241,16 @@ impl WireEntry {
 
 /// Raft §5.2. Ask a peer for its vote in `term`.
 ///
-/// Two fields beyond the paper's, both serving the recovery path for "when every
-/// voter has forgotten".
-///
-/// `probe` asks a peer only to state whether it can vote, never for the vote
-/// itself. A member that came back from a restart needs to know how many of its
-/// peers are in the same condition before it may do anything about it, and
-/// without a probe the only way to ask would be to stand for election -- which
-/// inflates the term on every attempt and, in the state this exists to escape,
-/// can never succeed.
-///
-/// `amnesiac` carries the evidence: the members this candidate has *itself
-/// observed* answering `voting = false`. A voter that has lost its log grants
-/// nothing on trust; it re-does the arithmetic on this list plus its own status,
-/// and grants only when the two together prove that no quorum of voters can
-/// exist. Members the candidate has not heard from are absent from the list and
-/// therefore counted as voters -- which is what stops a partition looking like an
-/// empty cluster.
+/// Fields 5 and 6 are retired and must never be reused. They were `probe`
+/// ("can you vote?", sent by a member that had forgotten) and `amnesiac` (the
+/// members the candidate had observed answering `voting = false`, for a voter
+/// that had forgotten to re-do the recovery arithmetic on). Both served evidence
+/// carried *between* rounds, and such evidence goes stale: a member is promoted
+/// back to voting without the observer hearing of it, and a stale list once
+/// elected a leader that lacked a committed entry. Who has forgotten is now
+/// proved inside the round, by each member's own reply ([`RequestVoteReply`]'s
+/// `voting` at the candidate's term) -- see "When every voter has forgotten" in
+/// `node.rs`. A decoder skips both numbers like any field it does not know.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestVote {
     /// The term being stood for -- prospective when `pre_vote` is set.
@@ -268,10 +261,6 @@ pub struct RequestVote {
     pub last_log_index: u64,
     /// The term of that entry.
     pub last_log_term: u64,
-    /// Ask only whether this peer can vote, not for the vote.
-    pub probe: bool,
-    /// Members observed to have answered `voting = false`.
-    pub amnesiac: Vec<u64>,
     /// Raft §9.6, and etcd's `MsgPreVote`: "would you vote for me?".
     ///
     /// `term` then carries the term the candidate *would* stand in -- its own
@@ -290,16 +279,13 @@ impl RequestVote {
     /// This message's payload bytes.
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
-        let mut writer = Writer::new()
+        Writer::new()
             .uint(1, self.term)
             .uint(2, self.candidate)
             .uint(3, self.last_log_index)
             .uint(4, self.last_log_term)
-            .bool(5, self.probe);
-        for member in &self.amnesiac {
-            writer = writer.uint(6, *member);
-        }
-        writer.bool(7, self.pre_vote).take()
+            .bool(7, self.pre_vote)
+            .take()
     }
 
     /// Reads a payload back.
@@ -313,8 +299,6 @@ impl RequestVote {
             candidate: 0,
             last_log_index: 0,
             last_log_term: 0,
-            probe: false,
-            amnesiac: Vec::new(),
             pre_vote: false,
         };
         let mut reader = Reader::new(payload);
@@ -324,8 +308,6 @@ impl RequestVote {
                 2 => message.candidate = reader.uint()?,
                 3 => message.last_log_index = reader.uint()?,
                 4 => message.last_log_term = reader.uint()?,
-                5 => message.probe = reader.bool()?,
-                6 => message.amnesiac.push(reader.uint()?),
                 7 => message.pre_vote = reader.bool()?,
                 _ => reader.skip(wire)?,
             }
@@ -342,6 +324,11 @@ impl RequestVote {
 /// candidate missing committed entries from winning. Until the leader has caught
 /// it up and promoted it, it answers `voting = false` and the candidate does not
 /// count it toward a majority.
+///
+/// Answered at the candidate's own term, `voting = false` is also the only
+/// evidence the recovery path accepts that a member has forgotten: the member
+/// has adopted that term, and only a leader of that term or a later one could
+/// promote it, so the answer cannot go stale while the round is decided.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestVoteReply {
     /// The voter's term, or the prospective term on a granted pre-vote.
@@ -577,6 +564,15 @@ pub struct InstallSnapshot {
     pub done: bool,
     /// The ownership table, carried alongside the store.
     pub ownership: Vec<u8>,
+    /// Which chunk this is, for the reply to name.
+    ///
+    /// Drawn from the leader's append sequence, so the `reply_floor` that
+    /// fences replies from a superseded exchange fences these too. Chunks
+    /// travel on BULK while a reconnect is reported for CONTROL, so a reply can
+    /// outlive the transfer it belonged to; only the reply to the chunk in
+    /// flight may drive the transfer, and the id is how the leader knows which
+    /// one that is.
+    pub request_id: u64,
 }
 
 impl InstallSnapshot {
@@ -595,6 +591,7 @@ impl InstallSnapshot {
             .bytes(6, &self.ownership)
             .bytes(7, &self.data)
             .bool(8, self.done)
+            .uint(9, self.request_id)
             .take()
     }
 
@@ -613,6 +610,7 @@ impl InstallSnapshot {
             data: Vec::new(),
             done: false,
             ownership: Vec::new(),
+            request_id: 0,
         };
         let mut reader = Reader::new(payload);
         while let Some((number, wire)) = reader.next_field()? {
@@ -625,6 +623,7 @@ impl InstallSnapshot {
                 6 => message.ownership = reader.bytes()?.to_vec(),
                 7 => message.data = reader.bytes()?.to_vec(),
                 8 => message.done = reader.bool()?,
+                9 => message.request_id = reader.uint()?,
                 _ => reader.skip(wire)?,
             }
         }
@@ -641,6 +640,19 @@ pub struct InstallSnapshotReply {
     pub bytes_received: u64,
     /// Whether it considers the transfer complete.
     pub done: bool,
+    /// How far this member has committed, as it answers.
+    ///
+    /// etcd's rule (`raft.go:1840-1854`): an installed snapshot is answered
+    /// with the follower's new last index and an *ignored* one -- at or below
+    /// what it has already committed -- with its commit index, both as an
+    /// ordinary append response. Without it the ignored snapshot had no answer
+    /// but the one a discarded transfer gets, and the leader started again from
+    /// zero, for ever. Crediting it is truthful whichever transfer the reply
+    /// answers: the follower's committed prefix is the leader's (Leader
+    /// Completeness).
+    pub commit_index: u64,
+    /// The [`InstallSnapshot::request_id`] this answers.
+    pub request_id: u64,
 }
 
 impl InstallSnapshotReply {
@@ -654,6 +666,8 @@ impl InstallSnapshotReply {
             .uint(1, self.term)
             .uint(2, self.bytes_received)
             .bool(3, self.done)
+            .uint(4, self.commit_index)
+            .uint(5, self.request_id)
             .take()
     }
 
@@ -667,6 +681,8 @@ impl InstallSnapshotReply {
             term: 0,
             bytes_received: 0,
             done: false,
+            commit_index: 0,
+            request_id: 0,
         };
         let mut reader = Reader::new(payload);
         while let Some((number, wire)) = reader.next_field()? {
@@ -674,6 +690,8 @@ impl InstallSnapshotReply {
                 1 => message.term = reader.uint()?,
                 2 => message.bytes_received = reader.uint()?,
                 3 => message.done = reader.bool()?,
+                4 => message.commit_index = reader.uint()?,
+                5 => message.request_id = reader.uint()?,
                 _ => reader.skip(wire)?,
             }
         }
@@ -683,9 +701,11 @@ impl InstallSnapshotReply {
 
 /// The leader telling a caught-up member that its vote now counts.
 ///
-/// Sent once `match_index` has reached the commit index the leader held when it
-/// first heard from this peer again. Until then the peer has an empty or partial
-/// log and must not participate in elections.
+/// Sent once `match_index` has reached the leader's last index as it stood when
+/// it first heard from this peer again -- its last index rather than its commit
+/// index, because a leader's commit index can lag entries an earlier leader
+/// committed (see `on_append_entries_reply` in `node.rs`). Until then the peer
+/// has an empty or partial log and must not participate in elections.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Promote {
     /// The leader's term.
@@ -727,6 +747,106 @@ impl Promote {
                 1 => message.term = reader.uint()?,
                 2 => message.leader = reader.uint()?,
                 3 => message.through_index = reader.uint()?,
+                _ => reader.skip(wire)?,
+            }
+        }
+        Ok(message)
+    }
+}
+
+/// A member asking its leader for a read index.
+///
+/// etcd's `MsgReadIndex` (`raft.go:1764-1770`): the index below which
+/// everything committed when the read began lies, confirmed by a quorum that
+/// the asker's leader still leads. A member that has applied through it can
+/// answer from its own store as if it were the leader's -- which is what makes
+/// a 400 or a 404 from a follower something a client may act on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadIndex {
+    /// Correlates the reply.
+    pub request_id: u64,
+}
+
+impl ReadIndex {
+    /// The frame type that carries this message.
+    pub const TYPE: MessageType = MessageType::ReadIndex;
+
+    /// This message's payload bytes.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        Writer::new().uint(1, self.request_id).take()
+    }
+
+    /// Reads a payload back.
+    ///
+    /// # Errors
+    ///
+    /// [`RaftProtocolError`] if the payload is malformed.
+    pub fn decode(payload: &[u8]) -> Result<Self, RaftProtocolError> {
+        let mut message = Self { request_id: 0 };
+        let mut reader = Reader::new(payload);
+        while let Some((number, wire)) = reader.next_field()? {
+            match number {
+                1 => message.request_id = reader.uint()?,
+                _ => reader.skip(wire)?,
+            }
+        }
+        Ok(message)
+    }
+}
+
+/// The read index, confirmed -- or why this member cannot give one.
+///
+/// Refused when the answering member is not the leader, or stops being it
+/// before a quorum confirms the read: an index vouched for by a deposed leader
+/// proves nothing (etcd drops pending reads when a leader resets,
+/// `raft.go:809`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadIndexReply {
+    /// Whether `index` is a confirmed read index.
+    pub ok: bool,
+    /// The confirmed read index, when `ok`.
+    pub index: u64,
+    /// Why not, when not `ok`.
+    pub reason: String,
+    /// Echoes the request's id.
+    pub request_id: u64,
+}
+
+impl ReadIndexReply {
+    /// The frame type that carries this message.
+    pub const TYPE: MessageType = MessageType::ReadIndexReply;
+
+    /// This message's payload bytes.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        Writer::new()
+            .bool(1, self.ok)
+            .uint(2, self.index)
+            .string(3, &self.reason)
+            .uint(4, self.request_id)
+            .take()
+    }
+
+    /// Reads a payload back.
+    ///
+    /// # Errors
+    ///
+    /// [`RaftProtocolError`] if the payload is malformed.
+    pub fn decode(payload: &[u8]) -> Result<Self, RaftProtocolError> {
+        let mut message = Self {
+            ok: false,
+            index: 0,
+            reason: String::new(),
+            request_id: 0,
+        };
+        let mut reader = Reader::new(payload);
+        while let Some((number, wire)) = reader.next_field()? {
+            match number {
+                1 => message.ok = reader.bool()?,
+                2 => message.index = reader.uint()?,
+                3 => message.reason = reader.string()?,
+                4 => message.request_id = reader.uint()?,
                 _ => reader.skip(wire)?,
             }
         }
@@ -1093,6 +1213,10 @@ pub enum Message {
     InstallSnapshotReply(InstallSnapshotReply),
     /// See [`Promote`].
     Promote(Promote),
+    /// See [`ReadIndex`].
+    ReadIndex(ReadIndex),
+    /// See [`ReadIndexReply`].
+    ReadIndexReply(ReadIndexReply),
     /// See [`Propose`].
     Propose(Propose),
     /// See [`ProposeReply`].
@@ -1121,6 +1245,8 @@ impl Message {
             Self::InstallSnapshot(_) => MessageType::InstallSnapshot,
             Self::InstallSnapshotReply(_) => MessageType::InstallSnapshotReply,
             Self::Promote(_) => MessageType::Promote,
+            Self::ReadIndex(_) => MessageType::ReadIndex,
+            Self::ReadIndexReply(_) => MessageType::ReadIndexReply,
             Self::Propose(_) => MessageType::Propose,
             Self::ProposeReply(_) => MessageType::ProposeReply,
             Self::Forward(_) => MessageType::Forward,
@@ -1145,6 +1271,7 @@ impl Message {
             Self::RequestVote(_) => Some(MessageType::RequestVoteReply),
             Self::AppendEntries(_) => Some(MessageType::AppendEntriesReply),
             Self::InstallSnapshot(_) => Some(MessageType::InstallSnapshotReply),
+            Self::ReadIndex(_) => Some(MessageType::ReadIndexReply),
             Self::Propose(_) => Some(MessageType::ProposeReply),
             Self::Forward(_) => Some(MessageType::ForwardReply),
             Self::Ping(_) => Some(MessageType::Pong),
@@ -1154,6 +1281,7 @@ impl Message {
             | Self::AppendEntriesReply(_)
             | Self::InstallSnapshotReply(_)
             | Self::Promote(_)
+            | Self::ReadIndexReply(_)
             | Self::ProposeReply(_)
             | Self::ForwardReply(_)
             | Self::Pong(_) => None,
@@ -1173,6 +1301,8 @@ impl Message {
             Self::InstallSnapshot(ref m) => m.encode(),
             Self::InstallSnapshotReply(ref m) => m.encode(),
             Self::Promote(ref m) => m.encode(),
+            Self::ReadIndex(ref m) => m.encode(),
+            Self::ReadIndexReply(ref m) => m.encode(),
             Self::Propose(ref m) => m.encode(),
             Self::ProposeReply(ref m) => m.encode(),
             Self::Forward(ref m) => m.encode(),
@@ -1208,6 +1338,8 @@ pub fn decode_message(
             Message::InstallSnapshotReply(InstallSnapshotReply::decode(payload)?)
         }
         MessageType::Promote => Message::Promote(Promote::decode(payload)?),
+        MessageType::ReadIndex => Message::ReadIndex(ReadIndex::decode(payload)?),
+        MessageType::ReadIndexReply => Message::ReadIndexReply(ReadIndexReply::decode(payload)?),
         MessageType::Propose => Message::Propose(Propose::decode(payload)?),
         MessageType::ProposeReply => Message::ProposeReply(ProposeReply::decode(payload)?),
         MessageType::Forward => Message::Forward(Forward::decode(payload)?),

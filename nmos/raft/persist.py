@@ -1,7 +1,7 @@
 # Copyright (C) 2025-2026 Alain Bouchard
 # SPDX-License-Identifier: Apache-2.0
 
-"""The only thing in this backend that reaches the disk: about 24 bytes.
+"""The only thing in this backend that reaches the disk: well under 100 bytes.
 
 Why any disk at all
 -------------------
@@ -39,13 +39,36 @@ tells a leader that this peer has been reset and must be caught up and
 explicitly promoted before its vote or its acknowledgement counts. See
 ``node.py`` for the non-voting rejoin that uses it.
 
+The cursor reservation
+----------------------
+The third thing a restart must not forget is which paging cursors this member
+has already handed out. A cursor is unique across members by construction, but
+not across two runs of one member, and once the log's cursors are ahead of the
+member's clock a new run re-mints its predecessor's cursors exactly -- see
+``cursors.py`` for the mechanism and the measurement. So the file also carries
+``cursor_reservation``: a bound at or above every cursor this member has handed
+out, written before any cursor above the previous bound leaves the member.
+
+Adding it did not change ``STATE_VERSION``, deliberately. The version exists so
+that a member never guesses about a *vote*, and the new key changes nothing
+about the vote: both implementations have always read the three vote fields by
+name and ignored any other key, so a member built before the key existed still
+reads its vote correctly from a file that has it. Bumping the version would buy
+no safety and would turn every downgrade into a member that refuses to start. A
+file without the key -- written before it existed -- resumes no reservation,
+which is exactly what that file's writer did.
+
+It costs one extra write per ``RESERVATION_WINDOW_SECONDS`` of cursor progress
+(``cursors.py``), on the same path and with the same durability as the vote.
+
 Why the write is synchronous
 ----------------------------
 ``save`` blocks the event loop. That is deliberate and it is the one place this
 package knowingly does so. It sits on the election path, it is a few bytes to
 the page cache plus one fsync, and moving it to a thread would let the loop run
 between "I decided to vote" and "that vote is durable" -- which is precisely
-the window the whole mechanism exists to close.
+the window the whole mechanism exists to close. The reservation has the same
+window, between "this cursor is handed out" and "its bound is durable".
 """
 
 from __future__ import annotations
@@ -58,10 +81,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from nmos.raft.errors import RaftError
+from nmos.registry.types import TaiCursor
 
-# Bumped only if the file's shape changes. A member that finds a version it
-# does not understand refuses to start rather than guessing, because guessing
-# here means guessing about whether it has already voted.
+# Bumped only if the file's shape changes in a way a reader of the vote would
+# misread. A member that finds a version it does not understand refuses to
+# start rather than guessing, because guessing here means guessing about
+# whether it has already voted. (``cursor_reservation`` is additive and did not
+# bump it; see "The cursor reservation" above.)
 STATE_VERSION = 1
 
 
@@ -127,11 +153,18 @@ class PersistentStateError(RaftError):
 
 @dataclass(frozen=True)
 class PersistentState:
-    """What must survive a crash for elections to stay safe."""
+    """What must survive a crash for elections and paging to stay safe.
+
+    ``cursor_reservation`` has no default on purpose. Every save writes the
+    whole file, so a construction site that forgot it would silently erase the
+    reservation the previous save recorded -- and the next incarnation would
+    resume below cursors already handed out.
+    """
 
     term: int
     voted_for: int | None
     incarnation: int
+    cursor_reservation: TaiCursor | None
 
 
 class TermStore:
@@ -175,7 +208,9 @@ class TermStore:
         has been reset.
         """
         if not self._path.exists():
-            state = PersistentState(term=0, voted_for=None, incarnation=1)
+            state = PersistentState(
+                term=0, voted_for=None, incarnation=1, cursor_reservation=None,
+            )
             self.save(state)
             return state
 
@@ -223,9 +258,33 @@ class TermStore:
 
         state = PersistentState(
             term=term, voted_for=voted_for, incarnation=incarnation,
+            cursor_reservation=self._cursor_reservation(raw),
         )
         self.save(state)
         return state
+
+    def _cursor_reservation(self, raw: dict[str, object]) -> TaiCursor | None:
+        """The stored reservation: absent or ``null`` is none, else a cursor.
+
+        Anything else refuses, as an unusable vote does. Resuming *no*
+        reservation instead would be a guess in the one direction that is not
+        safe: this member could then re-mint cursors it has already handed out.
+        """
+        stored = raw.get("cursor_reservation")
+        if stored is None:
+            return None
+        reservation = (
+            TaiCursor.parse(stored) if isinstance(stored, str) else None
+        )
+        if reservation is None:
+            raise PersistentStateError(
+                f"{self._path} holds a cursor reservation that is not a "
+                f"cursor: {stored!r}. Refusing to start without knowing which "
+                f"paging cursors this member has already handed out; removing "
+                f"the key starts it without that knowledge, and a cursor it "
+                f"hands out may then repeat one it handed out before.",
+            )
+        return reservation
 
     def save(self, state: PersistentState) -> None:
         """Write and fsync, atomically. Blocking, for the reason above.
@@ -248,12 +307,21 @@ class TermStore:
         whichever machine last wrote it is not a thing to leave to chance in
         the one file this backend cannot afford to misread.
         """
+        # ``cursor_reservation`` is written even when there is none, as
+        # ``null``, the way ``voted_for`` is: every file this version writes has
+        # the same five keys in the same order, whichever implementation wrote
+        # it. (A missing key still loads -- as no reservation -- because files
+        # written before the key existed have none.)
         payload = json.dumps(
             {
                 "version": STATE_VERSION,
                 "term": state.term,
                 "voted_for": state.voted_for,
                 "incarnation": state.incarnation,
+                "cursor_reservation": (
+                    None if state.cursor_reservation is None
+                    else str(state.cursor_reservation)
+                ),
             },
             indent=2,
         )

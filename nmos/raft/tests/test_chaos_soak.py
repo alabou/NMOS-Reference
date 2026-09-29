@@ -409,7 +409,7 @@ class ChurnDriver:
         """
         node_id = str(uuid.UUID(int=self.rng.getrandbits(128), version=4))
         member = self.cluster.members[member_index]
-        cursor = member.node.cursors.allocate(ResourceType.NODE)
+        cursor = member.node.allocate_cursor(ResourceType.NODE)
         operation = RegisterOp(
             proposal=ProposalId(member_index, 0),
             resource_type=ResourceType.NODE,
@@ -563,7 +563,13 @@ async def _soak(
         elect_timeout, max_delay = 20.0, SOCKET_TIMING.heartbeat / 4
     else:
         cluster = Cluster(size, tmp_path)
-        elect_timeout, max_delay = 5.0, FAST.heartbeat / 2
+        # As long as the socket cluster's, not 5 s: this is a check that a
+        # leader emerges, not a timing one. With every core busy the event
+        # loop ran timers up to 273 ms late against a 30-60 ms election
+        # window, and first elections took up to 7.3 s (120 measured, the
+        # committed and the current election code alike) -- a 5 s deadline
+        # failed the soak on the machine's load, not on anything Raft does.
+        elect_timeout, max_delay = 20.0, FAST.heartbeat / 2
 
     await cluster.start()
     driver = ChurnDriver(cluster, seed, max_delay=max_delay)

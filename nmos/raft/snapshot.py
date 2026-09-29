@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Iterator
+from typing import TYPE_CHECKING, Iterator
 
 from nmos.raft.errors import RaftProtocolError
 from nmos.raft.ownership import OwnershipTable
@@ -58,6 +58,9 @@ from nmos.registry.types import (
     ResourceType,
     TaiCursor,
 )
+
+if TYPE_CHECKING:
+    from nmos.registry.registry import Registry
 
 SNAPSHOT_VERSION = 1
 
@@ -225,13 +228,33 @@ class SnapshotCapture:
         return len(self._pre)
 
 
+class SnapshotAbandoned(Exception):
+    """The capture being serialised was abandoned before it was finished.
+
+    Not a failure. A member abandons its open capture when it installs a
+    snapshot (``StateMachine.install_snapshot``): the store the capture was
+    photographing has just been replaced by a later one, so the image it would
+    produce describes an index the member has already passed. ``finish`` raises
+    this at the first yield after the abandon, and the compaction waiting on it
+    stops -- what it would have produced is older than what the member holds.
+    """
+
+
 class SnapshotStore:
     """Takes and installs snapshots for one member."""
 
-    __slots__ = ("_registry_store", "_capture")
+    __slots__ = ("_registry", "_capture")
 
-    def __init__(self, store: RegistryStore) -> None:
-        self._registry_store = store
+    def __init__(self, registry: Registry) -> None:
+        # The registry, not its store. An install replaces the store in one
+        # assignment (``Registry.swap_store``), and the registry is the single
+        # owner of which store is live -- that is what its ``store`` property
+        # is for. Holding the store itself froze every later snapshot on
+        # whichever store existed when this was built: measured, a member
+        # caught up by an installed snapshot then snapshotted its *pre-install*
+        # store -- none of the 60 Nodes it served -- and, leading, would have
+        # handed that to any follower it had to catch up.
+        self._registry = registry
         self._capture: SnapshotCapture | None = None
 
     @property
@@ -255,6 +278,10 @@ class SnapshotStore:
         The yields are what keep a snapshot of a large registry from stalling
         the event loop -- and therefore the heartbeat timer, which is how a
         snapshot would otherwise cause the election it has no business causing.
+
+        Raises:
+            SnapshotAbandoned: The capture was abandoned during a yield,
+                because the member installed a later snapshot.
         """
         if capture is not self._capture:
             raise RuntimeError("that capture is not the open one")
@@ -270,6 +297,17 @@ class SnapshotStore:
                 seen += 1
                 if seen % CHUNK_RESOURCES == 0:
                     await asyncio.sleep(0)
+                    # A yield is the only place anything else runs, so it is
+                    # the only place the capture can have been abandoned -- and
+                    # after the last one nothing yields again, so no install
+                    # can land between this check and the caller storing the
+                    # result. Checked by identity: "a capture is open" is not
+                    # "this capture is still open".
+                    if self._capture is not capture:
+                        raise SnapshotAbandoned(
+                            f"the capture pinned at index {capture.index} was "
+                            f"abandoned: a later snapshot was installed",
+                        )
 
             # Resources that were *deleted* while the capture was open are no
             # longer in the walk, but they existed at the pinned index, so the
@@ -291,10 +329,17 @@ class SnapshotStore:
                 writer.bytes_(6, record)
             return writer.take()
         finally:
-            self._capture = None
+            # Only if it is still this one: an abandoned capture is already
+            # gone, and whatever is open now is not this walk's to close.
+            if self._capture is capture:
+                self._capture = None
 
     def abandon(self) -> None:
-        """Drop an open capture without producing a snapshot."""
+        """Drop an open capture without producing a snapshot.
+
+        Called when a snapshot is installed; a ``finish`` still walking the
+        abandoned capture raises ``SnapshotAbandoned`` at its next yield.
+        """
         self._capture = None
 
     def _walk(self) -> Iterator[RegisteredResource]:
@@ -314,8 +359,12 @@ class SnapshotStore:
 
         Sorted, so two members with equal stores produce byte-identical
         snapshots, which is what makes one comparable or checksummable at all.
+
+        The live store, read through the registry when the walk begins. An
+        install that replaces it mid-walk abandons the capture, so a walk never
+        continues across a swap.
         """
-        store = self._registry_store
+        store = self._registry.store
         for resource_type in ResourceType:
             for resource in sorted(
                 store.iter_extant(resource_type), key=lambda r: r.id,

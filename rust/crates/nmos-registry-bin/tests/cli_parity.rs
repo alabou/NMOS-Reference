@@ -261,7 +261,7 @@ fn every_implemented_flag_has_pythons_repeatability() {
         let Some(long) = flag.options.iter().find(|o| o.starts_with("--")) else {
             continue;
         };
-        if clap_flags().get(long.as_str()).is_none() {
+        if !clap_flags().contains_key(long.as_str()) {
             continue; // deferred, not implemented here yet
         }
         let python_repeats = flag.kind == "append";

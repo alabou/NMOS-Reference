@@ -12,6 +12,8 @@ the one that fails if the fast path is allowed to return its own rejection.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from nmos.registry.backend import BackendState
@@ -28,17 +30,22 @@ from nmos.registry.tests.test_etcd_backend import (
     _eventually,
     _start_backend,
 )
-from nmos.registry.types import Body, ResourceType
+from nmos.registry.etcd_backend import EtcdRegistryBackend
+from nmos.registry.types import Body, RegistrationResult, ResourceType
 
 pytestmark = pytest.mark.e2e
 
 
-async def _register(backend, resource_type: ResourceType, raw: dict):
+async def _register(
+    backend: EtcdRegistryBackend, resource_type: ResourceType, raw: dict[str, Any],
+) -> RegistrationResult:
     typed = decode_resource(resource_type, raw)
     return await backend.register(resource_type, Body.from_data(raw))
 
 
-async def _register_tree(backend) -> tuple[dict, dict, dict]:
+async def _register_tree(
+    backend: EtcdRegistryBackend,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     node, device, sender = make_node(), make_device(), make_sender()
     assert (await _register(backend, ResourceType.NODE, node)).ok
     assert (await _register(backend, ResourceType.DEVICE, device)).ok
@@ -199,7 +206,9 @@ async def test_created_cursor_is_preserved_across_an_update(
     try:
         node = make_node()
         assert (await _register(backend, ResourceType.NODE, node)).ok
-        created = registry.store.get(ResourceType.NODE, node["id"]).created
+        stored = registry.store.get(ResourceType.NODE, node["id"])
+        assert stored is not None
+        created = stored.created
 
         node["version"] = tai_version(1.0)
         assert (await _register(backend, ResourceType.NODE, node)).ok
@@ -462,4 +471,45 @@ async def test_state_is_ready_after_mutations(
         await _register_tree(backend)
         assert backend.state is BackendState.READY
     finally:
+        await backend.close()
+
+
+# ---------------------------------------------------------------------------
+# A compaction error inside a mutation
+# ---------------------------------------------------------------------------
+
+async def test_a_compaction_error_in_a_mutation_is_a_503_that_does_not_degrade(
+    etcd_endpoint: str, namespace: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The watch loop's to handle, not a mutation's to fail on.
+
+    Answered 503 with the member still READY, as the Rust backend answers it
+    (``guarded``). It escaped ``_guarded`` to the handler, which answered 500,
+    and the fenced path degraded the member first. Planted, because no mutation
+    reads at an old revision, so nothing produces it today.
+    """
+    from nmos.etcd.errors import EtcdCompacted
+    from nmos.etcd.kv import EtcdKV
+    from nmos.registry.backend import MutationUnavailable
+
+    registry, backend = await _start_backend(etcd_endpoint, namespace)
+    try:
+        async def compacted(self: EtcdKV, *args: object, **kwargs: object) -> None:
+            raise EtcdCompacted(
+                "etcdserver: mvcc: required revision has been compacted",
+            )
+
+        # On the class: ``EtcdKV`` has slots, so an instance cannot be given a
+        # method of its own. Both the fast path's transaction and the fenced
+        # path's read meet it.
+        monkeypatch.setattr(EtcdKV, "txn", compacted)
+        monkeypatch.setattr(EtcdKV, "read_set", compacted)
+        with pytest.raises(MutationUnavailable):
+            await _register(backend, ResourceType.NODE, make_node())
+        assert backend.state is BackendState.READY, (
+            f"a compaction error left the member {backend.state.name}: it "
+            f"refuses every mutation while its watch rebuilds nothing"
+        )
+    finally:
+        monkeypatch.undo()
         await backend.close()

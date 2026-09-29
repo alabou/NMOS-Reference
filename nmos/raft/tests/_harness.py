@@ -22,6 +22,7 @@ Underscore-prefixed so pytest does not collect it, matching
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import random
 import time
 from pathlib import Path
@@ -121,6 +122,10 @@ class MemoryNetwork:
         self.delivered = 0
         self.dropped = 0
 
+        # Correlated requests (``ask``), by an id unique across the network.
+        self._next_request = 0
+        self._awaiting: dict[int, asyncio.Future[Any]] = {}
+
         # -- chaos knobs, all inert by default --------------------------
         self.rng: random.Random | None = None
         """Set to make delays random. Seeded by the caller, so a failing soak
@@ -187,6 +192,18 @@ class MemoryNetwork:
     def unblock(self, source: int, target: int) -> None:
         self._blocked.discard((source, target))
         self._resync()
+
+    def lose(self, source: int, target: int) -> None:
+        """Lose everything sent ``source -> target`` from now on, telling no one.
+
+        ``block`` announces the change to every member, and a leader takes an
+        announcement that a peer is up as a reconnect: it discards what it
+        knew of that peer's log and fences every reply already in flight. Right
+        for a reconnect; wrong for a link that has failed and not yet been
+        noticed, which is what a TCP connection is between its last delivered
+        byte and the error that reports it. ``unblock`` and ``heal`` restore it.
+        """
+        self._blocked.add((source, target))
 
     def heal(self) -> None:
         self._blocked.clear()
@@ -311,6 +328,18 @@ class MemoryNetwork:
             )
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
+        elif kind is MessageType.READ_INDEX:
+            # On its own task, as ``transport.py`` serves it off the reader: it
+            # waits for a quorum round whose replies arrive by this network.
+            task = asyncio.get_running_loop().create_task(
+                self._read_index(source, target, message),
+            )
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+        elif kind is MessageType.READ_INDEX_REPLY:
+            waiting = self._awaiting.pop(message.request_id, None)
+            if waiting is not None and not waiting.done():
+                waiting.set_result(message)
         if reply is not None:
             # A snapshot reply travels back on the same connection the chunk
             # came in on, so it shares BULK's ordering domain rather than
@@ -328,6 +357,42 @@ class MemoryNetwork:
         if handler is None:
             return
         await handler.on_propose(source, message)
+
+    async def _read_index(self, source: int, target: int, message: Any) -> None:
+        handler = self._handlers.get(target)
+        if handler is None:
+            return
+        reply = await handler.on_read_index(source, message)
+        self.deliver(target, source, reply)
+
+    async def ask(
+        self, source: int, target: int, message: Any, *, timeout: float | None,
+    ) -> Any:
+        """Send a request and await its correlated reply.
+
+        Both legs travel by ``deliver``, so a request or a reply on a link that
+        breaks while it is in flight is lost exactly as any other message is --
+        and the asker learns it the way ``transport.py``'s ``request`` reports
+        silence: ``RaftUnavailable`` at its deadline. A link already down is
+        refused at once, as ``request`` refuses one it has no connection for.
+        """
+        if not self.reachable(source, target):
+            raise RaftUnavailable(f"no link to member {target}")
+        self._next_request += 1
+        request_id = self._next_request
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        self._awaiting[request_id] = future
+        try:
+            self.deliver(
+                source, target, dataclasses.replace(message, request_id=request_id),
+            )
+            return await asyncio.wait_for(future, timeout)
+        except asyncio.TimeoutError as exc:
+            raise RaftUnavailable(
+                f"member {target} did not answer within the deadline",
+            ) from exc
+        finally:
+            self._awaiting.pop(request_id, None)
 
     async def drain(self) -> None:
         """Cancel and await every in-flight delivery task."""
@@ -366,7 +431,17 @@ class MemoryTransport:
         self, peer: int, message: Any, *, timeout: float | None = None,
         stream: Stream = Stream.CONTROL,
     ) -> Any:
-        raise RaftUnavailable("the memory transport does not correlate requests")
+        # A read index is correlated: the node asks its leader for one and
+        # needs the answer. Nothing else is, so a forwarded mutation over this
+        # transport still finds no owner to answer it.
+        if message.TYPE is not MessageType.READ_INDEX:
+            raise RaftUnavailable(
+                f"the memory transport correlates only read indexes, not "
+                f"{message.TYPE.name}",
+            )
+        return await self._network.ask(
+            self._index, peer, message, timeout=timeout,
+        )
 
     @property
     def live(self) -> frozenset[int]:
@@ -388,7 +463,7 @@ class Member:
         self.root = root
         self.registry = Registry(RegistryStore(), query_id=f"q{self.index}")
         self.registry.attach_subscriptions(SubscriptionManager(self.registry))
-        self.snapshots = SnapshotStore(self.registry.store)
+        self.snapshots = SnapshotStore(self.registry)
         self.machine = StateMachine(
             self.registry,
             ownership=OwnershipTable(),

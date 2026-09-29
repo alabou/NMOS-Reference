@@ -23,6 +23,7 @@ use nmos_registry_raft::cursors::CursorAllocator;
 use nmos_registry_raft::log::Entry;
 use nmos_registry_raft::machine::{Outcome, StateMachine};
 use nmos_registry_raft::operations::{Operation, OperationKind, ProposalId, Register};
+use nmos_registry_raft::ownership::OwnershipTable;
 use serde_json::json;
 
 const NODE_ID: &str = "11111111-0000-4000-8000-000000000000";
@@ -148,7 +149,7 @@ fn seed(machine: &mut StateMachine, registry: &Registry) {
             TaiCursor::new(1000, 2),
         ),
     ];
-    machine.apply(registry, &entries).expect("applies");
+    machine.apply(registry, &entries);
 }
 
 // -- registrations ----------------------------------------------------------
@@ -157,19 +158,17 @@ fn seed(machine: &mut StateMachine, registry: &Registry) {
 fn a_registration_lands_in_the_store() {
     let registry = registry();
     let mut machine = machine();
-    let outcomes = machine
-        .apply(
-            &registry,
-            &[register_entry(
-                1,
-                ResourceType::Node,
-                NODE_ID,
-                node_body("a node"),
-                true,
-                TaiCursor::new(1000, 0),
-            )],
-        )
-        .expect("applies");
+    let outcomes = machine.apply(
+        &registry,
+        &[register_entry(
+            1,
+            ResourceType::Node,
+            NODE_ID,
+            node_body("a node"),
+            true,
+            TaiCursor::new(1000, 0),
+        )],
+    );
 
     assert_eq!(outcomes.len(), 1);
     assert_eq!(outcomes[0].1, Outcome::Registered { created: true });
@@ -186,19 +185,17 @@ fn the_carried_cursors_and_health_are_what_is_stored() {
     let registry = registry();
     let mut machine = machine();
     let at = TaiCursor::new(777, 5);
-    machine
-        .apply(
-            &registry,
-            &[register_entry(
-                1,
-                ResourceType::Node,
-                NODE_ID,
-                node_body("a node"),
-                true,
-                at,
-            )],
-        )
-        .expect("applies");
+    machine.apply(
+        &registry,
+        &[register_entry(
+            1,
+            ResourceType::Node,
+            NODE_ID,
+            node_body("a node"),
+            true,
+            at,
+        )],
+    );
 
     let stored = registry.get(ResourceType::Node, NODE_ID).expect("present");
     assert_eq!(
@@ -226,19 +223,17 @@ fn the_body_is_stored_verbatim() {
     let registry = registry();
     let mut machine = machine();
     let raw = format!("  {}\n", node_body("spaced"));
-    machine
-        .apply(
-            &registry,
-            &[register_entry(
-                1,
-                ResourceType::Node,
-                NODE_ID,
-                raw.clone(),
-                true,
-                TaiCursor::new(1000, 0),
-            )],
-        )
-        .expect("applies");
+    machine.apply(
+        &registry,
+        &[register_entry(
+            1,
+            ResourceType::Node,
+            NODE_ID,
+            raw.clone(),
+            true,
+            TaiCursor::new(1000, 0),
+        )],
+    );
 
     assert_eq!(
         registry
@@ -268,19 +263,17 @@ fn an_authoritative_rejection_is_returned_not_raised() {
     })
     .to_string();
 
-    let outcomes = machine
-        .apply(
-            &registry,
-            &[register_entry(
-                4,
-                ResourceType::Device,
-                SENDER_ID,
-                conflicting,
-                true,
-                TaiCursor::new(1001, 0),
-            )],
-        )
-        .expect("a refusal is an answer, not an error");
+    let outcomes = machine.apply(
+        &registry,
+        &[register_entry(
+            4,
+            ResourceType::Device,
+            SENDER_ID,
+            conflicting,
+            true,
+            TaiCursor::new(1001, 0),
+        )],
+    );
 
     assert!(
         matches!(outcomes[0].1, Outcome::Refused { .. }),
@@ -297,19 +290,17 @@ fn entries_already_applied_are_skipped() {
     let mut machine = machine();
     seed(&mut machine, &registry);
 
-    let replayed = machine
-        .apply(
-            &registry,
-            &[register_entry(
-                2,
-                ResourceType::Device,
-                DEVICE_ID,
-                device_body(),
-                true,
-                TaiCursor::new(1000, 1),
-            )],
-        )
-        .expect("applies");
+    let replayed = machine.apply(
+        &registry,
+        &[register_entry(
+            2,
+            ResourceType::Device,
+            DEVICE_ID,
+            device_body(),
+            true,
+            TaiCursor::new(1000, 1),
+        )],
+    );
 
     assert!(
         replayed.is_empty(),
@@ -318,35 +309,214 @@ fn entries_already_applied_are_skipped() {
     assert_eq!(machine.last_applied(), 3);
 }
 
-// -- the divergence tripwire ------------------------------------------------
+// -- apply decides ------------------------------------------------------------
+//
+// `expect_created` is the proposer's prediction, made against its own replica.
+// A mismatch used to stop the applier for good -- on every member, since apply
+// is deterministic -- and it was the chaos soak's largest failure class, from
+// ordinary client races. Apply's own `prepare` is the answer.
+
+/// A registration entry with the proposer's two cursors given separately.
+fn predicted_entry(
+    index: u64,
+    resource_type: ResourceType,
+    resource_id: &str,
+    body_text: String,
+    expect_created: bool,
+    (created, updated): (TaiCursor, TaiCursor),
+    claim_owner: Option<u64>,
+) -> Entry<Operation> {
+    let operation = Operation {
+        proposal: ProposalId {
+            member: 0,
+            sequence: index,
+        },
+        kind: OperationKind::Register(Register {
+            resource_type,
+            resource_id: resource_id.to_owned(),
+            node_id: NODE_ID.to_owned(),
+            body_text,
+            created,
+            updated,
+            health: 1234,
+            expect_created,
+            claim_owner,
+        }),
+    };
+    Entry {
+        term: 1,
+        index,
+        payload: operation.encode(),
+        value: operation,
+    }
+}
 
 #[test]
-fn disagreeing_about_created_is_a_divergence() {
+fn a_registration_predicted_as_a_create_that_applies_as_an_update_is_one() {
+    // The same new Node registered at two members at once: both saw it absent,
+    // both predicted a create, and the second to commit finds it present.
     let registry = registry();
     let mut machine = machine();
     seed(&mut machine, &registry);
 
-    // The Node exists, so this is an update -- but the proposer says create.
-    let error = machine
-        .apply(
-            &registry,
-            &[register_entry(
+    let outcomes = machine.apply(
+        &registry,
+        &[
+            register_entry(
                 4,
                 ResourceType::Node,
                 NODE_ID,
                 node_body("updated"),
                 true,
                 TaiCursor::new(1001, 0),
-            )],
-        )
-        .expect_err("a disagreement about the store's contents is fatal");
+            ),
+            register_entry(
+                5,
+                ResourceType::Node,
+                NODE_ID,
+                node_body("again"),
+                false,
+                TaiCursor::new(1002, 0),
+            ),
+        ],
+    );
+
+    assert_eq!(
+        outcomes[0].1,
+        Outcome::Registered { created: false },
+        "applied as whatever the proposer predicted, not as what the committed state is",
+    );
+    assert_eq!(
+        machine.last_applied(),
+        5,
+        "the applier stopped at the mispredicted entry and never applied the next",
+    );
+    let stored = registry.get(ResourceType::Node, NODE_ID).expect("present");
+    assert_eq!(
+        stored.created,
+        TaiCursor::new(1000, 0),
+        "an update moved the resource's creation cursor",
+    );
+}
+
+#[test]
+fn a_registration_predicted_as_an_update_that_applies_as_a_create_is_stamped_now() {
+    // An update racing a deletion: the proposer saw the Sender and carried its
+    // creation cursor; by the time the entry applies the Sender is gone, so the
+    // entry creates it -- and a resource created *at* this entry was created at
+    // this entry's cursor, not at the one the proposer copied from a record that
+    // no longer exists. Stamped with that, it would sit behind cursors a client
+    // has already paged past.
+    let registry = registry();
+    let mut machine = machine();
+    let seeded = vec![
+        register_entry(
+            1,
+            ResourceType::Node,
+            NODE_ID,
+            node_body("original"),
+            true,
+            TaiCursor::new(1000, 0),
+        ),
+        register_entry(
+            2,
+            ResourceType::Device,
+            DEVICE_ID,
+            device_body(),
+            true,
+            TaiCursor::new(1000, 1),
+        ),
+    ];
+    machine.apply(&registry, &seeded);
+
+    let outcomes = machine.apply(
+        &registry,
+        &[predicted_entry(
+            3,
+            ResourceType::Sender,
+            SENDER_ID,
+            sender_body(),
+            false,
+            (TaiCursor::new(900, 0), TaiCursor::new(1002, 0)),
+            None,
+        )],
+    );
+
+    assert_eq!(outcomes[0].1, Outcome::Registered { created: true });
+    let stored = registry
+        .get(ResourceType::Sender, SENDER_ID)
+        .expect("present");
+    assert_eq!(
+        stored.created,
+        TaiCursor::new(1002, 0),
+        "a resource this entry created carries the creation cursor the proposer copied \
+         from a record that no longer exists",
+    );
+}
+
+#[test]
+fn a_refused_registration_claims_nothing() {
+    // A Device whose Node is not registered: `prepare` refuses it. It registered
+    // nothing and must own nothing -- the claim once landed before `prepare`, so
+    // a refused registration took its Node, and a cluster of Python and Rust
+    // members (the Python claims after `prepare`) held two ownership tables.
+    let registry = registry();
+    let mut machine = machine();
+
+    let outcomes = machine.apply(
+        &registry,
+        &[predicted_entry(
+            1,
+            ResourceType::Device,
+            DEVICE_ID,
+            device_body(),
+            true,
+            (TaiCursor::new(1000, 1), TaiCursor::new(1000, 1)),
+            Some(1),
+        )],
+    );
 
     assert!(
-        error.0.contains("expected created=true"),
-        "unhelpful report: {}",
-        error.0,
+        matches!(outcomes[0].1, Outcome::Refused { .. }),
+        "the orphan Device was accepted: {:?}",
+        outcomes[0].1,
     );
-    assert!(error.0.contains("disagree"));
+    assert_eq!(
+        machine.ownership().owner_of(NODE_ID),
+        None,
+        "a refused registration claimed its Node",
+    );
+}
+
+// -- installing over a capture ---------------------------------------------
+
+#[test]
+fn installing_a_snapshot_abandons_an_open_capture() {
+    // A capture opened before an install photographs the store the install
+    // replaces, pinned at an index the installed snapshot has passed. Left
+    // open, the compaction serialising it finishes and stores its older
+    // snapshot over the installed one.
+    let registry = registry();
+    let mut machine = machine();
+    seed(&mut machine, &registry);
+    let ownership = machine.ownership().clone();
+    machine
+        .snapshots_mut()
+        .begin(3, 1, &ownership)
+        .expect("no capture is open");
+
+    machine.install_snapshot(
+        &registry,
+        RegistryStore::new(),
+        OwnershipTable::default(),
+        10,
+    );
+
+    assert!(
+        machine.snapshots().capture().is_none(),
+        "the install left open the capture that was photographing the store it replaced",
+    );
+    assert_eq!(machine.last_applied(), 10);
 }
 
 #[test]
@@ -355,19 +525,17 @@ fn an_update_declared_as_an_update_is_fine() {
     let mut machine = machine();
     seed(&mut machine, &registry);
 
-    let outcomes = machine
-        .apply(
-            &registry,
-            &[register_entry(
-                4,
-                ResourceType::Node,
-                NODE_ID,
-                node_body("updated"),
-                false,
-                TaiCursor::new(1001, 0),
-            )],
-        )
-        .expect("applies");
+    let outcomes = machine.apply(
+        &registry,
+        &[register_entry(
+            4,
+            ResourceType::Node,
+            NODE_ID,
+            node_body("updated"),
+            false,
+            TaiCursor::new(1001, 0),
+        )],
+    );
     assert_eq!(outcomes[0].1, Outcome::Registered { created: false });
 }
 
@@ -379,18 +547,16 @@ fn unregister_cascades() {
     let mut machine = machine();
     seed(&mut machine, &registry);
 
-    let outcomes = machine
-        .apply(
-            &registry,
-            &[entry(
-                4,
-                OperationKind::Unregister {
-                    resource_type: ResourceType::Device,
-                    resource_id: DEVICE_ID.to_owned(),
-                },
-            )],
-        )
-        .expect("applies");
+    let outcomes = machine.apply(
+        &registry,
+        &[entry(
+            4,
+            OperationKind::Unregister {
+                resource_type: ResourceType::Device,
+                resource_id: DEVICE_ID.to_owned(),
+            },
+        )],
+    );
 
     assert_eq!(outcomes[0].1, Outcome::Removed(true));
     assert!(registry.get(ResourceType::Device, DEVICE_ID).is_none());
@@ -404,18 +570,16 @@ fn unregister_cascades() {
 fn unregistering_something_absent_reports_false() {
     let registry = registry();
     let mut machine = machine();
-    let outcomes = machine
-        .apply(
-            &registry,
-            &[entry(
-                1,
-                OperationKind::Unregister {
-                    resource_type: ResourceType::Node,
-                    resource_id: NODE_ID.to_owned(),
-                },
-            )],
-        )
-        .expect("applies");
+    let outcomes = machine.apply(
+        &registry,
+        &[entry(
+            1,
+            OperationKind::Unregister {
+                resource_type: ResourceType::Node,
+                resource_id: NODE_ID.to_owned(),
+            },
+        )],
+    );
     assert_eq!(outcomes[0].1, Outcome::Removed(false));
 }
 
@@ -425,17 +589,15 @@ fn expiry_removes_the_whole_subtree() {
     let mut machine = machine();
     seed(&mut machine, &registry);
 
-    let outcomes = machine
-        .apply(
-            &registry,
-            &[entry(
-                4,
-                OperationKind::Expire {
-                    node_id: NODE_ID.to_owned(),
-                },
-            )],
-        )
-        .expect("applies");
+    let outcomes = machine.apply(
+        &registry,
+        &[entry(
+            4,
+            OperationKind::Expire {
+                node_id: NODE_ID.to_owned(),
+            },
+        )],
+    );
 
     assert_eq!(outcomes[0].1, Outcome::Count(3));
     for (kind, id) in [
@@ -468,7 +630,7 @@ fn a_fused_claim_takes_ownership_in_one_entry() {
     if let OperationKind::Register(ref mut op) = first.value.kind {
         op.claim_owner = Some(2);
     }
-    machine.apply(&registry, &[first]).expect("applies");
+    machine.apply(&registry, &[first]);
 
     assert!(
         machine.ownership().is_owned_by(NODE_ID, 2),
@@ -480,31 +642,27 @@ fn a_fused_claim_takes_ownership_in_one_entry() {
 fn a_standalone_claim_and_release() {
     let registry = registry();
     let mut machine = machine();
-    machine
-        .apply(
-            &registry,
-            &[entry(
-                1,
-                OperationKind::ClaimOwnership {
-                    node_id: NODE_ID.to_owned(),
-                    owner: 1,
-                },
-            )],
-        )
-        .expect("applies");
+    machine.apply(
+        &registry,
+        &[entry(
+            1,
+            OperationKind::ClaimOwnership {
+                node_id: NODE_ID.to_owned(),
+                owner: 1,
+            },
+        )],
+    );
     assert!(machine.ownership().is_owned_by(NODE_ID, 1));
 
-    machine
-        .apply(
-            &registry,
-            &[entry(
-                2,
-                OperationKind::ReleaseOwnership {
-                    node_id: NODE_ID.to_owned(),
-                },
-            )],
-        )
-        .expect("applies");
+    machine.apply(
+        &registry,
+        &[entry(
+            2,
+            OperationKind::ReleaseOwnership {
+                node_id: NODE_ID.to_owned(),
+            },
+        )],
+    );
     assert_eq!(machine.ownership().owner_of(NODE_ID), None);
 }
 
@@ -513,26 +671,22 @@ fn member_down_releases_everything_that_member_held() {
     let registry = registry();
     let mut machine = machine();
     for (index, node) in ["n-a", "n-b", "n-c"].iter().enumerate() {
-        machine
-            .apply(
-                &registry,
-                &[entry(
-                    index as u64 + 1,
-                    OperationKind::ClaimOwnership {
-                        node_id: (*node).to_owned(),
-                        owner: if index == 2 { 2 } else { 1 },
-                    },
-                )],
-            )
-            .expect("applies");
+        machine.apply(
+            &registry,
+            &[entry(
+                index as u64 + 1,
+                OperationKind::ClaimOwnership {
+                    node_id: (*node).to_owned(),
+                    owner: if index == 2 { 2 } else { 1 },
+                },
+            )],
+        );
     }
 
-    let outcomes = machine
-        .apply(
-            &registry,
-            &[entry(10, OperationKind::MemberDown { member: 1 })],
-        )
-        .expect("applies");
+    let outcomes = machine.apply(
+        &registry,
+        &[entry(10, OperationKind::MemberDown { member: 1 })],
+    );
     assert_eq!(outcomes[0].1, Outcome::Count(2));
     assert!(machine.ownership().is_owned_by("n-c", 2));
 }
@@ -543,18 +697,16 @@ fn the_epoch_is_the_log_index() {
     // recently" answerable without a clock.
     let registry = registry();
     let mut machine = machine();
-    machine
-        .apply(
-            &registry,
-            &[entry(
-                42,
-                OperationKind::ClaimOwnership {
-                    node_id: NODE_ID.to_owned(),
-                    owner: 1,
-                },
-            )],
-        )
-        .expect("applies");
+    machine.apply(
+        &registry,
+        &[entry(
+            42,
+            OperationKind::ClaimOwnership {
+                node_id: NODE_ID.to_owned(),
+                owner: 1,
+            },
+        )],
+    );
     assert_eq!(
         machine.ownership().owner_of(NODE_ID).expect("owned").epoch,
         42,
@@ -606,7 +758,7 @@ fn the_same_log_produces_the_same_store_on_every_member() {
     for member in [0u64, 1] {
         let registry = registry();
         let mut machine = StateMachine::new(member, CursorAllocator::new(member).expect("valid"));
-        machine.apply(&registry, &log).expect("applies");
+        machine.apply(&registry, &log);
 
         let mut image = Vec::new();
         for kind in ResourceType::ALL {
@@ -674,14 +826,12 @@ fn applying_in_chunks_is_the_same_as_applying_at_once() {
 
     let whole_registry = registry();
     let mut whole = machine();
-    whole.apply(&whole_registry, &build()).expect("applies");
+    whole.apply(&whole_registry, &build());
 
     let chunked_registry = registry();
     let mut chunked = machine();
     for entry in build() {
-        chunked
-            .apply(&chunked_registry, std::slice::from_ref(&entry))
-            .expect("applies");
+        chunked.apply(&chunked_registry, std::slice::from_ref(&entry));
     }
 
     assert_eq!(whole.last_applied(), chunked.last_applied());
@@ -705,17 +855,15 @@ fn a_cascade_publishes_events_in_a_total_order() {
     seed(&mut machine, &registry);
     let _ = registry.drain_commits();
 
-    machine
-        .apply(
-            &registry,
-            &[entry(
-                4,
-                OperationKind::Expire {
-                    node_id: NODE_ID.to_owned(),
-                },
-            )],
-        )
-        .expect("applies");
+    machine.apply(
+        &registry,
+        &[entry(
+            4,
+            OperationKind::Expire {
+                node_id: NODE_ID.to_owned(),
+            },
+        )],
+    );
 
     let commits = registry.drain_commits();
     let order: Vec<(&str, &str)> = commits
@@ -766,33 +914,29 @@ fn siblings_in_a_cascade_come_out_in_a_fixed_order() {
             "subscription": {"receiver_id": null, "active": false},
         })
         .to_string();
-        machine
-            .apply(
-                &registry,
-                &[register_entry(
-                    4 + offset as u64,
-                    ResourceType::Sender,
-                    id,
-                    body,
-                    true,
-                    TaiCursor::new(1000, 10 + offset as u64),
-                )],
-            )
-            .expect("applies");
+        machine.apply(
+            &registry,
+            &[register_entry(
+                4 + offset as u64,
+                ResourceType::Sender,
+                id,
+                body,
+                true,
+                TaiCursor::new(1000, 10 + offset as u64),
+            )],
+        );
     }
     let _ = registry.drain_commits();
 
-    machine
-        .apply(
-            &registry,
-            &[entry(
-                20,
-                OperationKind::Expire {
-                    node_id: NODE_ID.to_owned(),
-                },
-            )],
-        )
-        .expect("applies");
+    machine.apply(
+        &registry,
+        &[entry(
+            20,
+            OperationKind::Expire {
+                node_id: NODE_ID.to_owned(),
+            },
+        )],
+    );
 
     let commits = registry.drain_commits();
     let senders: Vec<&str> = commits
@@ -822,19 +966,17 @@ fn applying_raises_the_cursor_high_water() {
     let mut machine = machine();
 
     let far_ahead = TaiCursor::new(TaiCursor::now().seconds + 3600, 0);
-    machine
-        .apply(
-            &registry,
-            &[register_entry(
-                1,
-                ResourceType::Node,
-                NODE_ID,
-                node_body("from a member an hour ahead"),
-                true,
-                far_ahead,
-            )],
-        )
-        .expect("applies");
+    machine.apply(
+        &registry,
+        &[register_entry(
+            1,
+            ResourceType::Node,
+            NODE_ID,
+            node_body("from a member an hour ahead"),
+            true,
+            far_ahead,
+        )],
+    );
 
     assert_eq!(
         machine.cursors().high_water(ResourceType::Node),

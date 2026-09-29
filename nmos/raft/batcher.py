@@ -112,12 +112,12 @@ class ProposalBatcher(Generic[T, R]):
         self._drain(batch)
 
     def fail_all(self, error: BaseException) -> None:
-        """Fail every queued proposal. Used on shutdown and on losing leadership.
+        """Fail every queued proposal. Used on shutdown.
 
-        Leaves the batcher usable afterwards: a member that loses leadership
-        and regains it does not get a new batcher, and one that refused to
-        accept anything after a single failure would stop serving until it
-        restarted.
+        Not on losing leadership: a queued proposal is then routed by the
+        member's role when it drains, as etcd routes one (``RaftNode._relinquish``).
+        Leaves the batcher usable afterwards all the same, so a member that
+        fails what it holds can go on serving.
         """
         batch = self._pending
         self._pending = []

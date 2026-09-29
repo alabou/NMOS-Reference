@@ -102,7 +102,7 @@ class OpKind(IntEnum):
     """
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, order=True)
 class ProposalId:
     """Identifies a proposal so its originator can be answered.
 
@@ -316,8 +316,9 @@ def decode_operation(data: bytes) -> RegistryOperation:
     """Parse one operation, or raise :class:`RaftProtocolError`.
 
     Called on receipt rather than at apply time, deliberately. A malformed
-    entry discovered here can still drop the link; discovered inside apply it
-    would be a synchronous mutation that has nowhere to fail.
+    entry discovered here can still be refused in the reply
+    (``RaftNode.on_append_entries``); discovered inside apply it would be a
+    synchronous mutation that has nowhere to fail.
     """
     kind_value: int | None = None
     body = b""

@@ -23,11 +23,9 @@ import json
 import re
 from pathlib import Path
 
-import pytest
-
 from nmos.raft.cursors import CursorAllocator
 from nmos.raft.log import Entry
-from nmos.raft.machine import DivergenceDetected, StateMachine
+from nmos.raft.machine import StateMachine
 from nmos.raft.operations import (
     ClaimOwnershipOp,
     ExpireOp,
@@ -51,7 +49,7 @@ from nmos.registry.tests._fixtures import (
     make_node,
     make_sender,
 )
-from nmos.registry.types import ResourceType, TaiCursor
+from nmos.registry.types import RegistrationResult, ResourceType, TaiCursor
 
 
 def _machine(member: int = 0) -> tuple[Registry, StateMachine]:
@@ -209,22 +207,102 @@ class TestApplyingRegistrations:
         assert machine.last_applied == 3
 
 
-class TestTheDivergenceTripwire:
-    def test_disagreeing_about_created_raises(self) -> None:
-        """The proposer and this member disagree about what is registered.
+class TestApplyDecides:
+    """``expect_created`` is the proposer's prediction; ``prepare`` decides.
 
-        Reported rather than reconciled: a member that quietly serves its own
-        version of the truth is the failure the whole design exists to stop.
-        """
+    The prediction is made against the proposer's own replica. A mismatch used
+    to stop the applier for good -- on every member, since apply is
+    deterministic -- and it was the chaos soak's largest failure class, from
+    ordinary client races.
+    """
+
+    def test_a_registration_predicted_as_a_create_that_applies_as_an_update_is_one(
+        self,
+    ) -> None:
+        # The same new Node registered at two members at once: both saw it
+        # absent, both predicted a create, and the second to commit finds it
+        # present.
         registry, machine = _machine()
         machine.apply(_seed())
 
-        with pytest.raises(DivergenceDetected, match="disagree"):
-            machine.apply([
-                _register(
-                    4, ResourceType.SENDER, make_sender(), created=True,
+        outcomes = machine.apply([
+            _register(4, ResourceType.NODE, make_node(), created=True),
+            _register(5, ResourceType.NODE, make_node(), created=False),
+        ])
+
+        result = outcomes[ProposalId(member=0, sequence=4)].result
+        assert isinstance(result, RegistrationResult)
+        assert result.ok
+        assert result.created is False, (
+            "applied as whatever the proposer predicted, not as what the "
+            "committed state is"
+        )
+        assert machine.last_applied == 5, (
+            "the applier stopped at the mispredicted entry and never applied "
+            "the next"
+        )
+        stored = registry.store.get(ResourceType.NODE, NODE_ID)
+        assert stored is not None
+        assert stored.created == TaiCursor(1001, 8), (
+            "an update moved the resource's creation cursor"
+        )
+
+    def test_a_registration_predicted_as_an_update_that_applies_as_a_create_is_stamped_now(
+        self,
+    ) -> None:
+        # An update racing a deletion: the proposer saw the Sender and carried
+        # its creation cursor; by the time the entry applies the Sender is
+        # gone, so the entry creates it -- and a resource created *at* this
+        # entry was created at this entry's cursor, not at the one the proposer
+        # copied from a record that no longer exists. Stamped with that, it
+        # would sit behind cursors a client has already paged past.
+        registry, machine = _machine()
+        machine.apply(_seed()[:2])
+
+        raw = make_sender()
+        outcomes = machine.apply([
+            Entry(
+                term=1, index=3, payload=b"",
+                value=RegisterOp(
+                    proposal=ProposalId(0, 3),
+                    resource_type=ResourceType.SENDER,
+                    resource_id=raw["id"], node_id=NODE_ID,
+                    body_text=json.dumps(raw),
+                    created=TaiCursor(900, 0), updated=TaiCursor(1003, 8),
+                    health=5000, expect_created=False,
                 ),
-            ])
+            ),
+        ])
+
+        result = outcomes[ProposalId(0, 3)].result
+        assert isinstance(result, RegistrationResult)
+        assert result.ok
+        assert result.created is True
+        stored = registry.store.get(ResourceType.SENDER, SENDER_ID)
+        assert stored is not None
+        assert stored.created == TaiCursor(1003, 8), (
+            "a resource this entry created carries the creation cursor the "
+            "proposer copied from a record that no longer exists"
+        )
+
+    def test_a_refused_registration_claims_nothing(self) -> None:
+        # A Device whose Node is not registered: ``prepare`` refuses it. It
+        # registered nothing and must own nothing. This side has always
+        # claimed after ``prepare``; the Rust member once claimed before it,
+        # so a mixed cluster held two ownership tables -- the same test there
+        # is the one that fails on that code.
+        registry, machine = _machine()
+
+        outcomes = machine.apply([
+            _register(1, ResourceType.DEVICE, make_device(), claim=1),
+        ])
+
+        result = outcomes[ProposalId(0, 1)].result
+        assert isinstance(result, RegistrationResult)
+        assert not result.ok, "the orphan Device was accepted"
+        assert machine.ownership.owner_of(NODE_ID) is None, (
+            "a refused registration claimed its Node"
+        )
 
     def test_an_update_declared_as_an_update_is_fine(self) -> None:
         registry, machine = _machine()

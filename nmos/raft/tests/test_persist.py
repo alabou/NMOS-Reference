@@ -3,11 +3,13 @@
 
 """The term/vote file: the one piece of durability this backend keeps.
 
-These pin three separable claims:
+These pin four separable claims:
 
 * the state survives a restart, which is what makes election safety hold;
 * the incarnation counts restarts, which is what lets a leader notice a member
   that came back with an empty log;
+* the cursor reservation survives a restart, which is what keeps a restarted
+  member from handing out a paging cursor it handed out before;
 * the write is atomic, so a crash mid-save cannot produce a file that parses as
   term 0 -- which would silently undo the first claim.
 """
@@ -27,6 +29,7 @@ from nmos.raft.persist import (
     PersistentStateError,
     TermStore,
 )
+from nmos.registry.types import TaiCursor
 
 
 class TestFreshMember:
@@ -34,7 +37,7 @@ class TestFreshMember:
         store = TermStore(tmp_path / "state.json")
         state = store.load()
         assert state == PersistentState(
-            term=0, voted_for=None, incarnation=1,
+            term=0, voted_for=None, incarnation=1, cursor_reservation=None,
         )
 
     def test_loading_creates_the_file(self, tmp_path: Path) -> None:
@@ -57,7 +60,10 @@ class TestSurvivingARestart:
         path = tmp_path / "state.json"
         first = TermStore(path)
         first.load()
-        first.save(PersistentState(term=5, voted_for=2, incarnation=1))
+        first.save(PersistentState(
+            term=5, voted_for=2, incarnation=1,
+            cursor_reservation=None,
+        ))
 
         reloaded = TermStore(path).load()
         assert reloaded.term == 5
@@ -73,10 +79,16 @@ class TestSurvivingARestart:
         path = tmp_path / "state.json"
         store = TermStore(path)
         store.load()
-        store.save(PersistentState(term=3, voted_for=0, incarnation=1))
+        store.save(PersistentState(
+            term=3, voted_for=0, incarnation=1,
+            cursor_reservation=None,
+        ))
         assert TermStore(path).load().voted_for == 0
 
-        store.save(PersistentState(term=4, voted_for=None, incarnation=1))
+        store.save(PersistentState(
+            term=4, voted_for=None, incarnation=1,
+            cursor_reservation=None,
+        ))
         assert TermStore(path).load().voted_for is None
 
 
@@ -92,18 +104,141 @@ class TestIncarnation:
         path = tmp_path / "state.json"
         store = TermStore(path)
         store.load()
-        store.save(PersistentState(term=9, voted_for=1, incarnation=1))
+        store.save(PersistentState(
+            term=9, voted_for=1, incarnation=1,
+            cursor_reservation=None,
+        ))
 
         reloaded = TermStore(path).load()
         assert reloaded.term == 9
         assert reloaded.incarnation == 2
 
 
+class TestCursorReservation:
+    """The bound on every cursor handed out, carried from one run to the next."""
+
+    def test_a_reservation_comes_back(self, tmp_path: Path) -> None:
+        path = tmp_path / "state.json"
+        store = TermStore(path)
+        store.load()
+        store.save(PersistentState(
+            term=2, voted_for=1, incarnation=1,
+            cursor_reservation=TaiCursor(1_790_000_000, 999_999_999),
+        ))
+
+        reloaded = TermStore(path).load()
+        assert reloaded.cursor_reservation == TaiCursor(
+            1_790_000_000, 999_999_999,
+        )
+        assert (reloaded.term, reloaded.voted_for) == (2, 1)
+
+    def test_a_file_written_before_the_reservation_existed_resumes_none(
+        self, tmp_path: Path,
+    ) -> None:
+        """The upgrade path: the old four keys, and the vote read exactly.
+
+        A member's first start on this version finds a file without the key.
+        It must neither refuse (that would stop every upgraded member) nor
+        invent a bound (that would be a guess), and the file it writes back
+        carries the key from then on.
+        """
+        path = tmp_path / "state.json"
+        path.write_text(
+            json.dumps({
+                "version": STATE_VERSION, "term": 7, "voted_for": 0,
+                "incarnation": 4,
+            }, indent=2),
+            encoding="utf-8",
+        )
+
+        state = TermStore(path).load()
+        assert state == PersistentState(
+            term=7, voted_for=0, incarnation=5, cursor_reservation=None,
+        )
+        rewritten = json.loads(path.read_text(encoding="utf-8"))
+        assert "cursor_reservation" in rewritten
+        assert rewritten["cursor_reservation"] is None
+
+    def test_a_null_reservation_is_none(self, tmp_path: Path) -> None:
+        path = tmp_path / "state.json"
+        path.write_text(
+            json.dumps({
+                "version": STATE_VERSION, "term": 1, "voted_for": None,
+                "incarnation": 1, "cursor_reservation": None,
+            }),
+            encoding="utf-8",
+        )
+        assert TermStore(path).load().cursor_reservation is None
+
+    @pytest.mark.parametrize(
+        "stored",
+        [
+            pytest.param("soon", id="not a cursor"),
+            pytest.param(12, id="a number"),
+            pytest.param("+1:0", id="a signed cursor"),
+            pytest.param("1:x", id="a cursor with a word in it"),
+            pytest.param(["1:0"], id="a list"),
+            pytest.param(True, id="a boolean"),
+        ],
+    )
+    def test_an_unusable_reservation_refuses_to_start(
+        self, tmp_path: Path, stored: object,
+    ) -> None:
+        """Resuming no bound instead would guess in the one unsafe direction.
+
+        The member could then hand out again a cursor it handed out before --
+        the defect the reservation exists to prevent.
+        """
+        path = tmp_path / "state.json"
+        path.write_text(
+            json.dumps({
+                "version": STATE_VERSION, "term": 1, "voted_for": None,
+                "incarnation": 1, "cursor_reservation": stored,
+            }),
+            encoding="utf-8",
+        )
+        with pytest.raises(
+            PersistentStateError, match="cursor reservation that is not a cursor",
+        ):
+            TermStore(path).load()
+
+    def test_the_file_has_five_keys_in_a_fixed_order(
+        self, tmp_path: Path,
+    ) -> None:
+        """The exact text, which the Rust port asserts byte for byte too.
+
+        A rolling upgrade can hand a member's state directory from one
+        implementation to the other, so the file is the same file whichever
+        wrote it.
+        """
+        path = tmp_path / "state.json"
+        store = TermStore(path)
+        store.save(PersistentState(
+            term=5, voted_for=1, incarnation=3,
+            cursor_reservation=TaiCursor(1_790_000_001, 250),
+        ))
+        assert path.read_text(encoding="utf-8") == (
+            '{\n  "version": 1,\n  "term": 5,\n  "voted_for": 1,\n'
+            '  "incarnation": 3,\n  "cursor_reservation": "1790000001:250"\n}'
+        )
+
+        store.save(PersistentState(
+            term=5, voted_for=None, incarnation=3, cursor_reservation=None,
+        ))
+        assert path.read_text(encoding="utf-8") == (
+            '{\n  "version": 1,\n  "term": 5,\n  "voted_for": null,\n'
+            '  "incarnation": 3,\n  "cursor_reservation": null\n}'
+        )
+
+
 class TestAtomicity:
     def test_a_save_leaves_no_temporary_files(self, tmp_path: Path) -> None:
         store = TermStore(tmp_path / "state.json")
         store.load()
-        store.save(PersistentState(term=2, voted_for=1, incarnation=1))
+        store.save(PersistentState(
+            term=2, voted_for=1, incarnation=1,
+            cursor_reservation=None,
+        ))
         assert [p.name for p in tmp_path.iterdir()] == ["state.json"]
 
     def test_an_unreadable_file_refuses_to_start(self, tmp_path: Path) -> None:
@@ -241,11 +376,17 @@ class TestWindowsDurability:
         """
         path = tmp_path / "state.json"
         store = TermStore(path)
-        store.save(PersistentState(term=1, voted_for=None, incarnation=1))
-        store.save(PersistentState(term=9, voted_for=2, incarnation=3))
+        store.save(PersistentState(
+            term=1, voted_for=None, incarnation=1,
+            cursor_reservation=None,
+        ))
+        store.save(PersistentState(
+            term=9, voted_for=2, incarnation=3,
+            cursor_reservation=None,
+        ))
 
         assert TermStore(path).load() == PersistentState(
-            term=9, voted_for=2, incarnation=4,
+            term=9, voted_for=2, incarnation=4, cursor_reservation=None,
         )
         assert list(tmp_path.iterdir()) == [path]
 
@@ -262,5 +403,8 @@ class TestWriteAccounting:
         assert store.writes == 1
 
         for term in range(2, 6):
-            store.save(PersistentState(term=term, voted_for=None, incarnation=1))
+            store.save(PersistentState(
+                term=term, voted_for=None, incarnation=1,
+                cursor_reservation=None,
+            ))
         assert store.writes == 5

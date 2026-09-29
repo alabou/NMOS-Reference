@@ -33,7 +33,11 @@ serde_json = { workspace = true }
 [dev-dependencies]
 parking_lot = "0.12"
 futures-util = { workspace = true }
-tokio = { workspace = true }
+# `test-util` is what lets `tests/chaos_soak.rs` pause the tokio clock. Every
+# timer the node, the backend and the fence await is a `tokio::time` one, so a
+# paused clock drives elections, leases and timeouts coherently -- and a run
+# costs only the CPU it needs rather than its wall-clock election windows.
+tokio = { workspace = true, features = ["test-util"] }
 serde_json = { workspace = true }
 crc32fast = "1"
 

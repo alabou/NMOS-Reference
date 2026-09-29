@@ -38,15 +38,23 @@ state:
    set, so removal events are sorted before publication -- the same total
    order the etcd backend imposes for the same reason.
 
-The tripwire
-------------
-``RegisterOp.expect_created`` carries the proposer's belief about 201-vs-200.
-Apply re-runs ``store.prepare`` and *that* answer is authoritative, because the
-id-uniqueness check is global and the proposer could not decide it. When the
-two disagree, the proposer and this member have diverged about what the store
-contains, and that is reported rather than reconciled: a member that quietly
-serves its own version of the truth is the failure this whole design exists to
-prevent.
+Apply decides
+-------------
+``RegisterOp.expect_created`` carries the proposer's prediction of 201-vs-200,
+made against its own replica. Apply re-runs ``store.prepare`` and *that* answer
+is authoritative: the committed log order is the truth, and a proposer's view
+of it can only be as fresh as its replica. The two differ on ordinary client
+races -- the same new Node registered at two members at once, a retry whose
+first attempt also commits, an update racing a deletion -- and differing is not
+divergence: every member applied the same prefix and computes the same answer.
+
+A mismatch used to be treated as one ("the two stores disagree") and stopped
+the applier for good. Because apply is deterministic, every member stopped at
+the same entry, and the cluster went on committing while applying nothing --
+the chaos soak's largest single failure class. It is gone; the field stays on
+the wire for members that still read it, and nothing here consults it. Real
+divergence between replicas is not something a stale prediction can reveal;
+the soak's replica-equality check is what looks for it.
 """
 
 from __future__ import annotations
@@ -81,15 +89,6 @@ from nmos.registry.types import (
 )
 
 log = logging.getLogger(__name__)
-
-
-class DivergenceDetected(Exception):
-    """Apply disagreed with the proposer about what the store contained.
-
-    Never recovered from in place. The member raises, degrades, and asks for a
-    fresh snapshot, because the one thing worse than being behind is serving a
-    private version of the truth.
-    """
 
 
 @dataclass
@@ -170,7 +169,17 @@ class StateMachine:
         Ownership is replaced too. A member that rebuilt ownership only from
         entries *after* the snapshot would believe every Node was unowned and
         would start claiming Nodes that already have owners.
+
+        Any capture still open is abandoned first. It was photographing the
+        store this replaces, pinned at an index the installed snapshot has
+        passed, and the compaction serialising it -- which yields, and so can be
+        overtaken by an install -- used to finish anyway and store its older
+        snapshot over the installed one: a member holding a snapshot below its
+        own log boundary, unable to serve the entries between. The compaction
+        sees the abandon at its next yield and stops (``SnapshotAbandoned``).
         """
+        if self._snapshots is not None:
+            self._snapshots.abandon()
         self._registry.swap_store(store)
         self._ownership = ownership
         self._last_applied = index
@@ -297,13 +306,8 @@ class StateMachine:
             # simply the answer.
             return Outcome(result=prepared)
 
-        if prepared.creates != op.expect_created:
-            raise DivergenceDetected(
-                f"proposer expected created={op.expect_created} for "
-                f"{op.resource_type.value} {op.resource_id}, this member "
-                f"computed {prepared.creates}; the two stores disagree about "
-                f"what is registered",
-            )
+        # Created or updated is whatever ``prepare`` says of the committed
+        # state, not what the proposer predicted -- see the module docstring.
 
         if op.claim_owner is not None:
             # Fused claim: a Node's first registration takes ownership in the
@@ -314,7 +318,13 @@ class StateMachine:
         result = store.apply_committed(
             prepared,
             body,
-            created=op.created,
+            # A resource this entry creates was created *at* this entry, whose
+            # cursor is ``updated``. ``created`` is the proposer's copy of the
+            # existing record's creation cursor when it predicted an update;
+            # stamped on a resource that turns out to be new, it would sit
+            # behind cursors a client has already paged past. For a predicted
+            # create the two are equal, so nothing else changes.
+            created=op.updated if prepared.creates else op.created,
             updated=op.updated,
             health=op.health,
         )

@@ -208,34 +208,91 @@ pub const fn should_send_now(
     has_entries || can_bump_commit
 }
 
-/// Where a leader's commit index sits, given what each follower has matched.
+/// Where a leader's commit index sits, given what its countable peers have
+/// matched.
 ///
 /// Figure 2's leader rule: the highest `N` such that a majority have
 /// `match_index >= N` **and** `log[N].term == currentTerm`.
 ///
-/// The term check is §5.4.2 and is not optional: a leader may not commit an
-/// entry from an earlier term merely because it is present on a majority now,
-/// because a later leader could still overwrite it. It becomes committed
-/// indirectly, when an entry from the current term commits above it.
+/// # A majority of the voting configuration
 ///
-/// `match_indices` must include the leader's own last index -- a leader counts
-/// itself toward its own quorum.
+/// Every configured member counts in the denominator, whether or not it can be
+/// counted right now. A member still catching up after a restart contributes
+/// no acknowledgement -- its log may be incomplete, so an acknowledgement from
+/// it is not evidence the entry is safe -- but it is still one of the
+/// cluster's members, and the leader must still outnumber it.
+///
+/// This function once took one vector, the leader's own index among the
+/// peers', and derived the majority from its length. Its caller had already
+/// dropped the members catching up, so the majority shrank with them: with one
+/// of three catching up the vector was two long, its "majority" one, and a
+/// leader committed an entry only it held. Each half was right about what it
+/// documented, and the composition was wrong -- which is why every test of
+/// this function passed, all of them written with every member present. The
+/// chaos soak's commit audit measured it in 92 of 96 runs of seed 11245, every
+/// one the same shape: "m2 (term 57) advanced its commit index 56 -> 60 ... m2
+/// last=60 [leader]; m0 match=0 catching-up (bar 56); m1 match=52". In the runs
+/// that went on long enough, a later leader that never had the entry wrote
+/// over it.
+///
+/// So the quorum is a parameter, which the caller takes from the cluster, and
+/// the leader's own position is another. Nothing about how many
+/// acknowledgements happen to be countable can change how many are needed.
+/// This is the Python rule step for step (`nmos/raft/node.py`,
+/// `_advance_commit`: `needed = self._layout.quorum - 1` peers, the `needed`-th
+/// highest of them, or the leader's own last index when none are needed), and
+/// the rule `go.etcd.io/raft` has by construction: `CommittedIndex`
+/// (`quorum/majority.go:120-163`) sizes its vector by the configured voters,
+/// a voter that has not acknowledged contributes 0, and it reads position
+/// `n - (n/2 + 1)`.
+///
+/// A member catching up is **not** an etcd learner, although both are members
+/// whose acknowledgements do not count. A learner is out of etcd's
+/// denominator because it is out of the voting configuration
+/// (`tracker/tracker.go:34-42`), and that configuration changes only through
+/// an entry the cluster has committed (`node.go:179-187`: `ApplyConfChange`
+/// "must be called whenever a config change is observed in
+/// Ready.CommittedEntries"). Catching up is one leader's own observation of
+/// one peer, agreed by nobody. Letting it shrink the majority is a leader
+/// changing the configuration on its own evidence -- which is the defect.
+///
+/// # The current-term check
+///
+/// §5.4.2, and not optional: a leader may not commit an entry from an earlier
+/// term merely because it is present on a majority now, because a later
+/// leader could still overwrite it. It becomes committed indirectly, when an
+/// entry from the current term commits above it.
+///
+/// # Arguments
+///
+/// * `quorum` -- a majority of the voting configuration, the leader included.
+/// * `leader_last_index` -- the leader's own last index. It counts itself
+///   toward its own quorum, because it holds everything it has appended.
+/// * `acknowledged` -- the match index of every peer whose acknowledgement may
+///   be counted. Not the leader's, and not a peer catching up.
 #[must_use]
 pub fn leader_commit_index(
-    mut match_indices: Vec<u64>,
+    quorum: usize,
+    leader_last_index: u64,
+    mut acknowledged: Vec<u64>,
     current_commit: u64,
     current_term: u64,
     term_at: impl Fn(u64) -> Option<u64>,
 ) -> u64 {
-    if match_indices.is_empty() {
+    // The leader is one of the quorum; the rest must come from its peers.
+    let needed = quorum.saturating_sub(1);
+    if acknowledged.len() < needed {
         return current_commit;
     }
-    // Descending, so the element at the quorum position is the highest index a
-    // majority have reached.
-    match_indices.sort_unstable_by(|a, b| b.cmp(a));
-    let quorum = match_indices.len().div_ceil(2);
-    let Some(&candidate) = match_indices.get(quorum.saturating_sub(1)) else {
-        return current_commit;
+    // Descending, so the `needed`-th element is the highest index that the
+    // leader and `needed` peers all hold.
+    acknowledged.sort_unstable_by(|a, b| b.cmp(a));
+    let candidate = match needed.checked_sub(1) {
+        None => leader_last_index,
+        Some(position) => match acknowledged.get(position) {
+            Some(&index) => index,
+            None => return current_commit,
+        },
     };
 
     if candidate <= current_commit {

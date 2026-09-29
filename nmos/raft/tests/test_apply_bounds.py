@@ -169,10 +169,15 @@ class TestTheInvariantIsAssertedNotAssumed:
         """The half that would silently not work.
 
         ``_apply_forever`` catches ``Exception`` and logs it so one bad apply
-        cannot kill a member. Without an explicit re-raise the assertion would
-        be caught, logged once per wake-up, and the loop would carry on with
-        the invariant still broken -- a silent failure wearing the costume of a
-        handled one.
+        cannot kill a member. Without being taken past that handler the
+        assertion would be caught, logged once per wake-up, and the loop would
+        carry on with the invariant still broken -- a silent failure wearing the
+        costume of a handled one.
+
+        Past it, the member stops (``RaftNode._fail``). This once asserted that
+        the violation ended up in the applier task's result instead -- where
+        nobody looked, which is how the member went on leading, voting and
+        serving a store that no longer moved.
         """
         cluster = await _cluster_with_a_quiet_follower(tmp_path)
         try:
@@ -190,8 +195,12 @@ class TestTheInvariantIsAssertedNotAssumed:
                 "the applier task is still running -- the violation was "
                 "swallowed by the catch-all and logged in a loop"
             )
-            with pytest.raises(RaftInvariantViolated):
-                applier.result()
+            failure = node.failure
+            assert isinstance(failure, RaftInvariantViolated), (
+                "the violation ended the applier and nothing else: the member "
+                "did not stop"
+            )
+            assert "applied through 5" in str(failure)
         finally:
             await cluster.close()
 

@@ -380,6 +380,10 @@ async fn main() -> std::io::Result<()> {
             tracing::info!("registry: shutting down");
             Ok(())
         }
+        failure = member_stopped(consensus.as_ref()) => {
+            tracing::error!(%failure, "registry: the consensus member stopped; exiting");
+            Err(std::io::Error::other(format!("the consensus member stopped: {failure}")))
+        }
     };
     matcher.abort();
     collector.abort();
@@ -399,6 +403,22 @@ async fn main() -> std::io::Result<()> {
     }
 
     result
+}
+
+/// Resolves when the consensus member stops itself, with why; never without one.
+///
+/// A member stops on a broken invariant and takes no further part
+/// (`RaftNode::fail`); only a restart makes it whole, bringing it back with
+/// nothing to be caught up as a non-voting learner. Ending `main` with the
+/// error is what exits the process with status 1 -- the status a service
+/// manager restarts on. Serving on regardless would keep the Registration and
+/// Query APIs up in front of a member that takes part in nothing.
+/// `nmos_registry.py`'s `_exit_when_the_member_stops` is the same.
+async fn member_stopped(consensus: Option<&Arc<RaftRegistryBackend>>) -> String {
+    match consensus {
+        Some(backend) => backend.node().wait_for_failure().await,
+        None => std::future::pending().await,
+    }
 }
 
 /// Resolves when the process is asked to stop.
@@ -482,6 +502,54 @@ fn distributed_flags(args: &cli::Args) -> nmos_registry_bin::distributed::Distri
     }
 }
 
+/// The term file's name inside `--raftStateDir`: the Python's
+/// (`nmos_registry.py`, `_build_raft_node`).
+///
+/// One name for both implementations, because the file is the member's, not
+/// the implementation's: both write it alike, byte for byte (`persist.rs`), so
+/// a member switched from one to the other keeps its term, its vote and its
+/// start count. Each member needs a state directory of its own, as in the
+/// Python -- two given one directory would share one file.
+const TERM_FILE: &str = "raft-state.json";
+
+/// Refuse a state directory that holds the term file an earlier build of this
+/// registry wrote, under the member's name.
+///
+/// That build named the file after the member, so a switch to the Python found
+/// no file, and so did a change of the derived name. Starting now, without
+/// reading it, would be the same failure again -- a member with a term and a
+/// vote coming back as brand new -- so the operator is told which file it is and
+/// what to do. Nothing is moved or deleted here: which of two files is the
+/// member's is not a guess to make on its behalf.
+///
+/// # Errors
+///
+/// The refusal, naming the file.
+fn refuse_an_earlier_term_file(state_dir: &Path, member: &str) -> Result<(), String> {
+    let earlier = state_dir.join(format!("{member}.json"));
+    if !earlier.exists() {
+        return Ok(());
+    }
+    let current = state_dir.join(TERM_FILE);
+    Err(if current.exists() {
+        format!(
+            "{} and {} are both term files for this member; the first was \
+             written by an earlier build. Refusing to start without knowing \
+             which holds its vote: keep the newer one as {TERM_FILE} and remove \
+             the other.",
+            earlier.display(),
+            current.display(),
+        )
+    } else {
+        format!(
+            "{} is this member's term file as an earlier build named it. \
+             Refusing to start without its vote: rename it to {TERM_FILE}, or \
+             remove it only if this member is genuinely new to the cluster.",
+            earlier.display(),
+        )
+    })
+}
+
 /// Wire one consensus member: layout, transport, term store, machine, backend.
 ///
 /// Built here, in one place, rather than half in the backend and half in the
@@ -518,11 +586,8 @@ fn build_consensus(
 
     std::fs::create_dir_all(&config.state_dir)
         .map_err(|error| format!("{}: {error}", config.state_dir.display()))?;
-    let terms = TermStore::new(
-        config
-            .state_dir
-            .join(format!("{}.json", config.layout.local.name)),
-    );
+    refuse_an_earlier_term_file(&config.state_dir, &config.layout.local.name)?;
+    let terms = TermStore::new(config.state_dir.join(TERM_FILE));
 
     let transport = Arc::new(RaftTransport::new(TransportSettings {
         local: raft.local.index,
@@ -540,12 +605,17 @@ fn build_consensus(
             .as_millis()
             .try_into()
             .unwrap_or(u64::MAX),
+        // etcd's value, fixed as etcd fixes it: no flag, and none needed.
+        conn_read_timeout_ms: nmos_registry_raft::transport::CONN_READ_TIMEOUT_MS,
     }));
 
     let machine = StateMachine::new(
         raft.local.index,
         CursorAllocator::new(raft.local.index).map_err(|error| format!("cursor lane: {error}"))?,
     );
+    // An unusable term file ends the program here, before anything binds, as
+    // the Python's `PersistentStateError` does. The refusal names the file and
+    // says what to do about it, so it is reported as it stands.
     let node = RaftNode::new(
         raft,
         Arc::clone(&transport) as Arc<dyn Transport>,
@@ -553,7 +623,8 @@ fn build_consensus(
         machine,
         Arc::clone(registry),
         RaftTiming::default(),
-    );
+    )
+    .map_err(|refusal| refusal.to_string())?;
     transport.set_incarnation(node.incarnation());
 
     let backend = RaftRegistryBackend::new(Arc::clone(registry), node, config.mutation_timeout);

@@ -50,6 +50,7 @@ from nmos.registry.tests.rigs import (
     make_rig,
 )
 from nmos.registry.tests.test_etcd_backend import _eventually, build_registry
+from nmos.registry.registry import Registry
 from nmos.registry.types import Body, ResourceType
 
 pytestmark = pytest.mark.e2e
@@ -81,7 +82,9 @@ def _parameterise(fn: Any) -> Any:
     return pytest.mark.parametrize("rig", BACKENDS, indirect=True)(fn)
 
 
-async def _register(backend: Any, resource_type: ResourceType, raw: dict) -> Any:
+async def _register(
+    backend: Any, resource_type: ResourceType, raw: dict[str, Any],
+) -> Any:
     decode_resource(resource_type, raw)
     return await backend.register(resource_type, Body.from_data(raw))
 
@@ -154,12 +157,10 @@ async def test_three_registries_share_one_view(
             assert (await _register(backends[0], resource_type, raw)).ok
 
         for registry in registries[1:]:
-            await _eventually(
-                lambda r=registry: r.store.get(
-                    ResourceType.SENDER, sender["id"],
-                ) is not None,
-                timeout=20.0,
-            )
+            def holds_the_sender(r: Registry = registry) -> bool:
+                return r.store.get(ResourceType.SENDER, sender["id"]) is not None
+
+            await _eventually(holds_the_sender, timeout=20.0)
 
         reference = registries[0].store.get(ResourceType.SENDER, sender["id"])
         assert reference is not None
@@ -205,12 +206,12 @@ async def test_registries_can_write_concurrently_to_different_nodes(
 
         for registry in (registry_a, registry_b):
             for node_id in (NODE_ID, NODE_ID_2):
-                await _eventually(
-                    lambda r=registry, n=node_id: r.store.get(
-                        ResourceType.NODE, n,
-                    ) is not None,
-                    timeout=20.0,
-                )
+                def holds_the_node(
+                    r: Registry = registry, n: str = node_id,
+                ) -> bool:
+                    return r.store.get(ResourceType.NODE, n) is not None
+
+                await _eventually(holds_the_node, timeout=20.0)
     finally:
         await backend_a.close()
         await backend_b.close()

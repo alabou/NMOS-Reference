@@ -1,7 +1,7 @@
 // Copyright (C) 2025-2026 Alain Bouchard
 // SPDX-License-Identifier: Apache-2.0
 
-//! The 24 bytes that make elections safe across a restart.
+//! The few dozen bytes that make elections and paging safe across a restart.
 //!
 //! Port of `nmos/raft/tests/test_persist.py`, plus one test the Python cannot
 //! have: that the file this writes is byte-identical to the file the Python
@@ -19,6 +19,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use nmos_registry_core::cursor::TaiCursor;
 use nmos_registry_raft::persist::{PersistentState, STATE_VERSION, TermStore};
 
 /// A directory that removes itself, so a failing test does not leak into the
@@ -101,6 +102,7 @@ fn the_term_and_vote_come_back() {
             term: 5,
             voted_for: Some(1),
             incarnation: 1,
+            cursor_reservation: None,
         })
         .expect("saves");
 
@@ -128,6 +130,7 @@ fn a_vote_for_nobody_round_trips_as_none() {
             term: 3,
             voted_for: None,
             incarnation: 1,
+            cursor_reservation: None,
         })
         .expect("saves");
     assert_eq!(
@@ -143,6 +146,7 @@ fn a_vote_for_nobody_round_trips_as_none() {
             term: 4,
             voted_for: Some(0),
             incarnation: 1,
+            cursor_reservation: None,
         })
         .expect("saves");
     assert_eq!(
@@ -182,6 +186,7 @@ fn the_incarnation_survives_independently_of_the_term() {
             term: 9,
             voted_for: Some(2),
             incarnation: first.incarnation,
+            cursor_reservation: None,
         })
         .expect("saves");
 
@@ -202,6 +207,7 @@ fn a_save_leaves_no_temporary_files() {
             term: 2,
             voted_for: Some(1),
             incarnation: 1,
+            cursor_reservation: None,
         })
         .expect("saves");
 
@@ -302,6 +308,7 @@ fn writes_are_counted() {
                 term,
                 voted_for: None,
                 incarnation: 1,
+                cursor_reservation: None,
             })
             .expect("saves");
     }
@@ -318,10 +325,11 @@ fn the_file_is_byte_identical_to_the_python_one() {
     // comparison is what notices a key silently renamed or dropped, and it
     // costs one `assert_eq`.
     //
-    // The expected text is `json.dumps({...}, indent=2)` over the same four
-    // keys in the same order. Recorded here rather than exported because it is
-    // four lines and a corpus file for four lines is harder to read than the
-    // four lines.
+    // The expected text is `json.dumps({...}, indent=2)` over the same five
+    // keys in the same order -- `test_the_file_has_five_keys_in_a_fixed_order`
+    // pins the Python side to the same strings. Recorded here rather than
+    // exported because it is five lines and a corpus file for five lines is
+    // harder to read than the five lines.
     let scratch = Scratch::new();
     let mut store = TermStore::new(scratch.file());
     store
@@ -329,12 +337,14 @@ fn the_file_is_byte_identical_to_the_python_one() {
             term: 5,
             voted_for: Some(1),
             incarnation: 3,
+            cursor_reservation: None,
         })
         .expect("saves");
 
     assert_eq!(
         fs::read_to_string(scratch.file()).expect("readable"),
-        "{\n  \"version\": 1,\n  \"term\": 5,\n  \"voted_for\": 1,\n  \"incarnation\": 3\n}",
+        "{\n  \"version\": 1,\n  \"term\": 5,\n  \"voted_for\": 1,\n  \"incarnation\": 3,\n  \
+         \"cursor_reservation\": null\n}",
     );
 
     store
@@ -342,12 +352,139 @@ fn the_file_is_byte_identical_to_the_python_one() {
             term: 5,
             voted_for: None,
             incarnation: 3,
+            cursor_reservation: None,
         })
         .expect("saves");
     assert_eq!(
         fs::read_to_string(scratch.file()).expect("readable"),
-        "{\n  \"version\": 1,\n  \"term\": 5,\n  \"voted_for\": null,\n  \"incarnation\": 3\n}",
+        "{\n  \"version\": 1,\n  \"term\": 5,\n  \"voted_for\": null,\n  \"incarnation\": 3,\n  \
+         \"cursor_reservation\": null\n}",
         "an absent vote must be written as null, not omitted: a reader that \
          finds no `voted_for` key cannot tell it from a vote it failed to parse",
+    );
+}
+
+// -- the cursor reservation -------------------------------------------------
+
+#[test]
+fn a_reservation_comes_back() {
+    let scratch = Scratch::new();
+    let mut store = TermStore::new(scratch.file());
+    store.load().expect("loads");
+    store
+        .save(&PersistentState {
+            term: 2,
+            voted_for: Some(1),
+            incarnation: 1,
+            cursor_reservation: Some(TaiCursor::new(1_790_000_000, 999_999_999)),
+        })
+        .expect("saves");
+
+    let reloaded = TermStore::new(scratch.file()).load().expect("loads");
+    assert_eq!(
+        reloaded.cursor_reservation,
+        Some(TaiCursor::new(1_790_000_000, 999_999_999)),
+    );
+    assert_eq!((reloaded.term, reloaded.voted_for), (2, Some(1)));
+}
+
+#[test]
+fn a_file_written_before_the_reservation_existed_resumes_none() {
+    // The upgrade path: the old four keys, and the vote read exactly. It must
+    // neither refuse (that would stop every upgraded member) nor invent a bound
+    // (that would be a guess), and the file it writes back carries the key.
+    let scratch = Scratch::new();
+    fs::write(
+        scratch.file(),
+        "{\n  \"version\": 1,\n  \"term\": 7,\n  \"voted_for\": 0,\n  \"incarnation\": 4\n}",
+    )
+    .expect("written");
+
+    let state = TermStore::new(scratch.file()).load().expect("loads");
+    assert_eq!(
+        state,
+        PersistentState {
+            term: 7,
+            voted_for: Some(0),
+            incarnation: 5,
+            cursor_reservation: None,
+        },
+    );
+    let rewritten: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(scratch.file()).expect("readable")).expect("json");
+    assert_eq!(
+        rewritten.get("cursor_reservation"),
+        Some(&serde_json::Value::Null)
+    );
+}
+
+#[test]
+fn a_null_reservation_is_none() {
+    let scratch = Scratch::new();
+    fs::write(
+        scratch.file(),
+        r#"{"version": 1, "term": 1, "voted_for": null, "incarnation": 1, "cursor_reservation": null}"#,
+    )
+    .expect("written");
+    assert_eq!(
+        TermStore::new(scratch.file())
+            .load()
+            .expect("loads")
+            .cursor_reservation,
+        None,
+    );
+}
+
+#[test]
+fn an_unusable_reservation_refuses_to_start() {
+    // Resuming no bound instead would guess in the one unsafe direction: the
+    // member could hand out again a cursor it handed out before. The same six
+    // shapes the Python parametrises over.
+    for stored in [
+        r#""soon""#,
+        "12",
+        r#""+1:0""#,
+        r#""1:x""#,
+        r#"["1:0"]"#,
+        "true",
+    ] {
+        let scratch = Scratch::new();
+        fs::write(
+            scratch.file(),
+            format!(
+                r#"{{"version": 1, "term": 1, "voted_for": null, "incarnation": 1, "cursor_reservation": {stored}}}"#
+            ),
+        )
+        .expect("written");
+
+        let error = TermStore::new(scratch.file())
+            .load()
+            .expect_err("refuses to start");
+        assert!(
+            error
+                .0
+                .contains("holds a cursor reservation that is not a cursor: "),
+            "{stored} was refused, but not as an unusable reservation: {}",
+            error.0,
+        );
+    }
+}
+
+#[test]
+fn a_reservation_is_written_as_the_python_writes_it() {
+    let scratch = Scratch::new();
+    let mut store = TermStore::new(scratch.file());
+    store
+        .save(&PersistentState {
+            term: 5,
+            voted_for: Some(1),
+            incarnation: 3,
+            cursor_reservation: Some(TaiCursor::new(1_790_000_001, 250)),
+        })
+        .expect("saves");
+    assert_eq!(
+        fs::read_to_string(scratch.file()).expect("readable"),
+        "{\n  \"version\": 1,\n  \"term\": 5,\n  \"voted_for\": 1,\n  \"incarnation\": 3,\n  \
+         \"cursor_reservation\": \"1790000001:250\"\n}",
     );
 }

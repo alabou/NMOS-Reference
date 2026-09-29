@@ -20,13 +20,17 @@ import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Callable
 
 import pytest
 
 from nmos.registry.backend import BackendState
 from nmos.registry.decode import decode_resource
 from nmos.registry.etcd_backend import EtcdRegistryBackend
+
+if TYPE_CHECKING:
+    from nmos.etcd.kv import EtcdKV
+    from nmos.registry.distributed import EtcdConfig
 from nmos.registry.keys import ENVELOPE_VERSION, Envelope, Namespace
 from nmos.registry.registry import Registry
 from nmos.registry.store import RegistryStore
@@ -48,7 +52,7 @@ NAMESPACE = "/nmos-test/registry/v1"
 # Fixtures
 # ---------------------------------------------------------------------------
 
-def _config(endpoint: str, namespace: str):
+def _config(endpoint: str, namespace: str) -> EtcdConfig:
     """An EtcdConfig aimed at one plain-HTTP etcd."""
     from nmos.etcd.cluster import MemberSpec, derive_cluster
     from nmos.registry.distributed import EtcdConfig
@@ -112,7 +116,7 @@ async def _start_backend(
     return registry, backend
 
 
-def _envelope(resource_type: ResourceType, raw: dict) -> bytes:
+def _envelope(resource_type: ResourceType, raw: dict[str, Any]) -> bytes:
     return Envelope(
         version=ENVELOPE_VERSION,
         resource_type=resource_type,
@@ -123,7 +127,9 @@ def _envelope(resource_type: ResourceType, raw: dict) -> bytes:
     ).encode()
 
 
-async def _seed_tree(kv, ns: Namespace) -> tuple[dict, dict, dict]:
+async def _seed_tree(
+    kv: EtcdKV, ns: Namespace,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Write a Node -> Device -> Sender tree straight into etcd."""
     from nmos.etcd.kv import put_op
 
@@ -145,7 +151,9 @@ async def _seed_tree(kv, ns: Namespace) -> tuple[dict, dict, dict]:
     return node, device, sender
 
 
-async def _eventually(predicate, timeout: float = 10.0) -> None:
+async def _eventually(
+    predicate: Callable[[], bool], timeout: float = 10.0,
+) -> None:
     deadline = asyncio.get_running_loop().time() + timeout
     while asyncio.get_running_loop().time() < deadline:
         if predicate():
@@ -396,11 +404,10 @@ async def test_two_backends_converge_on_the_same_view(
         node, device, sender = await _seed_tree(writer, ns)
 
         for registry in (registry_a, registry_b):
-            await _eventually(
-                lambda r=registry: r.store.get(  # type: ignore[misc]
-                    ResourceType.SENDER, sender["id"],
-                ) is not None,
-            )
+            def holds_the_sender(r: Registry = registry) -> bool:
+                return r.store.get(ResourceType.SENDER, sender["id"]) is not None
+
+            await _eventually(holds_the_sender)
 
         for resource_type, resource_id in (
             (ResourceType.NODE, node["id"]),

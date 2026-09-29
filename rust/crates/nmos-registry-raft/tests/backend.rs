@@ -32,6 +32,7 @@ use nmos_registry_raft::cluster::{RAFT_FLAVOUR, derive_raft_layout};
 use nmos_registry_raft::cursors::CursorAllocator;
 use nmos_registry_raft::machine::StateMachine;
 use nmos_registry_raft::node::{RaftNode, RaftTiming};
+use nmos_registry_raft::ownership::OwnershipTable;
 use nmos_registry_raft::persist::TermStore;
 use nmos_registry_raft::transport::Transport;
 use serde_json::json;
@@ -98,7 +99,8 @@ fn sender_body(device_id: &str) -> Body {
 struct Backends {
     backends: Vec<Arc<RaftRegistryBackend>>,
     _fabric: Arc<Fabric>,
-    _scratch: Scratch,
+    /// Every member's state file lives here.
+    scratch: Scratch,
 }
 
 impl Backends {
@@ -114,6 +116,13 @@ impl Backends {
     /// just registered, so nothing was ever going to expire, and a backend that
     /// collected while degraded would pass.
     fn with_gc(size: usize, gc_interval: i64) -> Self {
+        Self::with(size, gc_interval, &[])
+    }
+
+    /// As [`Self::with_gc`], with the `broken` members' state machines already
+    /// applied far past anything the cluster commits: each stops on its first
+    /// apply (`RaftNode::fail`).
+    fn with(size: usize, gc_interval: i64, broken: &[u64]) -> Self {
         let scratch = Scratch::new();
         let fabric = Fabric::new();
         let timing = RaftTiming {
@@ -151,17 +160,27 @@ impl Backends {
                 gc_interval,
                 12,
             )));
+            let mut machine = StateMachine::new(
+                index as u64,
+                CursorAllocator::new(index as u64).expect("a lane"),
+            );
+            if broken.contains(&(index as u64)) {
+                machine.install_snapshot(
+                    &registry,
+                    RegistryStore::new(),
+                    OwnershipTable::new(),
+                    100,
+                );
+            }
             let node = RaftNode::new(
                 derive_raft_layout(&layout, token),
                 fabric.transport(index as u64) as Arc<dyn Transport>,
                 TermStore::new(scratch.0.join(format!("m{index}.json"))),
-                StateMachine::new(
-                    index as u64,
-                    CursorAllocator::new(index as u64).expect("a lane"),
-                ),
+                machine,
                 Arc::clone(&registry),
                 timing,
-            );
+            )
+            .expect("a term file only this member has written");
             backends.push(RaftRegistryBackend::new(
                 registry,
                 node,
@@ -172,7 +191,7 @@ impl Backends {
         Self {
             backends,
             _fabric: fabric,
-            _scratch: scratch,
+            scratch,
         }
     }
 
@@ -212,6 +231,25 @@ async fn until(mut ready: impl FnMut() -> bool) -> bool {
 }
 
 // -- state -------------------------------------------------------------------
+
+/// A member stopped on a broken invariant is going away (`RaftNode::fail`): its
+/// process is about to exit, and until it does its Registration API must not
+/// take mutations the member can never apply. (Python:
+/// `test_a_member_that_stops_itself_reports_stopping`.)
+#[tokio::test]
+async fn a_member_that_stops_itself_reports_stopping() {
+    let cluster = Backends::with(1, 12, &[0]);
+    cluster.start_all().await;
+    let backend = &cluster.backends[0];
+
+    assert!(
+        until(|| backend.state() == BackendState::Stopping).await,
+        "a member that stopped on a broken invariant reported {:?}",
+        backend.state(),
+    );
+    assert!(!backend.state().accepts_mutations());
+    cluster.close_all().await;
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_backend_is_starting_before_it_starts() {
@@ -267,6 +305,49 @@ async fn a_closing_backend_stops_accepting_mutations() {
         "a member shutting down still answers queries from the replica it \
          holds; refusing them turns a rolling restart into an outage",
     );
+}
+
+// -- the cursor reservation --------------------------------------------------
+
+/// A cursor whose reservation cannot be written never reaches the log: a 503
+/// the Node retries, with nothing proposed for the retry to duplicate. (Python:
+/// `test_a_registration_whose_cursor_cannot_be_reserved_is_a_503`.)
+#[tokio::test(flavor = "multi_thread")]
+async fn a_registration_whose_cursor_cannot_be_reserved_is_a_503() {
+    // One member, so no election can fall inside the window in which every
+    // write fails: the refusal measured is the reservation's alone. The write
+    // is made to fail by taking the state directory away, which fails for
+    // every user -- a read-only directory would not stop root.
+    let cluster = Backends::build(1);
+    cluster.start_all().await;
+    assert!(until(|| cluster.ready()).await, "never became ready");
+    let backend = &cluster.backends[0];
+
+    std::fs::remove_dir_all(&cluster.scratch.0).expect("removed");
+    let refused = backend
+        .register(ResourceType::Node, node_body("a node"))
+        .await
+        .expect_err("no reservation, no registration");
+    assert!(
+        refused.0.contains("could not reserve paging cursors"),
+        "a 503, but not the reservation's: {}",
+        refused.0,
+    );
+    std::fs::create_dir_all(&cluster.scratch.0).expect("restored");
+
+    assert!(
+        backend
+            .registry()
+            .get(ResourceType::Node, NODE_ID)
+            .is_none()
+    );
+    let retried = backend
+        .register(ResourceType::Node, node_body("a node"))
+        .await
+        .expect("commits")
+        .expect("accepted");
+    assert!(retried.created, "the retry was not the first registration");
+    cluster.close_all().await;
 }
 
 // -- the four methods --------------------------------------------------------

@@ -99,6 +99,18 @@ class SafetyMonitor:
     """index -> term, for entries some member has reported committed. Used by
     Leader Completeness."""
 
+    committed_by: dict[int, int] = field(default_factory=dict)
+    """index -> the lowest term of any member seen reporting it committed.
+
+    A bound on the term the entry was committed *in*, which is not its own
+    term: an entry of an earlier term is committed only when a later leader
+    commits one of its own above it (``commit.rs``, "The current-term check").
+    Every member reporting the index committed is in that term or a later one
+    -- it learned the commit from a leader at least that recent -- so the true
+    term never exceeds this bound, and equals it whenever the committing leader
+    itself is seen. Leader Completeness owes the entry to leaders of later
+    terms than this, and to no others."""
+
     applied: dict[int, str] = field(default_factory=dict)
     """index -> payload digest, across every member. State Machine Safety is a
     disagreement in this map."""
@@ -227,6 +239,9 @@ class SafetyMonitor:
                     # whose claim is the one that stuck.
                     self.forensics.note_commit(index, node, entry_term)
                 self.committed.setdefault(index, entry_term)
+                seen = self.committed_by.get(index)
+                if seen is None or node.term < seen:
+                    self.committed_by[index] = node.term
             for index, payload in _applied_digests(node):
                 existing = self.applied.get(index)
                 if existing is None:
@@ -312,6 +327,13 @@ class SafetyMonitor:
         """"if a log entry is committed in a given term, then that entry will be
         present in the logs of the leaders for all higher-numbered terms."
         (Figure 3)
+
+        "Committed in a given term" is the term of the leader that committed
+        it -- bounded by ``committed_by`` -- not the entry's own term. The two
+        differ for an entry committed indirectly, and taking one for the other
+        held leaders to entries committed after they were elected: seed 141387
+        (7 of 24 runs) flagged a cut-off leader of term 12 for lacking an entry
+        of term 11 that was committed only in term 13.
         """
         for member in self.cluster.members:
             node = member.node
@@ -319,7 +341,10 @@ class SafetyMonitor:
                 continue
             held = dict(_digest(node))
             for index, term in self.committed.items():
-                if term >= node.term:
+                if self.committed_by[index] >= node.term:
+                    # Committed in this leader's term or a later one, as far as
+                    # anything seen can tell -- so not owed to it. Subsumes the
+                    # entry's own term: nothing is committed before it exists.
                     continue
                 if index <= node.log.snapshot_index:
                     # Inside the snapshot, therefore present by construction.

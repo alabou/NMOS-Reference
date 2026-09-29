@@ -19,18 +19,22 @@ The baseline to beat, measured from the etcd backend in
     steady-state registration   2
     first registration of Node  3
     heartbeat                   1
-    locally-decided rejection   0
+    rejection the body decides  0
+    rejection the store decides 1
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+from typing import Any
 from pathlib import Path
 
 import pytest
 
+from nmos.raft.errors import RaftInvariantViolated
 from nmos.raft.node import Role
+from nmos.raft.persist import PersistentState, TermStore
 from nmos.raft.tests._harness import Cluster
 from nmos.registry.backend import BackendState, MutationUnavailable
 from nmos.registry.metrics import Event
@@ -42,10 +46,11 @@ from nmos.registry.tests._fixtures import (
     make_node,
     make_sender,
 )
+from nmos.registry.raft_backend import RaftRegistryBackend
 from nmos.registry.types import Body, ResourceType
 
 
-def _body(raw: dict) -> Body:
+def _body(raw: dict[str, Any]) -> Body:
     return Body(json.dumps(raw))
 
 
@@ -64,11 +69,21 @@ def _leader(cluster: Cluster):  # type: ignore[no-untyped-def]
     return cluster.backends[index], cluster.members[index]
 
 
-def _spent(backend, before: int) -> int:  # type: ignore[no-untyped-def]
+def _break(member) -> None:  # type: ignore[no-untyped-def]
+    """Put a member beyond Raft: applied past what it has committed.
+
+    The first thing ``_check_applied_within_committed`` refuses, found on the
+    next apply.
+    """
+    member.node._machine._last_applied = member.node.commit_index + 100
+    member.node._schedule_apply()
+
+
+def _spent(backend: RaftRegistryBackend, before: int) -> int:
     return backend.metrics.counter(Event.MUTATION).total_units - before
 
 
-def _units(backend) -> int:  # type: ignore[no-untyped-def]
+def _units(backend: RaftRegistryBackend) -> int:
     return backend.metrics.counter(Event.MUTATION).total_units
 
 
@@ -164,6 +179,40 @@ class TestRegistrationThroughTheSeam:
             await cluster.close()
 
 
+class TestCursorReservation:
+    """A cursor whose reservation cannot be written never reaches the log."""
+
+    async def test_a_registration_whose_cursor_cannot_be_reserved_is_a_503(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Retryable, and with nothing proposed for the retry to duplicate.
+
+        One member, so no election can fall inside the window in which every
+        write fails: the refusal measured is the reservation's alone.
+        """
+        cluster = await _started(tmp_path, size=1)
+        try:
+            backend, member = _leader(cluster)
+
+            def refuse(_store: TermStore, _state: PersistentState) -> None:
+                raise OSError(28, "No space left on device")
+
+            monkeypatch.setattr(TermStore, "save", refuse)
+            with pytest.raises(
+                MutationUnavailable, match="could not reserve paging cursors",
+            ):
+                await backend.register(ResourceType.NODE, _body(make_node()))
+            monkeypatch.undo()
+
+            assert member.registry.store.get(ResourceType.NODE, NODE_ID) is None
+            retried = await backend.register(
+                ResourceType.NODE, _body(make_node()),
+            )
+            assert retried.ok and retried.created
+        finally:
+            await cluster.close()
+
+
 class TestRoundTripCost:
     """The measurement the whole design is for."""
 
@@ -224,10 +273,44 @@ class TestRoundTripCost:
         finally:
             await cluster.close()
 
-    async def test_a_locally_decided_rejection_costs_nothing(
+    async def test_a_rejection_the_body_decides_costs_nothing(
         self, tmp_path: Path,
     ) -> None:
-        """And is still counted, so it cannot flatter the average."""
+        """And is still counted, so it cannot flatter the average.
+
+        A Sender with no ``device_id`` is malformed whatever the store holds,
+        so nothing needs confirming before saying so.
+        """
+        cluster = await _started(tmp_path)
+        try:
+            backend, _ = _leader(cluster)
+            counter = backend.metrics.counter(Event.MUTATION)
+            seen, spent = counter.count, counter.total_units
+
+            raw = make_sender()
+            del raw["device_id"]
+            assert not (await backend.register(
+                ResourceType.SENDER, _body(raw),
+            )).ok
+
+            assert backend.metrics.counter(Event.MUTATION).count == seen + 1
+            assert backend.metrics.counter(Event.MUTATION).total_units == spent
+        finally:
+            await cluster.close()
+
+    async def test_a_rejection_the_store_decides_costs_one_read_barrier(
+        self, tmp_path: Path,
+    ) -> None:
+        """A missing parent is only as true as the store it was read from.
+
+        So before a Sender whose Device is absent is refused, this member
+        learns a read index and applies through it -- one quorum round on the
+        leader -- and the round is counted. It once cost nothing, on the
+        belief that an owner's store is authoritative; an owner's store is
+        current only as of what it has applied, and a member behind it
+        answered 400s the protocol forbids retrying (see
+        ``test_forwarding_conformance``, "A member behind what is committed").
+        """
         cluster = await _started(tmp_path)
         try:
             backend, _ = _leader(cluster)
@@ -239,7 +322,7 @@ class TestRoundTripCost:
             )).ok
 
             assert backend.metrics.counter(Event.MUTATION).count == seen + 1
-            assert backend.metrics.counter(Event.MUTATION).total_units == spent
+            assert backend.metrics.counter(Event.MUTATION).total_units == spent + 1
         finally:
             await cluster.close()
 
@@ -298,10 +381,16 @@ class TestDeletion:
         finally:
             await cluster.close()
 
-    async def test_deleting_something_absent_is_free_and_false(
+    async def test_deleting_something_absent_is_false_once_current(
         self, tmp_path: Path,
     ) -> None:
-        """The local store is a complete replica, so "not here" is not a guess."""
+        """"Not here" is true only of a store that is current.
+
+        The local store is a complete replica only of what this member has
+        applied, so the 404 is given after a read barrier -- one quorum round
+        on the leader -- and not before (see ``test_forwarding_conformance``,
+        "A member behind what is committed").
+        """
         cluster = await _started(tmp_path)
         try:
             backend, _ = _leader(cluster)
@@ -309,7 +398,7 @@ class TestDeletion:
             assert await backend.unregister(
                 ResourceType.NODE, NODE_ID,
             ) is False
-            assert _spent(backend, before) == 0
+            assert _spent(backend, before) == 1
         finally:
             await cluster.close()
 
@@ -349,6 +438,54 @@ class TestState:
             assert member.registry.store.get(
                 ResourceType.NODE, NODE_ID,
             ) is not None
+        finally:
+            await cluster.close()
+
+    async def test_a_member_that_stops_itself_reports_stopping(
+        self, tmp_path: Path,
+    ) -> None:
+        """A member stopped on a broken invariant is going away (``RaftNode._fail``)."""
+        cluster = await _started(tmp_path)
+        try:
+            backend, member = _leader(cluster)
+            # Not `is READY`: that narrows `state` for the checker, which then
+            # takes the change this test is about for an impossibility.
+            assert backend.state.accepts_mutations, backend.state
+            _break(member)
+            await cluster.settle(2)
+
+            assert backend.state is BackendState.STOPPING, (
+                f"a member that stopped on a broken invariant reported "
+                f"{backend.state.name}: its Registration API would take "
+                f"mutations the member can never apply"
+            )
+            assert backend.state.accepts_mutations is False
+        finally:
+            await cluster.close()
+
+    async def test_the_process_ends_when_its_member_stops(
+        self, tmp_path: Path,
+    ) -> None:
+        """What ``main`` runs in its task group: the member's failure ends it.
+
+        Raised into the group, the failure cancels every other task, is logged
+        and exits the process with status 1 -- the status a service manager
+        restarts on.
+        """
+        from nmos_registry import _exit_when_the_member_stops
+
+        cluster = await _started(tmp_path)
+        try:
+            _, member = _leader(cluster)
+            watching = asyncio.create_task(
+                _exit_when_the_member_stops(member.node),
+            )
+            await cluster.settle(2)
+            assert not watching.done()
+
+            _break(member)
+            with pytest.raises(RaftInvariantViolated):
+                await asyncio.wait_for(watching, 5.0)
         finally:
             await cluster.close()
 

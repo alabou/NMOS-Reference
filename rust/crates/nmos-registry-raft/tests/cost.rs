@@ -18,6 +18,7 @@
 mod fabric;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use nmos_cluster::{Derivation, MemberSpec, derive_cluster};
@@ -49,12 +50,26 @@ fn node_body(id: &str) -> Body {
     }))
 }
 
+/// Distinguishes each call's state directory.
+///
+/// The two tests here run in parallel in one process and both measure five
+/// members, so a directory named by process and size alone was shared -- and
+/// each call's `remove_dir_all` deleted the other's live term files. Nothing
+/// noticed while the files were written only at start and on a term change;
+/// once allocation began writing its cursor reservation there, every parallel
+/// run failed (10 of 10, against 0 of 5 single-threaded).
+static NEXT: AtomicU64 = AtomicU64::new(0);
+
 async fn cost_of(
     members: usize,
     registrations: usize,
     heartbeat_ms: u64,
 ) -> (Vec<(&'static str, u64)>, Duration) {
-    let dir = std::env::temp_dir().join(format!("nmos-raft-cost-{}-{members}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "nmos-raft-cost-{}-{members}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed),
+    ));
     drop(std::fs::remove_dir_all(&dir));
     std::fs::create_dir_all(&dir).expect("a scratch directory");
 
@@ -100,7 +115,8 @@ async fn cost_of(
             ),
             registry.clone(),
             timing,
-        );
+        )
+        .expect("a term file only this member has written");
         backends.push(RaftRegistryBackend::new(
             registry,
             node,

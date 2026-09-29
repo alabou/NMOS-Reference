@@ -53,8 +53,7 @@ use std::sync::{Arc, mpsc};
 use nmos_registry_bin::tls::apply_tr10_restrictions;
 use openssl::pkey::Id;
 use openssl::ssl::{
-    Ssl, SslContext, SslContextBuilder, SslFiletype, SslMethod, SslVerifyMode,
-    SslVersion,
+    Ssl, SslContext, SslContextBuilder, SslFiletype, SslMethod, SslVerifyMode, SslVersion,
 };
 
 /// `nmos-reference/`, three levels above this crate.
@@ -96,9 +95,7 @@ fn server_key(flavor: &str) -> PathBuf {
 fn available() -> bool {
     for flavor in ["rsa", "ec"] {
         if !server_chain(flavor).is_file() || !server_key(flavor).is_file() {
-            eprintln!(
-                "skipping: the {flavor} identity under Certificates/build.0 is not present"
-            );
+            eprintln!("skipping: the {flavor} identity under Certificates/build.0 is not present");
             return false;
         }
     }
@@ -121,8 +118,7 @@ fn available() -> bool {
 /// assertions below must hold regardless. If a future change makes the result
 /// depend on this order, that is the bug, not the test.
 fn dual_identity_context() -> SslContext {
-    let mut builder =
-        SslContextBuilder::new(SslMethod::tls_server()).expect("context builder");
+    let mut builder = SslContextBuilder::new(SslMethod::tls_server()).expect("context builder");
     apply_tr10_restrictions(&mut builder).expect("TR-10-SEC policy");
 
     for flavor in ["rsa", "ec"] {
@@ -186,8 +182,7 @@ fn serve(context: SslContext, count: usize) -> (u16, mpsc::Receiver<bool>) {
 /// Returns the leaf's public-key algorithm and the number of certificates in
 /// the chain the server sent.
 fn presented(port: u16, cipher: &str) -> (Id, usize) {
-    let mut builder =
-        SslContextBuilder::new(SslMethod::tls_client()).expect("client builder");
+    let mut builder = SslContextBuilder::new(SslMethod::tls_client()).expect("client builder");
     // Verification is not what this probe is about, and the two flavours chain
     // to different roots -- trusting one would fail the other for a reason
     // that has nothing to do with certificate selection.
@@ -226,8 +221,14 @@ fn one_context_serves_each_client_the_flavour_it_asked_for() {
     let (ecdsa_alg, ecdsa_depth) = presented(port, "ECDHE-ECDSA-AES128-GCM-SHA256");
     let (rsa_alg, rsa_depth) = presented(port, "ECDHE-RSA-AES128-GCM-SHA256");
 
-    assert!(outcomes.recv().expect("server outcome"), "server refused #1");
-    assert!(outcomes.recv().expect("server outcome"), "server refused #2");
+    assert!(
+        outcomes.recv().expect("server outcome"),
+        "server refused #1"
+    );
+    assert!(
+        outcomes.recv().expect("server outcome"),
+        "server refused #2"
+    );
 
     // 1 + 2: both identities are reachable, and which one arrives is decided by
     // the client, not by the order they were loaded in.

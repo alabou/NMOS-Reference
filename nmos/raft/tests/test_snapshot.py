@@ -26,6 +26,7 @@ from nmos.raft.snapshot import (
     install,
 )
 from nmos.raft.wire import Writer
+from nmos.registry.registry import Registry
 from nmos.registry.store import RegistryStore
 from nmos.registry.tests._fixtures import (
     DEVICE_ID,
@@ -71,6 +72,16 @@ def _seeded(
     return store
 
 
+def _snapshots_of(store: RegistryStore) -> SnapshotStore:
+    """A snapshot store over ``store``, reached the way a member reaches it.
+
+    Through a registry, because that is the owner of which store is live: an
+    install replaces the store, and a snapshot store holding the store itself
+    went on photographing the one it was built with.
+    """
+    return SnapshotStore(Registry(store, query_id="snapshot-test"))
+
+
 def _update(store: RegistryStore, raw: dict, cursor: TaiCursor) -> None:
     body = Body(json.dumps(raw))
     prepared = store.prepare(ResourceType.SENDER, body.data)
@@ -83,7 +94,7 @@ def _update(store: RegistryStore, raw: dict, cursor: TaiCursor) -> None:
 class TestRoundTrip:
     async def test_a_snapshot_restores_an_equivalent_store(self) -> None:
         store = _seeded()
-        snapshots = SnapshotStore(store)
+        snapshots = _snapshots_of(store)
         capture = snapshots.begin(index=42, term=3, ownership=OwnershipTable())
         payload = await snapshots.finish(capture)
 
@@ -120,7 +131,7 @@ class TestRoundTrip:
             health=1,
         )
 
-        snapshots = SnapshotStore(store)
+        snapshots = _snapshots_of(store)
         payload = await snapshots.finish(
             snapshots.begin(index=1, term=1, ownership=OwnershipTable()),
         )
@@ -132,7 +143,7 @@ class TestRoundTrip:
         table = OwnershipTable()
         table.claim(NODE_ID, owner=2, epoch=7)
 
-        snapshots = SnapshotStore(store)
+        snapshots = _snapshots_of(store)
         payload = await snapshots.finish(
             snapshots.begin(index=9, term=1, ownership=table),
         )
@@ -140,7 +151,7 @@ class TestRoundTrip:
         assert restored.is_owned_by(NODE_ID, 2)
 
     async def test_an_empty_store_round_trips(self) -> None:
-        snapshots = SnapshotStore(RegistryStore())
+        snapshots = _snapshots_of(RegistryStore())
         payload = await snapshots.finish(
             snapshots.begin(index=0, term=0, ownership=OwnershipTable()),
         )
@@ -160,7 +171,7 @@ class TestCopyOnWrite:
         assert original is not None
         before_text = original.body.text
 
-        snapshots = SnapshotStore(store)
+        snapshots = _snapshots_of(store)
         capture = snapshots.begin(index=10, term=1, ownership=OwnershipTable())
 
         # Apply hands the pre-image over *before* mutating, which is the whole
@@ -180,7 +191,7 @@ class TestCopyOnWrite:
     async def test_capture_is_idempotent(self) -> None:
         """Repeated updates keep the earliest state: the pinned one."""
         store = _seeded()
-        snapshots = SnapshotStore(store)
+        snapshots = _snapshots_of(store)
         capture = snapshots.begin(index=10, term=1, ownership=OwnershipTable())
 
         first = store.get(ResourceType.SENDER, SENDER_ID)
@@ -197,7 +208,7 @@ class TestCopyOnWrite:
     async def test_a_record_created_after_the_capture_is_excluded(self) -> None:
         """Otherwise the snapshot describes a future its index had not reached."""
         store = _seeded()
-        snapshots = SnapshotStore(store)
+        snapshots = _snapshots_of(store)
         capture = snapshots.begin(index=10, term=1, ownership=OwnershipTable())
 
         newcomer = make_sender("99999999-0000-4000-8000-000000000000")
@@ -217,7 +228,7 @@ class TestCopyOnWrite:
     async def test_untouched_records_come_from_the_live_store(self) -> None:
         """No pre-image means nothing changed, so the live record is the image."""
         store = _seeded()
-        snapshots = SnapshotStore(store)
+        snapshots = _snapshots_of(store)
         capture = snapshots.begin(index=10, term=1, ownership=OwnershipTable())
         payload = await snapshots.finish(capture)
 
@@ -230,8 +241,8 @@ class TestDeterminism:
     async def test_equal_stores_produce_identical_bytes(self) -> None:
         """What makes a snapshot comparable or checksummable at all."""
         fixtures = _fixture_set()
-        left = SnapshotStore(_seeded(fixtures=fixtures))
-        right = SnapshotStore(_seeded(fixtures=fixtures))
+        left = _snapshots_of(_seeded(fixtures=fixtures))
+        right = _snapshots_of(_seeded(fixtures=fixtures))
         left_bytes = await left.finish(
             left.begin(index=1, term=1, ownership=OwnershipTable()),
         )
@@ -253,7 +264,7 @@ class TestRejections:
     async def test_a_truncated_transfer_is_refused(self) -> None:
         """It parsed, and it is still missing resources its peers hold."""
         store = _seeded()
-        snapshots = SnapshotStore(store)
+        snapshots = _snapshots_of(store)
         payload = await snapshots.finish(
             snapshots.begin(index=1, term=1, ownership=OwnershipTable()),
         )
@@ -265,21 +276,21 @@ class TestRejections:
             decode_snapshot(tampered)
 
     async def test_two_captures_at_once_are_refused(self) -> None:
-        snapshots = SnapshotStore(_seeded())
+        snapshots = _snapshots_of(_seeded())
         snapshots.begin(index=1, term=1, ownership=OwnershipTable())
         with pytest.raises(RuntimeError, match="already open"):
             snapshots.begin(index=2, term=1, ownership=OwnershipTable())
 
     async def test_the_capture_is_released_after_finishing(self) -> None:
         """An open capture taxes every apply; it must not outlive its use."""
-        snapshots = SnapshotStore(_seeded())
+        snapshots = _snapshots_of(_seeded())
         capture = snapshots.begin(index=1, term=1, ownership=OwnershipTable())
         assert snapshots.capture is capture
         await snapshots.finish(capture)
         assert snapshots.capture is None
 
     async def test_abandoning_releases_it_too(self) -> None:
-        snapshots = SnapshotStore(_seeded())
+        snapshots = _snapshots_of(_seeded())
         snapshots.begin(index=1, term=1, ownership=OwnershipTable())
         snapshots.abandon()
         assert snapshots.capture is None
@@ -289,7 +300,7 @@ class TestInstallOrdering:
     async def test_parents_are_restored_before_their_children(self) -> None:
         """A child whose parent is absent is refused outright."""
         store = _seeded()
-        snapshots = SnapshotStore(store)
+        snapshots = _snapshots_of(store)
         payload = await snapshots.finish(
             snapshots.begin(index=1, term=1, ownership=OwnershipTable()),
         )

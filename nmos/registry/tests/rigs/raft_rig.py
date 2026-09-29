@@ -180,7 +180,7 @@ class RaftRig:
             incarnation=0,
             rpc_timeout=1.0,
         )
-        snapshots = SnapshotStore(registry.store)
+        snapshots = SnapshotStore(registry)
         machine = StateMachine(
             registry,
             ownership=OwnershipTable(),

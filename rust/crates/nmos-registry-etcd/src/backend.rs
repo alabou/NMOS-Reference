@@ -24,7 +24,10 @@
 //! *failure* it produces may be a lie -- a parent registered a moment ago on
 //! another member is not here yet. A 400 is terminal, something the Node "MUST
 //! NOT" retry without corrective action (`Behaviour - Registration.md:94`), so
-//! a rejection is never returned without first fencing and re-validating.
+//! a rejection is never returned without first fencing and re-validating. That
+//! includes the one refusal made before any key is known -- a parent Device
+//! this member has not seen -- and the 404s of a delete and a heartbeat, which
+//! a Node acts on as final too: each is given only after `catch_up`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -42,11 +45,11 @@ use nmos_etcd::lease::EtcdLease;
 use nmos_etcd::watch::{EtcdWatch, RevisionBatch};
 use nmos_etcd::{EtcdError, RangeResult};
 use nmos_registry::Registry;
-use nmos_registry::fence::RevisionFence;
+use nmos_registry::fence::{FenceTimeout, RevisionFence};
 use nmos_registry_backend::{BackendState, MutationUnavailable, RegistryBackend};
 use nmos_registry_core::{
-    Applied, RegisteredResource, RegistrationFailure, RegistryStore, ResourceEvent, ResourceType,
-    TaiCursor,
+    Applied, RegisteredResource, RegistrationError, RegistrationFailure, RegistryStore,
+    ResourceEvent, ResourceType, TaiCursor,
 };
 use parking_lot::Mutex;
 
@@ -95,6 +98,41 @@ fn claim_value(key: &[u8]) -> Vec<u8> {
 /// attribute one registration's round trips to whichever finished next.
 #[derive(Debug, Default)]
 struct Trips(u32);
+
+/// Why a mutation could not be carried out, as `guarded` must tell apart.
+///
+/// The Python backend tells them apart by exception type (`_guarded`), and the
+/// difference is whether the member degrades. Folded into `EtcdError`, a fence
+/// that timed out degraded it like an outage -- and a member degrades until its
+/// watch reconnects, so one whose watch was merely slow refused every mutation
+/// while nothing was wrong with etcd.
+#[derive(Debug)]
+enum MutationError {
+    /// etcd failed, or could not be reached: degrade, and answer 503.
+    Etcd(EtcdError),
+    /// This member's view did not catch up within the deadline -- its watch has
+    /// not delivered what etcd holds. No failure of etcd's: 503, still READY.
+    /// The commit may well have succeeded; the Node replays, and version plus
+    /// CAS make the replay idempotent.
+    Fence(FenceTimeout),
+    /// A 503 that is nobody's failure -- a registration that kept losing its
+    /// compare to other writers until the deadline, an invariant this member
+    /// will not write past. Answered as it is, without degrading, as the Python
+    /// backend raises `MutationTimeout` for the same cases.
+    Unavailable(String),
+}
+
+impl From<EtcdError> for MutationError {
+    fn from(error: EtcdError) -> Self {
+        Self::Etcd(error)
+    }
+}
+
+impl From<FenceTimeout> for MutationError {
+    fn from(error: FenceTimeout) -> Self {
+        Self::Fence(error)
+    }
+}
 
 impl Trips {
     fn add(&mut self) {
@@ -765,20 +803,27 @@ impl EtcdRegistryBackend {
     /// `Compacted` is deliberately NOT swallowed: it is the watch loop's to
     /// handle, and absorbing it here would let a mutation proceed against a
     /// view that is about to be rebuilt.
-    fn guarded<T>(
+    fn guarded<T, E: Into<MutationError>>(
         &self,
         what: &str,
-        outcome: Result<T, EtcdError>,
+        outcome: Result<T, E>,
     ) -> Result<T, MutationUnavailable> {
-        match outcome {
+        match outcome.map_err(Into::into) {
             Ok(value) => Ok(value),
-            Err(EtcdError::Compacted { message, .. }) => {
+            Err(MutationError::Fence(timeout)) => {
+                // Behind, not broken: see `MutationError::Fence`.
+                Err(MutationUnavailable(format!("{what}: {timeout}")))
+            }
+            Err(MutationError::Unavailable(why)) => {
+                Err(MutationUnavailable(format!("{what}: {why}")))
+            }
+            Err(MutationError::Etcd(EtcdError::Compacted { message, .. })) => {
                 // Still a 503 to the caller, but without degrading: the watch
                 // loop is already rebuilding, and marking DEGRADED here would
                 // race its own recovery.
                 Err(MutationUnavailable(format!("{what}: {message}")))
             }
-            Err(exc) => {
+            Err(MutationError::Etcd(exc)) => {
                 self.degrade(&format!("{what} failed: {exc}"));
                 Err(MutationUnavailable(format!("{what}: {exc}")))
             }
@@ -897,11 +942,45 @@ impl EtcdRegistryBackend {
         })
     }
 
+    /// Bring the local store up to everything etcd holds now.
+    ///
+    /// For the answers this member would otherwise give from its local store
+    /// alone, and which a Node acts on as final: a 400 for a parent it cannot
+    /// find -- one that "MUST NOT be re-attempted without corrective action"
+    /// (`Behaviour - Registration.md:96`) -- and a 404 for a delete or a
+    /// heartbeat, the second of which makes the Node "re-register each of its
+    /// resources" (`:114`). The store is fed by the watch, which can be behind
+    /// etcd, so "not here" is only true once it has caught up: a Device
+    /// registered a moment ago through another member, or a Node that has just
+    /// failed over to this one -- which `:126` expects this member to recognise
+    /// -- is not here yet.
+    ///
+    /// A linearizable read carries etcd's current revision, and waiting until
+    /// the watch has applied it makes the local store -- and the lease table
+    /// the watch maintains with it -- at least that current: the fence
+    /// `read_fence` puts before a registration trusts its validation. `key` is
+    /// the one the answer is about, though the revision is all that is used.
+    async fn catch_up(&self, key: Vec<u8>, trips: &mut Trips) -> Result<(), MutationError> {
+        trips.add();
+        let read = self.kv()?.read_set(&[key], None).await?;
+        self.fence
+            .wait(
+                read.revision.max(0).unsigned_abs(),
+                self.config.mutation_timeout,
+            )
+            .await?;
+        Ok(())
+    }
+
     /// Linearizable read of the write set, then wait for the view to match.
     ///
     /// The read gives the revisions the CAS must compare against; the wait is
     /// what makes the subsequent local validation trustworthy.
-    async fn read_fence(&self, placement: &Placement, trips: &mut Trips) -> Result<i64, EtcdError> {
+    async fn read_fence(
+        &self,
+        placement: &Placement,
+        trips: &mut Trips,
+    ) -> Result<i64, MutationError> {
         let mut keys = vec![placement.key.clone(), placement.claim.clone()];
         if let Some(parent) = placement.parent.as_ref() {
             keys.push(parent.clone());
@@ -923,8 +1002,7 @@ impl EtcdRegistryBackend {
                 read.revision.max(0).unsigned_abs(),
                 self.config.mutation_timeout,
             )
-            .await
-            .map_err(|exc| EtcdError::Unavailable(exc.to_string()))?;
+            .await?;
         Ok(read.revision)
     }
 
@@ -937,12 +1015,12 @@ impl EtcdRegistryBackend {
     /// Counted as a round trip even though no request is sent: the mutation
     /// cannot answer until the commit has travelled to etcd, been replicated,
     /// and come back down the watch stream.
-    async fn await_commit(&self, revision: i64, trips: &mut Trips) -> Result<(), EtcdError> {
+    async fn await_commit(&self, revision: i64, trips: &mut Trips) -> Result<(), MutationError> {
         trips.add();
         self.fence
             .wait(revision.max(0).unsigned_abs(), self.config.mutation_timeout)
-            .await
-            .map_err(|exc| EtcdError::Unavailable(exc.to_string()))
+            .await?;
+        Ok(())
     }
 
     /// One speculative CAS from believed revisions. `None` means "fall back".
@@ -956,7 +1034,7 @@ impl EtcdRegistryBackend {
         body: &nmos_registry_core::Body,
         placement: &Placement,
         trips: &mut Trips,
-    ) -> Result<Option<Applied>, EtcdError> {
+    ) -> Result<Option<Applied>, MutationError> {
         let prepared = self
             .registry
             .with_read_store(|store| store.prepare(resource_type, body.data()));
@@ -995,7 +1073,7 @@ impl EtcdRegistryBackend {
         placement: &Placement,
         deadline: tokio::time::Instant,
         trips: &mut Trips,
-    ) -> Result<Result<Applied, RegistrationFailure>, EtcdError> {
+    ) -> Result<Result<Applied, RegistrationFailure>, MutationError> {
         let mut attempt = 0_u32;
         loop {
             attempt = attempt.saturating_add(1);
@@ -1012,12 +1090,48 @@ impl EtcdRegistryBackend {
                 Err(failure) => return Ok(Err(failure)),
             };
 
+            let leased;
+            let write = if resource_type == ResourceType::Node {
+                placement
+            } else {
+                // A child hangs off its Node's lease, taken here from the lease
+                // table as the fence has just brought it up to date. The one in
+                // `placement` was read before the fence -- when, at a member
+                // that had not yet seen the Node, the table held nothing for
+                // it, and the Device and its claim went out on no lease at all:
+                // keys that outlive the Node's expiry, a Device in etcd whose
+                // Node is gone.
+                let lease = self
+                    .leases
+                    .lock()
+                    .get(&placement.node_id)
+                    .copied()
+                    .unwrap_or(0);
+                if lease == 0 {
+                    // The store holds the Node -- validation just found it --
+                    // and the watch that put it there records its lease in the
+                    // same step (`apply_batch`). Neither is ever written without
+                    // the other, so this is a broken invariant, answered 503
+                    // rather than written as a key no expiry will collect.
+                    tracing::error!(
+                        node = placement.node_id,
+                        "registry: node is in the store with no lease known for it",
+                    );
+                    return Err(MutationError::Unavailable(format!(
+                        "no lease is known for node {}",
+                        placement.node_id,
+                    )));
+                }
+                leased = placement.clone().with_lease(lease);
+                &leased
+            };
+
             trips.add();
             let result = self
                 .kv()?
                 .txn(
-                    &self.compare_set(placement),
-                    &self.write_ops(placement, body, resource_type),
+                    &self.compare_set(write),
+                    &self.write_ops(write, body, resource_type),
                     &[],
                     None,
                 )
@@ -1032,7 +1146,7 @@ impl EtcdRegistryBackend {
             }
 
             if tokio::time::Instant::now() >= deadline {
-                return Err(EtcdError::Unavailable(format!(
+                return Err(MutationError::Unavailable(format!(
                     "registration of {} did not commit within {:.1}s ({attempt} attempt(s))",
                     placement.resource_id,
                     self.config.mutation_timeout.as_secs_f64(),
@@ -1056,7 +1170,19 @@ impl EtcdRegistryBackend {
         resource_type: ResourceType,
         resource_id: &str,
         trips: &mut Trips,
-    ) -> Result<Option<Vec<ResourceEvent>>, EtcdError> {
+    ) -> Result<Option<Vec<ResourceEvent>>, MutationError> {
+        let present = || {
+            self.registry
+                .with_read_store(|store| store.get(resource_type, resource_id).is_some())
+        };
+        if !present() {
+            // "Not here" is a guess until this member has caught up -- see
+            // `catch_up`. Answered wrongly, the delete never happens: the
+            // resource stays registered while the Node believes it gone, for as
+            // long as the Node goes on heartbeating.
+            self.catch_up(self.namespace.id_claim(resource_id), trips)
+                .await?;
+        }
         let leases = Arc::clone(&self.leases);
         let placement = self.registry.with_read_store(|store| {
             let resource = store.get(resource_type, resource_id)?;
@@ -1148,23 +1274,32 @@ impl EtcdRegistryBackend {
 
     /// Renew a Node's lease. `None` means it is gone.
     ///
-    /// No full-database fence and, deliberately, **no write**. The lease is
-    /// the liveness record. The legacy dRDS wrote a health key on every beat
-    /// and every member watched it -- 100 Nodes at the 5 s default is 100 Raft
-    /// writes per second fanning out to 500 watch events per second across
-    /// five members, to record something the lease already records more
-    /// reliably, since a lease cannot be renewed by a member that has lost
-    /// quorum.
+    /// No full-database fence for a Node this member knows and, deliberately,
+    /// **no write**. The lease is the liveness record. The legacy dRDS wrote a
+    /// health key on every beat and every member watched it -- 100 Nodes at the
+    /// 5 s default is 100 Raft writes per second fanning out to 500 watch
+    /// events per second across five members, to record something the lease
+    /// already records more reliably, since a lease cannot be renewed by a
+    /// member that has lost quorum. A Node it does not know costs one fence
+    /// before the 404 (`catch_up`).
     async fn heartbeat_inner(
         &self,
         node_id: &str,
         trips: &mut Trips,
-    ) -> Result<Option<i64>, EtcdError> {
-        let lease_id = self.leases.lock().get(node_id).copied().unwrap_or(0);
+    ) -> Result<Option<i64>, MutationError> {
+        let known = || self.leases.lock().get(node_id).copied().unwrap_or(0);
+        let mut lease_id = known();
         if lease_id == 0 {
-            // Not ours to renew, and answered without touching the network --
-            // the 404 that makes the Node re-register.
-            return Ok(None);
+            // The lease table is the watch's, and as far behind as the store: a
+            // Node registered through another member, or failed over to this
+            // one, is not in it yet. A 404 makes the Node re-register every
+            // resource it has (`Behaviour - Registration.md:112-114`), so it is
+            // given only once this member has caught up -- see `catch_up`.
+            self.catch_up(self.namespace.node(node_id), trips).await?;
+            lease_id = known();
+            if lease_id == 0 {
+                return Ok(None);
+            }
         }
 
         trips.add();
@@ -1177,7 +1312,7 @@ impl EtcdRegistryBackend {
                 self.leases.lock().remove(node_id);
                 return Ok(None);
             }
-            Err(other) => return Err(other),
+            Err(other) => return Err(other.into()),
         }
 
         let health = nmos_registry_core::store::health_now();
@@ -1386,7 +1521,7 @@ impl RegistryBackend for EtcdRegistryBackend {
             .checked_add(self.config.mutation_timeout)
             .unwrap_or_else(tokio::time::Instant::now);
 
-        let placement = {
+        let place = || {
             let leases = Arc::clone(&self.leases);
             self.registry.with_read_store(|store| {
                 placement_for(
@@ -1398,13 +1533,38 @@ impl RegistryBackend for EtcdRegistryBackend {
                 )
             })
         };
+        let mut trips = Trips::default();
+        let mut placement = place();
+        if let Err(ref failure) = placement
+            && failure.error == RegistrationError::ParentMissing
+        {
+            // The one refusal `placement_for` takes from the store, and a
+            // Device this member has not seen is not a missing one: see
+            // `catch_up`. Decided again once current -- which also takes the
+            // Node's lease from the lease table as it now stands.
+            let device_id = body
+                .data()
+                .get("device_id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            let caught_up = self
+                .catch_up(self.namespace.id_claim(&device_id), &mut trips)
+                .await;
+            let what = format!(
+                "registration of {}",
+                body.data()
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default(),
+            );
+            self.guarded(&what, caught_up)?;
+            placement = place();
+        }
         let mut placement = match placement {
             Ok(placement) => placement,
-            // Decided locally, so it cost nothing on the wire.
             Err(failure) => return Ok(Err(failure)),
         };
-
-        let mut trips = Trips::default();
 
         if resource_type == ResourceType::Node {
             // Every key in this Node's subtree will hang off this lease, so it
@@ -1494,5 +1654,104 @@ impl RegistryBackend for EtcdRegistryBackend {
             drop(handle.await);
         }
         *self.pool.lock() = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Which failures of a mutation degrade the member (`guarded`), pinned:
+    //! only etcd failing. The Python backend answers the same three the same
+    //! way (`_guarded`); its suite pins them against a live etcd.
+    use std::path::PathBuf;
+
+    use nmos_cluster::{ClusterLayout, Member};
+
+    use super::*;
+
+    /// A backend that is never started: `guarded` needs none of etcd.
+    fn backend() -> Arc<EtcdRegistryBackend> {
+        let member = Member {
+            name: "unit".to_owned(),
+            host: "127.0.0.1".to_owned(),
+            client_port: 1,
+            peer_port: 0,
+            bind_address: "127.0.0.1".to_owned(),
+        };
+        let config = EtcdConfig {
+            layout: ClusterLayout {
+                members: vec![member.clone()],
+                local: member,
+                token: "unit".to_owned(),
+                namespace: "/unit".to_owned(),
+                tls: false,
+            },
+            endpoints: vec!["127.0.0.1:1".to_owned()],
+            namespace: "/unit".to_owned(),
+            tls: false,
+            certificate: String::new(),
+            key: String::new(),
+            trusted_root_ca: Vec::new(),
+            certificate_name: String::new(),
+            rpc_timeout: Duration::from_secs(1),
+            mutation_timeout: Duration::from_secs(1),
+            external: true,
+            binary: String::new(),
+            data_dir: PathBuf::new(),
+            bootstrap: false,
+            client_crl_file: String::new(),
+            peer_crl_file: String::new(),
+        };
+        EtcdRegistryBackend::new(Arc::new(Registry::new(RegistryStore::new())), config)
+            .expect("a backend")
+    }
+
+    #[test]
+    fn a_compaction_in_a_mutation_is_a_503_that_does_not_degrade() {
+        // The watch loop's to handle; degrading here would race its recovery.
+        let backend = backend();
+        let before = backend.state();
+        let answer = backend.guarded(
+            "a registration",
+            Err::<(), _>(EtcdError::Compacted {
+                message: "etcdserver: mvcc: required revision has been compacted".to_owned(),
+                compact_revision: 0,
+            }),
+        );
+        assert!(
+            answer.is_err(),
+            "a compaction error was answered {answer:?}"
+        );
+        assert_eq!(
+            backend.state(),
+            before,
+            "a compaction error degraded the member"
+        );
+    }
+
+    #[test]
+    fn a_fence_timeout_is_a_503_that_does_not_degrade() {
+        let backend = backend();
+        let before = backend.state();
+        let answer = backend.guarded(
+            "a registration",
+            Err::<(), _>(FenceTimeout("still waiting for 7 after 1.0s".to_owned())),
+        );
+        assert!(answer.is_err(), "a fence timeout was answered {answer:?}");
+        assert_eq!(
+            backend.state(),
+            before,
+            "a fence timeout degraded the member"
+        );
+    }
+
+    #[test]
+    fn an_etcd_failure_degrades() {
+        let backend = backend();
+        let answer = backend.guarded(
+            "a registration",
+            Err::<(), _>(EtcdError::Unavailable("connection refused".to_owned())),
+        );
+        assert!(answer.is_err(), "an etcd failure was answered {answer:?}");
+        assert_eq!(backend.state(), BackendState::Degraded);
     }
 }

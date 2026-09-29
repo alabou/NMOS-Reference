@@ -7,24 +7,30 @@ Same seam as the etcd backend -- four methods and a state property, with Query
 untouched -- and a materially different path underneath. The comparison is the
 point, so it is worth stating in the terms the benchmark measures:
 
-============================  ==========  =========
+============================  ==========  ====================
 operation                     etcd        raft
-============================  ==========  =========
+============================  ==========  ====================
 registration, steady state    2           **1**
 first registration of a Node  3           **1**
 heartbeat                     1           **0**
-rejection decided locally     0           0
-============================  ==========  =========
+rejection the body decides    0           0
+rejection the store decides   1           1 (2 off the leader)
+============================  ==========  ====================
 
 Where the difference comes from
 -------------------------------
-**Ownership removes the read.** The etcd backend validates against a local
-store that may be behind, so a rejection it produces might be a lie -- and a
-400 is terminal, something a Node "MUST NOT" retry. It therefore cannot answer
-*any* rejection without a linearizable read first. Here exactly one member is
-responsible for a Node's subtree, so that member's view of the subtree is
-authoritative by construction and the parent/version checks are decided
-locally, with no round trip at all.
+**Ownership removes the read -- from every answer but a refusal.** The etcd
+backend validates against a local store that may be behind, so it fences before
+it trusts a rejection. Here exactly one member is responsible for a Node's
+subtree, so a registration that passes validation is simply proposed: apply,
+not the proposer, decides whether it creates, updates or is refused
+(``machine.py``), and nothing stale can commit. A *refusal* is different,
+because the refusal is the answer -- a 400 is terminal, something a Node "MUST
+NOT" retry, and a 404 on heartbeat makes it re-register everything -- and an
+owner's store is current only as of what it has applied: one restarted with
+nothing validates against an empty store. So a refusal the store decides, and a
+404 from a delete or a heartbeat, is given only after a read barrier
+(``_read_barrier``): one quorum round, on those paths alone.
 
 **Apply removes the second wait.** The etcd backend commits to etcd and then
 waits for its own write to come back down the watch stream before it can
@@ -52,9 +58,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from nmos.raft.errors import RaftUnavailable
+from nmos.raft.errors import RaftCursorReservationFailed, RaftUnavailable
 from nmos.raft.messages import Forward, ForwardReply
 from nmos.raft.node import RaftNode, Role
 from nmos.raft.operations import (
@@ -80,12 +87,6 @@ if TYPE_CHECKING:
     from nmos.registry.distributed import RaftConfig
 
 log = logging.getLogger(__name__)
-
-# How long a Node may remain owned by a member nobody can reach before another
-# member takes it over. Deliberately below the 12 s garbage-collection interval
-# of ``Behaviour - Registration.md:47``: a Node whose owner died must find a new
-# one before its resources would otherwise be collected.
-OWNERSHIP_GRACE_S = 6.0
 
 
 class _NodeGate:
@@ -119,6 +120,18 @@ class _NodeGate:
         lock = self._locks.get(node_id)
         if lock is not None and not lock.locked():
             del self._locks[node_id]
+
+
+@dataclass(frozen=True)
+class _Beat:
+    """What a heartbeat found at the member it reached (``_beat_here``)."""
+
+    health: int | None
+    """The Node's new health, or ``None``: this member does not hold it."""
+    owner: int | None
+    """Another member found to own the Node once this one was current."""
+    trips: int
+    """Round trips spent making sure (the read barrier's)."""
 
 
 class RaftRegistryBackend:
@@ -171,7 +184,10 @@ class RaftRegistryBackend:
         Reading it from the consensus layer each time costs two attribute
         loads and cannot go stale.
         """
-        if self._stopping:
+        if self._stopping or self._node.failure is not None:
+            # A member that stopped itself on a broken invariant is going away
+            # (``RaftNode._fail``): its process is about to exit, and until it
+            # does, a mutation is answered 503 so the Node retries elsewhere.
             return BackendState.STOPPING
         if not self._started:
             return BackendState.STARTING
@@ -232,10 +248,28 @@ class RaftRegistryBackend:
     async def register(
         self, resource_type: ResourceType, body: Body,
     ) -> RegistrationResult:
+        return await self._register(resource_type, body, route_again=True)
+
+    async def _register(
+        self, resource_type: ResourceType, body: Body, *, route_again: bool,
+    ) -> RegistrationResult:
+        """``register``, told whether a moved Node may still be routed again.
+
+        ``route_again`` is spent by the one retry ``_forward_register`` makes
+        when the member it forwarded to no longer owns the Node.
+        """
         node_id = self._resolve_node(resource_type, body.data)
+        # Round trips spent making sure of the parent, counted with the rest.
+        barrier = 0
+        if isinstance(node_id, RegistrationResult) and _decided_by_state(node_id):
+            # A parent this member has not yet applied is not a missing one:
+            # see ``_read_barrier``.
+            await self._read_barrier()
+            barrier = self._barrier_trips()
+            node_id = self._resolve_node(resource_type, body.data)
         if isinstance(node_id, RegistrationResult):
             self._metrics.record(
-                Event.MUTATION, None, units=0, verb="register",
+                Event.MUTATION, None, units=barrier, verb="register",
                 outcome="local",
             )
             return node_id
@@ -247,15 +281,16 @@ class RaftRegistryBackend:
             if owner is not None and owner != self._index:
                 trips, result = await self._forward_register(
                     owner, resource_type, body, node_id,
+                    route_again=route_again,
                 )
-                timer.count(trips)
+                timer.count(barrier + trips)
                 return result
 
             async with self._gate.lock(node_id):
                 result, trips = await self._register_as_owner(
                     resource_type, body, node_id, claim=owner is None,
                 )
-            timer.count(trips)
+            timer.count(barrier + trips)
             return result
 
     async def _register_as_owner(
@@ -265,12 +300,20 @@ class RaftRegistryBackend:
         store = self._registry.store
 
         prepared = store.prepare(resource_type, body.data)
+        barrier = 0
+        if isinstance(prepared, RegistrationResult) and _decided_by_state(prepared):
+            # Validated against a store that may be behind. It was once
+            # returned at once, as "authoritative, and free" because this member
+            # owns the Node -- true only of an owner that has applied everything
+            # committed, and an owner can lag like any member (one restarted
+            # with nothing validates against an empty store). So this member
+            # catches up to a read index first, exactly as the etcd backend
+            # fences before it dares return a terminal 400, and decides again.
+            await self._read_barrier()
+            barrier = self._barrier_trips()
+            prepared = store.prepare(resource_type, body.data)
         if isinstance(prepared, RegistrationResult):
-            # Authoritative, and free. The etcd backend cannot do this: its
-            # store may be behind, so it must fence before it dares return a
-            # terminal 400. Ownership is what makes the same answer safe here
-            # without touching the network.
-            return prepared, 0
+            return prepared, barrier
 
         cursors = self._cursors_for(resource_type, prepared.resource_id)
         operation = RegisterOp(
@@ -289,11 +332,11 @@ class RaftRegistryBackend:
         )
         result = await self._commit(operation, f"registration of {prepared.resource_id}")
         trips = 1 if self._node.role is Role.LEADER else 2
-        return result, trips
+        return result, barrier + trips
 
     async def _forward_register(
         self, owner: int, resource_type: ResourceType, body: Body,
-        node_id: str,
+        node_id: str, *, route_again: bool,
     ) -> tuple[int, RegistrationResult]:
         reply = await self._forward(Forward(
             verb="register", resource_type=resource_type.value,
@@ -309,7 +352,25 @@ class RaftRegistryBackend:
             # Ownership moved underneath us. One retry, as owner or forwarder
             # depending on where it moved to -- and no more, because a request
             # that keeps chasing an owner is a request that never answers.
-            return 3, await self.register(resource_type, body)
+            #
+            # "No more" has to be enforced, not merely intended: retrying
+            # through ``register`` again, with nothing spent, recursed for as
+            # long as this member's ownership table stayed behind -- and a
+            # table that is behind names the same former owner every time, so
+            # the retry forwards to the member that has just said no. Measured
+            # over real sockets: 490 forwards in 0.4s, ended only by
+            # ``RecursionError`` (reported by the transport as a failed link).
+            # The same recursion aborts the Rust process on a stack overflow.
+            # After the one retry this is a 503: the tables converge, and a
+            # Node retries a 503.
+            if not route_again:
+                raise MutationUnavailable(
+                    f"member {owner} no longer owns node {node_id}, and this "
+                    f"member has not yet learned which does",
+                )
+            return 3, await self._register(
+                resource_type, body, route_again=False,
+            )
 
         await self._await_applied(reply.applied_index)
         return (3 if self._node.role is not Role.LEADER else 2), _result_of(reply)
@@ -324,10 +385,14 @@ class RaftRegistryBackend:
         ) as timer:
             existing = self._registry.store.get(resource_type, resource_id)
             if existing is None:
-                # A 404 costs nothing: the local store is a complete replica,
-                # so "not here" is not a guess.
-                timer.count(0)
-                return False
+                # "Not here" is a guess until this member is current: its
+                # store is a complete replica only of what it has applied. See
+                # ``_read_barrier``.
+                await self._read_barrier()
+                existing = self._registry.store.get(resource_type, resource_id)
+                if existing is None:
+                    timer.count(self._barrier_trips())
+                    return False
 
             operation = UnregisterOp(
                 proposal=ProposalId(member=self._index, sequence=0),
@@ -350,23 +415,91 @@ class RaftRegistryBackend:
         rounds per second. Here it is stronger -- the beat writes nothing at
         all, not even a lease renewal.
         """
+        return await self._heartbeat(node_id, route_again=True)
+
+    async def _heartbeat(self, node_id: str, *, route_again: bool) -> int | None:
+        """``heartbeat``, told whether a moved Node may still be routed again.
+
+        Routed exactly as ``_register`` is: forwarded to the Node's owner, and
+        ``route_again`` spent by the one retry ``_forward_heartbeat`` makes when
+        that member no longer owns it.
+        """
         with self._metrics.timer(Event.MUTATION, verb="heartbeat") as timer:
             owner = self._owner_for(node_id)
             if owner is not None and owner != self._index:
-                reply = await self._forward(Forward(
-                    verb="heartbeat", resource_type="node",
-                    resource_id=node_id, body_text="", request_id=0,
-                ), owner, node_id)
                 timer.count(1)
-                if reply is None or not reply.ok:
-                    return None
-                return int(reply.applied_index) or health_now()
+                return await self._forward_heartbeat(
+                    owner, node_id, route_again=route_again,
+                )
+            beat = await self._beat_here(node_id)
+            if beat.owner is not None:
+                timer.count(beat.trips + 1)
+                return await self._forward_heartbeat(
+                    beat.owner, node_id, route_again=route_again,
+                )
+            timer.count(beat.trips)
+            return beat.health
 
-            timer.count(0)
+    async def _beat_here(self, node_id: str) -> _Beat:
+        """Refresh a Node this member takes to be its own -- or find it is not.
+
+        What both a Node's own heartbeat and a forwarded one do at the member
+        they reach, so the two cannot drift.
+        """
+        trips = 0
+        if self._registry.store.get(ResourceType.NODE, node_id) is None:
+            # A 404 tells the Node to re-register everything
+            # (``Behaviour - Registration.md:112-114``), so it has to be true:
+            # see ``_read_barrier``. Once current, the Node may turn out to be
+            # another member's.
+            await self._read_barrier()
+            trips = self._barrier_trips()
+            owner = self._owner_for(node_id)
+            if owner is not None and owner != self._index:
+                return _Beat(health=None, owner=owner, trips=trips)
             if self._registry.store.get(ResourceType.NODE, node_id) is None:
-                return None
-            self._last_seen[node_id] = asyncio.get_running_loop().time()
-            return self._registry.store.heartbeat(node_id)
+                return _Beat(health=None, owner=None, trips=trips)
+        self._last_seen[node_id] = asyncio.get_running_loop().time()
+        return _Beat(
+            health=self._registry.store.heartbeat(node_id), owner=None,
+            trips=trips,
+        )
+
+    async def _forward_heartbeat(
+        self, owner: int, node_id: str, *, route_again: bool,
+    ) -> int | None:
+        """A heartbeat for another member's Node, answered by that member."""
+        reply = await self._forward(Forward(
+            verb="heartbeat", resource_type="node",
+            resource_id=node_id, body_text="", request_id=0,
+        ), owner, node_id)
+        if reply is None:
+            # No answer is not "no such Node": the owner may well hold it. This
+            # used to be a 404 -- a terminal instruction to re-register
+            # everything, given because a link was slow.
+            raise MutationUnavailable(
+                f"the member owning node {node_id} did not answer",
+            )
+        if reply.not_owner:
+            # Ownership moved underneath us, as it can for a registration
+            # (``_forward_register``): one retry, as owner or forwarder
+            # depending on where it moved to, and no more -- a table that is
+            # behind names the same former owner every time. Read as a plain
+            # refusal, as it once was, this was a 404: the terminal
+            # "re-register every resource", for a Node the cluster still held.
+            if not route_again:
+                raise MutationUnavailable(
+                    f"member {owner} no longer owns node {node_id}, and this "
+                    f"member has not yet learned which does",
+                )
+            return await self._heartbeat(node_id, route_again=False)
+        if not reply.ok:
+            if reply.error == "unavailable":
+                raise MutationUnavailable(
+                    reply.detail or f"member {owner} could not answer",
+                )
+            return None
+        return int(reply.applied_index) or health_now()
 
     async def collect_garbage(self) -> int:
         """Expire silent Nodes this member owns; forget tombstones everywhere.
@@ -426,6 +559,30 @@ class RaftRegistryBackend:
 
     # -- forwarding, as the receiver --------------------------------------
 
+    async def _heartbeat_forwarded(self, message: Forward) -> ForwardReply:
+        """Answer a forwarded heartbeat as its Node's owner, or say it is not.
+
+        Never forwarded on, as a forwarded registration never is (below): a
+        request that hops between members has no bound on its latency, and two
+        members whose tables disagree about the owner handed a heartbeat back
+        and forth until an RPC deadline cut the chain. This was answered by the
+        member's own ``heartbeat``, which forwards.
+        """
+        owner = self._owner_for(message.resource_id)
+        if owner is None or owner == self._index:
+            beat = await self._beat_here(message.resource_id)
+            owner = beat.owner
+            if owner is None:
+                return ForwardReply(
+                    ok=beat.health is not None, created=False, error="",
+                    detail="", applied_index=beat.health or 0, not_owner=False,
+                    request_id=message.request_id, owner=None,
+                )
+        return ForwardReply(
+            ok=False, created=False, error="", detail="", applied_index=0,
+            not_owner=True, request_id=message.request_id, owner=owner,
+        )
+
     async def _on_forward(self, message: Forward) -> ForwardReply:
         """Answer a mutation another member handed us because we own its Node."""
         try:
@@ -438,18 +595,25 @@ class RaftRegistryBackend:
                 request_id=message.request_id, owner=None,
             )
 
-        if message.verb == "heartbeat":
-            health = await self.heartbeat(message.resource_id)
+        try:
+            if message.verb == "heartbeat":
+                return await self._heartbeat_forwarded(message)
+
+            body = Body(message.body_text)
+            node_id = self._resolve_node(resource_type, body.data)
+            if isinstance(node_id, RegistrationResult) and _decided_by_state(node_id):
+                # See ``_register``: this member may be behind as well.
+                await self._read_barrier()
+                node_id = self._resolve_node(resource_type, body.data)
+            if isinstance(node_id, RegistrationResult):
+                return _reply_for(node_id, 0, message.request_id)
+        except MutationUnavailable as error:
+            # Answered, not raised, for the reason given below.
             return ForwardReply(
-                ok=health is not None, created=False, error="", detail="",
-                applied_index=health or 0, not_owner=False,
+                ok=False, created=False, error="unavailable",
+                detail=str(error), applied_index=0, not_owner=False,
                 request_id=message.request_id, owner=None,
             )
-
-        body = Body(message.body_text)
-        node_id = self._resolve_node(resource_type, body.data)
-        if isinstance(node_id, RegistrationResult):
-            return _reply_for(node_id, 0, message.request_id)
 
         owner = self._owner_for(node_id)
         if owner is not None and owner != self._index:
@@ -461,9 +625,27 @@ class RaftRegistryBackend:
                 request_id=message.request_id, owner=owner,
             )
 
-        async with self._gate.lock(node_id):
-            result, _trips = await self._register_as_owner(
-                resource_type, body, node_id, claim=owner is None,
+        try:
+            async with self._gate.lock(node_id):
+                result, _trips = await self._register_as_owner(
+                    resource_type, body, node_id, claim=owner is None,
+                )
+        except MutationUnavailable as error:
+            # This member owns the Node but could not commit. Say so at once,
+            # with the reason, under the code every refusal of this kind uses
+            # (``RaftNode.on_forward``, ``transport._application_refusal``) and
+            # which the forwarder answers as a 503 -- see ``_result_of``.
+            #
+            # Raising instead lost the answer: the transport serves this on a
+            # task with nobody to hand an exception to, so no reply was written
+            # and the forwarder waited out its whole deadline to report "did
+            # not answer". Measured over real sockets: the owner failed with
+            # "no leader elected" in 0.00s, the forwarder answered after the
+            # full 2.00s mutation timeout.
+            return ForwardReply(
+                ok=False, created=False, error="unavailable",
+                detail=str(error), applied_index=0, not_owner=False,
+                request_id=message.request_id, owner=None,
             )
         return _reply_for(result, self._node.last_applied, message.request_id)
 
@@ -493,11 +675,23 @@ class RaftRegistryBackend:
     def _owner_for(self, node_id: str) -> int | None:
         """Who owns this Node, or None when it is free to claim.
 
-        A Node owned by a member that has been unreachable for longer than the
-        grace period reads as unowned, so whichever member it re-registers with
-        can take over. The grace is what stops two members trading a Node back
-        and forth while a load balancer spreads its traffic -- without it,
-        every request would claim, and every claim would be a consensus round.
+        A Node owned by a member this one cannot reach reads as unowned at
+        once, so whichever member it re-registers with takes it over. There is
+        no grace period, and none is wanted:
+
+        * a claim rides the registration's own proposal (``claim_owner``), so
+          taking a Node over adds no consensus round;
+        * ownership moves only when the owner is unreachable from the member a
+          request reached -- a load balancer spreading a Node's traffic over
+          members that can reach its owner forwards, it does not claim;
+        * for as long as a grace lasted, every request for the Node at another
+          member would go to an owner nobody can reach and be answered 503;
+        * and a Node whose owner died must find a new one before the 12 s
+          collection (``Behaviour - Registration.md:47``) removes it, which
+          immediate takeover serves best.
+
+        A move is safe whenever it happens: apply, not the proposer, decides
+        whether a registration creates or updates (``machine.py``).
         """
         held = self._node.ownership.owner_of(node_id)
         if held is None:
@@ -515,9 +709,10 @@ class RaftRegistryBackend:
 
         Mirrors what the etcd backend's ``_placement`` does, minus the key
         construction: a Node is its own, a Device names one, and everything
-        else inherits its Device's -- which is looked up locally, and a Device
-        that is genuinely absent is a genuine ``PARENT_MISSING`` decided by the
-        same store rule that governs it in standalone mode.
+        else inherits its Device's -- which is looked up locally. A Device
+        absent here is ``PARENT_MISSING`` only if this member is current, which
+        is why every caller takes a read barrier before believing it
+        (``_read_barrier``).
         """
         if resource_type is ResourceType.NODE:
             node_id = raw.get("id")
@@ -556,8 +751,16 @@ class RaftRegistryBackend:
 
         Same rule and the same reason as the etcd backend: a client paging by
         creation order must not see a resource move because it was updated.
+
+        Raises:
+            MutationUnavailable: The cursor's reservation could not be made
+                durable (``RaftNode.allocate_cursor``). Nothing was proposed,
+                so the Node's retry starts clean.
         """
-        updated = self._node.cursors.allocate(resource_type)
+        try:
+            updated = self._node.allocate_cursor(resource_type)
+        except RaftCursorReservationFailed as exc:
+            raise MutationUnavailable(str(exc)) from exc
         existing = self._registry.store.get(
             resource_type, resource_id, include_non_extant=True,
         )
@@ -587,13 +790,51 @@ class RaftRegistryBackend:
             ) from exc
         return outcome.result if not raw else outcome.result
 
+    async def _read_barrier(self) -> None:
+        """Bring this member's store up to everything committed when a read began.
+
+        A member answers some requests from its own store -- a refusal from
+        validation, a 404 for a delete or a heartbeat, a Node free to claim --
+        and a store can be behind what is committed: a follower that has not
+        yet applied, an owner restarted with nothing. Those answers were given
+        as if the store were current, and a client acts on them: a Node told
+        400 must not retry, one told 404 re-registers everything. The chaos
+        soak counted them in hundreds per run set, each unjustifiable.
+
+        So before such an answer this member learns a read index -- the commit
+        index when the read began, confirmed by a quorum that its leader still
+        leads (etcd's ReadIndex, ``RaftNode.read_index``) -- and waits until it
+        has applied it. The answer it then gives is the one the leader would
+        have given. Only those answers pay: a registration that commits, and a
+        heartbeat that finds its Node, pay nothing.
+
+        Raises ``MutationUnavailable`` when no read index can be had in time: a
+        member that cannot show it is current answers 503, which a Node
+        retries, rather than a terminal answer it cannot justify.
+        """
+        try:
+            index = await self._node.read_index(
+                timeout=self._config.mutation_timeout,
+            )
+        except RaftUnavailable as exc:
+            raise MutationUnavailable(
+                f"this member cannot confirm it is current: {exc}",
+            ) from exc
+        await self._await_applied(index)
+
+    def _barrier_trips(self) -> int:
+        """Network round trips a read barrier costs: the leader's quorum
+        round, and the ask on the way to it from a follower."""
+        return 1 if self._node.role is Role.LEADER else 2
+
     async def _await_applied(self, index: int) -> None:
         """Wait until this member has applied ``index``.
 
-        The one wait that survives ownership, and only on the forwarded path:
-        the member that answered the client is not the member that applied the
-        entry, and a client that immediately reads back from here would
-        otherwise get a 404 for something it was just told was created.
+        Two waits use it. On the forwarded path, the member that answered the
+        client is not the member that applied the entry, and a client that
+        immediately reads back from here would otherwise get a 404 for
+        something it was just told was created. And a read barrier
+        (``_read_barrier``) waits here for its read index.
         """
         if index <= 0:
             return
@@ -605,6 +846,17 @@ class RaftRegistryBackend:
             raise MutationUnavailable(
                 f"this member did not catch up to index {index}",
             ) from exc
+
+
+def _decided_by_state(result: RegistrationResult) -> bool:
+    """Does this refusal depend on what the store holds?
+
+    Every refusal but a malformed body (``SCHEMA``, ``Behaviour -
+    Registration.md:100``), which is decided by the body alone: the others --
+    an id of another type, an older version, a changed or missing parent
+    (``:101-104``) -- are only as true as the store they were read from.
+    """
+    return result.error is not None and result.error is not RegistrationError.SCHEMA
 
 
 def _result_of(reply: ForwardReply) -> RegistrationResult:

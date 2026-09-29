@@ -115,6 +115,10 @@ pub enum MessageType {
     InstallSnapshotReply = 0x15,
     /// Promotion of a non-voting member.
     Promote = 0x16,
+    /// A member asking its leader for a read index.
+    ReadIndex = 0x17,
+    /// Its reply.
+    ReadIndexReply = 0x18,
 
     /// A client proposal.
     Propose = 0x20,
@@ -143,6 +147,8 @@ impl MessageType {
             0x14 => Some(Self::InstallSnapshot),
             0x15 => Some(Self::InstallSnapshotReply),
             0x16 => Some(Self::Promote),
+            0x17 => Some(Self::ReadIndex),
+            0x18 => Some(Self::ReadIndexReply),
             0x20 => Some(Self::Propose),
             0x21 => Some(Self::ProposeReply),
             0x22 => Some(Self::Forward),

@@ -15,17 +15,24 @@
 //! | registration, steady state | 2 | **1** |
 //! | first registration of a Node | 3 | **1** |
 //! | heartbeat | 1 | **0** |
-//! | rejection decided locally | 0 | 0 |
+//! | rejection the body decides | 0 | 0 |
+//! | rejection the store decides | 1 | 1 (2 off the leader) |
 //!
 //! # Where the difference comes from
 //!
-//! **Ownership removes the read.** The etcd backend validates against a local
-//! store that may be behind, so a rejection it produces might be a lie -- and
-//! a 400 is terminal, something a Node "MUST NOT" retry. It therefore cannot
-//! answer *any* rejection without a linearizable read first. Here exactly one
-//! member is responsible for a Node's subtree, so that member's view of the
-//! subtree is authoritative by construction and the parent and version checks
-//! are decided locally, with no round trip at all.
+//! **Ownership removes the read -- from every answer but a refusal.** The etcd
+//! backend validates against a local store that may be behind, so it fences
+//! before it trusts a rejection. Here exactly one member is responsible for a
+//! Node's subtree, so a registration that passes validation is simply
+//! proposed: apply, not the proposer, decides whether it creates, updates or is
+//! refused (`machine.rs`), and nothing stale can commit. A *refusal* is
+//! different, because the refusal is the answer -- a 400 is terminal, something
+//! a Node "MUST NOT" retry, and a 404 on heartbeat makes it re-register
+//! everything -- and an owner's store is current only as of what it has
+//! applied: one restarted with nothing validates against an empty store. So a
+//! refusal the store decides, and a 404 from a delete or a heartbeat, is given
+//! only after a read barrier (`read_barrier`): one quorum round, on those paths
+//! alone.
 //!
 //! **Apply removes the second wait.** The etcd backend commits to etcd and
 //! then waits for its own write to come back down the watch stream before it
@@ -67,14 +74,6 @@ use crate::machine::Outcome;
 use crate::messages::{Forward, ForwardReply, Message};
 use crate::node::{ForwardHandler, RaftNode, Role};
 use crate::operations::{Operation, OperationKind, ProposalId, Register};
-
-/// How long a Node may remain owned by a member nobody can reach before
-/// another member takes it over.
-///
-/// Deliberately below the 12 s garbage-collection interval of `Behaviour -
-/// Registration.md:47`: a Node whose owner died must find a new one before its
-/// resources would otherwise be collected.
-pub const OWNERSHIP_GRACE_S: f64 = 6.0;
 
 /// One in-flight proposal per Node subtree.
 ///
@@ -163,11 +162,23 @@ impl RaftRegistryBackend {
 
     /// Who owns this Node, or `None` when it is free to claim.
     ///
-    /// A Node owned by a member that has been unreachable reads as unowned, so
-    /// whichever member it re-registers with can take over. The grace is what
-    /// stops two members trading a Node back and forth while a load balancer
-    /// spreads its traffic -- without it, every request would claim, and every
-    /// claim would be a consensus round.
+    /// A Node owned by a member this one cannot reach reads as unowned at once,
+    /// so whichever member it re-registers with takes it over. There is no grace
+    /// period, and none is wanted:
+    ///
+    /// * a claim rides the registration's own proposal (`claim_owner`), so
+    ///   taking a Node over adds no consensus round;
+    /// * ownership moves only when the owner is unreachable from the member a
+    ///   request reached -- a load balancer spreading a Node's traffic over
+    ///   members that can reach its owner forwards, it does not claim;
+    /// * for as long as a grace lasted, every request for the Node at another
+    ///   member would go to an owner nobody can reach and be answered 503;
+    /// * and a Node whose owner died must find a new one before the 12 s
+    ///   collection (`Behaviour - Registration.md:47`) removes it, which
+    ///   immediate takeover serves best.
+    ///
+    /// A move is safe whenever it happens: apply, not the proposer, decides
+    /// whether a registration creates or updates (`machine.rs`).
     fn owner_for(&self, node_id: &str) -> Option<u64> {
         let held = self.node.ownership_of(node_id)?;
         if held == self.index() {
@@ -186,9 +197,9 @@ impl RaftRegistryBackend {
     /// Which Node's subtree this resource belongs to.
     ///
     /// A Node is its own, a Device names one, and everything else inherits its
-    /// Device's -- looked up locally, and a Device that is genuinely absent is
-    /// a genuine `PARENT_MISSING` decided by the same store rule that governs
-    /// it in standalone mode.
+    /// Device's -- which is looked up locally. A Device absent here is
+    /// `PARENT_MISSING` only if this member is current, which is why every
+    /// caller takes a read barrier before believing it (`read_barrier`).
     fn resolve_node(
         &self,
         resource_type: ResourceType,
@@ -232,19 +243,28 @@ impl RaftRegistryBackend {
     ///
     /// A client paging by creation order must not see a resource move because
     /// it was updated.
+    ///
+    /// # Errors
+    ///
+    /// [`MutationUnavailable`] when the cursor's reservation could not be made
+    /// durable (`RaftNode::allocate_cursor`). Nothing was proposed, so the
+    /// Node's retry starts clean.
     fn cursors_for(
         &self,
         resource_type: ResourceType,
         resource_id: &str,
-    ) -> (TaiCursor, TaiCursor) {
-        let updated = self.node.allocate_cursor(resource_type);
+    ) -> Result<(TaiCursor, TaiCursor), MutationUnavailable> {
+        let updated = self
+            .node
+            .allocate_cursor(resource_type)
+            .map_err(|failed| MutationUnavailable(failed.0))?;
         let created = self.registry.with_read_store(|store| {
             store
                 .get_including_tombstoned(resource_type, resource_id)
                 .filter(|existing| existing.extant)
                 .map(|existing| existing.created)
         });
-        (created.unwrap_or(updated), updated)
+        Ok((created.unwrap_or(updated), updated))
     }
 
     /// Propose, wait for the apply, and translate failure into a 503.
@@ -274,19 +294,31 @@ impl RaftRegistryBackend {
         node_id: &str,
         claim: bool,
     ) -> Result<Result<Applied, RegistrationFailure>, MutationUnavailable> {
-        let prepared = self
-            .registry
-            .with_read_store(|store| store.prepare(resource_type, body.data()));
+        let prepare = || {
+            self.registry
+                .with_read_store(|store| store.prepare(resource_type, body.data()))
+        };
+        let mut prepared = prepare();
+        if let Err(ref failure) = prepared
+            && decided_by_state(failure)
+        {
+            // Validated against a store that may be behind. It was once
+            // returned at once, as "authoritative, and free" because this
+            // member owns the Node -- true only of an owner that has applied
+            // everything committed, and an owner can lag like any member (one
+            // restarted with nothing validates against an empty store). So this
+            // member catches up to a read index first, exactly as the etcd
+            // backend fences before it dares return a terminal 400, and decides
+            // again.
+            self.read_barrier().await?;
+            prepared = prepare();
+        }
         let prepared = match prepared {
             Ok(prepared) => prepared,
-            // Authoritative, and free. The etcd backend cannot do this: its
-            // store may be behind, so it must fence before it dares return a
-            // terminal 400. Ownership is what makes the same answer safe here
-            // without touching the network.
             Err(failure) => return Ok(Err(failure)),
         };
 
-        let (created, updated) = self.cursors_for(resource_type, &prepared.resource_id);
+        let (created, updated) = self.cursors_for(resource_type, &prepared.resource_id)?;
         let operation = Operation {
             proposal: ProposalId {
                 member: self.index(),
@@ -323,6 +355,97 @@ impl RaftRegistryBackend {
         }
     }
 
+    /// `register`, told what a moved Node may still do -- see [`WhenMoved`].
+    async fn register_routed(
+        &self,
+        resource_type: ResourceType,
+        body: Body,
+        when_moved: WhenMoved,
+    ) -> Result<Result<Applied, RegistrationFailure>, MutationUnavailable> {
+        let node_id = match self.resolve_node(resource_type, body.data()) {
+            Ok(node_id) => node_id,
+            Err(failure) if decided_by_state(&failure) => {
+                // A parent this member has not yet applied is not a missing
+                // one: see `read_barrier`.
+                self.read_barrier().await?;
+                match self.resolve_node(resource_type, body.data()) {
+                    Ok(node_id) => node_id,
+                    Err(failure) => return Ok(Err(failure)),
+                }
+            }
+            Err(failure) => return Ok(Err(failure)),
+        };
+
+        let owner = self.owner_for(&node_id);
+        if let Some(owner) = owner
+            && owner != self.index()
+        {
+            let resource_id = body
+                .data()
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            let Some(reply) = self
+                .forward(
+                    Forward {
+                        verb: "register".to_owned(),
+                        resource_type: resource_type.singular().to_owned(),
+                        resource_id,
+                        body_text: body.text().to_owned(),
+                        request_id: 0,
+                    },
+                    owner,
+                )
+                .await
+            else {
+                return Err(MutationUnavailable(format!(
+                    "the member owning node {node_id} did not answer",
+                )));
+            };
+
+            if reply.not_owner {
+                // Ownership moved underneath us. One retry, as owner or
+                // forwarder depending on where it moved to -- and no more,
+                // because a request that keeps chasing an owner is a request
+                // that never answers.
+                //
+                // "No more" has to be enforced, not merely intended. Retrying
+                // through `register` again, with nothing spent, recursed for
+                // as long as this member's ownership table stayed behind --
+                // and a table that is behind names the same former owner every
+                // time, so the retry forwards to the member that has just said
+                // no. The chaos soak measured it as a stack overflow that
+                // aborted the process, the faulting thread 9,700 frames deep in
+                // this function; the Python runs the same recursion into
+                // `RecursionError`, 490 forwards in 0.4s. After the one retry
+                // this is a 503: the tables converge, and a Node retries a 503.
+                return match when_moved {
+                    WhenMoved::RouteAgain => {
+                        Box::pin(self.register_routed(resource_type, body, WhenMoved::Unavailable))
+                            .await
+                    }
+                    WhenMoved::Unavailable => Err(MutationUnavailable(format!(
+                        "member {owner} no longer owns node {node_id}, and this member has not \
+                         yet learned which does",
+                    ))),
+                };
+            }
+
+            self.await_applied(reply.applied_index).await?;
+            return result_of(&reply);
+        }
+
+        let gate = self.gate.lock_for(&node_id);
+        let held = gate.lock().await;
+        let result = self
+            .register_as_owner(resource_type, body, &node_id, owner.is_none())
+            .await;
+        drop(held);
+        self.gate.forget(&node_id);
+        result
+    }
+
     /// Hand a mutation to the member that owns its Node.
     async fn forward(&self, message: Forward, owner: u64) -> Option<ForwardReply> {
         let reply = self
@@ -345,12 +468,171 @@ impl RaftRegistryBackend {
         }
     }
 
+    /// A heartbeat for another member's Node, answered by that member.
+    /// `heartbeat`, told what it may still do if its Node has moved.
+    ///
+    /// Routed exactly as `register_routed` is: forwarded to the Node's owner,
+    /// and `when_moved` spent by the one retry `forward_heartbeat` makes when
+    /// that member no longer owns it.
+    async fn heartbeat_routed(
+        &self,
+        node_id: &str,
+        when_moved: WhenMoved,
+    ) -> Result<Option<i64>, MutationUnavailable> {
+        if let Some(owner) = self.owner_for(node_id)
+            && owner != self.index()
+        {
+            return self.forward_heartbeat(owner, node_id, when_moved).await;
+        }
+        match self.beat_here(node_id).await? {
+            BeatHere::Refreshed(health) => Ok(health),
+            BeatHere::OwnedBy(owner) => self.forward_heartbeat(owner, node_id, when_moved).await,
+        }
+    }
+
+    /// Refresh a Node this member takes to be its own -- or find it is not.
+    ///
+    /// What both a Node's own heartbeat and a forwarded one do at the member
+    /// they reach, so the two cannot drift.
+    async fn beat_here(&self, node_id: &str) -> Result<BeatHere, MutationUnavailable> {
+        let known = || {
+            self.registry
+                .with_read_store(|store| store.get(ResourceType::Node, node_id).is_some())
+        };
+        if !known() {
+            // A 404 tells the Node to re-register everything (`Behaviour -
+            // Registration.md:112-114`), so it has to be true: see
+            // `read_barrier`. Once current, the Node may turn out to be another
+            // member's.
+            self.read_barrier().await?;
+            if let Some(owner) = self.owner_for(node_id)
+                && owner != self.index()
+            {
+                return Ok(BeatHere::OwnedBy(owner));
+            }
+            if !known() {
+                return Ok(BeatHere::Refreshed(None));
+            }
+        }
+        Ok(BeatHere::Refreshed(self.registry.heartbeat(node_id)))
+    }
+
+    /// Answer a forwarded heartbeat as its Node's owner, or say it is not.
+    ///
+    /// Never forwarded on, as a forwarded registration never is (`forward`): a
+    /// request that hops between members has no bound on its latency, and two
+    /// members whose tables disagree about the owner handed a heartbeat back and
+    /// forth until an RPC deadline cut the chain. This was answered by the
+    /// member's own `heartbeat`, which forwards.
+    async fn heartbeat_forwarded(&self, node_id: &str) -> Result<BeatHere, MutationUnavailable> {
+        match self.owner_for(node_id) {
+            Some(owner) if owner != self.index() => Ok(BeatHere::OwnedBy(owner)),
+            _ => self.beat_here(node_id).await,
+        }
+    }
+
+    async fn forward_heartbeat(
+        &self,
+        owner: u64,
+        node_id: &str,
+        when_moved: WhenMoved,
+    ) -> Result<Option<i64>, MutationUnavailable> {
+        let Some(reply) = self
+            .forward(
+                Forward {
+                    verb: "heartbeat".to_owned(),
+                    resource_type: "node".to_owned(),
+                    resource_id: node_id.to_owned(),
+                    body_text: String::new(),
+                    request_id: 0,
+                },
+                owner,
+            )
+            .await
+        else {
+            // No answer is not "no such Node": the owner may well hold it. This
+            // used to be a 404 -- a terminal instruction to re-register
+            // everything, given because a link was slow.
+            return Err(MutationUnavailable(format!(
+                "the member owning node {node_id} did not answer",
+            )));
+        };
+        if reply.not_owner {
+            // Ownership moved underneath us, as it can for a registration
+            // (`register_routed`): one retry, as owner or forwarder depending
+            // on where it moved to, and no more -- a table that is behind names
+            // the same former owner every time. Read as a plain refusal, as it
+            // once was, this was a 404: the terminal "re-register every
+            // resource", for a Node the cluster still held.
+            return match when_moved {
+                WhenMoved::RouteAgain => {
+                    Box::pin(self.heartbeat_routed(node_id, WhenMoved::Unavailable)).await
+                }
+                WhenMoved::Unavailable => Err(MutationUnavailable(format!(
+                    "member {owner} no longer owns node {node_id}, and this member has not yet \
+                     learned which does",
+                ))),
+            };
+        }
+        if !reply.ok {
+            if reply.error == "unavailable" {
+                return Err(MutationUnavailable(if reply.detail.is_empty() {
+                    format!("member {owner} could not answer")
+                } else {
+                    reply.detail
+                }));
+            }
+            return Ok(None);
+        }
+        Ok(Some(
+            i64::try_from(reply.applied_index).unwrap_or_else(|_| health_now()),
+        ))
+    }
+
+    /// Bring this member's store up to everything committed when a read began.
+    ///
+    /// A member answers some requests from its own store -- a refusal from
+    /// validation, a 404 for a delete or a heartbeat -- and a store can be
+    /// behind what is committed: a follower that has not yet applied, an owner
+    /// restarted with nothing. Those answers were given as if the store were
+    /// current, and a client acts on them: a Node told 400 must not retry, one
+    /// told 404 re-registers everything. The chaos soak counted them in
+    /// hundreds per run set, each unjustifiable.
+    ///
+    /// So before such an answer this member learns a read index -- the commit
+    /// index when the read began, confirmed by a quorum that its leader still
+    /// leads (etcd's ReadIndex, `RaftNode::read_index`) -- and waits until it
+    /// has applied it. The answer it then gives is the one the leader would
+    /// have given. Only those answers pay: a registration that commits, and a
+    /// heartbeat that finds its Node, pay nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`MutationUnavailable`] when no read index can be had in time: a member
+    /// that cannot show it is current answers 503, which a Node retries, rather
+    /// than a terminal answer it cannot justify.
+    async fn read_barrier(&self) -> Result<(), MutationUnavailable> {
+        let timeout_ms = self
+            .mutation_timeout
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX);
+        let index = self.node.read_index(timeout_ms).await.map_err(|error| {
+            MutationUnavailable(format!(
+                "this member cannot confirm it is current: {}",
+                error.0,
+            ))
+        })?;
+        self.await_applied(index).await
+    }
+
     /// Wait until this member has applied `index`.
     ///
-    /// The one wait that survives ownership, and only on the forwarded path:
-    /// the member that answered the client is not the member that applied the
-    /// entry, and a client that immediately reads back from here would
-    /// otherwise get a 404 for something it was just told was created.
+    /// Two waits use it. On the forwarded path, the member that answered the
+    /// client is not the member that applied the entry, and a client that
+    /// immediately reads back from here would otherwise get a 404 for
+    /// something it was just told was created. And a read barrier
+    /// (`read_barrier`) waits here for its read index.
     async fn await_applied(&self, index: u64) -> Result<(), MutationUnavailable> {
         if index == 0 {
             return Ok(());
@@ -388,25 +670,46 @@ impl ForwardHandler for RaftRegistryBackend {
         };
 
         if message.verb == "heartbeat" {
-            let health = RegistryBackend::heartbeat(self, &message.resource_id)
-                .await
-                .ok()
-                .flatten();
-            return ForwardReply {
-                ok: health.is_some(),
-                created: false,
-                error: String::new(),
-                detail: String::new(),
-                applied_index: health.unwrap_or(0).max(0).unsigned_abs(),
-                not_owner: false,
-                request_id: message.request_id,
-                owner: None,
+            return match self.heartbeat_forwarded(&message.resource_id).await {
+                Ok(BeatHere::Refreshed(health)) => ForwardReply {
+                    ok: health.is_some(),
+                    created: false,
+                    error: String::new(),
+                    detail: String::new(),
+                    applied_index: health.unwrap_or(0).max(0).unsigned_abs(),
+                    not_owner: false,
+                    request_id: message.request_id,
+                    owner: None,
+                },
+                Ok(BeatHere::OwnedBy(owner)) => ForwardReply {
+                    ok: false,
+                    created: false,
+                    error: String::new(),
+                    detail: String::new(),
+                    applied_index: 0,
+                    not_owner: true,
+                    request_id: message.request_id,
+                    owner: Some(owner),
+                },
+                // Answered, not dropped into a "no such Node": see the refusal
+                // at the end.
+                Err(error) => refusal("unavailable", error.0),
             };
         }
 
         let body = Body::new(message.body_text.clone());
         let node_id = match self.resolve_node(resource_type, body.data()) {
             Ok(node_id) => node_id,
+            Err(failure) if decided_by_state(&failure) => {
+                // See `register_routed`: this member may be behind as well.
+                if let Err(error) = self.read_barrier().await {
+                    return refusal("unavailable", error.0);
+                }
+                match self.resolve_node(resource_type, body.data()) {
+                    Ok(node_id) => node_id,
+                    Err(failure) => return reply_for(&Err(failure), 0, message.request_id),
+                }
+            }
             Err(failure) => return reply_for(&Err(failure), 0, message.request_id),
         };
 
@@ -436,7 +739,11 @@ impl ForwardHandler for RaftRegistryBackend {
 
         match result {
             Ok(outcome) => reply_for(&outcome, self.node.last_applied(), message.request_id),
-            Err(error) => refusal("", error.0),
+            // This member owns the Node but could not commit: say so at once,
+            // with the reason, under the code every refusal of this kind uses
+            // (`node.rs`'s `on_forward`, `transport.rs`'s `application_refusal`)
+            // and which the forwarder answers as a 503 -- see `result_of`.
+            Err(error) => refusal("unavailable", error.0),
         }
     }
 }
@@ -452,7 +759,11 @@ impl RegistryBackend for RaftRegistryBackend {
     /// reported degraded *forever*, because nothing wrote to it and nothing
     /// else looked. Its Registration API answered 503 on a healthy cluster.
     fn state(&self) -> BackendState {
-        if self.stopping.load(std::sync::atomic::Ordering::SeqCst) {
+        if self.stopping.load(std::sync::atomic::Ordering::SeqCst) || self.node.failure().is_some()
+        {
+            // A member that stopped itself on a broken invariant is going away
+            // (`RaftNode::fail`): its process is about to exit, and until it
+            // does, a mutation is answered 503 so the Node retries elsewhere.
             return BackendState::Stopping;
         }
         if !self.started.load(std::sync::atomic::Ordering::SeqCst) {
@@ -500,59 +811,8 @@ impl RegistryBackend for RaftRegistryBackend {
         resource_type: ResourceType,
         body: Body,
     ) -> Result<Result<Applied, RegistrationFailure>, MutationUnavailable> {
-        let node_id = match self.resolve_node(resource_type, body.data()) {
-            Ok(node_id) => node_id,
-            Err(failure) => return Ok(Err(failure)),
-        };
-
-        let owner = self.owner_for(&node_id);
-        if let Some(owner) = owner
-            && owner != self.index()
-        {
-            let resource_id = body
-                .data()
-                .get("id")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let Some(reply) = self
-                .forward(
-                    Forward {
-                        verb: "register".to_owned(),
-                        resource_type: resource_type.singular().to_owned(),
-                        resource_id,
-                        body_text: body.text().to_owned(),
-                        request_id: 0,
-                    },
-                    owner,
-                )
-                .await
-            else {
-                return Err(MutationUnavailable(format!(
-                    "the member owning node {node_id} did not answer",
-                )));
-            };
-
-            if reply.not_owner {
-                // Ownership moved underneath us. One retry, as owner or
-                // forwarder depending on where it moved to -- and no more,
-                // because a request that keeps chasing an owner is a request
-                // that never answers.
-                return Box::pin(self.register(resource_type, body)).await;
-            }
-
-            self.await_applied(reply.applied_index).await?;
-            return Ok(result_of(&reply));
-        }
-
-        let gate = self.gate.lock_for(&node_id);
-        let held = gate.lock().await;
-        let result = self
-            .register_as_owner(resource_type, body, &node_id, owner.is_none())
-            .await;
-        drop(held);
-        self.gate.forget(&node_id);
-        result
+        self.register_routed(resource_type, body, WhenMoved::RouteAgain)
+            .await
     }
 
     async fn unregister(
@@ -560,13 +820,18 @@ impl RegistryBackend for RaftRegistryBackend {
         resource_type: ResourceType,
         resource_id: &str,
     ) -> Result<Option<Vec<ResourceEvent>>, MutationUnavailable> {
-        // A 404 costs nothing: the local store is a complete replica, so "not
-        // here" is not a guess.
-        let present = self
-            .registry
-            .with_read_store(|store| store.get(resource_type, resource_id).is_some());
-        if !present {
-            return Ok(None);
+        let present = || {
+            self.registry
+                .with_read_store(|store| store.get(resource_type, resource_id).is_some())
+        };
+        if !present() {
+            // "Not here" is a guess until this member is current: its store is
+            // a complete replica only of what it has applied. See
+            // `read_barrier`.
+            self.read_barrier().await?;
+            if !present() {
+                return Ok(None);
+            }
         }
 
         let operation = Operation {
@@ -595,31 +860,7 @@ impl RegistryBackend for RaftRegistryBackend {
     /// rounds per second. Here it is stronger -- the beat writes nothing at
     /// all, not even a lease renewal.
     async fn heartbeat(&self, node_id: &str) -> Result<Option<i64>, MutationUnavailable> {
-        let owner = self.owner_for(node_id);
-        if let Some(owner) = owner
-            && owner != self.index()
-        {
-            let reply = self
-                .forward(
-                    Forward {
-                        verb: "heartbeat".to_owned(),
-                        resource_type: "node".to_owned(),
-                        resource_id: node_id.to_owned(),
-                        body_text: String::new(),
-                        request_id: 0,
-                    },
-                    owner,
-                )
-                .await;
-            return Ok(match reply {
-                Some(reply) if reply.ok => {
-                    Some(i64::try_from(reply.applied_index).unwrap_or_else(|_| health_now()))
-                }
-                _ => None,
-            });
-        }
-
-        Ok(self.registry.heartbeat(node_id))
+        self.heartbeat_routed(node_id, WhenMoved::RouteAgain).await
     }
 
     /// Expire silent Nodes this member owns; forget tombstones everywhere.
@@ -704,17 +945,67 @@ impl RegistryBackend for RaftRegistryBackend {
     }
 }
 
-fn result_of(reply: &ForwardReply) -> Result<Applied, RegistrationFailure> {
+/// What a forwarded registration or heartbeat may still do when the member it
+/// was forwarded to answers that it no longer owns the Node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WhenMoved {
+    /// Route it once more, as owner or forwarder depending on where it moved.
+    RouteAgain,
+    /// It has been routed again already: answer 503, and let the Node retry.
+    Unavailable,
+}
+
+/// What a heartbeat found at the member it reached (`beat_here`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BeatHere {
+    /// The Node's new health, or `None`: this member does not hold it.
+    Refreshed(Option<i64>),
+    /// Another member was found to own the Node once this one was current.
+    OwnedBy(u64),
+}
+
+/// Does this refusal depend on what the store holds?
+///
+/// Every refusal but a malformed body (`SCHEMA`, `Behaviour -
+/// Registration.md:100`), which is decided by the body alone: the others -- an
+/// id of another type, an older version, a changed or missing parent
+/// (`:101-104`) -- are only as true as the store they were read from.
+fn decided_by_state(failure: &RegistrationFailure) -> bool {
+    failure.error != RegistrationError::Schema
+}
+
+/// What a forwarded registration's reply means to this member's caller.
+///
+/// The Python `_result_of`, exactly. A reply that is not ok carries either a
+/// registration error -- the owner's terminal 400, decided against its replica
+/// -- or anything else, which means the owner could not decide at all:
+/// `"unavailable"` from a member that could not commit or is at capacity
+/// (`node.rs`'s `on_forward`, `transport.rs`'s `application_refusal`), or a
+/// code this member does not know. Those are 503s, because a Node retries a 503
+/// and MUST NOT retry a 400.
+///
+/// This once mapped every code it did not know to `Schema`, so an owner that
+/// had lost its quorum answered the client **400**: the chaos soak's Status
+/// Integrity oracle measured it as `400 ... schema: registration of ... could
+/// not commit: lost contact with a quorum`, and a Node told that stops
+/// re-registering.
+fn result_of(
+    reply: &ForwardReply,
+) -> Result<Result<Applied, RegistrationFailure>, MutationUnavailable> {
     if reply.ok {
-        return Ok(Applied {
+        return Ok(Ok(Applied {
             created: reply.created,
             events: Vec::new(),
-        });
+        }));
     }
-    Err(RegistrationFailure::new(
-        RegistrationError::from_code(&reply.error).unwrap_or(RegistrationError::Schema),
-        reply.detail.clone(),
-    ))
+    let Some(error) = RegistrationError::from_code(&reply.error) else {
+        return Err(MutationUnavailable(if reply.detail.is_empty() {
+            "the owning member refused the registration".to_owned()
+        } else {
+            reply.detail.clone()
+        }));
+    };
+    Ok(Err(RegistrationFailure::new(error, reply.detail.clone())))
 }
 
 fn reply_for(

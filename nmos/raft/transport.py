@@ -77,9 +77,13 @@ from nmos.raft.messages import (
     HelloAck,
     InstallSnapshot,
     InstallSnapshotReply,
+    Ping,
+    Pong,
     Promote,
     Propose,
     ProposeReply,
+    ReadIndex,
+    ReadIndexReply,
     RequestVote,
     RequestVoteReply,
     decode_message,
@@ -99,6 +103,66 @@ log = logging.getLogger(__name__)
 
 _RECONNECT_INITIAL = 0.05
 _RECONNECT_MAX = 2.0
+
+CONN_READ_TIMEOUT = 5.0
+"""Seconds a connection may carry nothing before it is closed.
+
+etcd's ``DefaultConnReadTimeout`` (``rafthttp/peer.go:40``), applied the way
+etcd applies it (``client/pkg/transport/timeout_conn.go``): every read must see
+bytes within it, at both ends of every peer connection. Without one, a path
+that stops carrying packets without breaking -- no reset, TCP retransmitting
+what it holds -- keeps its connection open for as long as the stall lasts, and
+delivers everything written into it when the path recovers: messages seconds or
+minutes late, acted on as if current. The chaos soak measured writes answered
+503 committing 4.6-26 s later, after their clients' own confirmed deletes.
+Closed at the deadline, a stalled connection delivers what it held promptly or
+never.
+"""
+
+HEARTBEATS_PER_READ_TIMEOUT = 3
+"""A ``Ping`` goes out on every outbound link this many times per read timeout.
+
+etcd's stream writer ticks every ``ConnReadTimeout / 3`` (``stream.go:169``),
+so a healthy link whose ends have nothing to say still carries something well
+inside the deadline, with room for two to be late.
+"""
+
+
+class _Silent(Exception):
+    """A connection carried nothing for the read timeout."""
+
+
+class _DeadlineReader:
+    """A connection's reads, each given the read timeout to see a byte.
+
+    The deadline measures silence, not how long a frame takes: ``read``
+    returns as soon as any bytes arrive, and each read gets the whole timeout
+    -- etcd's per-``Read`` deadline exactly. A snapshot chunk crawling in over a
+    slow link is never cut off; a link that has gone quiet is, however much of
+    a frame it had delivered.
+    """
+
+    def __init__(self, reader: asyncio.StreamReader, timeout: float) -> None:
+        self._reader = reader
+        self._timeout = timeout
+
+    async def readexactly(self, n: int) -> bytes:
+        parts: list[bytes] = []
+        remaining = n
+        while remaining:
+            try:
+                chunk = await asyncio.wait_for(
+                    self._reader.read(remaining), self._timeout,
+                )
+            except asyncio.TimeoutError as silence:
+                raise _Silent(
+                    f"nothing arrived for {self._timeout:g}s",
+                ) from silence
+            if not chunk:
+                raise asyncio.IncompleteReadError(b"".join(parts), n)
+            parts.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(parts)
 
 
 @runtime_checkable
@@ -151,6 +215,10 @@ class PeerHandler(Protocol):
     async def on_propose(self, peer: int, message: Propose) -> ProposeReply: ...
 
     async def on_forward(self, peer: int, message: Forward) -> ForwardReply: ...
+
+    async def on_read_index(
+        self, peer: int, message: ReadIndex,
+    ) -> ReadIndexReply: ...
 
     def on_peer_state(self, peer: int, *, up: bool, incarnation: int) -> None:
         """A peer's link came up or went down.
@@ -215,6 +283,8 @@ class _Link:
 
     The kind is not decoration -- see ``EXPECTED_REPLY``.
     """
+    beat: asyncio.Task[None] | None = None
+    """The heartbeat for the current connection (``RaftTransport._beat``)."""
 
 
 APPLICATION_CONCURRENCY = 64
@@ -247,6 +317,9 @@ class RaftTransport:
             module docstring for why chain validation alone is not enough.
             Meaningless, and ignored, when TLS is off.
         rpc_timeout: Default deadline for a correlated request.
+        conn_read_timeout: How long a connection may carry nothing before it
+            is closed (``CONN_READ_TIMEOUT``, etcd's value). Tests shorten it;
+            nothing else should.
     """
 
     def __init__(
@@ -262,6 +335,7 @@ class RaftTransport:
         client_ssl: ssl.SSLContext | None = None,
         peer_name: str | None = None,
         rpc_timeout: float = 2.0,
+        conn_read_timeout: float = CONN_READ_TIMEOUT,
     ) -> None:
         self._local = local
         self._peers = peers
@@ -273,6 +347,7 @@ class RaftTransport:
         self._client_ssl = client_ssl
         self._peer_name = peer_name
         self._rpc_timeout = rpc_timeout
+        self._read_timeout = conn_read_timeout
 
         self._handler_ref: weakref.ref[PeerHandler] | None = None
         """The node, held **weakly**.
@@ -455,10 +530,34 @@ class RaftTransport:
             try:
                 await self._connect(link)
                 backoff = _RECONNECT_INITIAL
+                link.beat = asyncio.create_task(
+                    self._beat(link),
+                    name=f"raft-beat-{self._member_name}-{link.peer}-{link.stream.name}",
+                )
                 await self._pump(link)
             except asyncio.CancelledError:
                 raise
-            except (OSError, RaftProtocolError, RaftClusterMismatch) as exc:
+            except _Silent as silence:
+                # etcd logs a lost stream at warning ("lost TCP streaming
+                # connection with remote peer", ``stream.go:497-504``): a peer
+                # that stopped answering is worth knowing about, and this is
+                # the only place its link says so.
+                log.warning(
+                    "raft: link to member %d (%s) went silent: %s; closing it",
+                    link.peer, link.stream.name, silence,
+                )
+            except (
+                OSError,
+                # A peer closing its end cleanly: the read ends here, as an
+                # ``EOFError`` rather than an ``OSError``. It is a link going
+                # down like any other, as the inbound side already treats it and
+                # as the Rust transport ends it (``pump``) -- not the failure the
+                # catch-all below logged it as, with a traceback, for every
+                # member that stopped.
+                asyncio.IncompleteReadError,
+                RaftProtocolError,
+                RaftClusterMismatch,
+            ) as exc:
                 if isinstance(exc, RaftClusterMismatch):
                     # Not transient and not fixable by retrying sooner: log it
                     # loudly, because a member configured into the wrong
@@ -503,7 +602,7 @@ class RaftTransport:
             ),
             link.stream,
         ))
-        frame = await read_frame(reader)
+        frame = await read_frame(_DeadlineReader(reader, self._read_timeout))
         if frame.type is not MessageType.HELLO_ACK:
             raise RaftProtocolError(
                 f"member {link.peer} answered {frame.type.name} to a Hello",
@@ -523,20 +622,59 @@ class RaftTransport:
             )
 
     async def _pump(self, link: _Link) -> None:
-        """Read replies on an outbound link until it fails."""
+        """Read replies on an outbound link until it fails or goes silent."""
         reader = link.reader
         if reader is None:
             raise RaftUnavailable("link has no reader")
+        source = _DeadlineReader(reader, self._read_timeout)
         while not self._closing:
-            frame = await read_frame(reader)
-            await self._dispatch(link.peer, frame, None)
+            frame = await read_frame(source)
+            try:
+                await self._dispatch(link.peer, frame, None)
+            except OSError as exc:
+                # The read above is this loop's only network I/O, so an
+                # ``OSError`` out of the dispatch is the handler's: a save that
+                # failed. ``_maintain`` drops the link for it as for any
+                # ``OSError`` -- which is right -- and says nothing, because to
+                # it an ``OSError`` is a link going down. Said here, then, as
+                # the Rust's ``pump`` says it: otherwise a disk that filled up
+                # shows in the log as nothing but links reconnecting.
+                log.exception(
+                    "raft: link to member %d failed: %s", link.peer, exc,
+                )
+                raise
+
+    async def _beat(self, link: _Link) -> None:
+        """Say something on a link every third of the read timeout.
+
+        A ``Ping`` keeps the peer's reads inside its deadline, and the ``Pong``
+        it draws keeps this end's: a connection here carries requests one way
+        and their answers the other, so a link with nothing to say would go
+        quiet in both directions at once. etcd's streams run one way, so its
+        heartbeat needs no answer (``stream.go:183-192``); these need one.
+        Neither reaches the node. Sent whatever else is flowing, as etcd's is:
+        a timer that only fired when idle would need to know what idle means.
+        """
+        nonce = 0
+        interval = self._read_timeout / HEARTBEATS_PER_READ_TIMEOUT
+        while link.connected:
+            await asyncio.sleep(interval)
+            nonce += 1
+            self.send(link.peer, Ping(nonce=nonce), stream=link.stream)
 
     def _drop(self, link: _Link, error: BaseException) -> None:
         link.connected = False
         link.reader = None
+        if link.beat is not None:
+            link.beat.cancel()
+            link.beat = None
         if link.writer is not None:
+            # Aborted, not closed: ``close`` flushes what is buffered, and on a
+            # connection being given up that is exactly what must not be sent
+            # -- the next connection starts clean. etcd discards a failed
+            # connection's queue the same way (``stream.go:336-339``).
             try:
-                link.writer.close()
+                link.writer.transport.abort()
             except (OSError, RuntimeError):
                 pass
             link.writer = None
@@ -554,8 +692,12 @@ class RaftTransport:
     ) -> None:
         peer = -1
         self._inbound.add(writer)
+        # Every read, the handshake's included: etcd's listener puts the
+        # deadline on every accepted connection (``rafthttp/util.go:40-43``),
+        # and a caller that connects and says nothing is a stalled one too.
+        source = _DeadlineReader(reader, self._read_timeout)
         try:
-            frame = await read_frame(reader)
+            frame = await read_frame(source)
             if frame.type is not MessageType.HELLO:
                 raise RaftProtocolError("first frame was not a Hello")
             hello = decode_message(frame.type, frame.payload)
@@ -578,8 +720,19 @@ class RaftTransport:
 
             peer = hello.member_index
             while not self._closing:
-                inbound = await read_frame(reader)
+                inbound = await read_frame(source)
                 await self._dispatch(peer, inbound, writer)
+        except _Silent as silence:
+            log.warning(
+                "raft: connection from member %d went silent: %s; closing it",
+                peer, silence,
+            )
+            # Aborted, so nothing still buffered for it -- answers to requests
+            # the caller has long since given up on -- is sent after all.
+            try:
+                writer.transport.abort()
+            except (OSError, RuntimeError):
+                pass
         except (asyncio.IncompleteReadError, ConnectionResetError):
             pass
         except RaftProtocolError as exc:
@@ -655,14 +808,28 @@ class RaftTransport:
         if handler is None:
             return
 
-        message = decode_message(frame.type, frame.payload)
+        try:
+            message = decode_message(frame.type, frame.payload)
+        except RaftProtocolError as exc:
+            # Warned about and answered with nothing, and the connection carries
+            # on, as the Rust's ``dispatch`` does. The frame passed its checksum,
+            # so it arrived as it was sent and the stream is still aligned: the
+            # fault is the sender's -- a bug, or another version -- and ending
+            # the connection would only fail every other exchange on it.
+            log.warning("raft: undecodable frame from member %d: %s", peer, exc)
+            return
 
         if frame.is_reply:
             self._resolve(peer, frame, message)
             return
 
         reply: Any | None = None
-        if frame.type is MessageType.REQUEST_VOTE:
+        if frame.type is MessageType.PING:
+            # The link heartbeat, answered on the connection it came by and
+            # kept from the node: it says the link is alive, nothing more
+            # (``_beat``).
+            reply = Pong(nonce=message.nonce)
+        elif frame.type is MessageType.REQUEST_VOTE:
             reply = handler.on_request_vote(peer, message)
         elif frame.type is MessageType.APPEND_ENTRIES:
             reply = handler.on_append_entries(peer, message)
@@ -670,16 +837,19 @@ class RaftTransport:
             reply = handler.on_install_snapshot(peer, message)
         elif frame.type is MessageType.PROMOTE:
             handler.on_promote(peer, message)
-        elif frame.type in (MessageType.PROPOSE, MessageType.FORWARD):
+        elif frame.type in (
+            MessageType.PROPOSE, MessageType.FORWARD, MessageType.READ_INDEX,
+        ):
             # **Served off this reader, not on it.**
             #
-            # These two wait for a quorum round -- the trait says so -- and the
-            # answer to that round arrives as ``AppendEntries`` on *this very
-            # link*. Awaiting them here therefore deadlocks whenever the member
-            # that sent the forward is the leader: the handler waits for a
-            # commit that cannot be read, because the reader is inside the
-            # handler. Measured as every refusal taking the whole mutation
-            # deadline, in both implementations.
+            # These three wait for a quorum round -- the trait says so -- and
+            # the answer to that round arrives as ``AppendEntries`` replies on
+            # *this very link*. Awaiting them here therefore deadlocks whenever
+            # the member that sent the request is one whose answer the round
+            # needs: the handler waits for a reply that cannot be read, because
+            # the reader is inside the handler. Measured, for the forward, as
+            # every refusal taking the whole mutation deadline, in both
+            # implementations; a read index waits on the same kind of round.
             #
             # The consensus messages above stay synchronous and in order, which
             # is what keeps a term from being read and acted on across an
@@ -722,6 +892,8 @@ class RaftTransport:
         async with self._application_slots:
             if frame.type is MessageType.PROPOSE:
                 reply: Any = await handler.on_propose(peer, message)
+            elif frame.type is MessageType.READ_INDEX:
+                reply = await handler.on_read_index(peer, message)
             else:
                 reply = await handler.on_forward(peer, message)
 
@@ -786,6 +958,12 @@ def _application_refusal(frame: Frame, message: Any) -> Any | None:
             accepted=False,
             reason="this member is at capacity for forwarded work",
             term=0, first_index=0, request_id=request_id, leader=None,
+        )
+    if frame.type is MessageType.READ_INDEX:
+        return ReadIndexReply(
+            ok=False, index=0,
+            reason="this member is at capacity for forwarded work",
+            request_id=request_id,
         )
     if frame.type is MessageType.FORWARD:
         return ForwardReply(

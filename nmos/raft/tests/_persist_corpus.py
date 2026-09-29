@@ -95,6 +95,18 @@ _CASES: list[tuple[str, str]] = [
         "version": STATE_VERSION, "term": 1, "voted_for": ["a", "list"],
         "incarnation": 1,
     })),
+    ("a cursor reservation that is not a cursor", json.dumps({
+        "version": STATE_VERSION, "term": 1, "voted_for": None,
+        "incarnation": 1, "cursor_reservation": "soon",
+    })),
+    ("a cursor reservation that is a number", json.dumps({
+        "version": STATE_VERSION, "term": 1, "voted_for": None,
+        "incarnation": 1, "cursor_reservation": 12,
+    })),
+    ("a signed cursor reservation", json.dumps({
+        "version": STATE_VERSION, "term": 1, "voted_for": None,
+        "incarnation": 1, "cursor_reservation": "+1:0",
+    })),
 ]
 
 
@@ -105,6 +117,9 @@ _CASES: list[tuple[str, str]] = [
 _INTERPOLATION_POINTS = (
     "is unreadable: ",
     "does not hold a usable term and vote: ",
+    # The stored value follows, as Python's ``repr`` -- which is Python's
+    # rendering of a JSON value, not something the Rust should reproduce.
+    "holds a cursor reservation that is not a cursor: ",
 )
 
 

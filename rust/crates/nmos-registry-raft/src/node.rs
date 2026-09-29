@@ -26,9 +26,40 @@
 //! scenario once per member.
 //!
 //! The fix: a member that has ever acknowledged entries does not vote until it
-//! has been caught up and explicitly promoted. While non-voting it grants no
-//! votes, starts no elections, and reports `catching_up` so the leader does not
-//! count its acknowledgements toward a commit.
+//! has been caught up and explicitly promoted. While non-voting its vote does
+//! not count -- it still answers, saying `voting = false`, and a candidate
+//! counts such a grant only where its own round proves that no quorum of voters
+//! can exist (see "When every voter has forgotten" below) -- and it reports
+//! `catching_up` so the leader does not count its acknowledgements toward a
+//! commit.
+//!
+//! # When every voter has forgotten
+//!
+//! Only a leader promotes, so once a quorum's worth of members are non-voting
+//! no election can succeed and nobody is ever promoted: restarting a whole
+//! cluster reaches that state on the second boot. The way out is that a
+//! guarantee already destroyed cannot be protected. While a quorum of voters is
+//! still *possible* the ordinary rule stands; once one is provably impossible,
+//! members that have forgotten vote again -- but only for a candidate approved
+//! by **every** member not proven to have forgotten, since any surviving copy
+//! of a committed entry is on one of them, and it refuses a candidate lacking
+//! it.
+//!
+//! What counts as proof is the part that has to be right. A member has
+//! forgotten, for the election of term T, only if its own reply to this
+//! candidacy says `voting = false` at term T. That reply is binding: the member
+//! has adopted T, and `on_promote` refuses a promotion from an earlier term, so
+//! it stays non-voting until a leader of T or later promotes it -- which cannot
+//! exist while T is being decided. The candidate does the arithmetic, over
+//! nothing but such replies and its own condition ([`NodeState::won`]); the
+//! voters do none. Evidence kept between rounds went stale -- a member is
+//! promoted without the observer hearing of it -- and the chaos soak measured
+//! a candidate counting as forgotten a member it had itself promoted, and
+//! winning without the committed entries that member held (seeds 59925,
+//! 110797, 111540). A pre-vote predicts the election by the same arithmetic,
+//! counting as forgotten only members that *granted* while saying so: nothing
+//! in a pre-vote is binding, and a prediction that promised a recovery the real
+//! round would refuse would raise the term against a live leader.
 //!
 //! # Why "ever acknowledged" and not "has restarted"
 //!
@@ -89,15 +120,15 @@ use tokio::time::Instant;
 use crate::batcher::{MAX_BATCH, Pending, ProposalBatcher, ProposalDrain, proposal_channel};
 use crate::cluster::RaftLayout;
 use crate::commit::{follower_commit_index, last_new_index, leader_commit_index};
-use crate::errors::RaftInvariantViolated;
-use crate::log::{Entry, RaftLog};
+use crate::errors::{RaftCursorReservationFailed, RaftInvariantViolated};
+use crate::log::{AppendError, Entry, RaftLog};
 use crate::machine::{Outcome, StateMachine};
 use crate::messages::{
     AppendEntries, AppendEntriesReply, InstallSnapshot, InstallSnapshotReply, Message, Promote,
-    RequestVote, RequestVoteReply, WireEntry,
+    ReadIndex, ReadIndexReply, RequestVote, RequestVoteReply, WireEntry,
 };
 use crate::operations::{Operation, OperationKind, ProposalId};
-use crate::persist::{PersistentState, TermStore};
+use crate::persist::{PersistentState, PersistentStateError, TermStore};
 use crate::snapshot::SnapshotMeta;
 use crate::transport::{RaftUnavailable, Transport};
 use nmos_registry_core::cursor::TaiCursor;
@@ -241,6 +272,19 @@ struct PeerState {
     pending_since: Option<Instant>,
     /// How much of the snapshot this peer has confirmed receiving.
     snapshot_offset: usize,
+    /// The snapshot this peer's transfer is *of*, pinned when it starts.
+    ///
+    /// An offset means something only relative to one byte sequence, and
+    /// compaction replaces this member's snapshot whenever it likes. Slicing the
+    /// current one at a saved offset spliced the head of one snapshot to the
+    /// tail of the next -- the chaos soak's splice detector measured it, and when
+    /// the result happened to decode it installed: replicas that had lost
+    /// acknowledged writes while reporting themselves caught up. Pinned here,
+    /// every chunk and the completion's credit come from the one snapshot the
+    /// transfer began with, as etcd's server streams one point-in-time snapshot
+    /// per transfer (`server/etcdserver/snapshot_merge.go:36-39`). Released when
+    /// the transfer completes or is abandoned; the payload is shared, not copied.
+    sending: Option<(SnapshotMeta, Arc<[u8]>)>,
     /// The commit index last *sent* to this peer.
     ///
     /// `go.etcd.io/raft` calls this `sentCommit` and gates an eager send on it
@@ -249,13 +293,32 @@ struct PeerState {
     /// -- which is what happened here -- never sends it at all until the next
     /// heartbeat.
     sent_commit: u64,
-    /// A chunk is out and unanswered.
+    /// The id of the chunk out and unanswered, or 0 when none is.
     ///
-    /// Without this the transfer is driven from two places at once -- the
-    /// replication tick and the previous chunk's reply -- so two chunks go out
-    /// carrying the same offset, the follower sees the second as out of order,
-    /// restarts from zero, and the pair loop forever making no progress.
-    snapshot_in_flight: bool,
+    /// One chunk at a time, and only its reply drives the transfer. Without
+    /// the first, the transfer was driven from two places at once -- the
+    /// replication tick and the previous chunk's reply -- so two chunks went
+    /// out carrying the same offset and the pair looped for ever. A flag alone
+    /// was not enough for the second: a reconnect is reported for the CONTROL
+    /// connection while chunks travel on BULK, so resetting on a reconnect
+    /// cleared the flag while the last chunk was still in flight *and still
+    /// answered* -- and that answer, taken as the one awaited, started a second
+    /// stream beside the new one (seed 60195). The id says which reply is
+    /// awaited; `reply_floor` fences everything sent before a reset.
+    snapshot_request: u64,
+    /// When the chunk in flight was sent.
+    ///
+    /// Overdue matters as much as outstanding: a chunk lost with its BULK
+    /// connection draws no answer, and nothing else ever clears it while
+    /// CONTROL stays up. `election_min` is the backstop, as for appends.
+    snapshot_sent_at: Option<Instant>,
+    /// The highest append this peer has answered in this leadership.
+    ///
+    /// What a read waits for (`RaftNode::confirm_reads`): a reply, in this
+    /// term, to an append sent after the read was recorded is this peer saying
+    /// the leader still leads -- etcd's heartbeat context, echoed back
+    /// (`read_only.go`, `recvAck`), with the append sequence as the position.
+    heard_request: u64,
     /// Correlation ids at or below this belong to a superseded exchange.
     ///
     /// Set to the current value of the node-wide append sequence whenever this
@@ -300,11 +363,53 @@ impl Default for PeerState {
             pending_since: None,
             sent_commit: 0,
             snapshot_offset: 0,
-            snapshot_in_flight: false,
+            sending: None,
+            snapshot_request: 0,
+            snapshot_sent_at: None,
+            heard_request: 0,
             reply_floor: 0,
             last_heard_at: None,
         }
     }
+}
+
+/// A snapshot being received: which one, and the bytes of it so far.
+///
+/// Reassembling by offset alone accepted the next chunk of *any* snapshot the
+/// sender happened to be slicing -- the head of one and the tail of another,
+/// joined because the offsets lined up. The identity is what makes an offset
+/// mean something: a chunk continues this assembly only if it belongs to the
+/// same transfer.
+#[derive(Debug)]
+struct Assembly {
+    /// `(term, leader, last_index, last_term)` of the chunk that began it.
+    identity: (u64, u64, u64, u64),
+    data: Vec<u8>,
+}
+
+/// Is `chunk`, at `offset`, already part of `assembled`?
+///
+/// Decided by the bytes, not the offset: a copy is the same bytes at the same
+/// place. Anything else at an offset already passed is no copy, and keeping the
+/// buffer for it would be a splice.
+fn holds(assembled: &[u8], offset: usize, chunk: &[u8]) -> bool {
+    offset
+        .checked_add(chunk.len())
+        .and_then(|end| assembled.get(offset..end))
+        .is_some_and(|held| held == chunk)
+}
+
+/// A read waiting for a quorum to confirm that this member still leads.
+///
+/// etcd's `readIndexRequest` (`read_only.go`). `index` is the commit index it
+/// reads at, unknown until this leader has committed an entry of its own term;
+/// `after` the append sequence then, since only a reply to a later append is
+/// evidence gathered after the read began.
+#[derive(Debug)]
+struct Read {
+    reply: oneshot::Sender<Result<u64, RaftUnavailable>>,
+    index: Option<u64>,
+    after: u64,
 }
 
 /// Everything one member holds, behind one lock.
@@ -319,14 +424,6 @@ pub(crate) struct NodeState {
     peers: BTreeMap<u64, PeerState>,
     /// Whether this member's vote counts.
     pub(crate) voting: bool,
-    /// Peers positively observed answering `voting = false`.
-    ///
-    /// Evidence, not belief: a peer that has simply not replied is absent from
-    /// this set and is therefore treated as a voter, which is what keeps a
-    /// partition from being mistaken for a cluster that has forgotten
-    /// everything. Cleared whenever a leader is heard from, so it can never go
-    /// stale and justify a recovery the cluster does not need.
-    observed_amnesiac: BTreeSet<u64>,
     votes: BTreeSet<u64>,
     pre_votes: BTreeSet<u64>,
     /// Members that refused this pre-vote round.
@@ -335,6 +432,16 @@ pub(crate) struct NodeState {
     /// decide when the round can no longer be won -- see
     /// `pre_vote_is_lost`.
     pre_refusals: BTreeSet<u64>,
+    /// Who has forgotten, as the *current* round has proved it: peers whose
+    /// reply to this candidacy said `voting = false` at its term.
+    ///
+    /// Reset with the votes and never carried from one round to the next --
+    /// see "When every voter has forgotten" in the module docs. A peer that has
+    /// not replied is absent and so counts as a voter, which is what keeps a
+    /// partition from looking like a cluster that has forgotten everything.
+    forgotten: BTreeSet<u64>,
+    /// The same for the pre-vote round, counted from grants only.
+    pre_forgotten: BTreeSet<u64>,
     append_sequence: u64,
     /// Seeded from the incarnation, **not** from zero.
     ///
@@ -345,6 +452,8 @@ pub(crate) struct NodeState {
     /// registration being answered with an unregistration's result.
     sequence: u64,
     waiters: HashMap<ProposalId, oneshot::Sender<Result<Outcome, RaftUnavailable>>>,
+    /// Reads waiting for a quorum to confirm this leadership (`read_index`).
+    reads: Vec<Read>,
     deadline: Instant,
     /// When this member last accepted an `AppendEntries` from a leader.
     ///
@@ -355,10 +464,10 @@ pub(crate) struct NodeState {
     terms: TermStore,
     /// The most recent snapshot this member holds, for serving to followers
     /// that have fallen below the log's first index.
-    snapshot: Vec<u8>,
+    snapshot: Arc<[u8]>,
     snapshot_meta: Option<SnapshotMeta>,
     /// Inbound transfers, by the leader sending them.
-    installing: HashMap<u64, Vec<u8>>,
+    installing: HashMap<u64, Assembly>,
 }
 
 impl NodeState {
@@ -366,36 +475,6 @@ impl NodeState {
         layout.quorum()
     }
 
-    /// Is a quorum of voters provably impossible?
-    ///
-    /// Counts only members *known* to have forgotten -- this member if it has,
-    /// plus peers observed saying so, plus `also` when evaluating a candidate's
-    /// claim. Everything else counts as a voter, including members nobody has
-    /// heard from, because an unreachable member is not evidence of anything
-    /// and treating it as one is how a partition turns into a cluster that
-    /// elects itself a second leader.
-    fn cluster_has_forgotten(&self, layout: &RaftLayout, also: &[u64]) -> bool {
-        let known: BTreeSet<u64> = layout.members.iter().map(|m| m.index).collect();
-        let mut forgotten: BTreeSet<u64> = self.observed_amnesiac.clone();
-        forgotten.extend(also.iter().copied());
-        if !self.voting {
-            forgotten.insert(layout.local.index);
-        }
-        let forgotten: BTreeSet<u64> = forgotten.intersection(&known).copied().collect();
-        layout.size().saturating_sub(forgotten.len()) < layout.quorum()
-    }
-
-    /// Has this candidate collected enough of the right votes?
-    ///
-    /// Ordinarily a quorum, unchanged. Once a quorum of voters is impossible, a
-    /// quorum of votes is necessary but no longer sufficient: every member not
-    /// known to have forgotten must *also* have granted, because those are the
-    /// only members whose up-to-dateness check still means anything and the
-    /// surviving copy of a committed entry can only be on one of them.
-    ///
-    /// Members nobody has heard from count among those, and they cannot have
-    /// granted -- so a partitioned cluster never satisfies this, which is the
-    /// intended answer.
     /// Can this pre-vote round no longer be won, however the rest answer?
     ///
     /// Every member that has refused is one that cannot later grant, so the
@@ -413,24 +492,40 @@ impl NodeState {
         still_possible < layout.quorum()
     }
 
-    fn won(&self, layout: &RaftLayout, tally: &BTreeSet<u64>) -> bool {
-        if tally.len() < self.quorum(layout) {
-            return false;
+    /// Has this round collected enough of the right votes?
+    ///
+    /// Ordinarily a quorum of grants from members that can vote: a grant from
+    /// one that has forgotten says only that the candidate is as current as an
+    /// empty log, which proves nothing. Once the round's own replies prove a
+    /// quorum of voters impossible -- `forgotten`, plus this member if it has
+    /// forgotten too -- a quorum of grants of any kind is necessary but not
+    /// sufficient: every member not proven to have forgotten must *also* have
+    /// granted, because those are the only members whose up-to-dateness check
+    /// still means anything, and the surviving copy of a committed entry can
+    /// only be on one of them. See "When every voter has forgotten" in the
+    /// module docs.
+    ///
+    /// Members nobody has heard from count among those, and they cannot have
+    /// granted -- so a partitioned cluster never satisfies this, which is the
+    /// intended answer.
+    fn won(&self, layout: &RaftLayout, tally: &BTreeSet<u64>, forgotten: &BTreeSet<u64>) -> bool {
+        let members: BTreeSet<u64> = layout.members.iter().map(|m| m.index).collect();
+        let mut proven: BTreeSet<u64> = forgotten.intersection(&members).copied().collect();
+        if !self.voting {
+            proven.insert(layout.local.index);
         }
-        if !self.cluster_has_forgotten(layout, &[]) {
+        let granted: BTreeSet<u64> = tally.intersection(&members).copied().collect();
+        let quorum = self.quorum(layout);
+        if granted.difference(&proven).count() >= quorum {
             return true;
         }
-        let mut forgotten = self.observed_amnesiac.clone();
-        if !self.voting {
-            forgotten.insert(layout.local.index);
+        if layout.size().saturating_sub(proven.len()) >= quorum {
+            return false;
         }
-        let remembering: BTreeSet<u64> = layout
-            .members
-            .iter()
-            .map(|m| m.index)
-            .filter(|index| !forgotten.contains(index))
-            .collect();
-        remembering.is_subset(tally)
+        granted.len() >= quorum
+            && members
+                .difference(&proven)
+                .all(|member| granted.contains(member))
     }
 
     /// Is this member currently being served by a leader it believes in?
@@ -452,33 +547,100 @@ impl NodeState {
         now.saturating_duration_since(heard) < Duration::from_millis(timing.election_min_ms)
     }
 
-    fn persist(&mut self) {
+    /// Make the term and vote durable, before anything that depends on them
+    /// leaves this member.
+    ///
+    /// # Errors
+    ///
+    /// The store's, when the save fails. Returned, as the Python raises it, so
+    /// that whatever made the decision stops there and sends nothing that rests
+    /// on it: no vote granted, no campaign's requests, no answer in the new
+    /// term. The decision stays in memory, as the Python's does. Nothing was
+    /// promised on it, so a restart that reads the older file forgets nothing a
+    /// peer was told. Logged and carried past instead, it was: measured, a
+    /// member whose saves failed granted a vote, answered a new term's append
+    /// and snapshot, and, alone, made itself leader.
+    fn persist(&mut self) -> Result<(), PersistentStateError> {
         let state = PersistentState {
             term: self.term,
             voted_for: self.voted_for,
             incarnation: self.incarnation,
+            // The bound already durable, carried over: this save is about the
+            // term, and must not erase the reservation the last one recorded.
+            cursor_reservation: self.machine.cursors().reservation(),
         };
-        if let Err(error) = self.terms.save(&state) {
-            // Logged rather than propagated: the caller is a consensus decision
-            // that has already been made, and unwinding it would leave the
-            // member's in-memory term ahead of its recorded one -- which is the
-            // state the file exists to rule out.
-            tracing::error!(error = %error.0, "raft: could not persist term and vote");
-        }
+        self.terms.save(&state)
+    }
+
+    /// Make a cursor reservation durable, then note it.
+    ///
+    /// Propagated, unlike [`Self::persist`]'s failure: there the caller is a
+    /// consensus decision already made, here it is a cursor not yet handed out,
+    /// and refusing it is both possible and the only safe answer.
+    fn reserve_cursors(&mut self, upto: TaiCursor) -> Result<(), RaftCursorReservationFailed> {
+        let state = PersistentState {
+            term: self.term,
+            voted_for: self.voted_for,
+            incarnation: self.incarnation,
+            cursor_reservation: Some(upto),
+        };
+        self.terms.save(&state).map_err(|error| {
+            RaftCursorReservationFailed(format!(
+                "could not reserve paging cursors up to {upto} in {}: {}",
+                self.terms.path().display(),
+                error.0,
+            ))
+        })?;
+        self.machine.cursors_mut().confirm_reservation(upto);
+        Ok(())
     }
 
     /// Adopt a higher term and return to following.
-    fn step_down(&mut self, term: u64) -> bool {
+    ///
+    /// Releases no proposal, for the reason `RaftNode::relinquish` gives; fails
+    /// any read, for the reason it gives too.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::persist`]'s. The save comes last, as in the Python, so a failed
+    /// one leaves the new term adopted in memory and the caller stops.
+    fn step_down(&mut self, term: u64) -> Result<bool, PersistentStateError> {
+        self.fail_reads("no longer the leader: a later term began");
         let was_leader = self.role == Role::Leader;
         self.term = term;
+        // Every partial snapshot was sent in an earlier term, and no chunk of an
+        // earlier term is accepted any more, so none of them can finish. Kept,
+        // each was memory held for the life of the member.
+        self.installing.clear();
         self.voted_for = None;
         self.role = Role::Follower;
         self.leader = None;
         self.votes.clear();
         self.pre_votes.clear();
         self.pre_refusals.clear();
-        self.persist();
-        was_leader
+        self.forgotten.clear();
+        self.pre_forgotten.clear();
+        self.persist()?;
+        Ok(was_leader)
+    }
+
+    /// Fail every read waiting here: see `RaftNode::relinquish`.
+    fn fail_reads(&mut self, reason: &str) {
+        for read in self.reads.drain(..) {
+            drop(read.reply.send(Err(RaftUnavailable(reason.to_owned()))));
+        }
+    }
+
+    /// etcd's `committedEntryInCurrentTerm` (`raft.go:2065-2070`).
+    ///
+    /// Until a leader commits an entry of its own term it cannot know how far
+    /// earlier terms committed (Raft §8), so its commit index is no bound on
+    /// what a read must see: etcd postpones reads until then
+    /// (`raft.go:1365-1367`).
+    fn committed_in_current_term(&self) -> bool {
+        self.log
+            .term_at(self.commit_index)
+            .is_ok_and(|term| term == self.term)
     }
 
     fn reset_election_timer(&mut self, timing: &RaftTiming, now: Instant) {
@@ -508,10 +670,47 @@ impl NodeState {
         match self.log.append(self.term, encoded) {
             Ok(range) => Some(range),
             Err(error) => {
-                tracing::error!(error = %error.0, "raft: local append refused");
+                tracing::error!(error = %error, "raft: local append refused");
                 None
             }
         }
+    }
+
+    /// Where this leader's append contradicts an entry committed here, or
+    /// `None`.
+    ///
+    /// Raft makes it impossible: a leader holds every entry committed before
+    /// its term (Leader Completeness, section 5.4.3), and Log Matching makes its
+    /// entries at those indexes the ones committed here. So a disagreement
+    /// proves committed data lost from the cluster -- which the non-voting
+    /// rejoin and the recovery election's veto exist to prevent, so it means a
+    /// defect. `go.etcd.io/raft` treats the same observation as corruption and
+    /// panics (`maybeAppend`, `log.go:117-121`).
+    ///
+    /// Checked wherever this member still can: the anchor, and every entry the
+    /// message carries, that lie from the snapshot boundary -- whose term is
+    /// kept -- up to the commit index. Below the boundary nothing is left to
+    /// compare, and the leader's next append, anchored at the commit point, is
+    /// where it shows. Before the `prev_log_index < commit_index` answer,
+    /// deliberately: that answer credits the leader with `match = commit`
+    /// without looking, and an anchor that matches below the commit point can
+    /// still carry entries contradicting it. At most a batch of comparisons.
+    fn contradicting_committed(&self, message: &AppendEntries) -> Option<String> {
+        let floor = self.log.snapshot_index();
+        let ceiling = self.commit_index.min(self.log.last_index());
+        std::iter::once((message.prev_log_index, message.prev_log_term))
+            .chain(message.entries.iter().map(|wire| (wire.index, wire.term)))
+            .filter(|&(index, _)| (floor..=ceiling).contains(&index))
+            .find_map(|(index, term)| {
+                let held = self.log.term_at(index).ok()?;
+                (held != term).then(|| {
+                    format!(
+                        "leader {} of term {} holds index {index} at term {term}, committed \
+                         here at term {held}: committed data was lost from the cluster",
+                        message.leader, message.term,
+                    )
+                })
+            })
     }
 
     /// The two invariants `go.etcd.io/raft` asserts about one member.
@@ -578,6 +777,14 @@ pub struct RaftNode {
     drain: Mutex<Option<ProposalDrain<Operation, Result<Outcome, RaftUnavailable>>>>,
     tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     forwarder: Mutex<Option<std::sync::Weak<dyn ForwardHandler>>>,
+    /// The broken invariant this member stopped on, once it has (`fail`), and
+    /// how its owner learns of it (`wait_for_failure`).
+    failure: tokio::sync::watch::Sender<Option<String>>,
+    /// One `close` at a time. A member that stops itself begins closing on its
+    /// own, and its owner closes it again on the way out.
+    closing_now: tokio::sync::Mutex<()>,
+    /// This member, for the part of `fail` that needs a task of its own.
+    me: std::sync::Weak<Self>,
 }
 
 /// What a forwarded registry mutation is handed to.
@@ -593,25 +800,37 @@ pub trait ForwardHandler: Send + Sync + 'static {
 
 impl RaftNode {
     /// Build a member. Nothing starts until [`Self::start`].
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// [`PersistentStateError`] if the term file cannot be loaded, or, for a
+    /// member that has none yet, cannot be written. Fatal at startup by
+    /// design, as the Python's constructor makes it: a member that started
+    /// anyway would have no memory of a vote it may already have cast.
     pub fn new(
         layout: RaftLayout,
         transport: Arc<dyn Transport>,
         mut terms: TermStore,
-        machine: StateMachine,
+        mut machine: StateMachine,
         registry: Arc<Registry>,
         timing: RaftTiming,
-    ) -> Arc<Self> {
+    ) -> Result<Arc<Self>, PersistentStateError> {
         // Loading is what increments the incarnation, so it happens once, here,
         // and the transport is told the answer rather than reading it again.
-        let persisted = terms.load().unwrap_or_else(|error| {
-            tracing::error!(error = %error.0, "raft: starting with no stored term");
-            PersistentState {
-                term: 0,
-                voted_for: None,
-                incarnation: 1,
-            }
-        });
+        //
+        // A refusal is returned, never replaced by a fresh start. Term 0, no
+        // vote and incarnation 1 is what a brand-new member starts from, and a
+        // member that is not brand new would, from there, grant a second vote
+        // in a term it has already voted in; count as a voter at once rather
+        // than rejoining as a learner; take proposal ids from its first
+        // incarnation's range again and resume no cursor reservation; and, at
+        // its first save, overwrite the file that was the only record of its
+        // vote. Measured on the fallback this replaced: the second vote was
+        // granted, and the file overwritten with it.
+        let persisted = terms.load()?;
+        // Before anything can allocate: the previous incarnation may have
+        // handed out any cursor up to this, and this one must start above it.
+        machine.cursors_mut().resume(persisted.cursor_reservation);
 
         let peers: BTreeMap<u64, PeerState> = layout
             .members
@@ -635,7 +854,8 @@ impl RaftNode {
             // commit. Making it wait for a promotion would deadlock a cold
             // start.
             voting: persisted.incarnation == 1 || layout.size() == 1,
-            observed_amnesiac: BTreeSet::new(),
+            forgotten: BTreeSet::new(),
+            pre_forgotten: BTreeSet::new(),
             votes: BTreeSet::new(),
             pre_votes: BTreeSet::new(),
             pre_refusals: BTreeSet::new(),
@@ -644,17 +864,18 @@ impl RaftNode {
                 .incarnation
                 .saturating_mul(PROPOSALS_PER_INCARNATION),
             waiters: HashMap::new(),
+            reads: Vec::new(),
             deadline: now,
             heard_from_leader_at: None,
             machine,
             terms,
-            snapshot: Vec::new(),
+            snapshot: Arc::from(Vec::new()),
             snapshot_meta: None,
             installing: HashMap::new(),
         };
 
         let (batcher, drain) = proposal_channel(MAX_BATCH);
-        Arc::new(Self {
+        Ok(Arc::new_cyclic(|me| Self {
             layout,
             transport,
             timing,
@@ -668,7 +889,10 @@ impl RaftNode {
             drain: Mutex::new(Some(drain)),
             tasks: Mutex::new(Vec::new()),
             forwarder: Mutex::new(None),
-        })
+            failure: tokio::sync::watch::Sender::new(None),
+            closing_now: tokio::sync::Mutex::new(()),
+            me: me.clone(),
+        }))
     }
 
     // -- introspection ------------------------------------------------------
@@ -739,6 +963,17 @@ impl RaftNode {
         self.state.lock().waiters.len()
     }
 
+    /// Reads waiting for a quorum to confirm this leadership.
+    ///
+    /// Diagnostic, like [`Self::pending_waiters`]: each holds a caller, and a
+    /// read whose caller has gone is dropped at the next reply this leader
+    /// hears -- so outside a leadership, and a heartbeat after its callers
+    /// finish, this is zero.
+    #[must_use]
+    pub fn pending_reads(&self) -> usize {
+        self.state.lock().reads.len()
+    }
+
     /// Partly-received snapshots being reassembled, one buffer per peer.
     ///
     /// Diagnostic, and bounded by the peer count rather than by traffic -- but
@@ -748,6 +983,20 @@ impl RaftNode {
     #[must_use]
     pub fn snapshot_buffers(&self) -> usize {
         self.state.lock().installing.len()
+    }
+
+    /// The index an open snapshot capture is pinned at, if one is open.
+    ///
+    /// Diagnostic. A compaction holds one for as long as it takes to serialise
+    /// the store, across yields; an install abandons it.
+    #[must_use]
+    pub fn snapshot_capture(&self) -> Option<u64> {
+        self.state
+            .lock()
+            .machine
+            .snapshots()
+            .capture()
+            .map(|capture| capture.index)
     }
 
     /// The fence callers wait on before answering a client.
@@ -780,6 +1029,52 @@ impl RaftNode {
         })
     }
 
+    /// The next index this leader will send one peer, for diagnostics.
+    ///
+    /// Exposed beside [`Self::peer_progress`] because the two are one
+    /// invariant, `match_index < next_index` (etcd, `tracker/progress.go:211`):
+    /// a leader whose next index falls to or below what a peer has acknowledged
+    /// re-sends entries the peer already holds.
+    #[must_use]
+    pub fn peer_next_index(&self, peer: u64) -> Option<u64> {
+        self.state
+            .lock()
+            .peers
+            .get(&peer)
+            .map(|tracked| tracked.next_index)
+    }
+
+    /// The snapshot this member holds for followers below its log, for
+    /// diagnostics: `(last_index, payload bytes)`, or `None` when it holds none.
+    ///
+    /// Exposed because the invariant it lets a soak check -- the compacted
+    /// prefix of this member's log is always recoverable from its own snapshot
+    /// -- is otherwise invisible from outside, and a member that breaks it can
+    /// lead for as long as it likes while sending its stranded followers
+    /// nothing but keepalives. etcd treats the same condition as impossible:
+    /// `maybeSendSnapshot` panics with "need non-empty snapshot"
+    /// (`raft.go:680-682`).
+    #[must_use]
+    pub fn snapshot_held(&self) -> Option<(u64, usize)> {
+        let state = self.state.lock();
+        state
+            .snapshot_meta
+            .filter(|_| !state.snapshot.is_empty())
+            .map(|meta| (meta.last_index, state.snapshot.len()))
+    }
+
+    /// The bytes of the snapshot [`Self::snapshot_held`] describes -- what a
+    /// follower below this member's log would be caught up from. Empty when it
+    /// holds none.
+    ///
+    /// Diagnostic, and shared rather than copied. Holding a snapshot is not the
+    /// same as holding the right one: a member whose snapshots were taken of a
+    /// store it no longer serves would pass every check on the metadata.
+    #[must_use]
+    pub fn snapshot_payload(&self) -> Arc<[u8]> {
+        Arc::clone(&self.state.lock().snapshot)
+    }
+
     /// The term of one log entry, or `None` if it has been compacted away.
     ///
     /// Diagnostic. The pair `(index, term)` is what every consistency check on
@@ -807,18 +1102,34 @@ impl RaftNode {
             .map(|held| held.owner)
     }
 
-    /// Allocate the next cursor for a resource type.
+    /// The next paging cursor for a resource type, reserved durably.
     ///
     /// On the node rather than exposing the allocator, because the allocator's
     /// high-water mark is consensus state: handing out a `&mut` to it would let
     /// a caller allocate without the lock that keeps two mutations from taking
-    /// the same lane position.
-    pub fn allocate_cursor(&self, resource_type: ResourceType) -> TaiCursor {
-        self.state
-            .lock()
-            .machine
-            .cursors_mut()
-            .allocate(resource_type)
+    /// the same lane position -- and without the reservation.
+    ///
+    /// About once per `RESERVATION_WINDOW_SECONDS` of cursor progress the cursor
+    /// lies beyond the reservation on disk, and a new bound is written --
+    /// synchronously, beside the term and vote, for the reason `persist.rs`
+    /// gives -- before the cursor is returned. Every other call is the
+    /// allocator's arithmetic alone.
+    ///
+    /// # Errors
+    ///
+    /// [`RaftCursorReservationFailed`] if the bound could not be written. The
+    /// cursor is not returned, so nothing that could repeat it after a restart
+    /// has left this member; the allocator simply moves past it.
+    pub fn allocate_cursor(
+        &self,
+        resource_type: ResourceType,
+    ) -> Result<TaiCursor, RaftCursorReservationFailed> {
+        let mut state = self.state.lock();
+        let cursor = state.machine.cursors_mut().allocate(resource_type);
+        if let Some(upto) = state.machine.cursors().reservation_needed(cursor) {
+            state.reserve_cursors(upto)?;
+        }
+        Ok(cursor)
     }
 
     /// Send a correlated request to one peer.
@@ -918,6 +1229,86 @@ impl RaftNode {
 
     // -- lifecycle ----------------------------------------------------------
 
+    /// The broken invariant this member stopped on, or `None` (`fail`).
+    #[must_use]
+    pub fn failure(&self) -> Option<String> {
+        self.failure.borrow().clone()
+    }
+
+    /// Return once this member has stopped itself on a broken invariant.
+    ///
+    /// For the process that owns it, which must then exit: the member takes no
+    /// further part, and only a restart -- which brings it back with nothing,
+    /// to be caught up as a non-voting learner -- makes it whole again
+    /// ([`RaftInvariantViolated`]). `main.rs` waits on it beside the listeners,
+    /// so the failure ends the process with status 1.
+    pub async fn wait_for_failure(&self) -> String {
+        let mut watching = self.failure.subscribe();
+        loop {
+            if let Some(failure) = watching.borrow_and_update().as_ref() {
+                return failure.clone();
+            }
+            if watching.changed().await.is_err() {
+                // Only once the sender is dropped, and it is a field of this
+                // member, which `&self` keeps alive: never.
+                std::future::pending::<()>().await;
+            }
+        }
+    }
+
+    /// Stop this member for good: a broken invariant stays broken.
+    ///
+    /// Fail-stop, the position [`RaftInvariantViolated`] documents and the one
+    /// `go.etcd.io/raft` takes with `Panicf`: continuing from a state proven
+    /// impossible can only spread the damage. So before this returns, every
+    /// part that could spread it has stopped -- leadership, whose heartbeats
+    /// would carry a commit index this member no longer vouches for; elections
+    /// (`tick`); applying; and every caller waiting on an answer, told
+    /// "unavailable" (a 503 the Node retries) because this member will never
+    /// apply its entry. The tasks and the transport close right after, which
+    /// is when peers see the member gone, and the owner is told
+    /// (`wait_for_failure`) so the process can exit: a restart -- automatic
+    /// under a service manager -- brings the member back with nothing, and the
+    /// leader catches it up as a non-voting learner.
+    ///
+    /// Once only: a second violation found while stopping says nothing new.
+    fn fail(&self, error: &RaftInvariantViolated) {
+        let first = self.failure.send_if_modified(|failure| {
+            if failure.is_some() {
+                return false;
+            }
+            *failure = Some(error.0.clone());
+            true
+        });
+        if !first {
+            return;
+        }
+        tracing::error!(
+            error = %error,
+            member = self.layout.local.name,
+            "raft: consensus invariant violated; this member stops",
+        );
+        self.closing
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let reason = format!("member stopped: consensus invariant violated: {error}");
+        {
+            let mut state = self.state.lock();
+            self.relinquish(&mut state, "consensus invariant violated", Instant::now());
+            // Released here, unlike `relinquish`, which releases nothing
+            // because a later leader may yet commit what a caller waits on:
+            // this member will never apply it, whoever commits it.
+            for (_, sender) in state.waiters.drain() {
+                drop(sender.send(Err(RaftUnavailable(reason.clone()))));
+            }
+            state.fail_reads(&reason);
+        }
+        // A task of its own: this may be running inside one that `close`
+        // aborts and waits for.
+        if let Some(me) = self.me.upgrade() {
+            tokio::spawn(async move { me.close().await });
+        }
+    }
+
     /// Begin listening, connecting, ticking and applying.
     ///
     /// # Errors
@@ -955,7 +1346,12 @@ impl RaftNode {
     }
 
     /// Stop, releasing every waiter.
+    ///
+    /// One at a time: a member that stops itself (`fail`) begins closing on its
+    /// own, and its owner closes it again on the way out. Everything below is
+    /// idempotent once serialised -- a second close finds nothing left to do.
     pub async fn close(&self) {
+        let _one_at_a_time = self.closing_now.lock().await;
         self.closing
             .store(true, std::sync::atomic::Ordering::SeqCst);
         // Woken so the loops observe `closing` rather than sleeping out their
@@ -975,6 +1371,7 @@ impl RaftNode {
         for (_, sender) in waiters {
             drop(sender.send(Err(RaftUnavailable("member is shutting down".to_owned()))));
         }
+        self.state.lock().fail_reads("member is shutting down");
         self.transport.close().await;
     }
 
@@ -988,10 +1385,27 @@ impl RaftNode {
 
     /// One heartbeat's worth of decisions.
     fn tick(&self) {
+        if self.closing.load(std::sync::atomic::Ordering::SeqCst) {
+            // A tick whose sleep began before a stop (`fail`, `close`) must not
+            // lead or campaign after it: the loop only looks between sleeps.
+            return;
+        }
         let now = Instant::now();
-        let mut wake_apply = false;
-        {
+        let wake_apply = {
             let mut state = self.state.lock();
+            // A waiter goes when its entry applies (`resolve`) -- or, as here,
+            // when its caller has stopped waiting: dropped the `propose`
+            // future, closing the channel. It used to leave only the first
+            // way, so a forwarded proposal that never became an entry here --
+            // its `Propose` never delivered, refused by a member no longer
+            // leading, or accepted and then overwritten -- kept one for the
+            // life of the member: 1,046 of them in 40 chaos-soak runs, every
+            // one's caller long gone. etcd removes the waiter when the client's
+            // context ends (`v3_server.go:1117`, `:1129`, "GC wait"). The entry
+            // may still commit, with nobody waiting: what a caller answered
+            // "unavailable" was told to expect. Swept each tick, so a waiter
+            // outlives its caller by at most a heartbeat.
+            state.waiters.retain(|_, reply| !reply.is_closed());
             if state.role == Role::Leader {
                 if !self.quorum_is_answering(&state, now) {
                     // Check-quorum. A leader cut off from a majority cannot
@@ -1030,36 +1444,41 @@ impl RaftNode {
                 return;
             }
 
-            if !state.installing.is_empty() {
-                // **Absorbing a snapshot is not a moment to campaign.**
-                //
-                // `go.etcd.io/raft` gates every campaign on `promotable()`
-                // (`raft.go:853`), which is `!IsLearner &&
-                // !hasNextOrInProgressSnapshot()` (`raft.go:1946`). The first
-                // half is `voting` below; this is the second, which was
-                // missing.
-                //
-                // A member mid-transfer is by definition far behind, so it
-                // cannot win a pre-vote the up-to-dateness check is honest
-                // about -- and campaigning clears its `leader`, which stops it
-                // answering mutations for no gain. The transfer is also what
-                // will make it current, so waiting is strictly the better move.
-                state.reset_election_timer(&self.timing, now);
-                return;
+            // **No snapshot gate here, deliberately.** One stood here --
+            // "absorbing a snapshot is not a moment to campaign" -- modelled on
+            // etcd's `promotable()`, which refuses while
+            // `hasNextOrInProgressSnapshot()` (`raft.go:1946-1949`). But that is
+            // a *complete* snapshot pending application (`log.go:287-291`:
+            // `unstable.snapshot != nil`, set only by `restore`); etcd has no
+            // partial transfers to gate on, and this member installs a completed
+            // one synchronously, so etcd's state never exists here. What the
+            // gate actually tested was a *partial* buffer -- and every chunk and
+            // every keepalive from a live leader resets the timer, so by the
+            // time the gate was reached the transfer had stopped. It could only
+            // ever block a campaign the silence called for: the chaos soak
+            // measured clusters with no leader because the one voter able to
+            // lead held an abandoned buffer and never campaigned. A far-behind
+            // member's pre-vote simply fails, which changes nothing.
+            //
+            // Pre-Vote first, always -- and for a member that has forgotten
+            // too. Winning the real election is the *only* thing a term
+            // increment buys, so asking first costs one round trip and saves
+            // every disruption a doomed campaign would cause. A pre-vote
+            // changes nothing a peer can observe, so it is also how a member
+            // that has forgotten learns whether enough others have for a
+            // recovery election to be winnable; a separate "probe" once did
+            // that, feeding evidence that outlived its round.
+            match self.pre_campaign(&mut state, now) {
+                Ok(wake_apply) => wake_apply,
+                Err(error) => {
+                    // The campaign stopped at its save and sent nothing; the
+                    // next election timeout tries again. The Python's
+                    // `_tick_forever` logs the same failure the same way.
+                    tracing::error!(error = %error.0, "raft: tick failed");
+                    false
+                }
             }
-
-            if state.voting || state.cluster_has_forgotten(&self.layout, &[]) {
-                // Pre-Vote first, always. Winning the real election is the
-                // *only* thing a term increment buys, so asking first costs one
-                // round trip and saves every disruption a doomed campaign would
-                // cause.
-                wake_apply = self.pre_campaign(&mut state, now);
-            } else {
-                // Cannot vote, and no evidence yet that the cluster has lost
-                // its voters. Ask, rather than campaign.
-                self.probe_for_forgotten_peers(&mut state, now);
-            }
-        }
+        };
         if wake_apply {
             self.apply_wake.notify_one();
         }
@@ -1087,43 +1506,22 @@ impl RaftNode {
         state.votes.clear();
         state.pre_votes.clear();
         state.pre_refusals.clear();
+        state.forgotten.clear();
+        state.pre_forgotten.clear();
         state.reset_election_timer(&self.timing, now);
-        self.fail_waiters(state, reason);
-    }
-
-    /// Release every proposal this member can no longer see through.
-    fn fail_waiters(&self, state: &mut NodeState, reason: &str) {
-        let waiters: Vec<_> = state.waiters.drain().collect();
-        for (_, sender) in waiters {
-            drop(sender.send(Err(RaftUnavailable(reason.to_owned()))));
-        }
-    }
-
-    /// Ask every peer whether it can vote, without standing for election.
-    ///
-    /// A member that has forgotten cannot campaign until it knows how many
-    /// others have too, and cannot learn that without asking. Asking by
-    /// campaigning would raise the term on every attempt while never succeeding
-    /// -- which is precisely the runaway this replaces.
-    ///
-    /// Sent at the current term and granting nothing, so it disturbs neither an
-    /// election in progress nor a healthy leader.
-    fn probe_for_forgotten_peers(&self, state: &mut NodeState, now: Instant) {
-        let request = Message::RequestVote(RequestVote {
-            term: state.term,
-            candidate: self.layout.local.index,
-            last_log_index: state.log.last_index(),
-            last_log_term: state.log.last_term(),
-            probe: true,
-            amnesiac: Vec::new(),
-            pre_vote: false,
-        });
-        let peers: Vec<u64> = state.peers.keys().copied().collect();
-        for peer in peers {
-            self.transport
-                .send(peer, &request, crate::wire::Stream::Control);
-        }
-        state.reset_election_timer(&self.timing, now);
+        // Nothing is released, as etcd releases nothing when a leader steps
+        // down: a proposal still queued is routed by this member's role when it
+        // drains, and one already appended waits for its entry -- which a later
+        // leader may yet commit -- or for its caller to stop waiting (`tick`).
+        // Every waiter used to be failed here, telling callers "unavailable"
+        // about entries that went on to commit; the Python implementation never
+        // did, and the two now agree.
+        //
+        // Reads are the exception, as they are in etcd, whose server fails a
+        // read with `ErrLeaderChanged` when the leader changes
+        // (`read/read.go:170-193`): a read is confirmed by a quorum that this
+        // member *still* leads, and it no longer does.
+        state.fail_reads(&format!("no longer the leader: {reason}"));
     }
 
     /// Ask whether this member would win, before claiming a term.
@@ -1142,14 +1540,27 @@ impl RaftNode {
     ///
     /// Returns whether an apply should be woken, because winning outright
     /// appends a no-op.
-    fn pre_campaign(&self, state: &mut NodeState, now: Instant) -> bool {
+    ///
+    /// # Errors
+    ///
+    /// [`Self::campaign`]'s, when the pre-vote is won outright.
+    fn pre_campaign(
+        &self,
+        state: &mut NodeState,
+        now: Instant,
+    ) -> Result<bool, PersistentStateError> {
         state.role = Role::PreCandidate;
         state.leader = None;
         state.pre_votes = BTreeSet::from([self.layout.local.index]);
         state.pre_refusals.clear();
+        state.pre_forgotten.clear();
         state.reset_election_timer(&self.timing, now);
 
-        if state.won(&self.layout, &state.pre_votes.clone()) {
+        if state.won(
+            &self.layout,
+            &state.pre_votes.clone(),
+            &state.pre_forgotten.clone(),
+        ) {
             return self.campaign(state, now);
         }
 
@@ -1158,8 +1569,6 @@ impl RaftNode {
             candidate: self.layout.local.index,
             last_log_index: state.log.last_index(),
             last_log_term: state.log.last_term(),
-            probe: false,
-            amnesiac: state.observed_amnesiac.iter().copied().collect(),
             pre_vote: true,
         });
         let peers: Vec<u64> = state.peers.keys().copied().collect();
@@ -1167,7 +1576,7 @@ impl RaftNode {
             self.transport
                 .send(peer, &request, crate::wire::Stream::Control);
         }
-        false
+        Ok(false)
     }
 
     /// Start an election. Only ever called with a reachable quorum.
@@ -1178,12 +1587,21 @@ impl RaftNode {
     /// it would arrive carrying a term far above everyone else's, force the
     /// healthy leader to step down, and cause an election the cluster had no
     /// reason to hold -- the "disruptive server" problem.
-    fn campaign(&self, state: &mut NodeState, now: Instant) -> bool {
+    ///
+    /// # Errors
+    ///
+    /// [`NodeState::persist`]'s. A vote for itself that is not on disk ends
+    /// the campaign there, before it is won or a request is sent, where the
+    /// Python's `_campaign` raises.
+    fn campaign(&self, state: &mut NodeState, now: Instant) -> Result<bool, PersistentStateError> {
         state.role = Role::Candidate;
         state.term = state.term.saturating_add(1);
+        // As in `step_down`: a new term ends every transfer of the old one.
+        state.installing.clear();
         state.voted_for = Some(self.layout.local.index);
-        state.persist();
+        state.persist()?;
         state.votes = BTreeSet::from([self.layout.local.index]);
+        state.forgotten.clear();
         state.leader = None;
         state.reset_election_timer(&self.timing, now);
 
@@ -1193,8 +1611,8 @@ impl RaftNode {
             "raft: campaigning",
         );
 
-        if state.won(&self.layout, &state.votes.clone()) {
-            return self.become_leader(state, now);
+        if state.won(&self.layout, &state.votes.clone(), &state.forgotten.clone()) {
+            return Ok(self.become_leader(state, now));
         }
 
         let request = Message::RequestVote(RequestVote {
@@ -1202,11 +1620,6 @@ impl RaftNode {
             candidate: self.layout.local.index,
             last_log_index: state.log.last_index(),
             last_log_term: state.log.last_term(),
-            probe: false,
-            // The evidence travels with the request so a voter that has
-            // forgotten can re-do the arithmetic itself rather than take this
-            // candidate's word for the state of the cluster.
-            amnesiac: state.observed_amnesiac.iter().copied().collect(),
             pre_vote: false,
         });
         let peers: Vec<u64> = state.peers.keys().copied().collect();
@@ -1214,7 +1627,7 @@ impl RaftNode {
             self.transport
                 .send(peer, &request, crate::wire::Stream::Control);
         }
-        false
+        Ok(false)
     }
 }
 
@@ -1378,7 +1791,9 @@ impl RaftNode {
     ///
     /// Members still catching up are excluded from the count. Their logs may be
     /// incomplete, and an acknowledgement from an incomplete log is not
-    /// evidence the entry is safe.
+    /// evidence the entry is safe. They are **not** excluded from the
+    /// majority, which is of the whole voting configuration: see
+    /// [`leader_commit_index`] for the defect that distinction was.
     ///
     /// An advance replicates **at once**. A follower learns the commit index
     /// only from `leaderCommit` on an `AppendEntries`, so leaving a new index to
@@ -1388,29 +1803,25 @@ impl RaftNode {
     /// about 1 ms. It cannot loop: the extra round carries no entries, so no
     /// follower's match index moves and this returns without sending again.
     fn advance_commit(&self, state: &mut NodeState) -> bool {
-        // This member holds everything it has appended, hence its own index in
-        // the tally alongside the peers that are not catching up.
-        let mut counted: Vec<u64> = state
+        let acknowledged: Vec<u64> = state
             .peers
             .values()
             .filter(|peer| !peer.catching_up)
             .map(|peer| peer.match_index)
             .collect();
-        counted.push(state.log.last_index());
-
-        let term = state.term;
-        let quorum = state.quorum(&self.layout);
-        if counted.len() < quorum {
-            return false;
-        }
-
-        let candidate = leader_commit_index(counted, state.commit_index, term, |index| {
-            state.log.term_at(index).ok()
-        });
+        let candidate = leader_commit_index(
+            state.quorum(&self.layout),
+            state.log.last_index(),
+            acknowledged,
+            state.commit_index,
+            state.term,
+            |index| state.log.term_at(index).ok(),
+        );
         if candidate <= state.commit_index {
             return false;
         }
         state.commit_index = candidate;
+        self.arm_reads(state);
         true
     }
 
@@ -1426,11 +1837,11 @@ impl RaftNode {
                 // Past any catch-all, deliberately. An invariant that is broken
                 // stays broken, and logging it once per wake-up would be a
                 // silent failure wearing the costume of a handled one.
-                tracing::error!(
-                    error = %error,
-                    member = self.layout.local.name,
-                    "raft: consensus invariant violated; this member stops applying",
-                );
+                //
+                // Logging it and ending this loop was no better: nothing else
+                // stopped, so the member went on leading, voting and serving a
+                // store that no longer moved. It stops instead (`fail`).
+                self.fail(&RaftInvariantViolated(error));
                 return;
             }
         }
@@ -1480,10 +1891,7 @@ impl RaftNode {
 
             let outcomes = {
                 let mut state = self.state.lock();
-                match state.machine.apply(&self.registry, &entries) {
-                    Ok(outcomes) => outcomes,
-                    Err(divergence) => return Err(divergence.0),
-                }
+                state.machine.apply(&self.registry, &entries)
             };
 
             let applied_now = {
@@ -1670,10 +2078,6 @@ impl RaftNode {
         // -- for no reason, since it is now the member the others are being
         // caught up *from*.
         state.voting = true;
-        // Whatever was observed about who had forgotten belonged to the
-        // election just concluded. Keeping it would let a cluster that has
-        // since recovered still believe its voters were gone.
-        state.observed_amnesiac.clear();
 
         let next_index = state.log.last_index().saturating_add(1);
         let append_sequence = state.append_sequence;
@@ -1694,11 +2098,13 @@ impl RaftNode {
             // about this one's, and this leader has just reset everything they
             // would report on.
             peer.reply_floor = append_sequence;
+            peer.heard_request = 0;
             // Likewise a snapshot this member was sending in an earlier term:
             // the new transfer starts from zero, and a carried-over offset
             // would have the leader resume a stream the peer is not expecting.
             peer.snapshot_offset = 0;
-            peer.snapshot_in_flight = false;
+            peer.snapshot_request = 0;
+            peer.sending = None;
             // One election window of grace before check-quorum asks anything of
             // them. A leader that demanded evidence it has not had time to
             // collect would step down in the tick after winning.
@@ -1783,36 +2189,65 @@ impl RaftNode {
             self.send_keepalive(state, peer);
             return;
         }
+        let now = Instant::now();
         let Some(tracked) = state.peers.get(&peer) else {
             return;
         };
-        if tracked.snapshot_in_flight {
-            // One chunk at a time. The chunk is on BULK, which a slow transfer
-            // can occupy for a long time, so the liveness signal goes
-            // separately on CONTROL.
-            self.send_keepalive(state, peer);
-            return;
+        if tracked.snapshot_request != 0 {
+            let elapsed = tracked
+                .snapshot_sent_at
+                .map_or(Duration::MAX, |sent| now.saturating_duration_since(sent));
+            if elapsed < Duration::from_millis(self.timing.election_min_ms) {
+                // One chunk at a time. See `PeerState::snapshot_request`. The
+                // chunk is on BULK, which a slow transfer can occupy for a long
+                // time, so the liveness signal goes separately on CONTROL.
+                self.send_keepalive(state, peer);
+                return;
+            }
+            // Overdue: lost with its connection, or its reply was. Sent again
+            // below under a new id, so should the first answer arrive after all
+            // it is not the one awaited. See `PeerState::snapshot_sent_at`.
         }
 
+        let current = Arc::clone(&state.snapshot);
+        let Some(tracked) = state.peers.get_mut(&peer) else {
+            return;
+        };
+        if tracked.snapshot_offset == 0 || tracked.sending.is_none() {
+            // A transfer starts -- or restarts, the follower having thrown its
+            // buffer away -- so it is of the snapshot as it stands now, pinned
+            // for its whole length. See `PeerState::sending`.
+            tracked.sending = Some((meta, current));
+            tracked.snapshot_offset = 0;
+        }
+        let Some((sent_meta, ref payload)) = tracked.sending else {
+            return;
+        };
         let offset = tracked.snapshot_offset;
         let end = offset
             .saturating_add(self.timing.snapshot_chunk)
-            .min(state.snapshot.len());
-        let chunk = state.snapshot.get(offset..end).unwrap_or_default().to_vec();
-        let done = end >= state.snapshot.len();
-
+            .min(payload.len());
+        let chunk = payload.get(offset..end).unwrap_or_default().to_vec();
+        let done = end >= payload.len();
+        // From the append sequence, so the floor a reset raises fences chunks
+        // and appends alike.
+        state.append_sequence = state.append_sequence.saturating_add(1);
+        let request_id = state.append_sequence;
         if let Some(tracked) = state.peers.get_mut(&peer) {
-            tracked.snapshot_in_flight = true;
+            tracked.snapshot_request = request_id;
+            tracked.snapshot_sent_at = Some(now);
         }
+
         let message = Message::InstallSnapshot(InstallSnapshot {
             term: state.term,
             leader: self.layout.local.index,
-            last_index: meta.last_index,
-            last_term: meta.last_term,
+            last_index: sent_meta.last_index,
+            last_term: sent_meta.last_term,
             offset: offset as u64,
             data: chunk,
             done,
             ownership: Vec::new(),
+            request_id,
         });
         // BULK, so a multi-megabyte transfer cannot head-of-line-block the
         // heartbeats that keep this member's leadership alive.
@@ -1822,42 +2257,39 @@ impl RaftNode {
 
     /// Is this snapshot's metadata possible at all? `None` if it is.
     ///
-    /// Two checks, both about metadata rather than content. A snapshot cannot
+    /// Two checks, both about metadata rather than content. A snapshot's own
+    /// header must describe the transfer that carried it, and it cannot
     /// describe a term above the one its sender holds: the sender built it from
     /// entries it had committed, and it cannot have committed an entry from a
-    /// term it has not reached. Nor can it move this member's snapshot boundary
-    /// *backwards*: everything below the boundary is already applied, so
-    /// accepting an older snapshot would un-apply committed state.
+    /// term it has not reached. A snapshot this member already holds -- one at
+    /// or below its commit index -- is not impossible, only unneeded, and is
+    /// answered before any of this (`on_install_snapshot`).
     ///
     /// Installing one anyway is worse than it sounds: the log would take the
     /// snapshot's term as its own, and a member whose last log term is above its
     /// current term considers itself impossibly up to date. It would refuse
     /// every vote and win any election it entered.
     fn why_the_snapshot_cannot_be_real(
-        state: &NodeState,
         meta: &SnapshotMeta,
         sender_term: u64,
+        sent_as: (u64, u64),
     ) -> Option<String> {
+        if (meta.last_index, meta.last_term) != sent_as {
+            // The payload's own header and the transfer that carried it
+            // describe different snapshots. The leader credits what it sent
+            // *as*; installing what the bytes say would leave the two members
+            // disagreeing about what this one holds -- a phantom match on one
+            // side, a hole on the other.
+            return Some(format!(
+                "its contents describe a snapshot through ({}, t{}) but it was sent as one \
+                 through ({}, t{})",
+                meta.last_index, meta.last_term, sent_as.0, sent_as.1,
+            ));
+        }
         if meta.last_term > sender_term {
             return Some(format!(
                 "it covers term {} but arrived from a member at term {sender_term}",
                 meta.last_term,
-            ));
-        }
-        if meta.last_index <= state.commit_index {
-            // Against the **commit index**, not the compaction boundary.
-            // `snapshot_index <= commit_index` always, so comparing against the
-            // boundary let through every snapshot landing in between -- and
-            // installing one of those replaces the state machine with older
-            // state while `commit_index` correctly stays put, leaving committed
-            // entries un-applied. That is the one thing a state machine may
-            // never do.
-            //
-            // `go.etcd.io/raft` refuses on exactly this line (`raft.go:1861`):
-            // `if s.Metadata.Index <= r.raftLog.committed { return false }`.
-            return Some(format!(
-                "it ends at index {}, at or below what is already committed here ({})",
-                meta.last_index, state.commit_index,
             ));
         }
         None
@@ -1940,41 +2372,64 @@ impl RaftNode {
 
         let (applied, term, discard_to) = prepared;
 
+        // Installing a snapshot abandons the open capture
+        // (`StateMachine::install_snapshot`), and an install can land whenever
+        // the state lock is free -- at any yield below, and on the threaded
+        // runtime between any two lock scopes. So every step that resumes after
+        // one checks that the capture is still open, and a capture that is gone
+        // means this snapshot was superseded: the installed one is newer than
+        // anything this walk could produce, and already held.
+        //
+        // "A capture is open" suffices for "this capture is open": compaction
+        // runs only here, and only from the apply task, which awaits it -- so
+        // once this capture is abandoned no other can open until this returns.
+        let superseded = || {
+            tracing::debug!(
+                member = self.layout.local.name,
+                applied,
+                "raft: stopped a snapshot: a later one was installed",
+            );
+        };
+
         // The walk is chunked so a large registry does not hold the store's
         // read lock for its whole length; copy-on-write is what makes a
         // non-atomic walk correct.
-        let payload = {
-            let keys = self.registry.with_read_store(crate::snapshot::walk_order);
-            let mut records = Vec::new();
-            let mut live = std::collections::BTreeSet::new();
-            for window in keys.chunks(crate::snapshot::CHUNK_RESOURCES) {
-                {
-                    let state = self.state.lock();
-                    let Some(capture) = state.machine.snapshots().capture() else {
-                        return;
-                    };
-                    let chunk = self.registry.with_read_store(|store| {
-                        crate::snapshot::collect_chunk(store, capture, window, &mut live)
-                    });
-                    records.extend(chunk);
-                    drop(state);
-                }
-                tokio::task::yield_now().await;
-            }
-
-            let mut state = self.state.lock();
-            match state.machine.snapshots_mut().finish(records, &live) {
-                Ok(payload) => payload,
-                Err(error) => {
-                    tracing::error!(error = %error.0, "raft: taking a snapshot failed");
-                    state.machine.snapshots_mut().abandon();
+        let keys = self.registry.with_read_store(crate::snapshot::walk_order);
+        let mut records = Vec::new();
+        let mut live = std::collections::BTreeSet::new();
+        for window in keys.chunks(crate::snapshot::CHUNK_RESOURCES) {
+            {
+                let state = self.state.lock();
+                let Some(capture) = state.machine.snapshots().capture() else {
+                    superseded();
                     return;
-                }
+                };
+                let chunk = self.registry.with_read_store(|store| {
+                    crate::snapshot::collect_chunk(store, capture, window, &mut live)
+                });
+                records.extend(chunk);
+                drop(state);
+            }
+            tokio::task::yield_now().await;
+        }
+
+        // Finishing and storing under one lock, so no install can land between
+        // them: stored after one, this snapshot would replace a newer one with
+        // an older.
+        let mut state = self.state.lock();
+        if state.machine.snapshots().capture().is_none() {
+            superseded();
+            return;
+        }
+        let payload = match state.machine.snapshots_mut().finish(records, &live) {
+            Ok(payload) => payload,
+            Err(error) => {
+                tracing::error!(error = %error.0, "raft: taking a snapshot failed");
+                state.machine.snapshots_mut().abandon();
+                return;
             }
         };
-
-        let mut state = self.state.lock();
-        state.snapshot = payload;
+        state.snapshot = Arc::from(payload);
         state.snapshot_meta = Some(SnapshotMeta {
             last_index: applied,
             last_term: term,
@@ -2006,6 +2461,166 @@ impl RaftNode {
                 "raft: snapshotted and compacted",
             ),
             Err(error) => tracing::debug!(error = %error.0, "raft: nothing to compact"),
+        }
+    }
+
+    // -- reading ------------------------------------------------------------
+
+    /// The index a read here must have applied before it may answer.
+    ///
+    /// etcd's ReadIndex in its default, quorum-confirmed mode (`ReadOnlySafe`,
+    /// `raft.go:58-70`): the commit index as it stood when the read began,
+    /// released only once a quorum has confirmed, after that moment, that the
+    /// leader giving it still leads. A member that has applied through it holds
+    /// every write acknowledged before the read began, so an answer from its
+    /// own store -- a 400, a 404 -- is one the leader would have given.
+    ///
+    /// On the leader the read is served here; a follower asks its leader
+    /// (`on_read_index`).
+    ///
+    /// # Errors
+    ///
+    /// [`RaftUnavailable`] when there is no leader, when leadership is lost
+    /// before a quorum confirms, or at `timeout_ms`.
+    pub async fn read_index(&self, timeout_ms: u64) -> Result<u64, RaftUnavailable> {
+        let pending = {
+            let mut state = self.state.lock();
+            if state.role == Role::Leader {
+                Ok(self.begin_read(&mut state))
+            } else {
+                Err(state.leader)
+            }
+        };
+        let receiver = match pending {
+            Ok(receiver) => receiver,
+            Err(leader) => return self.ask_leader_for_read_index(leader, timeout_ms).await,
+        };
+        match tokio::time::timeout(Duration::from_millis(timeout_ms), receiver).await {
+            Ok(Ok(answer)) => answer,
+            Ok(Err(_)) => Err(RaftUnavailable("member is shutting down".to_owned())),
+            Err(_) => Err(RaftUnavailable(
+                "no quorum confirmed this member's leadership in time".to_owned(),
+            )),
+        }
+    }
+
+    async fn ask_leader_for_read_index(
+        &self,
+        leader: Option<u64>,
+        timeout_ms: u64,
+    ) -> Result<u64, RaftUnavailable> {
+        let Some(leader) = leader else {
+            // etcd drops the request with no leader (`raft.go:1764-1768`); a
+            // caller here is told at once rather than left to its deadline.
+            return Err(RaftUnavailable("no leader elected".to_owned()));
+        };
+        // A silent leader or a failed link is `RaftUnavailable` from the
+        // transport, which resolves a request only with the kind it expects
+        // (`Message::expected_reply`).
+        let reply = self
+            .transport
+            .request(
+                leader,
+                &Message::ReadIndex(ReadIndex { request_id: 0 }),
+                crate::wire::Stream::Control,
+                Some(timeout_ms),
+            )
+            .await?;
+        match reply {
+            Message::ReadIndexReply(reply) if reply.ok => Ok(reply.index),
+            Message::ReadIndexReply(reply) => Err(RaftUnavailable(format!(
+                "member {leader} gave no read index: {}",
+                reply.reason,
+            ))),
+            other => Err(RaftUnavailable(format!(
+                "member {leader} answered a read index with {:?}",
+                other.message_type(),
+            ))),
+        }
+    }
+
+    /// Record a read on this leader; the receiver is its confirmed index.
+    fn begin_read(&self, state: &mut NodeState) -> oneshot::Receiver<Result<u64, RaftUnavailable>> {
+        let (reply, receiver) = oneshot::channel();
+        if self.layout.size() == 1 {
+            // A lone voter is answered at once, at its commit index, as etcd
+            // answers one (`raft.go:1355-1361`): there is nobody to confirm
+            // anything with, and it has acknowledged nothing it has not
+            // committed.
+            drop(reply.send(Ok(state.commit_index)));
+            return receiver;
+        }
+        state.reads.push(Read {
+            reply,
+            index: None,
+            after: 0,
+        });
+        self.arm_reads(state);
+        receiver
+    }
+
+    /// Give every postponed read its index, and ask a quorum to confirm it.
+    ///
+    /// Armed at the commit index and the append sequence of this moment, then
+    /// a heartbeat to every peer at once -- etcd broadcasts one per read
+    /// (`sendMsgReadIndexResponse`, `raft.go:2146-2156`) -- whose replies,
+    /// carrying later ids, are the confirmation `confirm_reads` counts.
+    fn arm_reads(&self, state: &mut NodeState) {
+        if state.role != Role::Leader || !state.committed_in_current_term() {
+            return;
+        }
+        let (index, after) = (state.commit_index, state.append_sequence);
+        let mut armed = false;
+        for read in state.reads.iter_mut().filter(|read| read.index.is_none()) {
+            read.index = Some(index);
+            read.after = after;
+            armed = true;
+        }
+        if armed {
+            let peers: Vec<u64> = state
+                .peers
+                .iter()
+                .filter(|&(_, peer)| peer.up)
+                .map(|(&peer, _)| peer)
+                .collect();
+            for peer in peers {
+                self.send_append(state, peer);
+            }
+            self.confirm_reads(state);
+        }
+    }
+
+    /// Release every read a quorum has confirmed.
+    ///
+    /// A read is confirmed when this member and enough voters to make a quorum
+    /// have answered, in this term, an append sent after it was armed -- etcd's
+    /// `maybeAdvance` over the voters' echoed positions (`raft.go:1600-1609`).
+    /// Members catching up are not voters here, as they are not for commitment
+    /// or check-quorum. A read whose caller has gone is simply dropped.
+    fn confirm_reads(&self, state: &mut NodeState) {
+        if state.reads.is_empty() {
+            return;
+        }
+        let quorum = state.quorum(&self.layout);
+        for read in std::mem::take(&mut state.reads) {
+            if read.reply.is_closed() {
+                continue;
+            }
+            let Some(index) = read.index else {
+                state.reads.push(read);
+                continue;
+            };
+            let confirmed = state
+                .peers
+                .values()
+                .filter(|peer| !peer.catching_up && peer.heard_request > read.after)
+                .count()
+                .saturating_add(1);
+            if confirmed >= quorum {
+                drop(read.reply.send(Ok(index)));
+            } else {
+                state.reads.push(read);
+            }
         }
     }
 
@@ -2046,22 +2661,13 @@ impl RaftNode {
 
 #[async_trait::async_trait]
 impl crate::transport::PeerHandler for RaftNode {
-    fn on_request_vote(&self, _peer: u64, message: &RequestVote) -> RequestVoteReply {
+    fn on_request_vote(
+        &self,
+        _peer: u64,
+        message: &RequestVote,
+    ) -> Result<RequestVoteReply, PersistentStateError> {
         let now = Instant::now();
         let mut state = self.state.lock();
-
-        if message.probe {
-            // A question, not a request. Answered at whatever term we hold, and
-            // deliberately without adopting the asker's term or touching the
-            // election timer: a probe must be able to survey a cluster without
-            // changing it.
-            return RequestVoteReply {
-                term: state.term,
-                granted: false,
-                voting: state.voting,
-                pre_vote: false,
-            };
-        }
 
         if state.leader_lease_holds(&self.timing, now) {
             // Raft §6's disruption problem. This member is being served right
@@ -2074,12 +2680,12 @@ impl crate::transport::PeerHandler for RaftNode {
             // The quorum gate on campaigning already stops a *partitioned*
             // member from doing this. It does not stop one whose scheduler
             // stalled long enough to miss its heartbeats.
-            return RequestVoteReply {
+            return Ok(RequestVoteReply {
                 term: state.term,
                 granted: false,
                 voting: state.voting,
                 pre_vote: message.pre_vote,
-            };
+            });
         }
 
         if message.pre_vote {
@@ -2091,14 +2697,11 @@ impl crate::transport::PeerHandler for RaftNode {
             // The grant conditions are the real election's, minus the recorded
             // vote -- a member may pre-vote for several candidates in the same
             // round, because it has promised none of them anything.
-            let may_vote =
-                state.voting || state.cluster_has_forgotten(&self.layout, &message.amnesiac);
-            let granted = may_vote
-                && message.term > state.term
+            let granted = message.term > state.term
                 && state
                     .log
                     .is_at_least_as_current_as(message.last_log_index, message.last_log_term);
-            return RequestVoteReply {
+            return Ok(RequestVoteReply {
                 // The prospective term when granting, so the candidate can
                 // count it against the term it proposed; this member's own when
                 // refusing, so a candidate standing on a stale term learns to
@@ -2107,22 +2710,19 @@ impl crate::transport::PeerHandler for RaftNode {
                 granted,
                 voting: state.voting,
                 pre_vote: true,
-            };
+            });
         }
 
         if message.term > state.term {
-            state.step_down(message.term);
+            state.step_down(message.term)?;
         }
 
-        // A member that has forgotten its log normally refuses. It votes only
-        // once the candidate's evidence, together with its own condition,
-        // proves no quorum of voters can exist -- at which point no committed
-        // entry can still be protected by refusing. The arithmetic is re-done
-        // here rather than trusted, so a candidate cannot talk a voter into it.
-        let may_vote = state.voting || state.cluster_has_forgotten(&self.layout, &message.amnesiac);
-
+        // A member that has forgotten grants on the same terms as any other --
+        // log currency, one vote per term -- and says what it is in the reply.
+        // Whether that grant counts is the candidate's to decide, from this
+        // round's replies alone: see "When every voter has forgotten".
         let mut granted = false;
-        if message.term == state.term && may_vote {
+        if message.term == state.term {
             let free = state
                 .voted_for
                 .is_none_or(|already| already == message.candidate);
@@ -2134,35 +2734,31 @@ impl crate::transport::PeerHandler for RaftNode {
                 state.voted_for = Some(message.candidate);
                 // Durable BEFORE the reply leaves. A vote that is granted and
                 // then forgotten is the whole failure this design guards
-                // against, and the window is exactly here.
-                state.persist();
+                // against, and the window is exactly here. A save that fails
+                // ends this without an answer; the vote stays recorded in
+                // memory, where it still refuses anyone else in this term.
+                state.persist()?;
                 state.reset_election_timer(&self.timing, now);
             }
         }
 
-        RequestVoteReply {
+        Ok(RequestVoteReply {
             term: state.term,
             granted,
             voting: state.voting,
             pre_vote: false,
-        }
+        })
     }
 
-    fn on_request_vote_reply(&self, peer: u64, message: &RequestVoteReply) {
+    fn on_request_vote_reply(
+        &self,
+        peer: u64,
+        message: &RequestVoteReply,
+    ) -> Result<(), PersistentStateError> {
         let now = Instant::now();
         let mut wake_apply = false;
         {
             let mut state = self.state.lock();
-
-            // Recorded before anything else, and for probes and pre-votes too:
-            // this is the only way a member learns which of its peers have
-            // forgotten, and a reply that arrives after the round it belonged
-            // to is still evidence.
-            if message.voting {
-                state.observed_amnesiac.remove(&peer);
-            } else {
-                state.observed_amnesiac.insert(peer);
-            }
 
             if message.pre_vote {
                 // A *refused* pre-vote carries the voter's own term. If that is
@@ -2172,17 +2768,23 @@ impl crate::transport::PeerHandler for RaftNode {
                 // term, ours plus one, and must never be mistaken for evidence
                 // that we are behind.
                 if !message.granted && message.term > state.term {
-                    state.step_down(message.term);
-                    return;
+                    state.step_down(message.term)?;
+                    return Ok(());
                 }
                 if state.role != Role::PreCandidate {
-                    return;
+                    return Ok(());
                 }
                 if message.granted && message.term == state.term.saturating_add(1) {
                     state.pre_votes.insert(peer);
-                    let tally = state.pre_votes.clone();
-                    if state.won(&self.layout, &tally) {
-                        wake_apply = self.campaign(&mut state, now);
+                    if !message.voting {
+                        // From a grant only: see "When every voter has
+                        // forgotten" for why a pre-vote must never over-predict
+                        // a recovery.
+                        state.pre_forgotten.insert(peer);
+                    }
+                    let (tally, forgotten) = (state.pre_votes.clone(), state.pre_forgotten.clone());
+                    if state.won(&self.layout, &tally, &forgotten) {
+                        wake_apply = self.campaign(&mut state, now)?;
                     }
                 } else if !message.granted {
                     // **A lost round ends the candidacy**, which is
@@ -2220,18 +2822,26 @@ impl crate::transport::PeerHandler for RaftNode {
                 }
             } else {
                 if message.term > state.term {
-                    state.step_down(message.term);
-                    return;
+                    state.step_down(message.term)?;
+                    return Ok(());
                 }
                 if state.role != Role::Candidate || message.term != state.term {
-                    return;
+                    // Including a reply that arrives after its round is over:
+                    // it is evidence about that round and no other. Keeping
+                    // such a reply was how a member promoted since came to be
+                    // counted as forgotten.
+                    return Ok(());
+                }
+                if !message.voting {
+                    // Binding -- this term's answer from the member itself.
+                    state.forgotten.insert(peer);
                 }
                 if message.granted {
                     state.votes.insert(peer);
-                    let tally = state.votes.clone();
-                    if state.won(&self.layout, &tally) {
-                        wake_apply = self.become_leader(&mut state, now);
-                    }
+                }
+                let (tally, forgotten) = (state.votes.clone(), state.forgotten.clone());
+                if state.won(&self.layout, &tally, &forgotten) {
+                    wake_apply = self.become_leader(&mut state, now);
                 }
             }
         }
@@ -2241,16 +2851,50 @@ impl crate::transport::PeerHandler for RaftNode {
         if self.role() == Role::Leader {
             self.replicate();
         }
+        Ok(())
     }
 
-    fn on_append_entries(&self, _peer: u64, message: &AppendEntries) -> AppendEntriesReply {
+    fn on_append_entries(
+        &self,
+        _peer: u64,
+        message: &AppendEntries,
+    ) -> Result<AppendEntriesReply, PersistentStateError> {
         let now = Instant::now();
         let mut wake_apply = false;
         let reply = {
             let mut state = self.state.lock();
 
             if message.term < state.term {
-                return AppendEntriesReply {
+                return Ok(AppendEntriesReply {
+                    term: state.term,
+                    success: false,
+                    match_index: 0,
+                    conflict_index: 0,
+                    conflict_term: 0,
+                    catching_up: !state.voting,
+                    request_id: 0,
+                });
+            }
+
+            if message.term > state.term {
+                state.step_down(message.term)?;
+            }
+            state.role = Role::Follower;
+            state.leader = Some(message.leader);
+            state.reset_election_timer(&self.timing, now);
+            state.heard_from_leader_at = Some(now);
+
+            if let Some(contradiction) = state.contradicting_committed(message) {
+                // A leader that contradicts what this member has committed
+                // proves committed data lost from the cluster
+                // (`contradicting_committed`). Nothing brings this member back
+                // into step -- it refuses every append anchored at its commit
+                // point, and would serve its stale store until the leader's
+                // snapshot passed that point -- so it stops, as for any broken
+                // invariant (`fail`, which takes this lock, hence the release
+                // first), answering nothing a leader could count: request id 0
+                // is under every reply floor.
+                let refusal = AppendEntriesReply {
                     term: state.term,
                     success: false,
                     match_index: 0,
@@ -2259,19 +2903,10 @@ impl crate::transport::PeerHandler for RaftNode {
                     catching_up: !state.voting,
                     request_id: 0,
                 };
+                drop(state);
+                self.fail(&RaftInvariantViolated(contradiction));
+                return Ok(refusal);
             }
-
-            if message.term > state.term {
-                state.step_down(message.term);
-            }
-            state.role = Role::Follower;
-            state.leader = Some(message.leader);
-            state.reset_election_timer(&self.timing, now);
-            state.heard_from_leader_at = Some(now);
-            // There is a leader, so a quorum of voters existed. Any evidence to
-            // the contrary is out of date, and stale evidence is the one thing
-            // that could justify the recovery path when it is not warranted.
-            state.observed_amnesiac.clear();
 
             if message.prev_log_index < state.commit_index {
                 // A delayed or duplicated append anchored below what this member
@@ -2287,7 +2922,7 @@ impl crate::transport::PeerHandler for RaftNode {
                 // It is also the guard that keeps such a message away from the
                 // truncation path below: everything at or below the commit index
                 // is settled, and no append may reopen it.
-                return AppendEntriesReply {
+                return Ok(AppendEntriesReply {
                     term: state.term,
                     success: true,
                     match_index: state.commit_index,
@@ -2295,7 +2930,7 @@ impl crate::transport::PeerHandler for RaftNode {
                     conflict_term: 0,
                     catching_up: !state.voting,
                     request_id: message.request_id,
-                };
+                });
             }
 
             if !state
@@ -2305,7 +2940,7 @@ impl crate::transport::PeerHandler for RaftNode {
                 let (conflict_index, conflict_term) = state
                     .log
                     .find_conflict(message.prev_log_index, message.prev_log_term);
-                return AppendEntriesReply {
+                return Ok(AppendEntriesReply {
                     term: state.term,
                     success: false,
                     match_index: 0,
@@ -2313,7 +2948,7 @@ impl crate::transport::PeerHandler for RaftNode {
                     conflict_term,
                     catching_up: !state.voting,
                     request_id: message.request_id,
-                };
+                });
             }
 
             if !message.entries.is_empty() {
@@ -2330,7 +2965,7 @@ impl crate::transport::PeerHandler for RaftNode {
                             // Rejected at the edge rather than inside apply,
                             // which runs synchronously and has nowhere to fail.
                             tracing::warn!(error = %error.0, "raft: undecodable entry");
-                            return AppendEntriesReply {
+                            return Ok(AppendEntriesReply {
                                 term: state.term,
                                 success: false,
                                 match_index: 0,
@@ -2338,22 +2973,48 @@ impl crate::transport::PeerHandler for RaftNode {
                                 conflict_term: 0,
                                 catching_up: !state.voting,
                                 request_id: message.request_id,
-                            };
+                            });
                         }
                     }
                 }
                 let committed = state.commit_index;
-                if let Err(error) = state.log.append_replicated(decoded, committed) {
-                    tracing::warn!(error = %error.0, "raft: replicated append refused");
-                    return AppendEntriesReply {
-                        term: state.term,
-                        success: false,
-                        match_index: 0,
-                        conflict_index: 0,
-                        conflict_term: 0,
-                        catching_up: !state.voting,
-                        request_id: message.request_id,
-                    };
+                match state.log.append_replicated(decoded, committed) {
+                    Ok(()) => {}
+                    Err(AppendError::Refused(why)) => {
+                        tracing::warn!(error = %why, "raft: replicated append refused");
+                        return Ok(AppendEntriesReply {
+                            term: state.term,
+                            success: false,
+                            match_index: 0,
+                            conflict_index: 0,
+                            conflict_term: 0,
+                            catching_up: !state.voting,
+                            request_id: message.request_id,
+                        });
+                    }
+                    Err(AppendError::Invariant(violated)) => {
+                        // An entry here conflicting at or below the commit
+                        // index. No message can reach that --
+                        // `prev_log_index < commit_index` was answered above,
+                        // so every entry here lies beyond the commit index --
+                        // which is what makes it a broken invariant rather
+                        // than a refusal. The member stops (`fail`, which takes
+                        // this lock, hence the release first), answering
+                        // nothing a leader could count: request id 0 is under
+                        // every reply floor.
+                        let refusal = AppendEntriesReply {
+                            term: state.term,
+                            success: false,
+                            match_index: 0,
+                            conflict_index: 0,
+                            conflict_term: 0,
+                            catching_up: !state.voting,
+                            request_id: 0,
+                        };
+                        drop(state);
+                        self.fail(&violated);
+                        return Ok(refusal);
+                    }
                 }
             }
 
@@ -2383,10 +3044,14 @@ impl crate::transport::PeerHandler for RaftNode {
         if wake_apply {
             self.apply_wake.notify_one();
         }
-        reply
+        Ok(reply)
     }
 
-    fn on_append_entries_reply(&self, peer: u64, message: &AppendEntriesReply) {
+    fn on_append_entries_reply(
+        &self,
+        peer: u64,
+        message: &AppendEntriesReply,
+    ) -> Result<(), PersistentStateError> {
         let mut wake_apply = false;
         let mut resend = false;
         // "This reply told us nothing to act on", the Python's early return.
@@ -2395,14 +3060,14 @@ impl crate::transport::PeerHandler for RaftNode {
         {
             let mut state = self.state.lock();
             if message.term > state.term {
-                state.step_down(message.term);
-                return;
+                state.step_down(message.term)?;
+                return Ok(());
             }
             if state.role != Role::Leader || message.term != state.term {
-                return;
+                return Ok(());
             }
             let Some(tracked) = state.peers.get_mut(&peer) else {
-                return;
+                return Ok(());
             };
 
             if message.request_id <= tracked.reply_floor {
@@ -2410,7 +3075,7 @@ impl crate::transport::PeerHandler for RaftNode {
                 // `PeerState::reply_floor`. Believing it credits the member
                 // that has just replaced this one with a log it does not have,
                 // and takes `catching_up` from a member that no longer exists.
-                return;
+                return Ok(());
             }
 
             // Only the answer to *this* append releases the pause. A reply to a
@@ -2431,16 +3096,55 @@ impl crate::transport::PeerHandler for RaftNode {
             let was_catching_up = tracked.catching_up;
             tracked.catching_up = message.catching_up;
             if message.catching_up && !was_catching_up {
-                // Newly noticed: it must reach everything committed as of now
-                // before its acknowledgements count again.
-                let bar = state.commit_index;
+                // Newly noticed: it must hold everything committed as of now
+                // before its vote counts again -- and "everything committed" is
+                // bounded by this leader's *last* index, not by its commit index.
+                //
+                // The two differ exactly after an election. A new leader holds
+                // every committed entry (Leader Completeness), but it learns that
+                // an entry is committed only once one of its own term commits
+                // above it; until then an entry an earlier leader committed
+                // looks, from here, like one nobody committed. The chaos soak's
+                // promotion audit measured the consequence of barring at the
+                // commit index: a leader committed an entry with one follower and
+                // restarted before telling it; that follower won the next term,
+                // still believing the commit index below the entry, and promoted
+                // the restarted member at that bar without it; the promoted
+                // member then voted in a candidate that had never had the entry,
+                // which wrote over it. The Python module docstring's own
+                // scenario, through the promotion rather than the vote.
+                //
+                // Entries committed after the member restarted do not need
+                // waiting for -- a member catching up is never counted, so they
+                // were committed on a majority without it -- but nothing here can
+                // tell them from the others, and they are in this log, so the
+                // whole log is the bar. etcd's server judges a learner ready
+                // against the same point, the leader's own `Match`
+                // (`server/etcdserver/server.go`, `isLearnerReady`).
+                let bar = state.log.last_index();
                 if let Some(tracked) = state.peers.get_mut(&peer) {
                     tracked.promote_through = bar;
                 }
                 tracing::info!(peer, through = bar, "raft: member is catching up");
             }
 
+            // Whatever it said, the peer answered in this term -- a read's
+            // confirmation, but only from a member that votes. etcd counts
+            // voters' acknowledgements alone (`maybeAdvance(r.trk.Voters)`,
+            // `raft.go:1604-1605`; `CommittedIndex` over the voters' acks,
+            // `read_only.go:79-81`), as this leader counts only voters toward a
+            // commit and toward check-quorum. Judged by the flag this reply
+            // carries, not the one before it: the first reply of a member that
+            // restarted with nothing is the one that says so.
+            if !message.catching_up
+                && let Some(tracked) = state.peers.get_mut(&peer)
+            {
+                tracked.heard_request = tracked.heard_request.max(message.request_id);
+            }
+            self.confirm_reads(&mut state);
+
             let matched = state.peers.get(&peer).map_or(0, |t| t.match_index);
+            let own_last = state.log.last_index();
             if !message.success && message.conflict_index <= matched {
                 // Stale, and safe to say so only because of `reply_floor`.
                 //
@@ -2462,7 +3166,7 @@ impl crate::transport::PeerHandler for RaftNode {
                 // `match_index` left by a previous incarnation's reply made a
                 // rejoining member's honest "resume from index 1" look stale,
                 // and the leader ignored it for the rest of the term.
-                return;
+                return Ok(());
             }
 
             if !message.success {
@@ -2479,20 +3183,40 @@ impl crate::transport::PeerHandler for RaftNode {
                 // match_index` -- so a floor could never be the larger term,
                 // and adding it would be a line that looks load-bearing and is
                 // not.
-                if let Some(tracked) = state.peers.get_mut(&peer) {
-                    tracked.next_index = message.conflict_index.max(1);
-                    // The window just moved backwards, so anything recorded as
-                    // told to this peer above its new end was told through a
-                    // message it rejected. `go.etcd.io/raft` clamps the same way
-                    // whenever `Next` regresses (`tracker/progress.go:142`,
-                    // `:238`, `:251`), commenting that the sent commit "unlikely
-                    // has been applied".
-                    tracked.sent_commit = crate::commit::commit_after_regression(
-                        tracked.sent_commit,
-                        tracked.next_index,
-                    );
+                let resume = message.conflict_index.max(1);
+                if state
+                    .peers
+                    .get(&peer)
+                    .is_some_and(|tracked| resume >= tracked.next_index)
+                {
+                    // Nothing learned: the peer asks to resume where this
+                    // leader already is, or past it. Sent again at once, the
+                    // same append draws the same refusal -- and it was, forever,
+                    // at zero delay: 124,991 appends inside one millisecond of
+                    // cluster time (seed 111504), from a follower whose
+                    // committed snapshot contradicts this log at its boundary,
+                    // which only lost committed data (amnesia past the budget)
+                    // can produce. etcd re-sends only when a rejection lowers
+                    // `Next` (`MaybeDecrTo`, `tracker/progress.go:226-254`);
+                    // here the next heartbeat is the next probe.
+                    settled = true;
+                } else {
+                    if let Some(tracked) = state.peers.get_mut(&peer) {
+                        tracked.next_index = resume;
+                        // The window just moved backwards, so anything recorded
+                        // as told to this peer above its new end was told
+                        // through a message it rejected. `go.etcd.io/raft`
+                        // clamps the same way whenever `Next` regresses
+                        // (`tracker/progress.go:142`, `:238`, `:251`),
+                        // commenting that the sent commit "unlikely has been
+                        // applied".
+                        tracked.sent_commit = crate::commit::commit_after_regression(
+                            tracked.sent_commit,
+                            tracked.next_index,
+                        );
+                    }
+                    resend = true;
                 }
-                resend = true;
             } else if let Some(tracked) = state.peers.get_mut(&peer) {
                 // **Both indices only ever move forward within a leadership.**
                 //
@@ -2508,9 +3232,21 @@ impl crate::transport::PeerHandler for RaftNode {
                 // `go.etcd.io/raft` keeps the invariant in one place,
                 // `MaybeUpdate` (`tracker/progress.go:205`), and gates its
                 // whole success branch on it.
-                let advanced = message.match_index > tracked.match_index;
+                //
+                // And never past this leader's own log: a follower cannot hold
+                // more of it than it holds, as the snapshot-reply path already
+                // says (`on_install_snapshot_reply`). In a correct run the two
+                // agree -- a follower vouches for a window this leader sent, or
+                // for its commit index, which Leader Completeness puts inside
+                // this log. Where they do not, committed data has been lost,
+                // and the unbounded credit put `next_index` past the end of the
+                // log: `send_append` then sent a snapshot the follower ignored,
+                // and never an anchor it could check against what it committed
+                // (`contradicting_committed`).
+                let vouched = message.match_index.min(own_last);
+                let advanced = vouched > tracked.match_index;
                 if advanced {
-                    tracked.match_index = message.match_index;
+                    tracked.match_index = vouched;
                 }
                 // `Match < Next`, which etcd states as an invariant on the same
                 // line it advances them (`tracker/progress.go:211`). Enforced on
@@ -2601,6 +3337,7 @@ impl crate::transport::PeerHandler for RaftNode {
             // An advance publishes immediately; see `advance_commit`.
             self.replicate();
         }
+        Ok(())
     }
 
     fn on_promote(&self, peer: u64, message: &Promote) {
@@ -2619,82 +3356,187 @@ impl crate::transport::PeerHandler for RaftNode {
         state.voting = true;
     }
 
-    fn on_install_snapshot(&self, peer: u64, message: &InstallSnapshot) -> InstallSnapshotReply {
+    fn on_install_snapshot(
+        &self,
+        peer: u64,
+        message: &InstallSnapshot,
+    ) -> Result<InstallSnapshotReply, PersistentStateError> {
         let now = Instant::now();
         let mut state = self.state.lock();
+        // Every answer carries this member's commit index and names the chunk
+        // it answers (`InstallSnapshotReply`): the first is how the leader
+        // learns to stop sending a snapshot this member already holds, the
+        // second how it tells the answer to the chunk in flight from one that
+        // outlived its transfer.
+        let answer = |state: &NodeState, received: usize, done: bool| InstallSnapshotReply {
+            term: state.term,
+            bytes_received: received as u64,
+            done,
+            commit_index: state.commit_index,
+            request_id: message.request_id,
+        };
 
         if message.term < state.term {
-            return InstallSnapshotReply {
-                term: state.term,
-                bytes_received: 0,
-                done: false,
-            };
+            return Ok(answer(&state, 0, false));
         }
         if message.term > state.term {
-            state.step_down(message.term);
+            state.step_down(message.term)?;
         }
         state.role = Role::Follower;
         state.leader = Some(message.leader);
         state.reset_election_timer(&self.timing, now);
 
-        let offset = usize::try_from(message.offset).unwrap_or(usize::MAX);
-        let buffer = state.installing.entry(peer).or_default();
-        if offset == 0 {
-            buffer.clear();
-        }
-        if offset != buffer.len() {
-            // A chunk out of order, or a retransmission from a different
-            // offset. Restart rather than splice: a snapshot assembled from
-            // mismatched pieces would parse and be wrong.
-            buffer.clear();
-            return InstallSnapshotReply {
+        let held = (state.log.snapshot_index()..=state.commit_index)
+            .contains(&message.last_index)
+            .then(|| state.log.term_at(message.last_index).ok())
+            .flatten();
+        if let Some(held) = held.filter(|&held| held != message.last_term) {
+            // Not held at all: the leader's snapshot ends on an entry committed
+            // here at another term -- committed data lost from the cluster, as
+            // in `contradicting_committed`. The member stops (`fail`, which
+            // takes this lock, hence the release first) and credits nothing:
+            // request id 0 is under every reply floor.
+            state.installing.remove(&peer);
+            let refusal = InstallSnapshotReply {
                 term: state.term,
                 bytes_received: 0,
                 done: false,
+                commit_index: 0,
+                request_id: 0,
             };
+            drop(state);
+            self.fail(&RaftInvariantViolated(format!(
+                "leader {} of term {} sent a snapshot through index {} at term {}, committed \
+                 here at term {held}: committed data was lost from the cluster",
+                message.leader, message.term, message.last_index, message.last_term,
+            )));
+            return Ok(refusal);
         }
-        buffer.extend_from_slice(&message.data);
-        let assembled = buffer.len();
+
+        if message.last_index <= state.commit_index {
+            // Already held: everything this snapshot covers is committed here,
+            // and installing it would replace the state machine with older
+            // state while `commit_index` correctly stays put -- committed
+            // entries un-applied, the one thing a state machine may never do.
+            // Against the **commit index**, not the compaction boundary:
+            // `snapshot_index <= commit_index` always, so the boundary let
+            // through every snapshot landing in between. `go.etcd.io/raft`
+            // ignores it on exactly this line (`raft.go:1861`) and answers with
+            // its commit index (`raft.go:1850-1853`), logged at Info: it is a
+            // race between a leader's decision and this member's progress, not
+            // a fault. Decided from the metadata at the first chunk, rather
+            // than after a whole transfer has been assembled to be thrown away.
+            state.installing.remove(&peer);
+            tracing::info!(
+                member = self.layout.local.name,
+                peer,
+                through = message.last_index,
+                committed = state.commit_index,
+                "raft: ignored a snapshot: committed through it already",
+            );
+            return Ok(answer(&state, 0, false));
+        }
+
+        let offset = usize::try_from(message.offset).unwrap_or(usize::MAX);
+        let identity = (
+            message.term,
+            message.leader,
+            message.last_index,
+            message.last_term,
+        );
+        if offset == 0 {
+            // Only a first chunk may begin a transfer, and it always may: the
+            // sender has started over, whatever it was sending before.
+            state.installing.insert(
+                peer,
+                Assembly {
+                    identity,
+                    data: Vec::new(),
+                },
+            );
+        } else if let Some(assembly) = state.installing.get(&peer)
+            && assembly.identity == identity
+            && holds(&assembly.data, offset, &message.data)
+        {
+            // A copy of a chunk this member already holds. The leader sends a
+            // chunk again once its answer is overdue, and a chunk that was slow
+            // rather than lost arrives as well as its copy -- first, since one
+            // connection carries both. Answered with what is assembled, which is
+            // where the leader resumes; the copy is the chunk in flight, so its
+            // answer is the one the leader acts on. Treated as a mismatch, as it
+            // once was, it threw the transfer away and the leader began again
+            // from nothing: 343 of 362 follower resets in chaos-soak seed
+            // 140692, whose members needing a snapshot never finished one.
+            let assembled = assembly.data.len();
+            return Ok(answer(&state, assembled, false));
+        }
+        let continues = state
+            .installing
+            .get(&peer)
+            .is_some_and(|assembly| assembly.identity == identity && assembly.data.len() == offset);
+        if !continues {
+            // A chunk out of order, one disagreeing with what is held at its
+            // offset, or -- the case an offset alone cannot see -- the next
+            // chunk of a *different* snapshot. Restart rather than splice: a
+            // snapshot assembled from mismatched pieces can parse and be wrong.
+            state.installing.remove(&peer);
+            return Ok(answer(&state, 0, false));
+        }
+        let assembled = state.installing.get_mut(&peer).map_or(0, |assembly| {
+            assembly.data.extend_from_slice(&message.data);
+            assembly.data.len()
+        });
 
         if !message.done {
-            return InstallSnapshotReply {
-                term: state.term,
-                bytes_received: assembled as u64,
-                done: false,
-            };
+            return Ok(answer(&state, assembled, false));
         }
 
-        let payload = state.installing.remove(&peer).unwrap_or_default();
-        let refusal = InstallSnapshotReply {
-            term: state.term,
-            bytes_received: 0,
-            done: false,
-        };
+        let payload = state
+            .installing
+            .remove(&peer)
+            .map(|assembly| assembly.data)
+            .unwrap_or_default();
+        let refusal = answer(&state, 0, false);
 
         let Ok((meta, ownership, records)) = crate::snapshot::decode_snapshot(&payload) else {
             tracing::error!("raft: refusing a snapshot that did not decode");
-            return refusal;
+            return Ok(refusal);
         };
-        if let Some(reason) = Self::why_the_snapshot_cannot_be_real(&state, &meta, message.term) {
+        if let Some(reason) = Self::why_the_snapshot_cannot_be_real(
+            &meta,
+            message.term,
+            (message.last_index, message.last_term),
+        ) {
             // Rejecting protocol-impossible input early rather than corrupting
             // state with it. A correct leader cannot produce these, so seeing
             // one means a peer is wrong and the only safe answer is to keep our
             // own state.
             tracing::error!(peer, reason, "raft: refusing a snapshot");
-            return refusal;
+            return Ok(refusal);
         }
         let (gc, forget) = self
             .registry
             .with_read_store(|store| (store.gc_interval(), store.forget_interval()));
         let Ok(store) = crate::snapshot::install(records, gc, forget) else {
             tracing::error!("raft: refusing a snapshot that did not install");
-            return refusal;
+            return Ok(refusal);
         };
 
         state
             .machine
             .install_snapshot(&self.registry, store, ownership, meta.last_index);
         state.log.reset_to_snapshot(meta.last_index, meta.last_term);
+        // Kept as this member's own snapshot. The log now starts at the
+        // snapshot's boundary, so the entries below it exist on this member only
+        // as these bytes -- and a member that cannot hand them on strands every
+        // follower that needs them, should it ever lead. Only compaction used to
+        // set these, so a leader that had caught up by snapshot and not
+        // compacted since could send its stranded followers nothing but
+        // keepalives, for as long as it led: the chaos soak's commonest liveness
+        // failure. etcd keeps an applied snapshot as the storage's own
+        // (`storage.go:218-237`) and serves that (`raft.go:672`).
+        state.snapshot = Arc::from(payload);
+        state.snapshot_meta = Some(meta);
         // The fence jumps rather than advances: everything through this index is
         // now visible, however little of it arrived as entries.
         self.fence.reset(meta.last_index);
@@ -2706,54 +3548,99 @@ impl crate::transport::PeerHandler for RaftNode {
             "raft: installed a snapshot",
         );
 
-        InstallSnapshotReply {
-            term: state.term,
-            bytes_received: assembled as u64,
-            done: true,
-        }
+        Ok(answer(&state, assembled, true))
     }
 
-    fn on_install_snapshot_reply(&self, peer: u64, message: &InstallSnapshotReply) {
+    fn on_install_snapshot_reply(
+        &self,
+        peer: u64,
+        message: &InstallSnapshotReply,
+    ) -> Result<(), PersistentStateError> {
         let mut state = self.state.lock();
         if message.term > state.term {
-            state.step_down(message.term);
-            return;
+            state.step_down(message.term)?;
+            return Ok(());
         }
-        if state.role != Role::Leader {
-            return;
+        if state.role != Role::Leader || message.term != state.term {
+            // A reply is evidence only about the exchange it answers, and one
+            // from an earlier term answers a transfer this leadership never
+            // made. Its correlation id is below the floor this leadership
+            // raised on beginning, so it would be fenced below as well; the
+            // term is checked first, as `on_append_entries_reply` checks its
+            // replies. Believed, a stale `done` credited the peer with *this* leader's
+            // current snapshot -- measured as a member credited with index 504
+            // from a term-78 reply about a snapshot through 500, whose genuine
+            // rejections were then discarded as stale for good. etcd drops every
+            // lower-term message before per-type handling (`raft.go:1133-1186`).
+            return Ok(());
         }
-        let Some(meta) = state.snapshot_meta else {
-            return;
+        let last_index = state.log.last_index();
+        let Some(tracked) = state.peers.get_mut(&peer) else {
+            return Ok(());
         };
-        if !state.peers.contains_key(&peer) {
-            return;
+        if message.request_id <= tracked.reply_floor {
+            // Sent before a reset -- a reconnect, or this leadership beginning
+            // -- and so about an exchange this leader has disowned, possibly
+            // with an incarnation of the peer that no longer exists. Fenced as
+            // `on_append_entries_reply` fences its own.
+            return Ok(());
         }
 
-        if let Some(tracked) = state.peers.get_mut(&peer) {
-            // A peer working through a transfer is answering, and must count
-            // toward check-quorum exactly as an append reply does. In
-            // `go.etcd.io/raft` the snapshot acknowledgement arrives as an
-            // ordinary `MsgAppResp`, so it sets `RecentActive` on the same line.
-            tracked.last_heard_at = Some(Instant::now());
-            tracked.snapshot_in_flight = false;
-            if message.done {
-                tracked.next_index = meta.last_index.saturating_add(1);
-                tracked.match_index = meta.last_index;
-                tracked.snapshot_offset = 0;
-            } else {
-                // `bytes_received` is how much the follower has assembled, so
-                // it is both the acknowledgement and the offset to resume from
-                // -- including zero, which is the follower saying it threw the
-                // transfer away.
-                tracked.snapshot_offset = usize::try_from(message.bytes_received).unwrap_or(0);
-            }
+        // A peer working through a transfer is answering, and must count
+        // toward check-quorum exactly as an append reply does. In
+        // `go.etcd.io/raft` the snapshot acknowledgement arrives as an
+        // ordinary `MsgAppResp`, so it sets `RecentActive` on the same line.
+        tracked.last_heard_at = Some(Instant::now());
+
+        // The follower's own statement of what it holds, credited whichever
+        // chunk this answers: its committed prefix is this leader's, so the
+        // credit is true however stale the reply (see
+        // `InstallSnapshotReply::commit_index`). Bounded by this leader's log,
+        // which a complete leader's commit-holding peers cannot exceed.
+        let credited = message.commit_index.min(last_index);
+        if credited > tracked.match_index {
+            tracked.match_index = credited;
+            tracked.next_index = tracked.next_index.max(credited.saturating_add(1));
         }
 
-        if message.done {
+        if message.request_id != tracked.snapshot_request {
+            // Not the reply to the chunk in flight -- a first copy answered
+            // after an overdue one was sent again. It drives nothing: a second
+            // stream beside the first is how the transfer once forked.
+            return Ok(());
+        }
+        tracked.snapshot_request = 0;
+
+        let held = tracked
+            .sending
+            .as_ref()
+            .is_some_and(|(pinned, _)| message.commit_index >= pinned.last_index);
+        if message.done || held {
+            // Installed -- or already held, which etcd calls an ignored
+            // snapshot: either way the follower has everything the transfer
+            // covers, and replication resumes from what it has said it holds.
+            tracked.sending = None;
+            tracked.snapshot_offset = 0;
+            tracked.next_index = tracked.match_index.saturating_add(1);
             self.send_append(&mut state, peer);
-        } else {
-            self.send_snapshot(&mut state, peer);
+            return Ok(());
         }
+        if message.bytes_received == 0 {
+            // The follower threw the transfer away. It starts again, from a
+            // fresh pin -- but at the next heartbeat, not now: a refusal that
+            // recurs would otherwise ping-pong at network speed. etcd pauses a
+            // failed snapshot's peer the same way (`MsgAppFlowPaused`,
+            // `raft.go:1618-1628`).
+            tracked.sending = None;
+            tracked.snapshot_offset = 0;
+            return Ok(());
+        }
+
+        // How much the follower has assembled: the acknowledgement, and the
+        // offset to resume from.
+        tracked.snapshot_offset = usize::try_from(message.bytes_received).unwrap_or(0);
+        self.send_snapshot(&mut state, peer);
+        Ok(())
     }
 
     async fn on_propose(
@@ -2858,6 +3745,38 @@ impl crate::transport::PeerHandler for RaftNode {
         }
     }
 
+    /// A member asking this one, as its leader, for a read index.
+    ///
+    /// Waits for confirmation, or for leadership to end, and for nothing else:
+    /// a leader that cannot hear a quorum stands down within an election window
+    /// (check-quorum), which fails every read waiting on it. The asker bounds
+    /// its own wait; etcd's leader holds reads the same way.
+    async fn on_read_index(&self, _peer: u64, message: &ReadIndex) -> ReadIndexReply {
+        let receiver = {
+            let mut state = self.state.lock();
+            if state.role != Role::Leader {
+                return ReadIndexReply {
+                    ok: false,
+                    index: 0,
+                    reason: "not the leader".to_owned(),
+                    request_id: message.request_id,
+                };
+            }
+            self.begin_read(&mut state)
+        };
+        let (ok, index, reason) = match receiver.await {
+            Ok(Ok(index)) => (true, index, String::new()),
+            Ok(Err(error)) => (false, 0, error.0),
+            Err(_) => (false, 0, "member is shutting down".to_owned()),
+        };
+        ReadIndexReply {
+            ok,
+            index,
+            reason,
+            request_id: message.request_id,
+        }
+    }
+
     fn on_peer_state(&self, peer: u64, up: bool, incarnation: u64) {
         let mut state = self.state.lock();
         let Some(tracked) = state.peers.get_mut(&peer) else {
@@ -2866,6 +3785,13 @@ impl crate::transport::PeerHandler for RaftNode {
         tracked.up = up;
         if !up {
             tracked.catching_up = false;
+            // A transfer from this peer may never resume, and held its buffer
+            // for the life of the member if it did not. Nothing is lost by
+            // dropping it: a reconnected leader restarts at offset 0, and if the
+            // leader's own link survived -- links are directed -- its next chunk
+            // finds no buffer, is answered with 0, and it starts over. A
+            // restart, never a splice and never a stall.
+            state.installing.remove(&peer);
             return;
         }
 
@@ -2889,12 +3815,14 @@ impl crate::transport::PeerHandler for RaftNode {
                 // disowned; a reply it already sent must not be read as news
                 // about the one that replaced it.
                 tracked.reply_floor = append_sequence;
-                // A reconnect invalidates anything in flight: neither the chunk
-                // nor the append it was waiting on will ever be answered, and
-                // holding the pause open would strand the peer.
-                tracked.snapshot_in_flight = false;
+                // A reconnect ends the exchange: whatever was in flight is
+                // disowned (`reply_floor` above fences its replies, which on
+                // BULK may yet arrive), and holding the pause open would strand
+                // the peer.
+                tracked.snapshot_request = 0;
                 tracked.pending_request = 0;
                 tracked.snapshot_offset = 0;
+                tracked.sending = None;
                 // The peer may have restarted and lost everything, so what it
                 // was last told about the commit index says nothing now.
                 tracked.sent_commit = 0;

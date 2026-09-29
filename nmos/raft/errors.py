@@ -38,6 +38,18 @@ class RaftUnavailable(RaftError):
     """
 
 
+class RaftCursorReservationFailed(RaftError):
+    """A paging-cursor reservation could not be made durable.
+
+    No cursor leaves a member until an upper bound on it is on disk
+    (``cursors.py``, "A reservation that outlives the process"), so the
+    mutation that asked for one cannot go ahead. Unlike ``RaftUnavailable``
+    something *is* wrong -- a disk refused a write -- but the answer to the
+    client is the same retryable 503: the Node tries again, here or at another
+    member, and nothing was proposed.
+    """
+
+
 class RaftClusterMismatch(RaftError):
     """A peer belongs to a different cluster, or to a different member set.
 
@@ -76,6 +88,11 @@ class RaftInvariantViolated(RaftError):
     applied is persisted. So this means a defect in this implementation, not a
     hostile message or a corrupt file.
 
+    One comes from a peer and is no exception to that: a leader contradicting
+    an entry this member committed (``RaftNode._contradicting_committed``).
+    Raft makes it impossible -- every leader holds every committed entry -- so
+    it too means a defect, one that lost committed data from the cluster.
+
     That is why it is not recovered from anywhere. ``go.etcd.io/raft`` takes
     the same position and states it more bluntly -- 32 ``Panicf`` sites, no
     ``recover()`` in the library at all -- on the reasoning that continuing
@@ -87,9 +104,19 @@ class RaftInvariantViolated(RaftError):
 
     Distinct from every other error in this module because it must not be
     swallowed. ``_apply_forever`` catches ``Exception`` and logs it so that one
-    bad apply cannot kill a member; this class is re-raised past that handler,
+    bad apply cannot kill a member; this class is taken past that handler,
     because an invariant that is broken stays broken and a loop that logs it
     once per wake-up is a silent failure wearing the costume of a handled one.
+
+    **What happens instead is a stop** (``RaftNode._fail``): the member stops
+    leading, campaigning and applying at once, answers every waiting caller
+    "unavailable", closes its transport, and signals its owner
+    (``RaftNode.wait_for_failure``), which ends the process with status 1
+    (``nmos_registry.py``). The restart that brings it back -- automatic under
+    a service manager that restarts on failure -- is the recovery described
+    above. Merely re-raising it did none of that: it ended the task that found
+    it and nothing else, and the member served on from a store that no longer
+    moved.
     """
 
 

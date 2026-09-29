@@ -59,19 +59,24 @@
 //! `HelloAck` is written.
 
 use std::collections::HashMap;
+use std::future::Future as _;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::task::{Context, Poll};
+use std::time::Duration;
 
 use async_trait::async_trait;
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, ReadBuf};
 use tokio::sync::{Mutex, oneshot};
 
 use crate::errors::RaftProtocolError;
 use crate::messages::{
     AppendEntries, AppendEntriesReply, Forward, ForwardReply, Hello, HelloAck, InstallSnapshot,
-    InstallSnapshotReply, Message, Promote, Propose, ProposeReply, RequestVote, RequestVoteReply,
-    decode_message,
+    InstallSnapshotReply, Message, Ping, Pong, Promote, Propose, ProposeReply, ReadIndex,
+    ReadIndexReply, RequestVote, RequestVoteReply, decode_message,
 };
+use crate::persist::PersistentStateError;
 use crate::wire::{
     FLAG_REPLY, Frame, HEADER_SIZE, MessageType, PROTOCOL_MAJOR, PROTOCOL_MINOR, Stream,
     TRAILER_SIZE, decode_frame, encode_frame, payload_length,
@@ -85,6 +90,158 @@ pub const RECONNECT_MAX_MS: u64 = 2_000;
 
 /// Default deadline for a correlated request.
 pub const RPC_TIMEOUT_MS: u64 = 2_000;
+
+/// How long a connection may carry nothing before it is closed.
+///
+/// etcd's `DefaultConnReadTimeout` (`rafthttp/peer.go:40`), applied the way
+/// etcd applies it (`client/pkg/transport/timeout_conn.go`): every read must see
+/// bytes within it, at both ends of every peer connection. Without one, a path
+/// that stops carrying packets without breaking -- no reset, TCP retransmitting
+/// what it holds -- keeps its connection open for as long as the stall lasts,
+/// and delivers everything written into it when the path recovers: messages
+/// seconds or minutes late, acted on as if current. The chaos soak measured
+/// writes answered 503 committing 4.6-26 s later, after their clients' own
+/// confirmed deletes. Closed at the deadline, a stalled connection delivers what
+/// it held promptly or never.
+pub const CONN_READ_TIMEOUT_MS: u64 = 5_000;
+
+/// How long a write may make no progress before its connection is closed.
+///
+/// etcd's `DefaultConnWriteTimeout` (`rafthttp/peer.go:41`). The Python
+/// transport has no counterpart because its writes cannot block -- asyncio
+/// buffers them -- while one here can: on a socket whose peer has stopped
+/// reading, holding the link's writer lock, which `take_down` needs. Measured on
+/// progress rather than on a whole write, so a 1 MiB snapshot chunk crawling out
+/// over a slow link is not cut off: etcd exempts its own large writes, snapshots,
+/// from write deadlines for the same reason (`rafthttp/util.go:45-52`).
+pub const CONN_WRITE_TIMEOUT_MS: u64 = 5_000;
+
+/// A `Ping` goes out on every outbound link this many times per read timeout.
+///
+/// etcd's stream writer ticks every `ConnReadTimeout / 3` (`stream.go:169`), so
+/// a healthy link whose ends have nothing to say still carries something well
+/// inside the deadline, with room for two to be late.
+pub const HEARTBEATS_PER_READ_TIMEOUT: u64 = 3;
+
+/// A countdown armed while an operation waits, and disarmed by any progress.
+///
+/// What makes [`DeadlineRead`] and [`DeadlineWrite`] measure silence rather than
+/// duration: etcd sets a deadline before each `Read` and `Write` call, each
+/// returning as soon as it has moved any bytes -- so the limit is on waiting, and
+/// resets with every step forward.
+struct Deadline {
+    limit: Duration,
+    what: &'static str,
+    timer: Option<Pin<Box<tokio::time::Sleep>>>,
+}
+
+impl Deadline {
+    const fn new(limit: Duration, what: &'static str) -> Self {
+        Self {
+            limit,
+            what,
+            timer: None,
+        }
+    }
+
+    /// Fold one poll of the guarded operation: progress disarms the countdown,
+    /// waiting arms it, and a wait that outlasts the limit becomes an error.
+    fn guard<T>(
+        &mut self,
+        cx: &mut Context<'_>,
+        polled: Poll<std::io::Result<T>>,
+    ) -> Poll<std::io::Result<T>> {
+        if polled.is_ready() {
+            self.timer = None;
+            return polled;
+        }
+        let limit = self.limit;
+        let timer = self
+            .timer
+            .get_or_insert_with(|| Box::pin(tokio::time::sleep(limit)));
+        if timer.as_mut().poll(cx).is_pending() {
+            return Poll::Pending;
+        }
+        self.timer = None;
+        Poll::Ready(Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            format!("{} made no progress for {limit:?}", self.what),
+        )))
+    }
+}
+
+/// A read half whose every read must see bytes within the read timeout.
+///
+/// A snapshot chunk trickling in over a slow link is never cut off; a
+/// connection that has gone quiet is, however much of a frame it had delivered.
+struct DeadlineRead<R> {
+    inner: R,
+    deadline: Deadline,
+}
+
+impl<R> DeadlineRead<R> {
+    const fn new(inner: R, limit: Duration) -> Self {
+        Self {
+            inner,
+            deadline: Deadline::new(limit, "the connection"),
+        }
+    }
+}
+
+impl<R: AsyncRead + Unpin> AsyncRead for DeadlineRead<R> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let this = &mut *self;
+        let polled = Pin::new(&mut this.inner).poll_read(cx, buf);
+        this.deadline.guard(cx, polled)
+    }
+}
+
+/// A write half whose writes and flushes must make progress within the write
+/// timeout. See [`CONN_WRITE_TIMEOUT_MS`].
+struct DeadlineWrite<W> {
+    inner: W,
+    deadline: Deadline,
+}
+
+impl<W> DeadlineWrite<W> {
+    const fn new(inner: W, limit: Duration) -> Self {
+        Self {
+            inner,
+            deadline: Deadline::new(limit, "a write"),
+        }
+    }
+}
+
+impl<W: AsyncWrite + Unpin> AsyncWrite for DeadlineWrite<W> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let this = &mut *self;
+        let polled = Pin::new(&mut this.inner).poll_write(cx, buf);
+        this.deadline.guard(cx, polled)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        let this = &mut *self;
+        let polled = Pin::new(&mut this.inner).poll_flush(cx);
+        this.deadline.guard(cx, polled)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+/// Did a read fail because its connection went silent?
+fn went_silent(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::TimedOut
+}
 
 /// A peer is not reachable, or did not answer in time.
 ///
@@ -127,34 +284,93 @@ impl std::error::Error for RaftClusterMismatch {}
 /// two that are async, [`Self::on_propose`] and [`Self::on_forward`], are not
 /// consensus messages at all: they wait for a quorum round, which is exactly
 /// the thing the others must not do.
+///
+/// The six that can adopt a term or record a vote return a
+/// [`PersistentStateError`] when the member could not make that durable. The
+/// transport then sends nothing for the message and ends the connection it
+/// came by -- an inbound one closed, an outbound link dropped and redialled --
+/// which is what the Python's transport does with the exception its handler
+/// raises (`_serve`, `_maintain`).
 #[async_trait]
 pub trait PeerHandler: Send + Sync + 'static {
     /// Figure 2 RequestVote.
-    fn on_request_vote(&self, peer: u64, message: &RequestVote) -> RequestVoteReply;
+    ///
+    /// # Errors
+    ///
+    /// The term or vote could not be saved; see the trait.
+    fn on_request_vote(
+        &self,
+        peer: u64,
+        message: &RequestVote,
+    ) -> Result<RequestVoteReply, PersistentStateError>;
 
     /// Figure 2 AppendEntries, heartbeat included.
-    fn on_append_entries(&self, peer: u64, message: &AppendEntries) -> AppendEntriesReply;
+    ///
+    /// # Errors
+    ///
+    /// The term could not be saved; see the trait.
+    fn on_append_entries(
+        &self,
+        peer: u64,
+        message: &AppendEntries,
+    ) -> Result<AppendEntriesReply, PersistentStateError>;
 
     /// A snapshot chunk.
-    fn on_install_snapshot(&self, peer: u64, message: &InstallSnapshot) -> InstallSnapshotReply;
+    ///
+    /// # Errors
+    ///
+    /// The term could not be saved; see the trait.
+    fn on_install_snapshot(
+        &self,
+        peer: u64,
+        message: &InstallSnapshot,
+    ) -> Result<InstallSnapshotReply, PersistentStateError>;
 
     /// The leader saying this member's vote now counts.
     fn on_promote(&self, peer: u64, message: &Promote);
 
     /// A vote reply that no request was awaiting.
-    fn on_request_vote_reply(&self, peer: u64, message: &RequestVoteReply);
+    ///
+    /// # Errors
+    ///
+    /// The term, or the vote for itself of a campaign the reply won, could not
+    /// be saved; see the trait.
+    fn on_request_vote_reply(
+        &self,
+        peer: u64,
+        message: &RequestVoteReply,
+    ) -> Result<(), PersistentStateError>;
 
     /// An append reply that no request was awaiting.
-    fn on_append_entries_reply(&self, peer: u64, message: &AppendEntriesReply);
+    ///
+    /// # Errors
+    ///
+    /// The term could not be saved; see the trait.
+    fn on_append_entries_reply(
+        &self,
+        peer: u64,
+        message: &AppendEntriesReply,
+    ) -> Result<(), PersistentStateError>;
 
     /// A snapshot reply that no request was awaiting.
-    fn on_install_snapshot_reply(&self, peer: u64, message: &InstallSnapshotReply);
+    ///
+    /// # Errors
+    ///
+    /// The term could not be saved; see the trait.
+    fn on_install_snapshot_reply(
+        &self,
+        peer: u64,
+        message: &InstallSnapshotReply,
+    ) -> Result<(), PersistentStateError>;
 
     /// A follower's batch, for this member to append as leader.
     async fn on_propose(&self, peer: u64, message: &Propose) -> ProposeReply;
 
     /// A registry mutation handed to the member that owns its Node.
     async fn on_forward(&self, peer: u64, message: &Forward) -> ForwardReply;
+
+    /// A member asking this one, as its leader, for a read index.
+    async fn on_read_index(&self, peer: u64, message: &ReadIndex) -> ReadIndexReply;
 
     /// A peer's link came up or went down.
     ///
@@ -290,6 +506,11 @@ pub fn with_request_id(message: &Message, request_id: u64) -> Option<Message> {
             request_id,
             ..m.clone()
         }),
+        Message::ReadIndex(_) => Message::ReadIndex(ReadIndex { request_id }),
+        Message::ReadIndexReply(ref m) => Message::ReadIndexReply(ReadIndexReply {
+            request_id,
+            ..m.clone()
+        }),
         _ => return None,
     })
 }
@@ -304,6 +525,8 @@ pub fn request_id_of(message: &Message) -> u64 {
         Message::ProposeReply(ref m) => m.request_id,
         Message::Forward(ref m) => m.request_id,
         Message::ForwardReply(ref m) => m.request_id,
+        Message::ReadIndex(ref m) => m.request_id,
+        Message::ReadIndexReply(ref m) => m.request_id,
         _ => 0,
     }
 }
@@ -374,6 +597,16 @@ struct Link {
     writer: Mutex<Option<Box<dyn AsyncWriteUnpinSend>>>,
     connected: AtomicBool,
     incarnation: AtomicU64,
+    /// Which connection is in place: bumped whenever one ends.
+    ///
+    /// A frame is queued for the connection current when it was sent -- `send`
+    /// spawns its write, which waits its turn on `writer` -- and is dropped if
+    /// that connection has gone by the time its turn comes, rather than written
+    /// on the next one. Without it a message sent into a stalled connection
+    /// went out on the connection that replaced it, as late as the stall was
+    /// long. etcd discards a failed connection's queue the same way
+    /// (`stream.go:336-339`).
+    generation: AtomicU64,
     /// Callers awaiting a correlated reply, and **what each is waiting for**.
     ///
     /// The type is not decoration. Two id spaces meet in this one map: the
@@ -397,6 +630,7 @@ impl Default for Link {
             writer: Mutex::new(None),
             connected: AtomicBool::new(false),
             incarnation: AtomicU64::new(0),
+            generation: AtomicU64::new(0),
             pending: Mutex::new(HashMap::new()),
         }
     }
@@ -432,15 +666,54 @@ impl Link {
             .map_err(|e| RaftUnavailable(format!("flush failed: {e}")))
     }
 
+    /// Write `bytes` if the connection they were queued for is still in place.
+    ///
+    /// `Ok(false)` when it is not: the frame is dropped, as it would have been
+    /// with its connection (see `generation`).
+    #[expect(
+        clippy::significant_drop_tightening,
+        reason = "the guard IS the serialisation, as in `write`, and the \
+                  generation must be read under it or a reconnect could slip \
+                  between the check and the write"
+    )]
+    async fn write_queued(&self, generation: u64, bytes: &[u8]) -> Result<bool, RaftUnavailable> {
+        let mut guard = self.writer.lock().await;
+        if self.generation.load(Ordering::SeqCst) != generation {
+            return Ok(false);
+        }
+        let Some(writer) = guard.as_mut() else {
+            return Ok(false);
+        };
+        writer
+            .write_all(bytes)
+            .await
+            .map_err(|e| RaftUnavailable(format!("write failed: {e}")))?;
+        writer
+            .flush()
+            .await
+            .map_err(|e| RaftUnavailable(format!("flush failed: {e}")))?;
+        Ok(true)
+    }
+
     /// Mark the link down and release every awaiting request.
     ///
     /// Every pending waiter must be released, not left: a caller awaiting a
     /// reply from a link that has gone would otherwise wait out its whole
     /// deadline to learn what is already known. Dropping the sender is how a
     /// `oneshot` says so.
+    #[expect(
+        clippy::significant_drop_tightening,
+        reason = "the generation is bumped under the writer lock, so a frame \
+                  waiting on it for the connection just gone finds it gone -- \
+                  not the next one"
+    )]
     async fn take_down(&self) {
         self.connected.store(false, Ordering::SeqCst);
-        *self.writer.lock().await = None;
+        {
+            let mut writer = self.writer.lock().await;
+            *writer = None;
+            self.generation.fetch_add(1, Ordering::SeqCst);
+        }
         drop(std::mem::take(&mut *self.pending.lock().await));
     }
 }
@@ -490,6 +763,7 @@ struct Inner {
     incarnation: AtomicU64,
     tls: Option<Arc<PeerTls>>,
     rpc_timeout_ms: u64,
+    conn_read_timeout_ms: u64,
     links: HashMap<(u64, Stream), Arc<Link>>,
     /// The node, held **weakly**.
     ///
@@ -552,6 +826,10 @@ pub struct TransportSettings {
     pub tls: Option<Arc<PeerTls>>,
     /// Default deadline for a correlated request.
     pub rpc_timeout_ms: u64,
+    /// How long a connection may carry nothing before it is closed:
+    /// [`CONN_READ_TIMEOUT_MS`], etcd's value. Tests shorten it; nothing else
+    /// should.
+    pub conn_read_timeout_ms: u64,
 }
 
 /// How one member reaches the others, over TCP and optionally TLS.
@@ -578,6 +856,7 @@ impl RaftTransport {
             incarnation,
             tls,
             rpc_timeout_ms,
+            conn_read_timeout_ms,
         } = settings;
         let mut links = HashMap::new();
         for &peer in peers.keys() {
@@ -594,6 +873,7 @@ impl RaftTransport {
                 incarnation: AtomicU64::new(incarnation),
                 tls,
                 rpc_timeout_ms,
+                conn_read_timeout_ms,
                 links,
                 handler: Mutex::new(None),
                 closing: AtomicBool::new(false),
@@ -657,6 +937,27 @@ impl Inner {
         peers
     }
 
+    /// A connection's two halves, each under its deadline.
+    ///
+    /// Every peer connection, dialed or accepted, as etcd's listener and stream
+    /// dialer give both deadlines to every one (`rafthttp/util.go:40-61`).
+    fn guarded(
+        &self,
+        reader: Box<dyn AsyncReadUnpinSend>,
+        writer: Box<dyn AsyncWriteUnpinSend>,
+    ) -> (Box<dyn AsyncReadUnpinSend>, Box<dyn AsyncWriteUnpinSend>) {
+        (
+            Box::new(DeadlineRead::new(
+                reader,
+                Duration::from_millis(self.conn_read_timeout_ms),
+            )),
+            Box::new(DeadlineWrite::new(
+                writer,
+                Duration::from_millis(CONN_WRITE_TIMEOUT_MS),
+            )),
+        )
+    }
+
     async fn handler(&self) -> Option<Arc<dyn PeerHandler>> {
         self.handler
             .lock()
@@ -671,7 +972,16 @@ impl Inner {
     /// so a reply to a fire-and-forget message has no waiter and must reach the
     /// handler instead. Dropping it silently is how a leader ends up never
     /// learning that its entries landed.
-    async fn resolve(&self, peer: u64, frame: &Frame, message: Message) {
+    ///
+    /// # Errors
+    ///
+    /// The handler's: see [`PeerHandler`].
+    async fn resolve(
+        &self,
+        peer: u64,
+        frame: &Frame,
+        message: Message,
+    ) -> Result<(), PersistentStateError> {
         let request_id = request_id_of(&message);
         if request_id != 0
             && let Some(link) = self.links.get(&(peer, frame.stream))
@@ -688,58 +998,72 @@ impl Inner {
                 // A closed receiver means the caller timed out and gave up;
                 // its deadline already told it what it needed to know.
                 drop(sender.send(message));
-                return;
+                return Ok(());
             }
             drop(pending);
         }
 
         let Some(handler) = self.handler().await else {
-            return;
+            return Ok(());
         };
         match message {
             Message::RequestVoteReply(ref m) => handler.on_request_vote_reply(peer, m),
             Message::AppendEntriesReply(ref m) => handler.on_append_entries_reply(peer, m),
             Message::InstallSnapshotReply(ref m) => handler.on_install_snapshot_reply(peer, m),
-            _ => {}
+            _ => Ok(()),
         }
     }
 
     /// Answer one inbound frame, if it asks for an answer.
-    async fn dispatch(&self, peer: u64, frame: &Frame) -> Option<Message> {
+    ///
+    /// # Errors
+    ///
+    /// The handler's: the member could not save what the frame required, so
+    /// nothing may be answered -- see [`PeerHandler`].
+    async fn dispatch(
+        &self,
+        peer: u64,
+        frame: &Frame,
+    ) -> Result<Option<Message>, PersistentStateError> {
         let message = match decode_message(frame.message_type, &frame.payload) {
             Ok(message) => message,
             Err(error) => {
                 tracing::warn!(error = %error.0, peer, "raft: undecodable frame");
-                return None;
+                return Ok(None);
             }
         };
 
         if frame.is_reply() {
-            self.resolve(peer, frame, message).await;
-            return None;
+            self.resolve(peer, frame, message).await?;
+            return Ok(None);
         }
 
-        let handler = self.handler().await?;
-        Some(match message {
+        let Some(handler) = self.handler().await else {
+            return Ok(None);
+        };
+        Ok(Some(match message {
+            // The link heartbeat, answered on the connection it came by and kept
+            // from the node: it says the link is alive, nothing more (`beat`).
+            Message::Ping(ref m) => Message::Pong(Pong { nonce: m.nonce }),
             Message::RequestVote(ref m) => {
-                Message::RequestVoteReply(handler.on_request_vote(peer, m))
+                Message::RequestVoteReply(handler.on_request_vote(peer, m)?)
             }
             Message::AppendEntries(ref m) => {
-                Message::AppendEntriesReply(handler.on_append_entries(peer, m))
+                Message::AppendEntriesReply(handler.on_append_entries(peer, m)?)
             }
             Message::InstallSnapshot(ref m) => {
-                Message::InstallSnapshotReply(handler.on_install_snapshot(peer, m))
+                Message::InstallSnapshotReply(handler.on_install_snapshot(peer, m)?)
             }
             Message::Promote(ref m) => {
                 handler.on_promote(peer, m);
-                return None;
+                return Ok(None);
             }
             // Never awaited here. `serve` detaches these -- see
             // `serve_application` -- because they wait for a quorum round whose
             // answer arrives on the link this reader is reading.
-            Message::Propose(_) | Message::Forward(_) => return None,
-            _ => return None,
-        })
+            Message::Propose(_) | Message::Forward(_) | Message::ReadIndex(_) => return Ok(None),
+            _ => return Ok(None),
+        }))
     }
 
     /// Keep one outbound link connected, backing off between attempts.
@@ -749,7 +1073,9 @@ impl Inner {
             match self.connect(peer, stream).await {
                 Ok(reader) => {
                     backoff = RECONNECT_INITIAL_MS;
+                    let beat = tokio::spawn(Arc::clone(&self).beat(peer, stream));
                     self.pump(peer, stream, reader).await;
+                    beat.abort();
                 }
                 Err(ConnectFailure::Mismatch(error)) => {
                     // Not transient and not fixable by retrying sooner: logged
@@ -835,6 +1161,7 @@ impl Inner {
                     (Box::new(r), Box::new(w))
                 }
             };
+        let (reader, writer) = self.guarded(reader, writer);
 
         let Some(link) = self.links.get(&(peer, stream)) else {
             return Err(ConnectFailure::Unavailable(RaftUnavailable(
@@ -879,18 +1206,75 @@ impl Inner {
         Ok(reader)
     }
 
-    /// Read replies on an outbound link until it fails.
+    /// Read replies on an outbound link until it fails or goes silent.
     async fn pump(&self, peer: u64, stream: Stream, mut reader: Box<dyn AsyncReadUnpinSend>) {
         while !self.closing.load(Ordering::SeqCst) {
             match read_frame(&mut reader).await {
-                Ok(frame) => {
-                    if let Some(reply) = self.dispatch(peer, &frame).await
-                        && let Some(link) = self.links.get(&(peer, stream))
-                    {
-                        drop(link.write(&frame_for(&reply, frame.stream, true)).await);
+                Ok(frame) => match self.dispatch(peer, &frame).await {
+                    Ok(Some(reply)) => {
+                        if let Some(link) = self.links.get(&(peer, stream)) {
+                            drop(link.write(&frame_for(&reply, frame.stream, true)).await);
+                        }
                     }
+                    Ok(None) => {}
+                    Err(error) => {
+                        // Returning drops the link, and `maintain` dials it
+                        // again: what the Python's `_maintain` does with its
+                        // handler's exception. Logged as the Python's `_pump`
+                        // logs it: a failed save is an `OSError` there, which
+                        // `_maintain` would otherwise take for a link going
+                        // down and pass over in silence.
+                        tracing::error!(
+                            peer,
+                            ?stream,
+                            error = %error.0,
+                            "raft: link to member failed",
+                        );
+                        return;
+                    }
+                },
+                Err(error) => {
+                    if went_silent(&error) {
+                        // etcd logs a lost stream at warning ("lost TCP
+                        // streaming connection with remote peer",
+                        // `stream.go:497-504`): a peer that stopped answering is
+                        // worth knowing about, and this is where it shows.
+                        tracing::warn!(
+                            peer,
+                            ?stream,
+                            %error,
+                            "raft: link went silent; closing it",
+                        );
+                    }
+                    return;
                 }
-                Err(_) => return,
+            }
+        }
+    }
+
+    /// Say something on a link every third of the read timeout.
+    ///
+    /// A `Ping` keeps the peer's reads inside its deadline, and the `Pong` it
+    /// draws keeps this end's: a connection here carries requests one way and
+    /// their answers the other, so a link with nothing to say would go quiet in
+    /// both directions at once. etcd's streams run one way, so its heartbeat
+    /// needs no answer (`stream.go:183-192`); these need one. Neither reaches
+    /// the node. Sent whatever else is flowing, as etcd's is.
+    async fn beat(self: Arc<Self>, peer: u64, stream: Stream) {
+        let Some(link) = self.links.get(&(peer, stream)).cloned() else {
+            return;
+        };
+        let generation = link.generation.load(Ordering::SeqCst);
+        let interval =
+            Duration::from_millis(self.conn_read_timeout_ms / HEARTBEATS_PER_READ_TIMEOUT);
+        let mut nonce: u64 = 0;
+        loop {
+            tokio::time::sleep(interval).await;
+            nonce = nonce.saturating_add(1);
+            let bytes = frame_for(&Message::Ping(Ping { nonce }), stream, false);
+            // Ends with its connection: a later one has a heartbeat of its own.
+            if !matches!(link.write_queued(generation, &bytes).await, Ok(true)) {
+                return;
             }
         }
     }
@@ -942,6 +1326,9 @@ impl Inner {
                 (Box::new(r), Box::new(w), names)
             }
         };
+        // Every read, the handshake's included: a caller that connects and
+        // says nothing is a stalled one too.
+        (reader, writer) = self.guarded(reader, writer);
 
         let Ok(frame) = read_frame(&mut reader).await else {
             return;
@@ -983,24 +1370,38 @@ impl Inner {
         // have had the same lock for the same reason since they were written.
         let writer = Arc::new(tokio::sync::Mutex::new(writer));
         while !self.closing.load(Ordering::SeqCst) {
-            let Ok(inbound) = read_frame(&mut reader).await else {
-                return;
+            let inbound = match read_frame(&mut reader).await {
+                Ok(inbound) => inbound,
+                Err(error) => {
+                    if went_silent(&error) {
+                        tracing::warn!(
+                            peer,
+                            %error,
+                            "raft: connection from a peer went silent; closing it",
+                        );
+                    }
+                    // Returning drops both halves: the connection closes with
+                    // whatever was queued on it.
+                    return;
+                }
             };
 
             if matches!(
                 inbound.message_type,
-                MessageType::Propose | MessageType::Forward
+                MessageType::Propose | MessageType::Forward | MessageType::ReadIndex
             ) && !inbound.is_reply()
             {
                 // **Served off this reader, not on it.**
                 //
-                // These two wait for a quorum round, and the answer to that
+                // These three wait for a quorum round, and the answer to that
                 // round arrives as `AppendEntries` on *this very link*.
                 // Awaiting them here deadlocks whenever the member that sent
-                // the forward is the leader: the handler waits for a commit
-                // that cannot be read, because the reader is inside the
-                // handler. Measured as every refusal taking the whole mutation
-                // deadline, in both implementations.
+                // the request is one whose answer the round needs: the handler
+                // waits for a reply that cannot be read, because the reader is
+                // inside the handler. Measured, for the forward, as every
+                // refusal taking the whole mutation deadline, in both
+                // implementations; a read index waits on the same kind of
+                // round.
                 //
                 // Everything else stays synchronous and in order below, which
                 // is what keeps a term from being read and acted on across an
@@ -1009,9 +1410,19 @@ impl Inner {
                 continue;
             }
 
-            if let Some(reply) = self.dispatch(peer, &inbound).await {
-                let bytes = frame_for(&reply, inbound.stream, true);
-                if !write_frame(&writer, &bytes).await {
+            match self.dispatch(peer, &inbound).await {
+                Ok(Some(reply)) => {
+                    let bytes = frame_for(&reply, inbound.stream, true);
+                    if !write_frame(&writer, &bytes).await {
+                        return;
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    // Nothing that rests on what could not be saved is
+                    // answered, and the connection ends here, as the Python's
+                    // `_serve` ends it on its handler's exception.
+                    tracing::error!(peer, error = %error.0, "raft: inbound connection failed");
                     return;
                 }
             }
@@ -1060,6 +1471,9 @@ impl Inner {
             let reply = match message {
                 Message::Propose(ref m) => Message::ProposeReply(handler.on_propose(peer, m).await),
                 Message::Forward(ref m) => Message::ForwardReply(handler.on_forward(peer, m).await),
+                Message::ReadIndex(ref m) => {
+                    Message::ReadIndexReply(handler.on_read_index(peer, m).await)
+                }
                 _ => return,
             };
             let bytes = frame_for(&reply, frame.stream, true);
@@ -1123,6 +1537,12 @@ fn application_refusal(frame: &Frame) -> Option<Message> {
             not_owner: false,
             request_id,
             owner: None,
+        })),
+        MessageType::ReadIndex => Some(Message::ReadIndexReply(ReadIndexReply {
+            ok: false,
+            index: 0,
+            reason: "this member is at capacity for forwarded work".to_owned(),
+            request_id,
         })),
         _ => None,
     }
@@ -1229,6 +1649,8 @@ impl Transport for RaftTransport {
         if !link.connected.load(Ordering::SeqCst) {
             return;
         }
+        // For this connection only (see `Link::generation`).
+        let generation = link.generation.load(Ordering::SeqCst);
         let link = Arc::clone(link);
         let bytes = frame_for(message, stream, false);
         // Spawned because `send` is synchronous by design -- the node calls it
@@ -1236,7 +1658,7 @@ impl Transport for RaftTransport {
         // be the await the whole locking model excludes. A write that fails is
         // a message that did not go, which replication sends again.
         tokio::spawn(async move {
-            if link.write(&bytes).await.is_err() {
+            if link.write_queued(generation, &bytes).await.is_err() {
                 link.take_down().await;
             }
         });
@@ -1255,6 +1677,9 @@ impl Transport for RaftTransport {
         if !link.connected.load(Ordering::SeqCst) {
             return Err(RaftUnavailable(format!("no link to member {peer}")));
         }
+        // The connection this request is for. Should it drop before the frame
+        // is written, the request fails rather than going out on the next one.
+        let generation = link.generation.load(Ordering::SeqCst);
 
         let request_id = self.inner.next_request_id.fetch_add(1, Ordering::SeqCst);
         let Some(tagged) = with_request_id(message, request_id) else {
@@ -1281,9 +1706,21 @@ impl Transport for RaftTransport {
             .await
             .insert(request_id, (expected, sender));
 
-        if let Err(error) = link.write(&frame_for(&tagged, stream, false)).await {
-            link.pending.lock().await.remove(&request_id);
-            return Err(error);
+        match link
+            .write_queued(generation, &frame_for(&tagged, stream, false))
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                link.pending.lock().await.remove(&request_id);
+                return Err(RaftUnavailable(format!(
+                    "the link to member {peer} dropped before the request went out"
+                )));
+            }
+            Err(error) => {
+                link.pending.lock().await.remove(&request_id);
+                return Err(error);
+            }
         }
 
         let deadline =

@@ -76,7 +76,7 @@ def _register(node_id: str, member: Member) -> RegisterOp:
     scenarios from manufacturing that defect themselves.
     """
     raw = make_node(node_id)
-    cursor = member.node.cursors.allocate(ResourceType.NODE)
+    cursor = member.node.allocate_cursor(ResourceType.NODE)
     return RegisterOp(
         proposal=ProposalId(member.index, 0),
         resource_type=ResourceType.NODE,
@@ -711,9 +711,13 @@ class TestSnapshotScenariosFromOpenraft:
         member. A follower installs the snapshot, sets ``last_applied`` to the
         claimed index over a store that already holds later entries' effects,
         replays those entries, computes ``creates=False`` where the proposer
-        said ``True``, and raises ``DivergenceDetected``. It then stops
-        applying for good -- committed at 14, applied stuck at 11 -- serving a
-        private view of the registry that further replication never repairs.
+        said ``True``, and -- at the time -- raised ``DivergenceDetected``. It
+        then stopped applying for good -- committed at 14, applied stuck at 11
+        -- serving a private view of the registry that further replication
+        never repairs. That tripwire has since been removed (it fired on
+        ordinary client races too; see ``machine.py``), and it was never the
+        point: replaying entries a snapshot already contains is wrong whatever
+        apply does with them, because not every operation is idempotent.
 
         # Why the peer state is set by hand
 

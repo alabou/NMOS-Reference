@@ -140,17 +140,20 @@ fn an_unchanged_commit_index_sends_nothing() {
 }
 
 // -- the leader's own commit rule (§5.4.2) ----------------------------------
+//
+// `leader_commit_index(quorum, leader_last_index, acknowledged, commit, term,
+// term_at)`: `acknowledged` holds only the peers whose acknowledgements count.
 
 #[test]
 fn a_leader_commits_at_the_quorum_position() {
-    // Three members, the leader included. match = [5, 5, 3] means two of three
-    // have index 5, which is a majority.
-    let committed = leader_commit_index(vec![5, 5, 3], 0, 7, |_| Some(7));
+    // Three members: the leader at 5, peers at 5 and 3. Two of three hold
+    // index 5, which is a majority.
+    let committed = leader_commit_index(2, 5, vec![5, 3], 0, 7, |_| Some(7));
     assert_eq!(committed, 5);
 
-    // With only one other member at 5, index 5 is on two of five -- not a
+    // Five members and only one peer at 5: index 5 is on two of five -- not a
     // majority -- and 3 is.
-    let committed = leader_commit_index(vec![5, 5, 3, 3, 3], 0, 7, |_| Some(7));
+    let committed = leader_commit_index(3, 5, vec![5, 3, 3, 3], 0, 7, |_| Some(7));
     assert_eq!(committed, 3);
 }
 
@@ -163,7 +166,7 @@ fn a_leader_does_not_commit_an_entry_from_an_earlier_term() {
     //
     // Here index 5 is on a majority but belongs to term 3, while the leader is
     // in term 7. Committing it is exactly the bug.
-    let committed = leader_commit_index(vec![5, 5, 3], 0, 7, |index| {
+    let committed = leader_commit_index(2, 5, vec![5, 3], 0, 7, |index| {
         if index == 5 { Some(3) } else { Some(7) }
     });
     assert_eq!(
@@ -173,7 +176,7 @@ fn a_leader_does_not_commit_an_entry_from_an_earlier_term() {
     );
 
     // And once an entry from the current term is there, it commits.
-    let committed = leader_commit_index(vec![5, 5, 3], 0, 7, |_| Some(7));
+    let committed = leader_commit_index(2, 5, vec![5, 3], 0, 7, |_| Some(7));
     assert_eq!(committed, 5);
 }
 
@@ -181,19 +184,170 @@ fn a_leader_does_not_commit_an_entry_from_an_earlier_term() {
 fn a_leader_never_moves_its_commit_index_backwards() {
     // A follower that falls behind reduces the quorum position; the leader must
     // not un-commit in response.
-    assert_eq!(leader_commit_index(vec![9, 2, 2], 5, 7, |_| Some(7)), 5);
+    assert_eq!(leader_commit_index(2, 9, vec![2, 2], 5, 7, |_| Some(7)), 5);
 }
 
 #[test]
-fn an_empty_match_set_changes_nothing() {
-    assert_eq!(leader_commit_index(Vec::new(), 4, 7, |_| Some(7)), 4);
+fn a_leader_with_no_countable_peer_commits_nothing() {
+    // Three members, and no peer whose acknowledgement counts: the leader on
+    // its own is one of three, which is not a majority.
+    assert_eq!(leader_commit_index(2, 9, Vec::new(), 4, 7, |_| Some(7)), 4);
 }
 
 #[test]
 fn a_single_member_cluster_commits_on_its_own() {
     // Quorum of one. A one-member cluster that could not commit would be a
     // registry that accepts nothing.
-    assert_eq!(leader_commit_index(vec![3], 0, 1, |_| Some(1)), 3);
+    assert_eq!(leader_commit_index(1, 3, Vec::new(), 0, 1, |_| Some(1)), 3);
+}
+
+// -- a majority of the voting configuration (chaos soak R1) ------------------
+//
+// A member catching up after a restart is not counted, but it is still one of
+// the members a majority must outnumber. The rule once took the majority of
+// whoever was counted, and a leader of three with one member catching up
+// committed on its own.
+
+#[test]
+fn a_member_that_cannot_be_counted_is_still_in_the_majority() {
+    // The decision the chaos soak's commit audit measured, verbatim: m2 leads
+    // term 57 holding index 60, m0 is catching up and so is not counted, m1
+    // has matched 52, and the commit index is 56. A majority of three is two,
+    // and the highest index two members are known to hold is 52 -- already
+    // committed.
+    let committed = leader_commit_index(2, 60, vec![52], 56, 57, |_| Some(57));
+    assert_eq!(
+        committed, 56,
+        "the leader committed through {committed} holding it alone: the \
+         member catching up does not count, the other has matched only 52, \
+         and one of three is not a majority",
+    );
+}
+
+#[test]
+fn five_members_with_one_catching_up_still_need_three() {
+    // Leader and one peer at 10, two peers at 5, the fifth catching up. Index
+    // 10 is on two of five. The majority of the four *counted* would be two,
+    // which is the defect; the majority of the cluster is three.
+    let committed = leader_commit_index(3, 10, vec![10, 5, 5], 0, 7, |_| Some(7));
+    assert_eq!(
+        committed, 5,
+        "committed through {committed} on two of five members",
+    );
+}
+
+#[test]
+fn five_members_with_two_catching_up_need_both_of_the_others() {
+    // Three counted -- the leader and two peers -- is exactly a majority of
+    // five, so everything they all hold commits, and nothing beyond it.
+    assert_eq!(
+        leader_commit_index(3, 10, vec![10, 10], 0, 7, |_| Some(7)),
+        10
+    );
+    assert_eq!(
+        leader_commit_index(3, 10, vec![10, 4], 0, 7, |_| Some(7)),
+        4
+    );
+}
+
+#[test]
+fn fewer_countable_members_than_a_majority_commit_nothing() {
+    // Five members, three catching up: the two counted -- the leader and one
+    // peer -- can never be a majority, however far both have got.
+    assert_eq!(leader_commit_index(3, 10, vec![10], 2, 7, |_| Some(7)), 2);
+}
+
+#[test]
+fn the_rule_is_figure_2_for_every_small_cluster() {
+    // Every cluster of one to five members, every position and countability of
+    // every peer, every commit index and every log whose terms rise with its
+    // index, checked against Figure 2's rule stated as a search:
+    //
+    // > If there exists an N such that N > commitIndex, a majority of
+    // > matchIndex[i] >= N, and log[N].term == currentTerm: set commitIndex = N
+    //
+    // with the majority taken over all `n` members, the leader counting
+    // itself, and a member catching up holding nothing that counts. The
+    // majority is written out here, `n / 2 + 1`, rather than taken from the
+    // implementation, so that the two cannot share a mistake.
+    //
+    // The function looks at one candidate where the definition searches, and
+    // that is sound only because terms never fall along a log: if the highest
+    // index a majority holds is from an earlier term, so is every index below
+    // it. The logs here are exactly those, so a function that relied on
+    // anything else would fail below.
+    const LAST: u64 = 3;
+    let mut logs: Vec<Vec<u64>> = Vec::new();
+    for first in 1..=3u64 {
+        for second in first..=3 {
+            for third in second..=3 {
+                logs.push(vec![first, second, third]);
+            }
+        }
+    }
+    let mut checked = 0u64;
+    for members in 1..=5usize {
+        let majority = members / 2 + 1;
+        let peers = members - 1;
+        // Per peer: a match index in 0..=LAST, and whether it may be counted.
+        let states_per_peer = (LAST + 1) * 2;
+        let assignments = states_per_peer.pow(u32::try_from(peers).unwrap());
+        for log in &logs {
+            let highest_term = *log.last().unwrap();
+            for current_term in [highest_term, highest_term + 1] {
+                let term_at = |index: u64| -> Option<u64> {
+                    match index {
+                        0 => Some(0),
+                        _ => log.get(usize::try_from(index - 1).ok()?).copied(),
+                    }
+                };
+                for commit in 0..=LAST {
+                    for assignment in 0..assignments {
+                        let mut rest = assignment;
+                        let mut acknowledged = Vec::new();
+                        for _ in 0..peers {
+                            let state = rest % states_per_peer;
+                            rest /= states_per_peer;
+                            let (matched, counted) = (state / 2, state.is_multiple_of(2));
+                            if counted {
+                                acknowledged.push(matched);
+                            }
+                        }
+
+                        let defined = (commit + 1..=LAST)
+                            .rev()
+                            .find(|&index| {
+                                let holding = 1 + acknowledged
+                                    .iter()
+                                    .filter(|&&matched| matched >= index)
+                                    .count();
+                                holding >= majority && term_at(index) == Some(current_term)
+                            })
+                            .unwrap_or(commit);
+                        let computed = leader_commit_index(
+                            majority,
+                            LAST,
+                            acknowledged.clone(),
+                            commit,
+                            current_term,
+                            term_at,
+                        );
+                        assert_eq!(
+                            computed, defined,
+                            "{members} members, counted acknowledgements \
+                             {acknowledged:?}, leader at {LAST}, log terms \
+                             {log:?}, term {current_term}, commit {commit}: \
+                             Figure 2 commits through {defined}, the rule \
+                             through {computed}",
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+        }
+    }
+    // A search that found nothing to check would pass by being empty.
+    assert!(checked > 100_000, "only {checked} cases were checked");
 }
 
 // -- what the leader records as told, and when it sends again ---------------

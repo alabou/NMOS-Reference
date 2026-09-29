@@ -18,6 +18,8 @@ it out would report the fast path as costing one traversal when it costs two.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from nmos.registry.metrics import Event
@@ -33,7 +35,7 @@ from nmos.registry.types import Body, ResourceType
 pytestmark = pytest.mark.e2e
 
 
-def _body(raw: dict) -> Body:
+def _body(raw: dict[str, Any]) -> Body:
     import json
 
     return Body(text=json.dumps(raw), data=raw)
@@ -114,14 +116,44 @@ async def test_a_heartbeat_costs_one_traversal(
         await backend.close()
 
 
-async def test_a_locally_decided_rejection_costs_nothing(
+async def test_a_rejection_the_body_decides_costs_nothing(
     etcd_endpoint: str, namespace: str,
 ) -> None:
-    """A Sender whose Device is absent is refused without touching etcd.
+    """A Sender with no ``device_id`` is refused without touching etcd.
 
+    Malformed whatever etcd holds, so there is nothing to confirm first.
     Recorded as zero rather than omitted: a backend whose free rejections
     vanished from the denominator could improve its reported average by
     refusing more requests.
+    """
+    registry, backend = await _start_backend(etcd_endpoint, namespace)
+    try:
+        before = backend.metrics.counter(Event.MUTATION)
+        seen, spent = before.count, before.total_units
+
+        raw = make_sender()
+        del raw["device_id"]
+        result = await backend.register(ResourceType.SENDER, _body(raw))
+        assert not result.ok
+
+        after = backend.metrics.counter(Event.MUTATION)
+        assert after.count == seen + 1, "the rejection was not counted at all"
+        assert after.total_units == spent, "a body-decided rejection used the network"
+    finally:
+        await backend.close()
+
+
+async def test_a_rejection_the_store_decides_costs_one_fence(
+    etcd_endpoint: str, namespace: str,
+) -> None:
+    """A Sender whose Device is absent is refused after one linearizable read.
+
+    A missing parent is only as true as the store it was read from, and this
+    member's store is fed by a watch that can be behind etcd -- so before the
+    400 it catches up (``_catch_up``). It once cost nothing, which is to say
+    it was answered from a store that could be behind: the refusal a Node
+    "MUST NOT" retry, given about a Device registered a moment before through
+    another member (see ``test_forwarding_conformance``).
     """
     registry, backend = await _start_backend(etcd_endpoint, namespace)
     try:
@@ -133,7 +165,10 @@ async def test_a_locally_decided_rejection_costs_nothing(
 
         after = backend.metrics.counter(Event.MUTATION)
         assert after.count == seen + 1, "the rejection was not counted at all"
-        assert after.total_units == spent, "a local rejection used the network"
+        assert after.total_units == spent + 1, (
+            f"a store-decided rejection cost {after.total_units - spent} "
+            f"traversals, not the one fence"
+        )
     finally:
         await backend.close()
 

@@ -22,7 +22,7 @@
 //! Here, several members allocate cursors concurrently and only find out about
 //! each other's afterwards. So the allocation itself has to be collision-proof.
 //!
-//! # Two mechanisms, both required
+//! # Three mechanisms, all required
 //!
 //! **Owner bits.** The low bits of the nanosecond field carry the allocating
 //! member's index, so two members physically cannot produce the same value. A
@@ -36,6 +36,27 @@
 //! cursor that arrives through the log is observed, the high-water mark rises
 //! to it, and the next local allocation is pushed above it. Real time is a
 //! lower bound on the cursor, never an upper one.
+//!
+//! **A reservation that outlives the process.** Owner bits keep two *members*
+//! apart; nothing in them keeps two *incarnations* of one member apart, because
+//! a restarted member allocates in the same lane it always did. While the clock
+//! is ahead of every cursor in the log that costs nothing: a restarted member
+//! reads a later time than any cursor it minted before. But once the log's
+//! cursors are ahead of a member's clock -- its wall clock stepped back, or a
+//! peer's clock runs fast -- every allocation is `next_in_lane(high_water)`, a
+//! function of the log prefix this member has applied and nothing else. A
+//! restart discards the high-water mark, the new incarnation rebuilds it from
+//! the same log, and from the same prefix it mints the same cursor. Measured,
+//! not supposed: with the log 5 s ahead of the clock, 5 of 172 chaos-soak runs
+//! held two Nodes on one cursor, each pair minted by consecutive incarnations
+//! of one member.
+//!
+//! So a member never hands out a cursor until an upper bound on it is on disk
+//! ([`CursorAllocator::reservation_needed`], which the node persists beside its
+//! term and vote), and a new incarnation resumes strictly above the bound its
+//! predecessor recorded ([`CursorAllocator::resume`]). One write covers
+//! [`RESERVATION_WINDOW_SECONDS`] of cursor progress, which keeps the disk out
+//! of all but one allocation in that window.
 //!
 //! The consequence worth stating: a cursor is no longer exactly a wall-clock
 //! instant. It is a monotonic identifier that starts from one, and under clock
@@ -60,6 +81,18 @@ pub const MAX_OWNERS: u64 = 1 << OWNER_BITS;
 
 const LANE_MASK: u64 = MAX_OWNERS - 1;
 const NANOS_PER_SECOND: u64 = 1_000_000_000;
+
+/// How far past a cursor one durable reservation reaches.
+///
+/// The trade is between two bounded costs. A smaller window writes more often:
+/// at most one write per window of cursor progress, and cursors progress with
+/// real time, so one write a second while a member is allocating at all. A
+/// larger window jumps further on restart: a new incarnation starts above the
+/// reservation, so its first cursors can lead its clock by up to the window --
+/// which only happens when the member restarts faster than the window, and
+/// which the hybrid clock already treats as ordinary (cursors are allowed to
+/// run ahead of real time). A second is small beside either cost.
+pub const RESERVATION_WINDOW_SECONDS: u64 = 1;
 
 /// Which member allocated this cursor.
 ///
@@ -96,6 +129,16 @@ pub struct CursorAllocator {
     /// is read and written on every apply, and a hash lookup for a six-element
     /// domain is pure overhead.
     high_water: [Option<TaiCursor>; ResourceType::ALL.len()],
+    /// What the previous incarnation reserved: nothing at or below it is ever
+    /// allocated again.
+    ///
+    /// One bound for every type rather than one per type: it only has to be
+    /// above everything handed out, and a single value is a single key in the
+    /// state file.
+    floor: Option<TaiCursor>,
+    /// The bound that is durable *now* -- the floor at start, raised by each
+    /// reservation.
+    reserved: Option<TaiCursor>,
 }
 
 impl CursorAllocator {
@@ -118,6 +161,8 @@ impl CursorAllocator {
         Ok(Self {
             owner,
             high_water: [None; ResourceType::ALL.len()],
+            floor: None,
+            reserved: None,
         })
     }
 
@@ -127,20 +172,73 @@ impl CursorAllocator {
         self.owner
     }
 
+    /// The durable bound on every cursor handed out, if any yet.
+    ///
+    /// What the node writes whenever it saves its state for another reason, so
+    /// that a term change never carries an older reservation over a newer one.
+    #[must_use]
+    pub const fn reservation(&self) -> Option<TaiCursor> {
+        self.reserved
+    }
+
+    /// Continue after a restart: everything up to `reserved` may be out.
+    ///
+    /// Called once, by the node, with what the state file holds, before this
+    /// allocator hands out anything. `None` is a member that never reserved --
+    /// its first start, or a state file written before the reservation existed
+    /// -- and resumes nothing.
+    pub const fn resume(&mut self, reserved: Option<TaiCursor>) {
+        self.floor = reserved;
+        self.reserved = reserved;
+    }
+
     /// The next cursor for `resource_type`: in our lane, strictly ahead.
     ///
-    /// Strictly ahead of both the local clock and everything this allocator has
-    /// observed, so the sequence a client pages through never goes backwards
-    /// even while members disagree about the time.
+    /// Strictly ahead of the local clock, of everything this allocator has
+    /// observed, and of everything an earlier incarnation of this member may
+    /// have handed out ([`Self::resume`]), so the sequence a client pages
+    /// through never goes backwards even while members disagree about the time.
+    ///
+    /// Not durable on its own: a caller that hands the result to anyone must
+    /// first make [`Self::reservation_needed`] durable. The node does both, in
+    /// `RaftNode::allocate_cursor`, which is the only production caller.
     pub fn allocate(&mut self, resource_type: ResourceType) -> TaiCursor {
         let mut candidate = self.in_lane(TaiCursor::now());
-        if let Some(previous) = self.high_water(resource_type)
+        let above = match (self.high_water(resource_type), self.floor) {
+            (Some(seen), Some(floor)) => Some(seen.max(floor)),
+            (seen, floor) => seen.or(floor),
+        };
+        if let Some(previous) = above
             && candidate <= previous
         {
             candidate = self.next_in_lane(previous);
         }
         self.set_high_water(resource_type, candidate);
         candidate
+    }
+
+    /// The bound to make durable before `cursor` is handed out, if any.
+    ///
+    /// `None` when the reservation already on disk covers it -- every
+    /// allocation but about one per [`RESERVATION_WINDOW_SECONDS`]. Otherwise a
+    /// bound [`RESERVATION_WINDOW_SECONDS`] past `cursor`: once it is durable,
+    /// the next incarnation resumes above it, and so above `cursor`.
+    #[must_use]
+    pub fn reservation_needed(&self, cursor: TaiCursor) -> Option<TaiCursor> {
+        match self.reserved {
+            Some(reserved) if cursor <= reserved => None,
+            _ => Some(TaiCursor::new(
+                cursor.seconds.saturating_add(RESERVATION_WINDOW_SECONDS),
+                cursor.nanoseconds,
+            )),
+        }
+    }
+
+    /// Note that `reserved` is now durable.
+    pub fn confirm_reservation(&mut self, reserved: TaiCursor) {
+        if self.reserved.is_none_or(|current| reserved > current) {
+            self.reserved = Some(reserved);
+        }
     }
 
     /// Note a cursor that arrived through the log.

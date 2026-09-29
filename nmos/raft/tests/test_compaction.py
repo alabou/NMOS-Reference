@@ -18,11 +18,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from nmos.raft import snapshot as snapshot_module
+from nmos.raft.messages import AppendEntries, InstallSnapshot, InstallSnapshotReply
 from nmos.raft.node import RaftTiming, Role
+from nmos.raft.snapshot import SnapshotMeta, decode_snapshot
 from nmos.raft.operations import ProposalId, RegisterOp
 from nmos.raft.tests._harness import FAST, Cluster
 from nmos.registry.tests._fixtures import make_node
@@ -193,6 +198,52 @@ class TestCatchUpBySnapshot:
         finally:
             await cluster.close()
 
+    async def test_a_member_caught_up_by_snapshot_holds_one_it_can_serve(
+        self, tmp_path: Path,
+    ) -> None:
+        """The compacted prefix of a member's log is recoverable from its own snapshot.
+
+        A member that caught up by *installing* a snapshot starts its log at the
+        snapshot's boundary, so the entries below it exist on that member only
+        as the snapshot -- and should it ever lead, they are exactly what a
+        stranded follower needs. It used to keep none: only compaction set a
+        member's snapshot, so such a leader could send its stranded followers
+        nothing but keepalives for as long as it led -- the Rust chaos soak's
+        commonest liveness failure, measured in Python too
+        (``has_snapshot_payload=False`` after installing through 12).
+
+        Nothing is proposed after the install, so the member cannot come by a
+        snapshot through its own compaction and pass this vacuously.
+        """
+        cluster = Cluster(3, tmp_path, timing=EAGER)
+        await cluster.start()
+        try:
+            leader = await cluster.elect()
+            outcast = next(m for m in cluster.members if m is not leader)
+            cluster.network.stop(outcast.index)
+            await cluster.settle(10)
+            await _fill(cluster, leader, 30)
+            await cluster.settle(20)
+            assert leader.node.log.snapshot_index > 0
+
+            cluster.network.resume(outcast.index)
+            await cluster.settle(60)
+
+            node = outcast.node
+            assert node.log.snapshot_index > 0, (
+                "the returning member never installed a snapshot, so this "
+                "proves nothing"
+            )
+            meta = node._snapshot_meta
+            assert node._snapshot and meta is not None, (
+                f"member {outcast.index} installed a snapshot through "
+                f"{node.log.snapshot_index} and kept none: as leader it could "
+                f"send a follower below that index nothing but keepalives"
+            )
+            assert meta.last_index >= node.log.snapshot_index
+        finally:
+            await cluster.close()
+
     async def test_a_caught_up_member_matches_the_leader_exactly(
         self, tmp_path: Path,
     ) -> None:
@@ -280,3 +331,748 @@ class TestCatchUpBySnapshot:
             assert leader.node.term == term_before
         finally:
             await cluster.close()
+
+
+class TestAMemberSnapshotsTheStoreItServes:
+    async def test_after_an_install_a_member_snapshots_its_live_store(
+        self, tmp_path: Path,
+    ) -> None:
+        """A member caught up by snapshot later snapshots what it serves.
+
+        An install replaces the registry's store (``Registry.swap_store``), and
+        the snapshot store kept the one it was built with -- so every snapshot
+        such a member took afterwards described its registry as it stood before
+        the install. Measured: a member caught up through 30 Nodes that then
+        applied 30 more took a snapshot of its 60 live Nodes holding none of
+        them, and leading, would have handed it to any follower it had to catch
+        up -- which would then serve an empty registry, silently.
+        """
+        cluster = Cluster(3, tmp_path, timing=EAGER)
+        await cluster.start()
+        try:
+            leader = await cluster.elect()
+            outcast = next(m for m in cluster.members if m is not leader)
+            cluster.network.stop(outcast.index)
+            await cluster.settle(10)
+            await _fill(cluster, leader, 30)
+            await cluster.settle(20)
+            cluster.network.resume(outcast.index)
+            await cluster.settle(60)
+            node = outcast.node
+            installed_through = node.log.snapshot_index
+            assert installed_through > 0, (
+                "the returning member never installed a snapshot, so this "
+                "proves nothing"
+            )
+
+            # Applied into the store the install swapped in, and enough of
+            # them that the member compacts on its own.
+            for index in range(30, 60):
+                await asyncio.wait_for(
+                    leader.node.propose(_register(index, leader.index)), 5.0,
+                )
+            await cluster.settle(40)
+            meta = node._snapshot_meta
+            assert meta is not None and meta.last_index > installed_through, (
+                "the member took no snapshot of its own after the install, so "
+                "this proves nothing"
+            )
+
+            _, _, records = decode_snapshot(node._snapshot)
+            held = [r.id for r in records if r.resource_type is ResourceType.NODE]
+            live = {
+                r.id for r in outcast.registry.store.iter_extant(ResourceType.NODE)
+            }
+            # Registered one entry each, in order, so a snapshot through any
+            # index holds exactly a prefix of them -- at least the 30 the
+            # install brought, since it is through a later index.
+            assert len(held) >= 30 and sorted(held) == sorted(
+                _node_id(index) for index in range(len(held))
+            ), (
+                f"member {outcast.index} snapshotted through {meta.last_index} "
+                f"and its snapshot holds {len(held)} Nodes of the {len(live)} "
+                f"it serves; one taken after installing through "
+                f"{installed_through} must hold at least the 30 installed"
+            )
+            assert set(held) <= live
+        finally:
+            await cluster.close()
+
+
+class TestAnInstallSupersedesACompactionInFlight:
+    async def test_a_compaction_begun_before_an_install_does_not_replace_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The installed snapshot is newer; the compaction that was mid-walk stops.
+
+        A compaction pins its image at ``last_applied`` and serialises it across
+        yields. An install landing in one of those yields replaces the store and
+        moves the log's boundary past the pinned index -- and the compaction,
+        resuming, used to finish anyway and overwrite the installed snapshot
+        with its own older one: a member holding a snapshot through the pinned
+        index below a log discarded through the installed one, with no way to
+        serve the entries between. The Rust chaos soak measured exactly that
+        (seed 100423: a snapshot through 1046 below a log discarded through
+        1120).
+
+        Deterministic rather than raced: the follower's threshold is lowered for
+        the one compaction this test starts, and ``CHUNK_RESOURCES`` is 1 so
+        that compaction yields after every resource.
+        """
+        # No member compacts on its own; the one compaction here is the test's.
+        timing = replace(EAGER, compaction_threshold=10_000, max_log_entries=20_000)
+        cluster = Cluster(3, tmp_path, timing=timing)
+        await cluster.start()
+        try:
+            leader = await cluster.elect()
+            follower = next(m for m in cluster.members if m is not leader)
+            await _fill(cluster, leader, 6)
+            await cluster.settle(20)
+
+            # From here the follower hears only what this test hands it, and
+            # falls behind the leader by six registrations.
+            cluster.network.stop(follower.index)
+            await cluster.settle(5)
+            for index in range(6, 12):
+                await asyncio.wait_for(
+                    leader.node.propose(_register(index, leader.index)), 5.0,
+                )
+            through = leader.node.last_applied
+            term = leader.node.log.term_at(through)
+            capture = leader.snapshots.begin(
+                index=through, term=term, ownership=leader.machine.ownership,
+            )
+            payload = await leader.snapshots.finish(capture)
+
+            node = follower.node
+            monkeypatch.setattr(snapshot_module, "CHUNK_RESOURCES", 1)
+            monkeypatch.setattr(node, "_timing", replace(timing, compaction_threshold=1))
+            compaction = asyncio.create_task(node._maybe_compact())
+            await asyncio.sleep(0)
+            open_capture = follower.snapshots.capture
+            assert open_capture is not None, (
+                "the compaction is not mid-walk, so this proves nothing"
+            )
+            pinned = open_capture.index
+            assert pinned < through, (pinned, through)
+
+            reply = node.on_install_snapshot(leader.index, InstallSnapshot(
+                term=node.term, leader=leader.index, last_index=through,
+                last_term=term, offset=0, data=payload, done=True,
+            ))
+            assert reply.done, "the install was refused, so this proves nothing"
+            await compaction
+
+            meta = node._snapshot_meta
+            assert meta is not None and meta.last_index == through, (
+                f"a compaction pinned at {pinned}, begun before the install "
+                f"through {through} and finished after it, replaced the "
+                f"installed snapshot: the member holds one through "
+                f"{meta.last_index if meta else None} below a log discarded "
+                f"through {node.log.snapshot_index}"
+            )
+            assert node._snapshot == payload
+            assert node.log.snapshot_index == through
+            assert follower.snapshots.capture is None
+        finally:
+            await cluster.close()
+
+
+class TestWhatASnapshotReplyIsEvidenceOf:
+    """A snapshot acknowledgement is evidence only about the exchange it answers."""
+
+    async def test_a_reply_from_an_earlier_term_is_not_credited(
+        self, tmp_path: Path,
+    ) -> None:
+        """A completion acknowledged in an earlier term, arriving now.
+
+        ``InstallSnapshotReply`` carries no correlation id, so the
+        ``reply_floor`` fence that protects appends cannot protect it -- only
+        its term can. Believing a stale ``done=True`` credits the peer with
+        *this* leader's current snapshot: measured in the Rust chaos soak as a
+        member credited with index 504 from a reply sent in term 78 about a
+        snapshot through 500, whose every genuine rejection afterwards was then
+        discarded as stale, so it never caught up. etcd drops every lower-term
+        message before it reaches the progress tracker (``raft.go:1133-1186``).
+        """
+        cluster = Cluster(3, tmp_path, timing=EAGER)
+        await cluster.start()
+        try:
+            leader = await cluster.elect()
+            await _fill(cluster, leader, 8)
+            await cluster.settle(10)
+            node = leader.node
+            assert node._snapshot_meta is not None, (
+                "the leader never compacted, so this proves nothing"
+            )
+            peer = min(node._peers)
+
+            # Nothing real reaches the leader from here on, and its view of the
+            # peer starts from nothing, as after a reconnect.
+            cluster.network.isolate(leader.index)
+            node.on_peer_state(peer, up=True, incarnation=2**62)
+            state = node._peers[peer]
+            assert node.role is Role.LEADER, "stepped down before the reply"
+            assert state.match_index == 0
+
+            node.on_install_snapshot_reply(peer, InstallSnapshotReply(
+                term=node.term - 1, bytes_received=0, done=True,
+            ))
+
+            assert state.match_index == 0, (
+                f"a snapshot acknowledgement from term {node.term - 1} credited "
+                f"member {peer} with index {state.match_index} in term "
+                f"{node.term}: the snapshot it acknowledged is not the one this "
+                f"leader holds, and every genuine rejection below that index "
+                f"will now be discarded as stale"
+            )
+        finally:
+            await cluster.close()
+
+
+async def _mid_transfer(cluster: Cluster) -> tuple[Any, int, Any, list[Any]]:
+    """A leader holding a snapshot of several chunks, about to transfer it.
+
+    Isolated, so nothing it sends arrives and every reply is the test's; the
+    peer's view reset as a reconnect resets it; every ``InstallSnapshot`` and
+    ``AppendEntries`` to that peer recorded, in order.
+    """
+    leader = await cluster.elect()
+    await _fill(cluster, leader, 8)
+    await cluster.settle(10)
+    node = leader.node
+    assert node._snapshot_meta is not None, "the leader never compacted"
+    assert len(node._snapshot) > 3 * EAGER.snapshot_chunk, (
+        "a snapshot of so few chunks proves nothing about a transfer"
+    )
+    peer = min(node._peers)
+    sent: list[Any] = []
+    real_send = node.transport.send
+
+    def recording(target: int, message: Any, **kwargs: Any) -> None:
+        if target == peer and isinstance(message, (InstallSnapshot, AppendEntries)):
+            sent.append(message)
+        real_send(target, message, **kwargs)
+
+    node.transport.send = recording  # type: ignore[method-assign, assignment]
+    cluster.network.isolate(leader.index)
+    node.on_peer_state(peer, up=True, incarnation=2**62)
+    return node, peer, node._peers[peer], sent
+
+
+def _chunks(sent: list[Any]) -> list[InstallSnapshot]:
+    return [m for m in sent if isinstance(m, InstallSnapshot)]
+
+
+class TestASnapshotAlreadyHeldEndsTheTransfer:
+    """A follower that already holds a snapshot says so, and the leader stops.
+
+    It refused such a snapshot -- one at or below its commit index -- with the
+    same answer it gives when it has thrown a transfer away, so the leader
+    started again from zero, and was refused again: a ping-pong at network
+    speed, logged at ERROR on every round (42 runs of one soak). etcd answers an
+    ignored snapshot with an ordinary append response carrying its commit index
+    (``raft.go:1840-1854``), and so does this now.
+    """
+
+    async def test_a_follower_answers_a_snapshot_it_already_holds_with_its_commit_index(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        cluster = Cluster(3, tmp_path, timing=EAGER)
+        await cluster.start()
+        try:
+            leader = await cluster.elect()
+            await _fill(cluster, leader, 3)
+            await cluster.settle(10)
+            follower = next(m for m in cluster.members if m is not leader)
+            node = follower.node
+            commit = node.commit_index
+            assert commit > 0
+
+            with caplog.at_level("INFO", logger="nmos.raft.node"):
+                reply = node.on_install_snapshot(leader.index, InstallSnapshot(
+                    term=node.term, leader=leader.index, last_index=commit,
+                    last_term=node.log.term_at(commit), offset=0,
+                    data=b"the first chunk of a snapshot this member holds",
+                    done=False, ownership=b"", request_id=7,
+                ))
+
+            assert reply.commit_index == commit, (
+                f"a follower committed through {commit} did not say so; the "
+                f"leader can only start the transfer again"
+            )
+            assert reply.request_id == 7
+            assert reply.bytes_received == 0 and not reply.done
+            assert not node._installing, "it began assembling a snapshot it holds"
+            assert not [r for r in caplog.records if r.levelname == "ERROR"], (
+                "a snapshot the member already holds is not an error"
+            )
+        finally:
+            await cluster.close()
+
+    async def test_a_snapshot_the_follower_already_holds_ends_the_transfer(
+        self, tmp_path: Path,
+    ) -> None:
+        cluster = Cluster(3, tmp_path, timing=EAGER)
+        await cluster.start()
+        try:
+            node, peer, state, sent = await _mid_transfer(cluster)
+            meta = node._snapshot_meta
+            # Past the snapshot and within this leader's log: crediting the
+            # follower's statement is then distinguishable from crediting the
+            # pin, and is a statement a complete leader can receive.
+            held = node.log.last_index
+            assert held > meta.last_index, (
+                "the leader holds nothing past its snapshot, so this proves "
+                "nothing"
+            )
+            node._send_snapshot(peer, state)
+            first = _chunks(sent)[0]
+
+            node.on_install_snapshot_reply(peer, InstallSnapshotReply(
+                term=node.term, bytes_received=0, done=False,
+                commit_index=held, request_id=first.request_id,
+            ))
+
+            assert len(_chunks(sent)) == 1, (
+                "the leader started the transfer again for a follower that "
+                "already holds everything it covers"
+            )
+            assert state.sending is None
+            assert state.match_index == held, (
+                "the follower's own statement of what it holds was not credited"
+            )
+            assert state.next_index == held + 1
+            assert isinstance(sent[-1], AppendEntries), (
+                "the leader did not return to replication"
+            )
+        finally:
+            await cluster.close()
+
+
+class TestATransferIsCorrelated:
+    """Only the reply to the chunk in flight drives a transfer.
+
+    Chunks travel on the BULK connection and a reconnect is reported for the
+    CONTROL one, so a reconnect reset the transfer while its last chunk was
+    still in flight -- and answered. The leader started again from zero, the
+    old chunk's reply sent another chunk too, and every reply thereafter sent
+    one more: two streams, for ever, the follower discarding its buffer at
+    every out-of-order chunk (seed 60195: a member stuck 20 entries behind for
+    400 x 10 heartbeats). Chunks now carry a correlation id, fenced by the same
+    ``reply_floor`` as appends, and an unanswered one is sent again once
+    overdue -- which is also what a chunk lost with its BULK connection needed,
+    since nothing else ever cleared it (S6).
+    """
+
+    async def test_a_reconnect_does_not_fork_the_transfer(
+        self, tmp_path: Path,
+    ) -> None:
+        cluster = Cluster(3, tmp_path, timing=EAGER)
+        await cluster.start()
+        try:
+            node, peer, state, sent = await _mid_transfer(cluster)
+            node._send_snapshot(peer, state)
+            zero = _chunks(sent)[0]
+            node.on_install_snapshot_reply(peer, InstallSnapshotReply(
+                term=node.term, bytes_received=len(zero.data), done=False,
+                commit_index=0, request_id=zero.request_id,
+            ))
+            one = _chunks(sent)[1]
+
+            # CONTROL reconnects; the chunk on BULK is still in flight.
+            node.on_peer_state(peer, up=True, incarnation=2**62)
+            node._send_snapshot(peer, state)
+            restart = _chunks(sent)[2]
+            assert restart.offset == 0
+
+            # The old chunk's reply arrives, true about its own stream.
+            node.on_install_snapshot_reply(peer, InstallSnapshotReply(
+                term=node.term, bytes_received=one.offset + len(one.data),
+                done=False, commit_index=0, request_id=one.request_id,
+            ))
+            assert len(_chunks(sent)) == 3, (
+                "a reply to a chunk sent before the reconnect drove the "
+                "transfer: a second stream now runs beside the first"
+            )
+
+            node.on_install_snapshot_reply(peer, InstallSnapshotReply(
+                term=node.term, bytes_received=len(restart.data), done=False,
+                commit_index=0, request_id=restart.request_id,
+            ))
+            chunks = _chunks(sent)
+            assert len(chunks) == 4 and chunks[3].offset == len(restart.data)
+        finally:
+            await cluster.close()
+
+    async def test_an_unanswered_chunk_is_sent_again_once_overdue(
+        self, tmp_path: Path,
+    ) -> None:
+        cluster = Cluster(3, tmp_path, timing=EAGER)
+        await cluster.start()
+        try:
+            node, peer, state, sent = await _mid_transfer(cluster)
+            node._send_snapshot(peer, state)
+            node._send_snapshot(peer, state)
+            assert len(_chunks(sent)) == 1, "a second chunk while one is in flight"
+
+            # Its BULK connection dropped with it, and nothing will answer.
+            state.snapshot_sent_at -= EAGER.election_min
+            node._send_snapshot(peer, state)
+
+            chunks = _chunks(sent)
+            assert len(chunks) == 2, (
+                "a chunk lost in flight was never sent again: the transfer "
+                "stalls for as long as the CONTROL connection stays up"
+            )
+            assert chunks[1].offset == chunks[0].offset
+            assert chunks[1].request_id != chunks[0].request_id
+
+            # Should the first copy's reply turn up after all, it is fenced.
+            node.on_install_snapshot_reply(peer, InstallSnapshotReply(
+                term=node.term, bytes_received=len(chunks[0].data), done=False,
+                commit_index=0, request_id=chunks[0].request_id,
+            ))
+            assert len(_chunks(sent)) == 2
+        finally:
+            await cluster.close()
+
+
+async def _a_member_that_needs_the_snapshot(
+    cluster: Cluster,
+) -> tuple[Any, SnapshotMeta, bytes, Any]:
+    """A leader holding a snapshot of several chunks, and a member restarted
+    empty that needs it -- cut off, so all that reaches it is what a test hands
+    it."""
+    leader = await cluster.elect()
+    await _fill(cluster, leader, 8)
+    await cluster.settle(10)
+    meta, payload = leader.node._snapshot_meta, leader.node._snapshot
+    assert meta is not None, "the leader never compacted"
+    assert len(payload) > 3 * EAGER.snapshot_chunk, (
+        "a snapshot of so few chunks proves nothing about a transfer"
+    )
+    victim = next(m for m in cluster.members if m is not leader)
+    cluster.network.isolate(victim.index)
+    fresh = await cluster.restart(victim.index)
+    assert fresh.node.commit_index < meta.last_index, (
+        "the restarted member already holds the snapshot"
+    )
+    return leader, meta, payload, fresh
+
+
+def _chunk_of(
+    leader: Any, meta: SnapshotMeta, payload: bytes, number: int, request_id: int,
+) -> InstallSnapshot:
+    """Chunk ``number`` of ``payload``, as ``leader`` sends it."""
+    size = EAGER.snapshot_chunk
+    offset = number * size
+    return InstallSnapshot(
+        term=leader.node.term, leader=leader.index, last_index=meta.last_index,
+        last_term=meta.last_term, offset=offset,
+        data=payload[offset:offset + size],
+        done=offset + size >= len(payload), ownership=b"", request_id=request_id,
+    )
+
+
+class TestAChunkSentAgainIsACopy:
+    """A chunk the leader sends again must not cost the transfer.
+
+    The overdue backstop (S6) makes a chunk's delivery at-least-once: a chunk
+    that is slow rather than lost arrives, and so does the copy sent after it.
+    The follower threw its whole buffer away on the copy -- its offset no
+    longer matched what it had assembled -- and answered zero, which is the
+    answer to the chunk in flight, so the leader started the transfer again
+    from nothing. Measured in 16 runs of chaos-soak seed 140692: 343 of the 362
+    follower resets were copies of a chunk already held, and 350 of the 486
+    restarts followed one; members needing a snapshot never finished one. A
+    copy is now answered with what is assembled, and the transfer goes on.
+    """
+
+    async def test_a_copy_of_a_chunk_already_held_is_answered_not_thrown_away(
+        self, tmp_path: Path,
+    ) -> None:
+        cluster = Cluster(3, tmp_path, timing=EAGER)
+        await cluster.start()
+        try:
+            leader, meta, payload, fresh = await _a_member_that_needs_the_snapshot(
+                cluster,
+            )
+            node = fresh.node
+            for number in range(3):
+                reply = node.on_install_snapshot(
+                    leader.index, _chunk_of(leader, meta, payload, number, number + 1),
+                )
+            held = reply.bytes_received
+            assert held == 3 * EAGER.snapshot_chunk
+
+            # The third chunk once more, as the leader sends it when the first
+            # copy's answer is overdue: the first copy arrived, and so does this.
+            again = node.on_install_snapshot(
+                leader.index, _chunk_of(leader, meta, payload, 2, 99),
+            )
+
+            assert again.bytes_received == held, (
+                f"a copy of a chunk this member already holds was answered with "
+                f"{again.bytes_received}: it threw away {held} bytes of the "
+                f"transfer, and the leader starts again from zero"
+            )
+            assert again.request_id == 99 and not again.done
+            number = 3
+            while not reply.done:
+                reply = node.on_install_snapshot(
+                    leader.index,
+                    _chunk_of(leader, meta, payload, number, 100 + number),
+                )
+                assert reply.bytes_received > 0, f"chunk {number} was refused"
+                number += 1
+            assert node.commit_index >= meta.last_index, "the snapshot never installed"
+        finally:
+            await cluster.close()
+
+    async def test_a_chunk_that_disagrees_with_what_is_held_still_restarts(
+        self, tmp_path: Path,
+    ) -> None:
+        # The boundary of the rule above: a copy is recognised by its bytes,
+        # not by its offset alone. Different bytes at an offset already passed
+        # are no copy, and keeping the buffer would be the splice that "restart
+        # rather than splice" exists to prevent.
+        cluster = Cluster(3, tmp_path, timing=EAGER)
+        await cluster.start()
+        try:
+            leader, meta, payload, fresh = await _a_member_that_needs_the_snapshot(
+                cluster,
+            )
+            node = fresh.node
+            for number in range(3):
+                node.on_install_snapshot(
+                    leader.index, _chunk_of(leader, meta, payload, number, number + 1),
+                )
+            copy = _chunk_of(leader, meta, payload, 2, 99)
+            other = replace(copy, data=bytes(byte ^ 0xFF for byte in copy.data))
+
+            reply = node.on_install_snapshot(leader.index, other)
+
+            assert reply.bytes_received == 0 and not reply.done, (
+                f"bytes that disagree with those held at offset {copy.offset} "
+                f"were accepted as a copy ({reply.bytes_received} acknowledged)"
+            )
+            assert leader.index not in node._installing, "the buffer was kept"
+        finally:
+            await cluster.close()
+
+    async def test_a_chunk_sent_again_while_its_first_copy_is_slow_does_not_restart(
+        self, tmp_path: Path,
+    ) -> None:
+        # End to end: the leader's own backstop, the member's own answers, in
+        # the order one connection delivers them.
+        cluster = Cluster(3, tmp_path, timing=EAGER)
+        await cluster.start()
+        try:
+            leader, meta, payload, fresh = await _a_member_that_needs_the_snapshot(
+                cluster,
+            )
+            node, peer = leader.node, fresh.index
+            sent: list[InstallSnapshot] = []
+            real_send = node.transport.send
+
+            def recording(target: int, message: Any, **kwargs: Any) -> None:
+                if target == peer and isinstance(message, InstallSnapshot):
+                    sent.append(message)
+                real_send(target, message, **kwargs)
+
+            node.transport.send = recording
+            cluster.network.isolate(leader.index)
+            node.on_peer_state(peer, up=True, incarnation=2**62)
+            state = node._peers[peer]
+
+            def deliver(chunk: InstallSnapshot) -> InstallSnapshotReply:
+                reply: InstallSnapshotReply = fresh.node.on_install_snapshot(
+                    leader.index, chunk,
+                )
+                return reply
+
+            node._send_snapshot(peer, state)
+            for _ in range(2):
+                node.on_install_snapshot_reply(peer, deliver(sent[-1]))
+            slow = sent[-1]
+            # Its answer is overdue -- the chunk is slow, not lost -- so the
+            # leader sends it again.
+            state.snapshot_sent_at -= EAGER.election_min
+            node._send_snapshot(peer, state)
+            again = sent[-1]
+            assert again.offset == slow.offset and again.request_id != slow.request_id
+
+            first, second = deliver(slow), deliver(again)
+            node.on_install_snapshot_reply(peer, first)
+            node.on_install_snapshot_reply(peer, second)
+
+            assert second.bytes_received == first.bytes_received, (
+                f"the copy was answered {second.bytes_received} after the first "
+                f"was answered {first.bytes_received}: the member threw the "
+                f"transfer away, and the leader starts it again from zero"
+            )
+            for _ in range(len(payload)):
+                reply = deliver(sent[-1])
+                node.on_install_snapshot_reply(peer, reply)
+                if reply.done:
+                    break
+            starts = [chunk for chunk in sent if chunk.offset == 0]
+            assert len(starts) == 1, f"the transfer started {len(starts)} times"
+            assert fresh.node.commit_index >= meta.last_index, (
+                "the snapshot never installed"
+            )
+        finally:
+            await cluster.close()
+
+
+class TestATransferIsOfOneSnapshot:
+    """An offset means something only relative to one snapshot's bytes.
+
+    Both ends reassembled or sliced by offset alone. The leader sliced whatever
+    snapshot it held *now* at the offset it had reached, and compaction
+    replaces that snapshot whenever it likes; the follower appended any chunk
+    whose offset lined up. The chaos soak's splice detector measured a follower
+    fed the head of one snapshot and the tail of the next -- and when the result
+    happened to decode, it installed, and the replicas that had installed it
+    lost acknowledged writes while reporting themselves caught up.
+    """
+
+    async def test_a_chunk_of_another_snapshot_does_not_continue_a_transfer(
+        self, tmp_path: Path,
+    ) -> None:
+        cluster = Cluster(3, tmp_path, timing=EAGER)
+        await cluster.start()
+        try:
+            leader = await cluster.elect()
+            follower = next(m for m in cluster.members if m is not leader)
+            node = follower.node
+            first = InstallSnapshot(
+                term=node.term, leader=leader.index, last_index=40, last_term=1,
+                offset=0, data=b"head of the snapshot through 40", done=False,
+                ownership=b"",
+            )
+            reply = node.on_install_snapshot(leader.index, first)
+            assert reply.bytes_received == len(first.data)
+
+            other = InstallSnapshot(
+                term=node.term, leader=leader.index, last_index=56, last_term=1,
+                offset=len(first.data), data=b"tail of the snapshot through 56",
+                done=False, ownership=b"",
+            )
+            reply = node.on_install_snapshot(leader.index, other)
+
+            assert reply.bytes_received == 0 and not reply.done, (
+                f"the follower acknowledged {reply.bytes_received} bytes of a "
+                f"transfer that began as the snapshot through 40 and went on "
+                f"with the snapshot through 56 -- a splice"
+            )
+            assert leader.index not in node._installing, (
+                "the spliced buffer was kept"
+            )
+        finally:
+            await cluster.close()
+
+    async def test_a_snapshot_whose_contents_disagree_with_its_transfer_is_refused(
+        self, tmp_path: Path,
+    ) -> None:
+        cluster = Cluster(3, tmp_path, timing=EAGER)
+        await cluster.start()
+        try:
+            leader = await cluster.elect()
+            await _fill(cluster, leader, 8)
+            await cluster.settle(10)
+            meta, payload = leader.node._snapshot_meta, leader.node._snapshot
+            assert meta is not None and payload, "the leader never compacted"
+            victim = next(m for m in cluster.members if m is not leader)
+            cluster.network.isolate(victim.index)
+            fresh = await cluster.restart(victim.index)
+
+            # The bytes of the snapshot through ``meta.last_index``, sent as if
+            # they were a later one.
+            reply = fresh.node.on_install_snapshot(leader.index, InstallSnapshot(
+                term=leader.node.term, leader=leader.index,
+                last_index=meta.last_index + 3, last_term=meta.last_term,
+                offset=0, data=payload, done=True, ownership=b"",
+            ))
+
+            assert not reply.done, (
+                f"installed a snapshot whose contents end at {meta.last_index} "
+                f"under a transfer claiming {meta.last_index + 3}: the leader "
+                f"now credits an index this member does not hold"
+            )
+            assert fresh.node.last_applied == 0
+        finally:
+            await cluster.close()
+
+    async def test_a_leader_sends_one_snapshot_per_transfer_and_credits_it(
+        self, tmp_path: Path,
+    ) -> None:
+        cluster = Cluster(3, tmp_path, timing=EAGER)
+        await cluster.start()
+        try:
+            leader = await cluster.elect()
+            await _fill(cluster, leader, 8)
+            await cluster.settle(10)
+            node = leader.node
+            meta, payload = node._snapshot_meta, node._snapshot
+            assert meta is not None, "the leader never compacted"
+            assert len(payload) > 2 * EAGER.snapshot_chunk, (
+                "a snapshot of one chunk cannot be spliced"
+            )
+            peer = min(node._peers)
+
+            sent: list[InstallSnapshot] = []
+            real_send = node.transport.send
+
+            def recording(target: int, message: Any, **kwargs: Any) -> None:
+                if isinstance(message, InstallSnapshot) and target == peer:
+                    sent.append(message)
+                real_send(target, message, **kwargs)
+
+            node.transport.send = recording  # type: ignore[method-assign, assignment]
+            cluster.network.isolate(leader.index)
+            node.on_peer_state(peer, up=True, incarnation=2**62)
+            state = node._peers[peer]
+
+            node._send_snapshot(peer, state)
+            assert len(sent) == 1 and sent[0].offset == 0
+
+            # The leader compacts before the next chunk goes out: a newer
+            # snapshot, with different bytes, replaces the one being sent.
+            node._snapshot = bytes(reversed(payload)) + b"newer"
+            node._snapshot_meta = SnapshotMeta(
+                last_index=meta.last_index + 5, last_term=meta.last_term,
+                resources=0,
+            )
+            node.on_install_snapshot_reply(peer, InstallSnapshotReply(
+                term=node.term, bytes_received=len(sent[0].data), done=False,
+                request_id=sent[0].request_id,
+            ))
+
+            assert len(sent) == 2
+            second = sent[1]
+            assert (second.last_index, second.last_term) == (
+                meta.last_index, meta.last_term,
+            ), (
+                f"the transfer began as the snapshot through {meta.last_index} "
+                f"and its second chunk claims the one through "
+                f"{second.last_index} -- a splice"
+            )
+            assert second.data == payload[
+                second.offset:second.offset + len(second.data)
+            ], "the second chunk's bytes are not the pinned snapshot's"
+
+            # Answered as a completed install is: the follower now commits
+            # through the snapshot it installed, and says so.
+            node.on_install_snapshot_reply(peer, InstallSnapshotReply(
+                term=node.term, bytes_received=len(payload), done=True,
+                commit_index=meta.last_index, request_id=second.request_id,
+            ))
+            assert state.match_index == meta.last_index, (
+                f"a completed transfer of the snapshot through "
+                f"{meta.last_index} credited index {state.match_index}"
+            )
+        finally:
+            await cluster.close()
+

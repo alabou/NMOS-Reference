@@ -40,15 +40,24 @@
 //!    that reaches output. A cascading delete's events are sorted before
 //!    publication, because the store walks a hash set to produce them.
 //!
-//! # The tripwire
+//! # Apply decides
 //!
-//! `Register::expect_created` carries the proposer's belief about 201-vs-200.
-//! Apply re-runs `prepare` and *that* answer is authoritative, because the
-//! id-uniqueness check is global and the proposer could not decide it. When the
-//! two disagree, the proposer and this member have diverged about what the
-//! store contains, and that is reported rather than reconciled: a member that
-//! quietly serves its own version of the truth is the failure this whole design
-//! exists to prevent.
+//! `Register::expect_created` carries the proposer's prediction of 201-vs-200,
+//! made against its own replica. Apply re-runs `prepare` and *that* answer is
+//! authoritative: the committed log order is the truth, and a proposer's view of
+//! it can only be as fresh as its replica. The two differ on ordinary client
+//! races -- the same new Node registered at two members at once, a retry whose
+//! first attempt also commits, an update racing a deletion -- and differing is
+//! not divergence: every member applied the same prefix and computes the same
+//! answer.
+//!
+//! A mismatch used to be treated as one ("the two stores disagree") and stopped
+//! the applier for good. Because apply is deterministic, every member stopped at
+//! the same entry, and the cluster went on committing while applying nothing --
+//! the chaos soak's largest single failure class. It is gone; the field stays on
+//! the wire for members that still read it, and nothing here consults it. Real
+//! divergence between replicas is not something a stale prediction can reveal;
+//! the soak's replica-equality check is what looks for it.
 
 use nmos_registry::registry::Registry;
 use nmos_registry_core::body::Body;
@@ -61,22 +70,6 @@ use crate::log::Entry;
 use crate::operations::{Operation, OperationKind, ProposalId, Register};
 use crate::ownership::OwnershipTable;
 use crate::snapshot::SnapshotStore;
-
-/// Apply disagreed with the proposer about what the store contained.
-///
-/// Never recovered from in place. The member raises, degrades, and asks for a
-/// fresh snapshot, because the one thing worse than being behind is serving a
-/// private version of the truth.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DivergenceDetected(pub String);
-
-impl std::fmt::Display for DivergenceDetected {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for DivergenceDetected {}
 
 /// What one applied operation produced for whoever proposed it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -178,6 +171,16 @@ impl StateMachine {
     /// Ownership is replaced too. A member that rebuilt ownership only from
     /// entries *after* the snapshot would believe every Node was unowned and
     /// would start claiming Nodes that already have owners.
+    ///
+    /// Any capture still open is abandoned first. It was photographing the
+    /// store this replaces, pinned at an index the installed snapshot has
+    /// passed, and the compaction serialising it -- which yields between
+    /// chunks, and so can be overtaken by an install -- used to finish anyway
+    /// and store its older snapshot over the installed one: a member holding a
+    /// snapshot below its own log boundary, unable to serve the entries between.
+    /// The chaos soak measured it (seed 100423: a snapshot through 1046 below a
+    /// log discarded through 1120). The compaction finds the capture gone at
+    /// its next check and stops.
     pub fn install_snapshot(
         &mut self,
         registry: &Registry,
@@ -185,6 +188,7 @@ impl StateMachine {
         ownership: OwnershipTable,
         index: u64,
     ) {
+        self.snapshots.abandon();
         registry.swap_store(store);
         self.ownership = ownership;
         self.last_applied = index;
@@ -195,17 +199,11 @@ impl StateMachine {
     /// Returns one outcome per proposal, for the member that proposed it to
     /// resolve its waiters with. Entries proposed elsewhere still produce an
     /// outcome; the caller simply has nobody waiting on them.
-    ///
-    /// # Errors
-    ///
-    /// [`DivergenceDetected`] if a registration's `expect_created` disagrees
-    /// with what this member computes. The run stops there: every entry after
-    /// it would be applied against a store this member can no longer vouch for.
     pub fn apply(
         &mut self,
         registry: &Registry,
         entries: &[Entry<Operation>],
-    ) -> Result<Vec<(ProposalId, Outcome)>, DivergenceDetected> {
+    ) -> Vec<(ProposalId, Outcome)> {
         let mut outcomes = Vec::new();
 
         for entry in entries {
@@ -214,41 +212,31 @@ impl StateMachine {
                 // log may still hold entries the snapshot covers.
                 continue;
             }
-            if let Some(outcome) = self.apply_one(registry, entry)? {
+            if let Some(outcome) = self.apply_one(registry, entry) {
                 outcomes.push((entry.value.proposal, outcome));
             }
             self.last_applied = entry.index;
         }
 
-        Ok(outcomes)
+        outcomes
     }
 
-    fn apply_one(
-        &mut self,
-        registry: &Registry,
-        entry: &Entry<Operation>,
-    ) -> Result<Option<Outcome>, DivergenceDetected> {
+    fn apply_one(&mut self, registry: &Registry, entry: &Entry<Operation>) -> Option<Outcome> {
         match entry.value.kind {
-            OperationKind::Noop => Ok(None),
-            OperationKind::Register(ref op) => {
-                self.apply_register(registry, op, entry.index).map(Some)
-            }
+            OperationKind::Noop => None,
+            OperationKind::Register(ref op) => Some(self.apply_register(registry, op, entry.index)),
             OperationKind::Unregister {
                 resource_type,
                 ref resource_id,
-            } => Ok(Some(self.apply_remove(
-                registry,
-                resource_type,
-                resource_id,
-            ))),
-            OperationKind::Expire { ref node_id } => Ok(Some(self.apply_expire(registry, node_id))),
-            OperationKind::Forget { ref victims } => Ok(Some(self.apply_forget(registry, victims))),
-            OperationKind::ClaimOwnership { ref node_id, owner } => Ok(Some(Outcome::Ownership(
+            } => Some(self.apply_remove(registry, resource_type, resource_id)),
+            OperationKind::Expire { ref node_id } => Some(self.apply_expire(registry, node_id)),
+            OperationKind::Forget { ref victims } => Some(self.apply_forget(registry, victims)),
+            OperationKind::ClaimOwnership { ref node_id, owner } => Some(Outcome::Ownership(
                 self.ownership.claim(node_id, owner, entry.index),
-            ))),
-            OperationKind::ReleaseOwnership { ref node_id } => Ok(Some(Outcome::Ownership(
+            )),
+            OperationKind::ReleaseOwnership { ref node_id } => Some(Outcome::Ownership(
                 self.ownership.release(node_id, entry.index),
-            ))),
+            )),
             OperationKind::MemberDown { member } => {
                 let released = self.ownership.member_down(member, entry.index);
                 if !released.is_empty() {
@@ -258,57 +246,44 @@ impl StateMachine {
                         "raft: member is down; released Node(s)",
                     );
                 }
-                Ok(Some(Outcome::Count(released.len())))
+                Some(Outcome::Count(released.len()))
             }
         }
     }
 
-    fn apply_register(
-        &mut self,
-        registry: &Registry,
-        op: &Register,
-        index: u64,
-    ) -> Result<Outcome, DivergenceDetected> {
+    fn apply_register(&mut self, registry: &Registry, op: &Register, index: u64) -> Outcome {
         // `Body::new`, not `from_value`: the bytes the client sent survive
         // apply exactly. Re-serialising is precisely the normalisation the
         // fidelity guarantee forbids.
         let body = Body::new(op.body_text.clone());
 
-        // The fused claim lands before the mutation, so a reader that sees the
-        // resource also sees who owns it. Outside the store's critical section
-        // because ownership is this member's own derived state, not the store's.
-        if let Some(owner) = op.claim_owner {
-            self.ownership.claim(&op.node_id, owner, index);
-        }
-
         let capture = self.snapshots.capture_mut();
+        let ownership = &mut self.ownership;
         let outcome = registry.with_mutation(|store| {
             let prepared = match store.prepare(op.resource_type, body.data()) {
                 Ok(prepared) => prepared,
                 Err(failure) => {
                     return (
-                        Ok(Outcome::Refused {
+                        Outcome::Refused {
                             error: failure.error.as_str().to_owned(),
                             detail: failure.detail,
-                        }),
+                        },
                         Vec::new(),
                     );
                 }
             };
+            // Created or updated is whatever `prepare` says of the committed
+            // state, not what the proposer predicted -- see the module docs.
 
-            if prepared.creates != op.expect_created {
-                return (
-                    Err(DivergenceDetected(format!(
-                        "proposer expected created={} for {} {}, this member \
-                         computed {}; the two stores disagree about what is \
-                         registered",
-                        op.expect_created,
-                        op.resource_type.singular(),
-                        op.resource_id,
-                        prepared.creates,
-                    ))),
-                    Vec::new(),
-                );
+            // The fused claim: only for a registration that is accepted -- a
+            // refused one registered nothing and must own nothing -- and
+            // before the mutation, so a reader that sees the resource also
+            // sees who owns it. The Python claims in exactly this place;
+            // claiming before `prepare`, as this once did, gave a refused
+            // registration its Node, and a mixed cluster two different
+            // ownership tables.
+            if let Some(owner) = op.claim_owner {
+                ownership.claim(&op.node_id, owner, index);
             }
 
             // Before, not after: apply mutates records in place, so once it has
@@ -322,19 +297,30 @@ impl StateMachine {
                 }
             }
 
+            // A resource this entry creates was created *at* this entry, whose
+            // cursor is `updated`. `created` is the proposer's copy of the
+            // existing record's creation cursor when it predicted an update;
+            // stamped on a resource that turns out to be new, it would sit
+            // behind cursors a client has already paged past. For a predicted
+            // create the two are equal, so nothing else changes.
+            let creation = if prepared.creates {
+                op.updated
+            } else {
+                op.created
+            };
             let applied = store.apply_committed(
                 &prepared,
                 body,
-                Some(op.created),
+                Some(creation),
                 Some(op.updated),
                 Some(i64::try_from(op.health).unwrap_or(i64::MAX)),
             );
             let created = applied.created;
-            (Ok(Outcome::Registered { created }), applied.events)
-        })?;
+            (Outcome::Registered { created }, applied.events)
+        });
 
         self.cursors.observe(op.resource_type, op.updated);
-        Ok(outcome)
+        outcome
     }
 
     fn apply_remove(

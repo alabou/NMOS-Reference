@@ -111,11 +111,12 @@ fn every_unusable_file_is_refused_in_the_same_words() {
 }
 
 #[test]
-fn the_corpus_covers_each_of_the_three_refusals() {
-    // The three are not interchangeable: "unreadable" sends the reader to the
-    // disk, "not an object" and "state version" send them to the file, and
-    // "does not hold a usable term and vote" tells them which field is wrong.
-    // A corpus that had drifted to cover only one would still pass the test
+fn the_corpus_covers_every_kind_of_refusal() {
+    // They are not interchangeable: "unreadable" sends the reader to the disk,
+    // "not an object" and "state version" send them to the file, "does not
+    // hold a usable term and vote" tells them which field is wrong, and "not a
+    // cursor" tells them the vote is fine and only the reservation is not. A
+    // corpus that had drifted to cover only one would still pass the test
     // above.
     let corpus = corpus();
     let prefixes: Vec<String> = corpus["cases"]
@@ -130,6 +131,7 @@ fn the_corpus_covers_each_of_the_three_refusals() {
         "not an object",
         "has state version",
         "does not hold a usable term and vote: ",
+        "holds a cursor reservation that is not a cursor: ",
     ] {
         assert!(
             prefixes.iter().any(|prefix| prefix.contains(phrase)),

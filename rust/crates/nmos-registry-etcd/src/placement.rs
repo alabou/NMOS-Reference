@@ -54,15 +54,15 @@ pub trait ParentLookup {
 /// Every resource belongs to exactly one Node subtree, so the Node id has to
 /// be resolvable before anything can be written. For a Device it is in the
 /// body; for a Source/Flow/Sender/Receiver it is the Device's Node, which is
-/// looked up locally -- and if the Device is not here yet, that is a genuine
-/// `PARENT_MISSING`, decided by the same store rule that governs it in
-/// standalone mode.
+/// looked up in `parents`. A Device absent there is `PARENT_MISSING` only if
+/// `parents` is current -- the local store is a lagging replica, not the whole
+/// registry as it is in standalone mode -- which the backend makes sure of
+/// before believing it (`catch_up`).
 ///
 /// # Errors
 ///
 /// A `RegistrationFailure` the caller may return as a 400 -- but only after
-/// fencing, when it came from the optimistic path. See the backend's
-/// `register`.
+/// fencing: see the backend's `register`.
 pub fn placement_for(
     namespace: &Namespace,
     resource_type: ResourceType,
@@ -207,7 +207,8 @@ mod tests {
     #[test]
     fn a_child_takes_its_node_from_the_local_store() {
         // The Device's Node is not in the child's body, so it has to be looked
-        // up -- and a Device that is not here yet is a genuine PARENT_MISSING.
+        // up -- in the parents given, which the backend brings up to date
+        // before it believes a Device missing from them.
         let placement = placement_for(
             &ns(),
             ResourceType::Sender,

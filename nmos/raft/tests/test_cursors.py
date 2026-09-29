@@ -8,9 +8,10 @@ one type sharing a cursor, or a cursor arriving below one already published,
 makes a client paging with ``paging.since`` skip a record. Nothing errors. The
 registry simply never returns a resource that is sitting in it.
 
-So these tests are about the two properties that prevent it -- uniqueness
-across members, and a sequence that never goes backwards -- rather than about
-the arithmetic that happens to implement them.
+So these tests are about the three properties that prevent it -- uniqueness
+across members, uniqueness across one member's restarts, and a sequence that
+never goes backwards -- rather than about the arithmetic that happens to
+implement them.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import pytest
 from nmos.raft.cursors import (
     MAX_OWNERS,
     OWNER_BITS,
+    RESERVATION_WINDOW_SECONDS,
     CursorAllocator,
     owner_of,
 )
@@ -142,12 +144,15 @@ class TestMonotonicityUnderSkew:
     def test_the_sequence_survives_a_member_that_never_hears_the_others(
         self,
     ) -> None:
-        """Uniqueness must not depend on observation, only ordering does.
+        """Between members, uniqueness must not depend on observation.
 
         A partitioned member keeps allocating. Its cursors may interleave with
         the majority's once it rejoins, but they must never *equal* one --
         that is the difference between a client seeing records out of order
         and a client never seeing one at all.
+
+        Between two incarnations of *one* member it is not observation but the
+        reservation that keeps them apart; see ``TestRestarts``.
         """
         connected = CursorAllocator(0)
         isolated = CursorAllocator(1)
@@ -185,3 +190,112 @@ class TestLaneArithmetic:
         assert allocator.allocate(SENDER) == TaiCursor(
             mark.seconds, MAX_OWNERS,
         )
+
+
+def _hand_out(allocator: CursorAllocator, resource_type: ResourceType) -> TaiCursor:
+    """What ``RaftNode.allocate_cursor`` does, with the disk left out."""
+    cursor = allocator.allocate(resource_type)
+    needed = allocator.reservation_needed(cursor)
+    if needed is not None:
+        allocator.confirm_reservation(needed)
+    return cursor
+
+
+class TestRestarts:
+    """One member's cursors stay unique across its own restarts.
+
+    Owner bits separate members, not incarnations: a restarted member allocates
+    in the lane it always did, so something else has to keep it from minting a
+    cursor its predecessor minted. That is the reservation, carried across the
+    restart in the state file and handed back through ``resume``.
+    """
+
+    def test_an_allocator_that_is_not_resumed_mints_its_predecessors_cursor(
+        self,
+    ) -> None:
+        """The mechanism ``resume`` exists for, pinned so the fix stays falsifiable.
+
+        Once the log is ahead of the clock -- the wall clock stepped back, or a
+        peer's runs fast -- an allocation depends on nothing but the log prefix
+        observed. Two incarnations that observed the same prefix therefore
+        agree exactly. Were that ever to stop being true, the test below would
+        pass whether or not ``resume`` did anything.
+        """
+        ahead = TaiCursor(TaiCursor.now().seconds + 60, 0)
+        before, after = CursorAllocator(1), CursorAllocator(1)
+        before.observe(SENDER, ahead)
+        after.observe(SENDER, ahead)
+        assert before.allocate(SENDER) == after.allocate(SENDER)
+
+    def test_a_resumed_allocator_starts_above_everything_handed_out_before(
+        self,
+    ) -> None:
+        ahead = TaiCursor(TaiCursor.now().seconds + 60, 0)
+        before = CursorAllocator(1)
+        before.observe(SENDER, ahead)
+        handed_out = [_hand_out(before, SENDER) for _ in range(20)]
+
+        after = CursorAllocator(1)
+        after.resume(before.reservation)
+        after.observe(SENDER, ahead)     # the same prefix, replayed
+        assert after.allocate(SENDER) > max(handed_out)
+
+    def test_the_bound_holds_for_every_type(self) -> None:
+        """One bound for all types: it need only be above everything out."""
+        before = CursorAllocator(0)
+        before.observe(SENDER, TaiCursor(TaiCursor.now().seconds + 60, 0))
+        _hand_out(before, SENDER)
+        reservation = before.reservation
+        assert reservation is not None
+
+        after = CursorAllocator(0)
+        after.resume(reservation)
+        for resource_type in ResourceType:
+            assert after.allocate(resource_type) > reservation
+
+    def test_resuming_nothing_leaves_the_clock_in_charge(self) -> None:
+        """A first start, or a state file written before reservations existed."""
+        allocator = CursorAllocator(2)
+        allocator.resume(None)
+        assert allocator.reservation is None
+        assert allocator.allocate(SENDER) < TaiCursor(
+            TaiCursor.now().seconds + 1, 0,
+        )
+
+
+class TestReservations:
+    """When a cursor needs a durable bound written first, and how far it reaches."""
+
+    def test_the_first_cursor_needs_a_reservation_one_window_past_it(
+        self,
+    ) -> None:
+        allocator = CursorAllocator(0)
+        cursor = allocator.allocate(SENDER)
+        assert allocator.reservation_needed(cursor) == TaiCursor(
+            cursor.seconds + RESERVATION_WINDOW_SECONDS, cursor.nanoseconds,
+        )
+
+    def test_cursors_under_a_durable_reservation_need_no_write(self) -> None:
+        """The disk is out of every allocation but about one per window."""
+        allocator = CursorAllocator(0)
+        _hand_out(allocator, SENDER)
+        for _ in range(100):
+            assert allocator.reservation_needed(allocator.allocate(SENDER)) is None
+
+    def test_a_cursor_beyond_the_reservation_needs_a_new_one(self) -> None:
+        allocator = CursorAllocator(0)
+        _hand_out(allocator, SENDER)
+        reserved = allocator.reservation
+        assert reserved is not None
+        allocator.observe(SENDER, TaiCursor(reserved.seconds + 5, 0))
+
+        beyond = allocator.allocate(SENDER)
+        needed = allocator.reservation_needed(beyond)
+        assert needed is not None
+        assert needed > beyond
+
+    def test_a_reservation_never_moves_backwards(self) -> None:
+        allocator = CursorAllocator(0)
+        allocator.confirm_reservation(TaiCursor(100, 0))
+        allocator.confirm_reservation(TaiCursor(50, 0))
+        assert allocator.reservation == TaiCursor(100, 0)

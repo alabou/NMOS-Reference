@@ -52,11 +52,10 @@ used, is therefore never reused for a different meaning.
 
 from __future__ import annotations
 
-import asyncio
 import zlib
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Iterator
+from typing import Iterator, Protocol
 
 PROTOCOL_MAJOR = 1
 PROTOCOL_MINOR = 0
@@ -103,6 +102,8 @@ class MessageType(IntEnum):
     INSTALL_SNAPSHOT = 0x14
     INSTALL_SNAPSHOT_REPLY = 0x15
     PROMOTE = 0x16
+    READ_INDEX = 0x17
+    READ_INDEX_REPLY = 0x18
 
     PROPOSE = 0x20
     PROPOSE_REPLY = 0x21
@@ -376,7 +377,17 @@ def decode_frame(data: bytes) -> Frame:
     )
 
 
-async def read_frame(reader: asyncio.StreamReader) -> Frame:
+class ByteSource(Protocol):
+    """What :func:`read_frame` reads from: anything that reads exact counts.
+
+    ``asyncio.StreamReader`` is one; the transport's silence deadline wraps one
+    (``transport._DeadlineReader``) without the frame format needing to know.
+    """
+
+    async def readexactly(self, n: int) -> bytes: ...
+
+
+async def read_frame(reader: ByteSource) -> Frame:
     """Read exactly one frame from a stream.
 
     Reads the header first and only then the payload, so a frame claiming an

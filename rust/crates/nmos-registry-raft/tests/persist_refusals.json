@@ -77,6 +77,24 @@
       "name": "a vote that is not a member index",
       "parity_prefix": "<PATH> does not hold a usable term and vote: ",
       "refusal": "<PATH> does not hold a usable term and vote: TypeError(\"int() argument must be a string, a bytes-like object or a real number, not 'list'\"). Refusing to start with no memory of whether this member has already voted; delete it only if this member is genuinely new to the cluster."
+    },
+    {
+      "file": "{\"version\": 1, \"term\": 1, \"voted_for\": null, \"incarnation\": 1, \"cursor_reservation\": \"soon\"}",
+      "name": "a cursor reservation that is not a cursor",
+      "parity_prefix": "<PATH> holds a cursor reservation that is not a cursor: ",
+      "refusal": "<PATH> holds a cursor reservation that is not a cursor: 'soon'. Refusing to start without knowing which paging cursors this member has already handed out; removing the key starts it without that knowledge, and a cursor it hands out may then repeat one it handed out before."
+    },
+    {
+      "file": "{\"version\": 1, \"term\": 1, \"voted_for\": null, \"incarnation\": 1, \"cursor_reservation\": 12}",
+      "name": "a cursor reservation that is a number",
+      "parity_prefix": "<PATH> holds a cursor reservation that is not a cursor: ",
+      "refusal": "<PATH> holds a cursor reservation that is not a cursor: 12. Refusing to start without knowing which paging cursors this member has already handed out; removing the key starts it without that knowledge, and a cursor it hands out may then repeat one it handed out before."
+    },
+    {
+      "file": "{\"version\": 1, \"term\": 1, \"voted_for\": null, \"incarnation\": 1, \"cursor_reservation\": \"+1:0\"}",
+      "name": "a signed cursor reservation",
+      "parity_prefix": "<PATH> holds a cursor reservation that is not a cursor: ",
+      "refusal": "<PATH> holds a cursor reservation that is not a cursor: '+1:0'. Refusing to start without knowing which paging cursors this member has already handed out; removing the key starts it without that knowledge, and a cursor it hands out may then repeat one it handed out before."
     }
   ],
   "path_placeholder": "<PATH>"

@@ -745,16 +745,21 @@ class EtcdRegistryBackend:
         call site is how one path ends up reporting healthy while another has
         already given up.
 
-        ``EtcdCompacted`` is deliberately NOT caught: it is the watch loop's to
-        handle, and swallowing it here would let a mutation proceed against a
-        view that is about to be rebuilt.
+        ``EtcdCompacted`` is not degraded over: it is the watch loop's to
+        handle -- it rebuilds this member's view (``_resnapshot``) -- and marking
+        DEGRADED here would race that recovery. Nor is it swallowed, which would
+        let a mutation proceed against a view about to be rebuilt: the mutation
+        ends with a 503 the Node retries. It once escaped from here to the
+        handler, which answered it 500; the Rust backend answers it as this
+        does (``guarded``). No mutation reads at an old revision, so nothing
+        reaches it today.
         """
         from nmos.etcd.errors import EtcdCompacted, EtcdError
 
         try:
             return await coro
-        except EtcdCompacted:
-            raise
+        except EtcdCompacted as exc:
+            raise MutationTimeout(f"{what}: {exc}") from exc
         except FenceTimeout as exc:
             # The commit may well have succeeded -- we simply did not see it
             # applied in time. Never roll back: the Node replays, and version
@@ -780,20 +785,37 @@ class EtcdRegistryBackend:
         ``PARENT_MISSING`` would be a lie. A 400 is terminal, something the Node
         "MUST NOT" retry without corrective action
         (``Behaviour - Registration.md:94``), so a rejection is never returned
-        without first fencing and re-validating against current state.
+        without first fencing and re-validating against current state. That
+        includes the one refusal made before any key is known: a parent Device
+        this member has not seen, which ``_placement`` reads from the store and
+        ``_catch_up`` fences.
         """
         deadline = asyncio.get_running_loop().time() + self._config.mutation_timeout
+        trips = _Trips()
         placement = self._placement(resource_type, body.data)
+        if (
+            isinstance(placement, RegistrationResult)
+            and placement.error is RegistrationError.PARENT_MISSING
+        ):
+            # The one refusal ``_placement`` takes from the store, and a Device
+            # this member has not seen is not a missing one: see ``_catch_up``.
+            # Decided again once current -- which also takes the Node's lease
+            # from the lease table as it now stands.
+            device_id = str(body.data.get("device_id", ""))
+            await self._guarded(
+                f"registration of {body.data.get('id')}",
+                self._catch_up(self._namespace.id_claim(device_id), trips),
+            )
+            placement = self._placement(resource_type, body.data)
         if isinstance(placement, RegistrationResult):
-            # Decided locally, so it cost nothing on the wire. Recorded anyway:
-            # a backend whose cheap rejections vanished from the denominator
-            # would report a flattering average.
+            # Recorded, and at what it cost: a backend whose cheap rejections
+            # vanished from the denominator would report a flattering average,
+            # and so would one that counted a fenced refusal as free.
             self._metrics.record(
-                Event.MUTATION, None, units=0, verb="register", outcome="local",
+                Event.MUTATION, None, units=trips.count, verb="register",
+                outcome="local",
             )
             return placement
-
-        trips = _Trips()
 
         if resource_type is ResourceType.NODE:
             # Every key in this Node's subtree will hang off this lease, so it
@@ -884,13 +906,16 @@ class EtcdRegistryBackend:
         trips: _Trips,
     ) -> RegistrationResult:
         """Read, fence, validate, commit -- retrying until the deadline."""
-        from nmos.etcd.errors import EtcdError
+        from nmos.etcd.errors import EtcdCompacted, EtcdError
 
         attempt = 0
         while True:
             attempt += 1
             try:
                 revision = await self._read_fence(placement, trips)
+            except EtcdCompacted:
+                # Not degraded over, for ``_guarded``'s reason.
+                raise
             except EtcdError as exc:
                 self._degrade(f"registration read failed: {exc}")
                 raise
@@ -900,6 +925,32 @@ class EtcdRegistryBackend:
             prepared = self._registry.store.prepare(resource_type, body.data)
             if isinstance(prepared, RegistrationResult):
                 return prepared
+
+            if resource_type is not ResourceType.NODE:
+                # A child hangs off its Node's lease, taken here from the lease
+                # table as the fence has just brought it up to date. The one in
+                # ``placement`` was read before the fence -- when, at a member
+                # that had not yet seen the Node, the table held nothing for it,
+                # and the Device and its claim went out on no lease at all.
+                # Measured: the Node's key on lease 1151691046727498246, the
+                # Device and its claim on 0 -- keys that outlive the Node's
+                # expiry, a Device in etcd whose Node is gone.
+                lease = self._leases.get(placement.node_id, 0)
+                if not lease:
+                    # The store holds the Node -- validation just found it --
+                    # and the watch that put it there records its lease in the
+                    # same step (``_apply_batch``). Neither is ever written
+                    # without the other, so this is a broken invariant, answered
+                    # 503 rather than written as a key no expiry will collect.
+                    log.error(
+                        "registry: node %s is in the store with no lease "
+                        "known for it", placement.node_id,
+                    )
+                    raise MutationTimeout(
+                        f"registration of {placement.resource_id}: no lease is "
+                        f"known for node {placement.node_id}",
+                    )
+                placement = placement.with_lease(lease)
 
             trips.add()
             with self._metrics.timer(
@@ -930,6 +981,37 @@ class EtcdRegistryBackend:
             # Someone else committed first; re-read and re-validate rather than
             # re-submitting the same comparisons, which would fail identically.
             await asyncio.sleep(0)
+
+    async def _catch_up(self, key: bytes, trips: _Trips) -> None:
+        """Bring the local store up to everything etcd holds now.
+
+        For the answers this member would otherwise give from its local store
+        alone, and which a Node acts on as final: a 400 for a parent it cannot
+        find -- one that "MUST NOT be re-attempted without corrective action"
+        (``Behaviour - Registration.md:96``) -- and a 404 for a delete or a
+        heartbeat, the second of which makes the Node "re-register each of its
+        resources" (``:114``). The store is fed by the watch, which can be behind
+        etcd, so "not here" is only true once it has caught up: a Device
+        registered a moment ago through another member, or a Node that has just
+        failed over to this one -- which ``:126`` expects this member to
+        recognise -- is not here yet.
+
+        A linearizable read carries etcd's current revision, and waiting until
+        the watch has applied it makes the local store -- and the lease table
+        the watch maintains with it -- at least that current: the fence
+        ``_read_fence`` puts before a registration trusts its validation.
+        ``key`` is the one the answer is about, though the revision is all that
+        is used.
+        """
+        trips.add()
+        with self._metrics.timer(Event.LINEARIZABLE_READ) as timer:
+            read = await self.kv.read_set([key])
+            timer.note(revision=read.revision, keys=1)
+        with self._metrics.timer(Event.FENCE_WAIT, target=read.revision) as timer:
+            await self._fence.wait(
+                read.revision, timeout=self._config.mutation_timeout,
+            )
+            timer.note(applied=self._fence.applied)
 
     async def _read_fence(self, placement: _Placement, trips: _Trips) -> int:
         """Linearizable read of the write set, then wait for the view to match.
@@ -1070,9 +1152,10 @@ class EtcdRegistryBackend:
         Every resource belongs to exactly one Node subtree, so the Node id has
         to be resolvable before anything can be written. For a Device it is in
         the body; for a Source/Flow/Sender/Receiver it is the Device's Node,
-        which is looked up locally -- and if the Device is not here yet, that is
-        a genuine ``PARENT_MISSING``, decided by the same store rule that
-        governs it in standalone mode.
+        which is looked up locally. A Device absent here is ``PARENT_MISSING``
+        only once this member has caught up with etcd -- the local store is a
+        lagging replica, not the whole registry as it is in standalone mode --
+        which ``register`` makes sure of before believing it (``_catch_up``).
         """
         resource_id = raw.get("id")
         if not isinstance(resource_id, str) or not resource_id:
@@ -1186,7 +1269,14 @@ class EtcdRegistryBackend:
 
         resource = self._registry.store.get(resource_type, resource_id)
         if resource is None:
-            return False
+            # "Not here" is a guess until this member has caught up -- see
+            # ``_catch_up``. Answered wrongly, the delete never happens: the
+            # resource stays registered while the Node believes it gone, for
+            # as long as the Node goes on heartbeating.
+            await self._catch_up(self._namespace.id_claim(resource_id), trips)
+            resource = self._registry.store.get(resource_type, resource_id)
+            if resource is None:
+                return False
 
         placement = self._placement(resource_type, resource.raw)
         if isinstance(placement, RegistrationResult):
@@ -1267,12 +1357,14 @@ class EtcdRegistryBackend:
     async def heartbeat(self, node_id: str) -> int | None:
         """Renew a Node's lease. Returns its health, or None if it is gone.
 
-        No full-database fence and, deliberately, **no write**. The lease is the
-        liveness record. The legacy dRDS wrote a health key on every beat and every
-        member watched it -- 100 Nodes at the 5 s default is 100 Raft writes per
-        second fanning out to 500 watch events per second across five members,
-        to record something the lease already records more reliably, since a
-        lease cannot be renewed by a member that has lost quorum.
+        No full-database fence for a Node this member knows and, deliberately,
+        **no write**. The lease is the liveness record. The legacy dRDS wrote a
+        health key on every beat and every member watched it -- 100 Nodes at the
+        5 s default is 100 Raft writes per second fanning out to 500 watch
+        events per second across five members, to record something the lease
+        already records more reliably, since a lease cannot be renewed by a
+        member that has lost quorum. A Node it does not know costs one fence
+        before the 404 (``_catch_up``).
         """
         trips = _Trips()
         with self._metrics.timer(Event.MUTATION, verb="heartbeat") as timer:
@@ -1289,9 +1381,15 @@ class EtcdRegistryBackend:
 
         lease_id = self._leases.get(node_id)
         if not lease_id:
-            # Not ours to renew, and answered without touching the network --
-            # the 404 that makes the Node re-register.
-            return None
+            # The lease table is the watch's, and as far behind as the store: a
+            # Node registered through another member, or failed over to this
+            # one, is not in it yet. A 404 makes the Node re-register every
+            # resource it has (``Behaviour - Registration.md:112-114``), so it
+            # is given only once this member has caught up -- see ``_catch_up``.
+            await self._catch_up(self._namespace.node(node_id), trips)
+            lease_id = self._leases.get(node_id)
+            if not lease_id:
+                return None
 
         trips.add()
 

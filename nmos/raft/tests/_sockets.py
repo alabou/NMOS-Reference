@@ -77,7 +77,7 @@ class SocketMember:
         self.index = layout.local.index
         self.registry = Registry(RegistryStore(), query_id=f"q{self.index}")
         self.registry.attach_subscriptions(SubscriptionManager(self.registry))
-        self.snapshots = SnapshotStore(self.registry.store)
+        self.snapshots = SnapshotStore(self.registry)
         self.machine = StateMachine(
             self.registry,
             ownership=OwnershipTable(),

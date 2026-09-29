@@ -202,31 +202,23 @@ class WireEntry:
 class RequestVote:
     """Raft §5.2. Ask a peer for its vote in ``term``.
 
-    Two fields beyond the paper's, both serving the recovery path described in
-    ``node.py`` under "when every voter has forgotten".
-
-    ``probe`` asks a peer only to state whether it can vote, never for the vote
-    itself. A member that came back from a restart needs to know how many of
-    its peers are in the same condition before it may do anything about it, and
-    without a probe the only way to ask would be to stand for election -- which
-    inflates the term on every attempt and, in the state this exists to escape,
-    can never succeed.
-
-    ``amnesiac`` carries the evidence: the members this candidate has *itself
-    observed* answering ``voting=False``. A voter that has lost its log grants
-    nothing on trust; it re-does the arithmetic on this list plus its own
-    status, and grants only when the two together prove that no quorum of
-    voters can exist. Members the candidate has not heard from are absent from
-    the list and therefore counted as voters -- which is what stops a partition
-    looking like an empty cluster.
+    Fields 5 and 6 are retired and must never be reused. They were ``probe``
+    ("can you vote?", sent by a member that had forgotten) and ``amnesiac``
+    (the members the candidate had observed answering ``voting=False``, for a
+    voter that had forgotten to re-do the recovery arithmetic on). Both served
+    evidence carried *between* rounds, and such evidence goes stale: a member
+    is promoted back to voting without the observer hearing of it, and a stale
+    list once elected a leader that lacked a committed entry. Who has forgotten
+    is now proved inside the round, by each member's own reply
+    (``RequestVoteReply.voting`` at the candidate's term) -- see "When every
+    voter has forgotten" in ``node.py``. A decoder skips both numbers like any
+    field it does not know.
     """
 
     term: int
     candidate: int
     last_log_index: int
     last_log_term: int
-    probe: bool = False
-    amnesiac: tuple[int, ...] = ()
     pre_vote: bool = False
     """Raft §9.6, and etcd's ``MsgPreVote``: "would you vote for me?".
 
@@ -241,25 +233,20 @@ class RequestVote:
     TYPE = MessageType.REQUEST_VOTE
 
     def encode(self) -> bytes:
-        writer = (
+        return (
             Writer()
             .uint(1, self.term)
             .uint(2, self.candidate)
             .uint(3, self.last_log_index)
             .uint(4, self.last_log_term)
-            .bool_(5, self.probe)
+            .bool_(7, self.pre_vote)
+            .take()
         )
-        for member in self.amnesiac:
-            writer.uint(6, member)
-        writer.bool_(7, self.pre_vote)
-        return writer.take()
 
     @classmethod
     def decode(cls, payload: bytes) -> RequestVote:
         term = candidate = last_index = last_term = 0
-        probe = False
         pre_vote = False
-        amnesiac: list[int] = []
         reader = Reader(payload)
         for number, wire in reader:
             if number == 1:
@@ -270,10 +257,6 @@ class RequestVote:
                 last_index = reader.uint()
             elif number == 4:
                 last_term = reader.uint()
-            elif number == 5:
-                probe = reader.bool_()
-            elif number == 6:
-                amnesiac.append(reader.uint())
             elif number == 7:
                 pre_vote = reader.bool_()
             else:
@@ -281,7 +264,7 @@ class RequestVote:
         return cls(
             term=term, candidate=candidate,
             last_log_index=last_index, last_log_term=last_term,
-            probe=probe, amnesiac=tuple(amnesiac), pre_vote=pre_vote,
+            pre_vote=pre_vote,
         )
 
 
@@ -295,6 +278,11 @@ class RequestVoteReply:
     candidate missing committed entries from winning. Until the leader has
     caught it up and promoted it, it answers ``voting=False`` and the candidate
     does not count it toward a majority.
+
+    Answered at the candidate's own term, ``voting=False`` is also the only
+    evidence the recovery path accepts that a member has forgotten: the member
+    has adopted that term, and only a leader of that term or a later one could
+    promote it, so the answer cannot go stale while the round is decided.
     """
 
     term: int
@@ -486,6 +474,15 @@ class InstallSnapshot:
     data: bytes
     done: bool
     ownership: bytes = b""
+    request_id: int = 0
+    """Which chunk this is, for the reply to name.
+
+    Drawn from the leader's append sequence, so the ``reply_floor`` that
+    fences replies from a superseded exchange fences these too. Chunks travel
+    on BULK while a reconnect is reported for CONTROL, so a reply can outlive
+    the transfer it belonged to; only the reply to the chunk in flight may
+    drive the transfer, and the id is how the leader knows which one that is.
+    """
 
     TYPE = MessageType.INSTALL_SNAPSHOT
 
@@ -500,12 +497,13 @@ class InstallSnapshot:
             .bytes_(6, self.ownership)
             .bytes_(7, self.data)
             .bool_(8, self.done)
+            .uint(9, self.request_id)
             .take()
         )
 
     @classmethod
     def decode(cls, payload: bytes) -> InstallSnapshot:
-        term = leader = last_index = last_term = offset = 0
+        term = leader = last_index = last_term = offset = request_id = 0
         data = ownership = b""
         done = False
         reader = Reader(payload)
@@ -526,12 +524,14 @@ class InstallSnapshot:
                 data = reader.bytes_()
             elif number == 8:
                 done = reader.bool_()
+            elif number == 9:
+                request_id = reader.uint()
             else:
                 reader.skip(wire)
         return cls(
             term=term, leader=leader, last_index=last_index,
             last_term=last_term, offset=offset, data=data, done=done,
-            ownership=ownership,
+            ownership=ownership, request_id=request_id,
         )
 
 
@@ -542,6 +542,20 @@ class InstallSnapshotReply:
     term: int
     bytes_received: int
     done: bool
+    commit_index: int = 0
+    """How far this member has committed, as it answers.
+
+    etcd's rule (``raft.go:1840-1854``): an installed snapshot is answered
+    with the follower's new last index and an *ignored* one -- at or below
+    what it has already committed -- with its commit index, both as an
+    ordinary append response. Without it the ignored snapshot had no answer
+    but the one a discarded transfer gets, and the leader started again from
+    zero, for ever. Crediting it is truthful whichever transfer the reply
+    answers: the follower's committed prefix is the leader's (Leader
+    Completeness).
+    """
+    request_id: int = 0
+    """The ``InstallSnapshot.request_id`` this answers."""
 
     TYPE = MessageType.INSTALL_SNAPSHOT_REPLY
 
@@ -551,12 +565,14 @@ class InstallSnapshotReply:
             .uint(1, self.term)
             .uint(2, self.bytes_received)
             .bool_(3, self.done)
+            .uint(4, self.commit_index)
+            .uint(5, self.request_id)
             .take()
         )
 
     @classmethod
     def decode(cls, payload: bytes) -> InstallSnapshotReply:
-        term = received = 0
+        term = received = commit_index = request_id = 0
         done = False
         reader = Reader(payload)
         for number, wire in reader:
@@ -566,18 +582,27 @@ class InstallSnapshotReply:
                 received = reader.uint()
             elif number == 3:
                 done = reader.bool_()
+            elif number == 4:
+                commit_index = reader.uint()
+            elif number == 5:
+                request_id = reader.uint()
             else:
                 reader.skip(wire)
-        return cls(term=term, bytes_received=received, done=done)
+        return cls(
+            term=term, bytes_received=received, done=done,
+            commit_index=commit_index, request_id=request_id,
+        )
 
 
 @dataclass(frozen=True)
 class Promote:
     """The leader telling a caught-up member that its vote now counts.
 
-    Sent once ``match_index`` has reached the commit index the leader held when
-    it first heard from this peer again. Until then the peer has an empty or
-    partial log and must not participate in elections.
+    Sent once ``match_index`` has reached the leader's last index as it stood
+    when it first heard from this peer again -- its last index rather than its
+    commit index, because a leader's commit index can lag entries an earlier
+    leader committed (see ``on_append_entries_reply`` in ``node.py``). Until then
+    the peer has an empty or partial log and must not participate in elections.
     """
 
     term: int
@@ -609,6 +634,83 @@ class Promote:
             else:
                 reader.skip(wire)
         return cls(term=term, leader=leader, through_index=through)
+
+
+@dataclass(frozen=True)
+class ReadIndex:
+    """A member asking its leader for a read index.
+
+    etcd's ``MsgReadIndex`` (``raft.go:1764-1770``): the index below which
+    everything committed when the read began lies, confirmed by a quorum that
+    the asker's leader still leads. A member that has applied through it can
+    answer from its own store as if it were the leader's -- which is what makes
+    a 400 or a 404 from a follower something a client may act on.
+    """
+
+    request_id: int
+
+    TYPE = MessageType.READ_INDEX
+
+    def encode(self) -> bytes:
+        return Writer().uint(1, self.request_id).take()
+
+    @classmethod
+    def decode(cls, payload: bytes) -> ReadIndex:
+        request_id = 0
+        reader = Reader(payload)
+        for number, wire in reader:
+            if number == 1:
+                request_id = reader.uint()
+            else:
+                reader.skip(wire)
+        return cls(request_id=request_id)
+
+
+@dataclass(frozen=True)
+class ReadIndexReply:
+    """The read index, confirmed -- or why this member cannot give one.
+
+    Refused when the answering member is not the leader, or stops being it
+    before a quorum confirms the read: an index vouched for by a deposed leader
+    proves nothing (etcd drops pending reads when a leader resets,
+    ``raft.go:809``).
+    """
+
+    ok: bool
+    index: int
+    reason: str
+    request_id: int
+
+    TYPE = MessageType.READ_INDEX_REPLY
+
+    def encode(self) -> bytes:
+        return (
+            Writer()
+            .bool_(1, self.ok)
+            .uint(2, self.index)
+            .string(3, self.reason)
+            .uint(4, self.request_id)
+            .take()
+        )
+
+    @classmethod
+    def decode(cls, payload: bytes) -> ReadIndexReply:
+        ok = False
+        index = request_id = 0
+        reason = ""
+        reader = Reader(payload)
+        for number, wire in reader:
+            if number == 1:
+                ok = reader.bool_()
+            elif number == 2:
+                index = reader.uint()
+            elif number == 3:
+                reason = reader.string()
+            elif number == 4:
+                request_id = reader.uint()
+            else:
+                reader.skip(wire)
+        return cls(ok=ok, index=index, reason=reason, request_id=request_id)
 
 
 @dataclass(frozen=True)
@@ -898,6 +1000,8 @@ BY_TYPE: dict[MessageType, Any] = {
     MessageType.INSTALL_SNAPSHOT: InstallSnapshot,
     MessageType.INSTALL_SNAPSHOT_REPLY: InstallSnapshotReply,
     MessageType.PROMOTE: Promote,
+    MessageType.READ_INDEX: ReadIndex,
+    MessageType.READ_INDEX_REPLY: ReadIndexReply,
     MessageType.PROPOSE: Propose,
     MessageType.PROPOSE_REPLY: ProposeReply,
     MessageType.FORWARD: Forward,
@@ -928,6 +1032,7 @@ EXPECTED_REPLY: dict[MessageType, MessageType] = {
     MessageType.REQUEST_VOTE: MessageType.REQUEST_VOTE_REPLY,
     MessageType.APPEND_ENTRIES: MessageType.APPEND_ENTRIES_REPLY,
     MessageType.INSTALL_SNAPSHOT: MessageType.INSTALL_SNAPSHOT_REPLY,
+    MessageType.READ_INDEX: MessageType.READ_INDEX_REPLY,
     MessageType.PROPOSE: MessageType.PROPOSE_REPLY,
     MessageType.FORWARD: MessageType.FORWARD_REPLY,
     MessageType.PING: MessageType.PONG,

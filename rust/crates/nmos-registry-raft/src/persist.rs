@@ -1,7 +1,7 @@
 // Copyright (C) 2025-2026 Alain Bouchard
 // SPDX-License-Identifier: Apache-2.0
 
-//! The only thing in this backend that reaches the disk: about 24 bytes.
+//! The only thing in this backend that reaches the disk: well under 100 bytes.
 //!
 //! Port of `nmos/raft/persist.py`.
 //!
@@ -41,13 +41,38 @@
 //! caught up and explicitly promoted before its vote or its acknowledgement
 //! counts.
 //!
+//! # The cursor reservation
+//!
+//! The third thing a restart must not forget is which paging cursors this
+//! member has already handed out. A cursor is unique across members by
+//! construction, but not across two runs of one member, and once the log's
+//! cursors are ahead of the member's clock a new run re-mints its predecessor's
+//! cursors exactly -- see `cursors.rs` for the mechanism and the measurement.
+//! So the file also carries `cursor_reservation`: a bound at or above every
+//! cursor this member has handed out, written before any cursor above the
+//! previous bound leaves the member.
+//!
+//! Adding it did not change [`STATE_VERSION`], deliberately. The version exists
+//! so that a member never guesses about a *vote*, and the new key changes
+//! nothing about the vote: both implementations have always read the three vote
+//! fields by name and ignored any other key, so a member built before the key
+//! existed still reads its vote correctly from a file that has it. Bumping the
+//! version would buy no safety and would turn every downgrade into a member
+//! that refuses to start. A file without the key -- written before it existed
+//! -- resumes no reservation, which is exactly what that file's writer did.
+//!
+//! It costs one extra write per `RESERVATION_WINDOW_SECONDS` of cursor progress
+//! (`cursors.rs`), on the same path and with the same durability as the vote.
+//!
 //! # Why the write is synchronous
 //!
 //! [`TermStore::save`] blocks. That is deliberate and it is the one place this
 //! package knowingly does so. It sits on the election path, it is a few bytes
 //! to the page cache plus one fsync, and moving it to a blocking thread would
 //! let the runtime run between "I decided to vote" and "that vote is durable"
-//! -- which is precisely the window the whole mechanism exists to close.
+//! -- which is precisely the window the whole mechanism exists to close. The
+//! reservation has the same window, between "this cursor is handed out" and
+//! "its bound is durable".
 //!
 //! So this module is **not** async, and callers must not make it so. On a
 //! multi-threaded runtime a `spawn_blocking` here would look like an
@@ -57,13 +82,16 @@ use std::fs::{self, File, OpenOptions};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
+use nmos_registry_core::cursor::TaiCursor;
 use serde_json::Value;
 
-/// Bumped only if the file's shape changes.
+/// Bumped only if the file's shape changes in a way a reader of the vote would
+/// misread.
 ///
 /// A member that finds a version it does not understand refuses to start rather
 /// than guessing, because guessing here means guessing about whether it has
-/// already voted.
+/// already voted. (`cursor_reservation` is additive and did not bump it; see
+/// "The cursor reservation" above.)
 pub const STATE_VERSION: u64 = 1;
 
 /// The persisted term/vote file is unreadable or not ours.
@@ -82,7 +110,7 @@ impl std::fmt::Display for PersistentStateError {
 
 impl std::error::Error for PersistentStateError {}
 
-/// What must survive a crash for elections to stay safe.
+/// What must survive a crash for elections and paging to stay safe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PersistentState {
     /// Raft's `currentTerm`.
@@ -94,6 +122,14 @@ pub struct PersistentState {
     pub voted_for: Option<u64>,
     /// How many times this member has started.
     pub incarnation: u64,
+    /// A bound at or above every paging cursor this member has handed out.
+    ///
+    /// `None` is a member that never reserved. Every save writes the whole
+    /// file, so a construction site that left the previous reservation out
+    /// would erase it -- and the next incarnation would resume below cursors
+    /// already handed out. A struct literal cannot leave it out, which is why
+    /// the Python makes the field required too.
+    pub cursor_reservation: Option<TaiCursor>,
 }
 
 /// Reads and writes the term/vote file, atomically.
@@ -154,14 +190,18 @@ impl TermStore {
     /// # Errors
     ///
     /// [`PersistentStateError`] if the file is unreadable, is not JSON, carries
-    /// a state version this build does not understand, or does not hold the
-    /// three values. Every one of those is fatal at startup by design.
+    /// a state version this build does not understand, does not hold the three
+    /// values, or holds a cursor reservation that is not a cursor -- or, when
+    /// there is no file yet, if the first one cannot be written. Every one of
+    /// those is fatal at startup by design: [`crate::node::RaftNode::new`]
+    /// returns it rather than starting.
     pub fn load(&mut self) -> Result<PersistentState, PersistentStateError> {
         if !self.path.exists() {
             let state = PersistentState {
                 term: 0,
                 voted_for: None,
                 incarnation: 1,
+                cursor_reservation: None,
             };
             self.save(&state)?;
             return Ok(state);
@@ -198,6 +238,7 @@ impl TermStore {
                 _ => Some(self.integer(&raw, "voted_for")?),
             },
             incarnation: self.integer(&raw, "incarnation")?.saturating_add(1),
+            cursor_reservation: self.cursor_reservation(&raw)?,
         };
         self.save(&state)?;
         Ok(state)
@@ -226,10 +267,13 @@ impl TermStore {
         // whichever implementation wrote it. Hand-built rather than derived:
         // `voted_for` is an `Option` that must appear as `null` and never be
         // skipped, and a `skip_serializing_if` added later by habit would make
-        // the file's absent-versus-zero distinction vanish.
+        // the file's absent-versus-zero distinction vanish. The reservation is
+        // written as `null` when there is none, the way `voted_for` is, so
+        // every file this version writes has the same five keys; a cursor's
+        // text is digits and a colon, which JSON needs no escaping for.
         let payload = format!(
             "{{\n  \"version\": {},\n  \"term\": {},\n  \"voted_for\": {},\n  \
-             \"incarnation\": {}\n}}",
+             \"incarnation\": {},\n  \"cursor_reservation\": {}\n}}",
             STATE_VERSION,
             state.term,
             match state.voted_for {
@@ -237,6 +281,10 @@ impl TermStore {
                 None => "null".to_owned(),
             },
             state.incarnation,
+            match state.cursor_reservation {
+                Some(cursor) => format!("\"{cursor}\""),
+                None => "null".to_owned(),
+            },
         );
 
         let directory = self
@@ -304,6 +352,36 @@ impl TermStore {
             "could not find an unused temporary name in {}",
             directory.display(),
         )))
+    }
+
+    /// The stored reservation: absent or `null` is none, else a cursor.
+    ///
+    /// Anything else refuses, as an unusable vote does. Resuming *no*
+    /// reservation instead would be a guess in the one direction that is not
+    /// safe: this member could then re-mint cursors it has already handed out.
+    /// Parsed with [`TaiCursor::parse`], whose rules are the Python's
+    /// `TaiCursor.parse` -- digits, a colon, digits, and nothing else.
+    fn cursor_reservation(&self, raw: &Value) -> Result<Option<TaiCursor>, PersistentStateError> {
+        let stored = match raw.get("cursor_reservation") {
+            None | Some(&Value::Null) => return Ok(None),
+            Some(stored) => stored,
+        };
+        match *stored {
+            Value::String(ref text) => TaiCursor::parse(text),
+            _ => None,
+        }
+        .map(Some)
+        .ok_or_else(|| {
+            PersistentStateError(format!(
+                "{} holds a cursor reservation that is not a cursor: {}. \
+                 Refusing to start without knowing which paging cursors this \
+                 member has already handed out; removing the key starts it \
+                 without that knowledge, and a cursor it hands out may then \
+                 repeat one it handed out before.",
+                self.path.display(),
+                python_repr(stored),
+            ))
+        })
     }
 
     fn unreadable(&self, error: &dyn std::fmt::Display) -> PersistentStateError {

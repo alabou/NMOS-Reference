@@ -64,12 +64,8 @@ pub fn context_for(
         );
         return Ok(None);
     }
-    let (context, report, mode) = server_context(
-        identities,
-        trust_anchors,
-        optional_client_auth,
-        gcrl,
-    )?;
+    let (context, report, mode) =
+        server_context(identities, trust_anchors, optional_client_auth, gcrl)?;
     for line in report.describe() {
         tracing::info!("{line}");
     }

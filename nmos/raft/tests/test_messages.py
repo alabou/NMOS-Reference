@@ -33,6 +33,8 @@ from nmos.raft.messages import (
     Promote,
     Propose,
     ProposeReply,
+    ReadIndex,
+    ReadIndexReply,
     RequestVote,
     RequestVoteReply,
     WireEntry,
@@ -69,6 +71,10 @@ _SAMPLES = [
     ),
     InstallSnapshotReply(term=4, bytes_received=2052, done=True),
     Promote(term=6, leader=1, through_index=500),
+    ReadIndex(request_id=13),
+    ReadIndexReply(
+        ok=True, index=640, reason="confirmed by a quorum", request_id=13,
+    ),
     Propose(proposals=(b"op-one", b"op-two", b"op-three"), request_id=11),
     ProposeReply(
         accepted=True, reason="", term=6, first_index=120, request_id=11,

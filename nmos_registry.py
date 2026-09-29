@@ -909,6 +909,20 @@ async def go_registry_authorizations(
 # ---------------------------------------------------------------------------
 
 
+async def _exit_when_the_member_stops(node: Any) -> None:
+    """End the process when the consensus member stops itself.
+
+    A member stops on a broken invariant and takes no further part
+    (``RaftNode._fail``); only a restart makes it whole, bringing it back with
+    nothing to be caught up as a non-voting learner. Raising here fails the task
+    group, which is what makes ``main`` log the cause and exit with status 1 --
+    the status a service manager restarts on. Running on regardless would keep
+    the Registration and Query APIs up in front of a member that takes part in
+    nothing.
+    """
+    raise await node.wait_for_failure()
+
+
 def _build_raft_node(registry: Any, config: Any) -> Any:
     """Assemble one raft member: transport, term store, state machine, node.
 
@@ -947,7 +961,7 @@ def _build_raft_node(registry: Any, config: Any) -> Any:
     )
 
     config.state_dir.mkdir(parents=True, exist_ok=True)
-    snapshots = SnapshotStore(registry.store)
+    snapshots = SnapshotStore(registry)
     machine = StateMachine(
         registry,
         ownership=OwnershipTable(),
@@ -1147,6 +1161,8 @@ async def main(args: argparse.Namespace) -> None:
     )
     await dg.dispatch(run_garbage_collection(dg, registry, backend))
     await dg.dispatch(run_status_reporting(dg, registry, args.statusInterval))
+    if distributed is not None and distributed.backend is DistributedBackend.RAFT:
+        await dg.dispatch(_exit_when_the_member_stops(backend.node))
 
     if args.oauth2:
         await dg.dispatch(

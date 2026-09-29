@@ -22,17 +22,23 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use nmos_registry_raft::messages::{
-    AppendEntries, AppendEntriesReply, Forward, ForwardReply, Hello, InstallSnapshot,
-    InstallSnapshotReply, Message, Promote, Propose, ProposeReply, RequestVote, RequestVoteReply,
+    AppendEntries, AppendEntriesReply, Forward, ForwardReply, Hello, HelloAck, InstallSnapshot,
+    InstallSnapshotReply, Message, Pong, Promote, Propose, ProposeReply, ReadIndex, ReadIndexReply,
+    RequestVote, RequestVoteReply, decode_message,
 };
+use nmos_registry_raft::persist::PersistentStateError;
 use nmos_registry_raft::transport::{
-    PeerHandler, RaftTransport, Transport, TransportSettings, refuse_certificate, refuse_hello,
+    CONN_READ_TIMEOUT_MS, PeerHandler, RaftTransport, Transport, TransportSettings, frame_for,
+    read_frame, refuse_certificate, refuse_hello,
 };
-use nmos_registry_raft::wire::{PROTOCOL_MAJOR, Stream};
+use nmos_registry_raft::wire::{
+    FLAG_REPLY, Frame, MessageType, PROTOCOL_MAJOR, PROTOCOL_MINOR, Stream, encode_frame,
+};
+use tokio::io::AsyncWriteExt as _;
 use tokio::sync::Mutex;
 
 /// Records what arrived, and answers the way a member would.
@@ -45,6 +51,9 @@ struct Recorder {
     peer_down: AtomicU64,
     last_incarnation: AtomicU64,
     append_replies: AtomicU64,
+    /// Answers every append, and every append reply, as a member whose term
+    /// file can no longer be written: with the save's failure.
+    saves_fail: AtomicBool,
     /// Holds `on_forward` open until the test releases it.
     ///
     /// `None` by default, so every other test sees an immediate answer. Only
@@ -55,21 +64,42 @@ struct Recorder {
     seen: Mutex<Vec<String>>,
 }
 
+impl Recorder {
+    /// What a member's save of its term would do: fail, once told to.
+    fn save(&self) -> Result<(), PersistentStateError> {
+        if self.saves_fail.load(Ordering::SeqCst) {
+            return Err(PersistentStateError(
+                "could not write raft-state.json: No space left on device".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl PeerHandler for Recorder {
-    fn on_request_vote(&self, _peer: u64, message: &RequestVote) -> RequestVoteReply {
+    fn on_request_vote(
+        &self,
+        _peer: u64,
+        message: &RequestVote,
+    ) -> Result<RequestVoteReply, PersistentStateError> {
         self.votes.fetch_add(1, Ordering::SeqCst);
-        RequestVoteReply {
+        Ok(RequestVoteReply {
             term: message.term,
             granted: true,
             voting: true,
             pre_vote: message.pre_vote,
-        }
+        })
     }
 
-    fn on_append_entries(&self, _peer: u64, message: &AppendEntries) -> AppendEntriesReply {
+    fn on_append_entries(
+        &self,
+        _peer: u64,
+        message: &AppendEntries,
+    ) -> Result<AppendEntriesReply, PersistentStateError> {
         self.appends.fetch_add(1, Ordering::SeqCst);
-        AppendEntriesReply {
+        self.save()?;
+        Ok(AppendEntriesReply {
             term: message.term,
             success: true,
             match_index: message.prev_log_index + message.entries.len() as u64,
@@ -77,28 +107,52 @@ impl PeerHandler for Recorder {
             conflict_term: 0,
             catching_up: false,
             request_id: message.request_id,
-        }
+        })
     }
 
-    fn on_install_snapshot(&self, _peer: u64, message: &InstallSnapshot) -> InstallSnapshotReply {
-        InstallSnapshotReply {
+    fn on_install_snapshot(
+        &self,
+        _peer: u64,
+        message: &InstallSnapshot,
+    ) -> Result<InstallSnapshotReply, PersistentStateError> {
+        Ok(InstallSnapshotReply {
             term: message.term,
             bytes_received: message.data.len() as u64,
             done: message.done,
-        }
+            commit_index: 0,
+            request_id: message.request_id,
+        })
     }
 
     fn on_promote(&self, _peer: u64, _message: &Promote) {
         self.promotes.fetch_add(1, Ordering::SeqCst);
     }
 
-    fn on_request_vote_reply(&self, _peer: u64, _message: &RequestVoteReply) {}
-
-    fn on_append_entries_reply(&self, _peer: u64, _message: &AppendEntriesReply) {
-        self.append_replies.fetch_add(1, Ordering::SeqCst);
+    fn on_request_vote_reply(
+        &self,
+        _peer: u64,
+        _message: &RequestVoteReply,
+    ) -> Result<(), PersistentStateError> {
+        Ok(())
     }
 
-    fn on_install_snapshot_reply(&self, _peer: u64, _message: &InstallSnapshotReply) {}
+    fn on_append_entries_reply(
+        &self,
+        _peer: u64,
+        _message: &AppendEntriesReply,
+    ) -> Result<(), PersistentStateError> {
+        self.append_replies.fetch_add(1, Ordering::SeqCst);
+        self.save()?;
+        Ok(())
+    }
+
+    fn on_install_snapshot_reply(
+        &self,
+        _peer: u64,
+        _message: &InstallSnapshotReply,
+    ) -> Result<(), PersistentStateError> {
+        Ok(())
+    }
 
     async fn on_propose(&self, _peer: u64, message: &Propose) -> ProposeReply {
         self.seen
@@ -134,6 +188,16 @@ impl PeerHandler for Recorder {
             not_owner: false,
             request_id: message.request_id,
             owner: Some(1),
+        }
+    }
+
+    async fn on_read_index(&self, _peer: u64, message: &ReadIndex) -> ReadIndexReply {
+        self.seen.lock().await.push("read index".to_owned());
+        ReadIndexReply {
+            ok: true,
+            index: 7,
+            reason: String::new(),
+            request_id: message.request_id,
         }
     }
 
@@ -195,6 +259,7 @@ async fn pair(
             incarnation: local + 10,
             tls: None,
             rpc_timeout_ms: 2_000,
+            conn_read_timeout_ms: CONN_READ_TIMEOUT_MS,
         }))
     };
 
@@ -527,6 +592,7 @@ async fn the_bulk_stream_is_separate_from_control() {
                 data: vec![1, 2, 3, 4],
                 done: true,
                 ownership: Vec::new(),
+                request_id: 7,
             }),
             Stream::Bulk,
             Some(2_000),
@@ -597,6 +663,7 @@ async fn a_member_in_another_cluster_is_refused_and_does_not_link() {
         incarnation: 1,
         tls: None,
         rpc_timeout_ms: 500,
+        conn_read_timeout_ms: CONN_READ_TIMEOUT_MS,
     }));
 
     let mut ours = HashMap::new();
@@ -610,6 +677,7 @@ async fn a_member_in_another_cluster_is_refused_and_does_not_link() {
         incarnation: 1,
         tls: None,
         rpc_timeout_ms: 500,
+        conn_read_timeout_ms: CONN_READ_TIMEOUT_MS,
     }));
 
     let recorder = Arc::new(Recorder::default());
@@ -648,6 +716,99 @@ async fn closing_reports_the_peer_down() {
     );
     assert!(until(|| b.live().is_empty()).await);
 
+    b.close().await;
+}
+
+// -- a handler that could not save ------------------------------------------
+//
+// What the Python's transport does with the exception a failed save raises out
+// of its handler: nothing is answered, and the connection the message came by
+// ends -- closed by `_serve` on the side that received a request, dropped and
+// dialled again by `_maintain` on the side that received a reply.
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_request_that_cannot_be_saved_gets_no_answer_and_ends_its_connection() {
+    let (a, recorder_a, b, recorder_b) = pair("unsaved-request").await;
+    let downs = recorder_a.peer_down.load(Ordering::SeqCst);
+    recorder_b.saves_fail.store(true, Ordering::SeqCst);
+
+    let heartbeat = Message::AppendEntries(AppendEntries {
+        term: 3,
+        leader: 0,
+        prev_log_index: 0,
+        prev_log_term: 0,
+        leader_commit: 0,
+        request_id: 0,
+        entries: Vec::new(),
+    });
+    let answer = a.request(1, &heartbeat, Stream::Control, Some(2_000)).await;
+    assert_eq!(
+        recorder_b.appends.load(Ordering::SeqCst),
+        1,
+        "the append never arrived"
+    );
+    assert!(
+        answer.is_err(),
+        "member 1 answered an append it could not save: {answer:?}",
+    );
+    assert!(
+        until(|| recorder_a.peer_down.load(Ordering::SeqCst) > downs).await,
+        "the connection outlived an append member 1 could not save",
+    );
+
+    // Dialled again, and answered on the new connection once saves work.
+    recorder_b.saves_fail.store(false, Ordering::SeqCst);
+    assert!(
+        until(|| a.live() == vec![1]).await,
+        "the link never came back"
+    );
+    let again = a.request(1, &heartbeat, Stream::Control, Some(2_000)).await;
+    assert!(
+        again.is_ok(),
+        "no answer once saves worked again: {again:?}"
+    );
+
+    a.close().await;
+    b.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reply_that_cannot_be_saved_ends_the_link_it_came_by() {
+    let (a, recorder_a, b, _recorder_b) = pair("unsaved-reply").await;
+    let downs = recorder_a.peer_down.load(Ordering::SeqCst);
+    recorder_a.saves_fail.store(true, Ordering::SeqCst);
+
+    // Fire-and-forget, so the answer goes to the handler, which cannot save
+    // what it says.
+    a.send(
+        1,
+        &Message::AppendEntries(AppendEntries {
+            term: 3,
+            leader: 0,
+            prev_log_index: 0,
+            prev_log_term: 0,
+            leader_commit: 0,
+            request_id: 0,
+            entries: Vec::new(),
+        }),
+        Stream::Control,
+    );
+    assert!(
+        until(|| recorder_a.append_replies.load(Ordering::SeqCst) == 1).await,
+        "the reply never reached member 0",
+    );
+    assert!(
+        until(|| recorder_a.peer_down.load(Ordering::SeqCst) > downs).await,
+        "the link outlived a reply member 0 could not save",
+    );
+
+    recorder_a.saves_fail.store(false, Ordering::SeqCst);
+    assert!(
+        until(|| a.live() == vec![1]).await,
+        "the link never came back"
+    );
+
+    a.close().await;
     b.close().await;
 }
 
@@ -802,6 +963,7 @@ async fn starting_a_transport_takes_no_strong_reference_to_the_handler() {
         incarnation: 1,
         tls: None,
         rpc_timeout_ms: 500,
+        conn_read_timeout_ms: CONN_READ_TIMEOUT_MS,
     }));
 
     let recorder = Arc::new(Recorder::default());
@@ -919,4 +1081,458 @@ async fn a_reply_of_the_wrong_kind_does_not_satisfy_a_waiter() {
 
     a.close().await;
     b.close().await;
+}
+
+// -- a connection that stops moving is closed --------------------------------
+//
+// Over a real network a connection can go quiet without breaking: a path that
+// stops carrying packets sends no reset, and TCP keeps whatever was written,
+// retransmitting it until the path comes back -- then delivers all of it, in
+// order. A transport that waits for that has no bound on how late a message
+// arrives; the chaos soak measured writes answered 503 committing 4.6-26 s
+// later. etcd bounds it (`rafthttp`): a 5 s read and write deadline on every
+// peer connection, a link heartbeat every third of that, and a connection whose
+// deadline passes is closed with its queue discarded. These tests hold a
+// connection's bytes in a relay the member dials through -- the model of a
+// stalled path, which a cut is not -- and check what the transport does.
+
+/// Small, so these take seconds; the mechanism does not depend on the value.
+const READ_TIMEOUT_MS: u64 = 500;
+
+/// How long a stalled path holds what it was given: well past the deadline.
+const HOLD_MS: u64 = 2_000;
+
+/// One direction of a member's connections to a peer, through a relay that can
+/// hold every byte it carries, both ways, and then let it all go in order.
+///
+/// Holding, not dropping: a relay that closed the connection would be a cut,
+/// and a cut is what every transport already notices.
+struct Relay {
+    port: u16,
+    hold_ms: Arc<AtomicU64>,
+    accepting: tokio::task::JoinHandle<()>,
+}
+
+impl Relay {
+    async fn start(target: std::net::SocketAddr) -> Self {
+        let listener = tokio::net::TcpListener::bind(loopback(0))
+            .await
+            .expect("a port");
+        let port = listener.local_addr().expect("an address").port();
+        let hold_ms = Arc::new(AtomicU64::new(0));
+        let shared = Arc::clone(&hold_ms);
+        let accepting = tokio::spawn(async move {
+            while let Ok((caller, _)) = listener.accept().await {
+                let Ok(callee) = tokio::net::TcpStream::connect(target).await else {
+                    continue;
+                };
+                let hold = Arc::clone(&shared);
+                tokio::spawn(async move {
+                    let (from_caller, to_caller) = caller.into_split();
+                    let (from_callee, to_callee) = callee.into_split();
+                    let mut forward =
+                        tokio::spawn(relay(from_caller, to_callee, Arc::clone(&hold)));
+                    let mut backward = tokio::spawn(relay(from_callee, to_caller, hold));
+                    // Either direction ending ends both, as a proxy closing its
+                    // two sockets does: what one side still holds is lost.
+                    tokio::select! {
+                        _ = &mut forward => {}
+                        _ = &mut backward => {}
+                    }
+                    forward.abort();
+                    backward.abort();
+                });
+            }
+        });
+        Self {
+            port,
+            hold_ms,
+            accepting,
+        }
+    }
+
+    /// Hold every chunk read from now on for `ms` before passing it on.
+    fn hold(&self, ms: u64) {
+        self.hold_ms.store(ms, Ordering::SeqCst);
+    }
+}
+
+impl Drop for Relay {
+    fn drop(&mut self) {
+        self.accepting.abort();
+    }
+}
+
+async fn relay(
+    mut from: tokio::net::tcp::OwnedReadHalf,
+    mut to: tokio::net::tcp::OwnedWriteHalf,
+    hold_ms: Arc<AtomicU64>,
+) {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let mut buffer = vec![0u8; 65_536];
+    loop {
+        let read = match from.read(&mut buffer).await {
+            Ok(0) | Err(_) => return,
+            Ok(read) => read,
+        };
+        let hold = hold_ms.load(Ordering::SeqCst);
+        if hold > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(hold)).await;
+        }
+        if to.write_all(&buffer[..read]).await.is_err() {
+            return;
+        }
+    }
+}
+
+/// Members 0 and 1, each reaching the other only through a relay.
+struct Relayed {
+    transports: [Arc<RaftTransport>; 2],
+    recorders: [Arc<Recorder>; 2],
+    /// `relays[i]` carries member `i`'s connections to the other.
+    relays: [Relay; 2],
+}
+
+async fn relayed() -> Relayed {
+    let probes = [
+        std::net::TcpListener::bind(loopback(0)).expect("a port"),
+        std::net::TcpListener::bind(loopback(0)).expect("a port"),
+    ];
+    let addrs = [
+        probes[0].local_addr().expect("an address"),
+        probes[1].local_addr().expect("an address"),
+    ];
+    drop(probes);
+    let relays = [Relay::start(addrs[1]).await, Relay::start(addrs[0]).await];
+    let make = |local: u64| {
+        let mut peers = HashMap::new();
+        peers.insert(
+            1 - local,
+            ("127.0.0.1".to_owned(), relays[local as usize].port),
+        );
+        Arc::new(RaftTransport::new(TransportSettings {
+            local,
+            peers,
+            bind: addrs[local as usize],
+            cluster_id: "liveness".to_owned(),
+            member_name: format!("member-{local}"),
+            incarnation: local + 10,
+            tls: None,
+            rpc_timeout_ms: 2_000,
+            conn_read_timeout_ms: READ_TIMEOUT_MS,
+        }))
+    };
+    let transports = [make(0), make(1)];
+    let recorders = [Arc::new(Recorder::default()), Arc::new(Recorder::default())];
+    for (transport, recorder) in transports.iter().zip(&recorders) {
+        transport
+            .start(Arc::clone(recorder) as Arc<dyn PeerHandler>)
+            .await
+            .expect("listens");
+    }
+    assert!(
+        until(|| !transports[0].live().is_empty() && !transports[1].live().is_empty()).await,
+        "the two members never linked up",
+    );
+    Relayed {
+        transports,
+        recorders,
+        relays,
+    }
+}
+
+impl Relayed {
+    async fn close(self) {
+        for transport in &self.transports {
+            transport.close().await;
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_held_past_the_read_deadline_is_never_delivered() {
+    let pair = relayed().await;
+    pair.relays[0].hold(HOLD_MS);
+    pair.transports[0].send(
+        1,
+        &Message::Promote(Promote {
+            term: 4,
+            leader: 0,
+            through_index: 9,
+        }),
+        Stream::Control,
+    );
+    // Long enough that the relay has taken the frame and is holding it;
+    // lifting the hold then frees only what comes after.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    pair.relays[0].hold(0);
+    tokio::time::sleep(std::time::Duration::from_millis(HOLD_MS + 1_000)).await;
+
+    assert_eq!(
+        pair.recorders[1].promotes.load(Ordering::SeqCst),
+        0,
+        "a message held {HOLD_MS} ms by a stalled path was delivered when the path recovered, \
+         {}x the read deadline late: nothing bounds how late a message can arrive",
+        HOLD_MS / READ_TIMEOUT_MS,
+    );
+    pair.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_link_that_stops_moving_is_reported_down_within_the_deadline() {
+    let pair = relayed().await;
+    let stalled = std::time::Instant::now();
+    pair.relays[0].hold(10 * HOLD_MS);
+
+    let down = until(|| pair.recorders[0].peer_down.load(Ordering::SeqCst) > 0).await;
+    let after = stalled.elapsed();
+
+    assert!(
+        down,
+        "member 0's link to member 1 carried nothing for {after:?} and is still reported up",
+    );
+    // The deadline, plus up to one heartbeat interval for the last frame read
+    // before the stall, plus scheduling.
+    let bound = std::time::Duration::from_millis(READ_TIMEOUT_MS + READ_TIMEOUT_MS / 3 + 250);
+    assert!(after <= bound, "reported down {after:?} into the stall");
+    pair.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_idle_link_stays_up_past_the_read_deadline() {
+    // The heartbeat's guard: with nothing to send, a link must still carry
+    // enough to keep both ends' reads inside the deadline.
+    let pair = relayed().await;
+    tokio::time::sleep(std::time::Duration::from_millis(5 * READ_TIMEOUT_MS)).await;
+    for (member, recorder) in pair.recorders.iter().enumerate() {
+        assert_eq!(
+            recorder.peer_down.load(Ordering::SeqCst),
+            0,
+            "member {member} saw an idle, healthy link go down",
+        );
+    }
+    pair.close().await;
+}
+
+// -- an undecodable frame -----------------------------------------------------
+//
+// A frame that passes its checksum and will not decode is warned about ("raft:
+// undecodable frame") and answered with nothing, and the connection carries on:
+// the checksum proves the stream is still aligned, so the fault is the
+// sender's. The Python does the same since it was made to match
+// (`TestAnUndecodableFrameIsSkipped`). No member of this build sends such a
+// frame, so here the test plays the peer that does.
+
+/// A frame whose checksum passes and whose payload no member can decode.
+fn undecodable(kind: MessageType, stream: Stream, reply: bool) -> Vec<u8> {
+    let flags = if reply { FLAG_REPLY } else { 0 };
+    // A varint that never ends: the first field's tag already fails.
+    encode_frame(&Frame::new(stream, kind, flags, vec![0xFF; 11])).expect("a frame")
+}
+
+/// A heartbeat from `leader` in term 3, correlated by `request_id`.
+fn heartbeat(leader: u64, request_id: u64) -> Message {
+    Message::AppendEntries(AppendEntries {
+        term: 3,
+        leader,
+        prev_log_index: 0,
+        prev_log_term: 0,
+        leader_commit: 0,
+        request_id,
+        entries: Vec::new(),
+    })
+}
+
+/// Member 0 alone, listening on a port of its own, with member 1 at `peer`.
+async fn lone_member(
+    cluster_id: &str,
+    peer: std::net::SocketAddr,
+) -> (Arc<RaftTransport>, Arc<Recorder>, std::net::SocketAddr) {
+    let probe = std::net::TcpListener::bind(loopback(0)).expect("a port");
+    let address = probe.local_addr().expect("an address");
+    drop(probe);
+    let mut peers = HashMap::new();
+    peers.insert(1, ("127.0.0.1".to_owned(), peer.port()));
+    let member = Arc::new(RaftTransport::new(TransportSettings {
+        local: 0,
+        peers,
+        bind: address,
+        cluster_id: cluster_id.to_owned(),
+        member_name: "member-0".to_owned(),
+        incarnation: 10,
+        tls: None,
+        rpc_timeout_ms: 2_000,
+        conn_read_timeout_ms: CONN_READ_TIMEOUT_MS,
+    }));
+    let recorder = Arc::new(Recorder::default());
+    member
+        .start(Arc::clone(&recorder) as Arc<dyn PeerHandler>)
+        .await
+        .expect("member 0 listens");
+    (member, recorder, address)
+}
+
+/// An address nothing listens on.
+fn nowhere() -> std::net::SocketAddr {
+    let probe = std::net::TcpListener::bind(loopback(0)).expect("a port");
+    probe.local_addr().expect("an address")
+}
+
+/// Connect to `member` as member 1 would, and be admitted.
+async fn as_member_one(member: std::net::SocketAddr, cluster_id: &str) -> tokio::net::TcpStream {
+    let mut socket = tokio::net::TcpStream::connect(member)
+        .await
+        .expect("connects");
+    let hello = Message::Hello(Hello {
+        major: u64::from(PROTOCOL_MAJOR),
+        minor: u64::from(PROTOCOL_MINOR),
+        cluster_id: cluster_id.to_owned(),
+        member_name: "member-1".to_owned(),
+        member_index: 1,
+        incarnation: 11,
+        stream: Stream::Control,
+    });
+    socket
+        .write_all(&frame_for(&hello, Stream::Control, false))
+        .await
+        .expect("the hello goes");
+    let ack = read_frame(&mut socket).await.expect("an acknowledgement");
+    match decode_message(ack.message_type, &ack.payload) {
+        Ok(Message::HelloAck(ack)) if ack.accepted => socket,
+        other => panic!("not admitted: {other:?}"),
+    }
+}
+
+/// Be member 1 for everything member 0 dials: admit each link, answer its
+/// heartbeat pings, and answer each append twice -- with bytes that do not
+/// decode, then with the real reply.
+async fn answer_undecodably_then_truly(listener: tokio::net::TcpListener) {
+    loop {
+        let Ok((mut socket, _)) = listener.accept().await else {
+            return;
+        };
+        tokio::spawn(async move {
+            let Ok(hello) = read_frame(&mut socket).await else {
+                return;
+            };
+            let Ok(Message::Hello(hello)) = decode_message(hello.message_type, &hello.payload)
+            else {
+                return;
+            };
+            let ack = Message::HelloAck(HelloAck {
+                accepted: true,
+                reason: String::new(),
+                minor: u64::from(PROTOCOL_MINOR),
+                member_index: 1,
+                incarnation: 11,
+            });
+            if socket
+                .write_all(&frame_for(&ack, hello.stream, false))
+                .await
+                .is_err()
+            {
+                return;
+            }
+            while let Ok(frame) = read_frame(&mut socket).await {
+                let answers = match decode_message(frame.message_type, &frame.payload) {
+                    Ok(Message::Ping(ping)) => vec![frame_for(
+                        &Message::Pong(Pong { nonce: ping.nonce }),
+                        frame.stream,
+                        true,
+                    )],
+                    Ok(Message::AppendEntries(append)) => vec![
+                        undecodable(MessageType::AppendEntriesReply, frame.stream, true),
+                        frame_for(
+                            &Message::AppendEntriesReply(AppendEntriesReply {
+                                term: append.term,
+                                success: true,
+                                match_index: append.prev_log_index,
+                                conflict_index: 0,
+                                conflict_term: 0,
+                                catching_up: false,
+                                request_id: append.request_id,
+                            }),
+                            frame.stream,
+                            true,
+                        ),
+                    ],
+                    _ => Vec::new(),
+                };
+                for bytes in answers {
+                    if socket.write_all(&bytes).await.is_err() {
+                        return;
+                    }
+                }
+            }
+        });
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_undecodable_request_is_not_answered_and_its_connection_stays() {
+    let (member, recorder, address) = lone_member("undecodable-request", nowhere()).await;
+    let mut socket = as_member_one(address, "undecodable-request").await;
+
+    socket
+        .write_all(&undecodable(
+            MessageType::AppendEntries,
+            Stream::Control,
+            false,
+        ))
+        .await
+        .expect("written");
+    // Behind it on the same connection, and answered: the connection carried
+    // on past it, and the answer is this request's, not the other's.
+    socket
+        .write_all(&frame_for(&heartbeat(1, 7), Stream::Control, false))
+        .await
+        .expect("written");
+    let answer = tokio::time::timeout(std::time::Duration::from_secs(5), read_frame(&mut socket))
+        .await
+        .expect("an answer within the deadline")
+        .expect("the connection was ended for one undecodable frame");
+    match decode_message(answer.message_type, &answer.payload) {
+        Ok(Message::AppendEntriesReply(reply)) => assert_eq!(reply.request_id, 7),
+        other => panic!("answered with {other:?}"),
+    }
+    assert_eq!(
+        recorder.appends.load(Ordering::SeqCst),
+        1,
+        "the undecodable frame reached the handler",
+    );
+
+    member.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_undecodable_reply_leaves_the_link_up() {
+    let listener = tokio::net::TcpListener::bind(loopback(0))
+        .await
+        .expect("a port");
+    let fake = listener.local_addr().expect("an address");
+    let (member, recorder, _) = lone_member("undecodable-reply", fake).await;
+    let peer = tokio::spawn(answer_undecodably_then_truly(listener));
+
+    assert!(
+        until(|| member.live() == vec![1]).await,
+        "member 0 never linked to member 1",
+    );
+    let downs = recorder.peer_down.load(Ordering::SeqCst);
+
+    // Fire-and-forget, so the real reply goes to the handler; the undecodable
+    // one before it must reach nothing and end nothing.
+    member.send(1, &heartbeat(0, 0), Stream::Control);
+    assert!(
+        until(|| recorder.append_replies.load(Ordering::SeqCst) == 1).await,
+        "the real reply behind the undecodable one never reached member 0",
+    );
+    assert_eq!(
+        recorder.peer_down.load(Ordering::SeqCst),
+        downs,
+        "the link was dropped for one undecodable reply",
+    );
+    assert_eq!(member.live(), vec![1]);
+
+    member.close().await;
+    peer.abort();
 }
