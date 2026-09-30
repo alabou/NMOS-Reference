@@ -919,6 +919,19 @@ impl ChaosNet {
             .collect()
     }
 
+    /// Which connection `dialer` reaches `acceptor` on, while one is in place:
+    /// its epoch, bumped every time a connection drops, as the transport's
+    /// `Link::generation` is. Both streams ride one connection here, so they
+    /// share it.
+    fn connection_of(&self, dialer: u64, acceptor: u64) -> Option<u64> {
+        let inner = self.inner.lock();
+        inner
+            .links
+            .get(&(dialer, acceptor))
+            .filter(|link| link.connected)
+            .map(|link| link.epoch)
+    }
+
     // -- delivery -----------------------------------------------------------
 
     /// A packet's release time has come: deliver it, hold it, or lose it.
@@ -1511,5 +1524,9 @@ impl Transport for ChaosTransport {
 
     fn live(&self) -> Vec<u64> {
         self.net.live_of(self.local)
+    }
+
+    fn connection(&self, peer: u64, _stream: Stream) -> Option<u64> {
+        self.net.connection_of(self.local, peer)
     }
 }

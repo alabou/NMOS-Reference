@@ -305,12 +305,27 @@ class _PeerState:
     fences everything sent before a reset.
     """
 
-    snapshot_sent_at: float = 0.0
-    """When the chunk in flight was sent.
+    snapshot_carrier: int | None = None
+    """The BULK connection the chunk in flight went out on
+    (``Transport.connection``).
 
-    Overdue matters as much as outstanding: a chunk lost with its BULK
-    connection draws no answer, and nothing else ever clears it while CONTROL
-    stays up. ``election_min`` is the backstop, as for appends.
+    A chunk and its answer travel one connection, and while it is in place TCP
+    delivers both, in order -- each end's read deadline closes one that stops
+    moving -- so a chunk can be lost only with the connection it went out on.
+    That connection ending is what sends it again, and nothing else is.
+
+    It used to be a timer: a chunk unanswered for ``election_min`` went out
+    again under a new id, the backstop for one lost with its BULK connection
+    while CONTROL stayed up, which nothing reports (S6). A timer cannot tell a
+    slow chunk from a lost one. Where one chunk's round trip outlasts
+    ``election_min`` every answer arrived already superseded by the next copy,
+    only the newest copy's driving the transfer, so the transfer never passed
+    its first chunk -- measured over real sockets as 183 copies of chunk 0 in
+    30 s at 16 KiB/s, with 4 KiB chunks and a 150 ms ``election_min`` -- and
+    every copy, a whole chunk, queued behind the first in this member's memory.
+    etcd never sends a snapshot again because time has passed either: a peer
+    awaiting one is paused until the transport reports the transfer failed
+    (``tracker/progress.go:268-269``, ``raft.go:1611-1628``).
     """
 
 
@@ -2624,18 +2639,25 @@ class RaftNode:
             self._send_keepalive(peer, state)
             return
 
-        now = asyncio.get_running_loop().time()
+        carrier = self._transport.connection(peer, Stream.BULK)
         if state.snapshot_request:
-            if now - state.snapshot_sent_at < self._timing.election_min:
-                # One chunk at a time. See ``_PeerState.snapshot_request``. The
-                # chunk is on BULK, which a slow transfer can occupy for a long
-                # time, so the liveness signal goes separately on CONTROL.
+            if carrier is not None and carrier == state.snapshot_carrier:
+                # One chunk at a time (``_PeerState.snapshot_request``), and
+                # this one is still on its way: the connection it went out on
+                # is in place, so it will be answered or that connection will
+                # end (``_PeerState.snapshot_carrier``). The chunk is on BULK,
+                # which a slow transfer can occupy for a long time, so the
+                # liveness signal goes separately on CONTROL.
                 self._send_keepalive(peer, state)
                 return
-            # Overdue: lost with its connection, or its reply was. Sent again
-            # under a new id, so should the first answer arrive after all it
-            # is not the one awaited. See ``_PeerState.snapshot_sent_at``.
+            # Its connection has ended, taking the chunk or its answer with it.
+            # Sent again under a new id, so should the first answer arrive
+            # after all it is not the one awaited.
             state.snapshot_request = 0
+        if carrier is None:
+            # No BULK connection to carry a chunk until one is back.
+            self._send_keepalive(peer, state)
+            return
 
         if state.snapshot_offset == 0 or state.sending is None:
             # A transfer starts -- or restarts, the follower having thrown its
@@ -2652,7 +2674,7 @@ class RaftNode:
         # and appends alike.
         self._append_sequence += 1
         state.snapshot_request = self._append_sequence
-        state.snapshot_sent_at = now
+        state.snapshot_carrier = carrier
         self._transport.send(
             peer,
             InstallSnapshot(
@@ -2786,13 +2808,14 @@ class RaftNode:
             and _holds(assembly.data, message.offset, message.data)
         ):
             # A copy of a chunk this member already holds. The leader sends a
-            # chunk again once its answer is overdue, and a chunk that was slow
-            # rather than lost arrives as well as its copy -- first, since one
-            # connection carries both. Answered with what is assembled, which
-            # is where the leader resumes; the copy is the chunk in flight, so
-            # its answer is the one the leader acts on. Treated as a mismatch,
-            # as it once was, it threw the transfer away and the leader began
-            # again from nothing: 343 of 362 follower resets in chaos-soak seed
+            # chunk again once the connection it went out on has ended, which
+            # can take the answer and leave the chunk delivered; and a CONTROL
+            # reconnect starts a transfer again while BULK may still carry the
+            # old one's chunk. Answered with what is assembled, which is where
+            # the leader resumes; the copy is the chunk in flight, so its
+            # answer is the one the leader acts on. Treated as a mismatch, as
+            # it once was, it threw the transfer away and the leader began again
+            # from nothing: 343 of 362 follower resets in chaos-soak seed
             # 140692, whose members needing a snapshot never finished one.
             return answer(len(assembly.data))
         elif (
@@ -2954,9 +2977,10 @@ class RaftNode:
             state.next_index = max(state.next_index, credited + 1)
 
         if message.request_id != state.snapshot_request:
-            # Not the reply to the chunk in flight -- a first copy answered
-            # after an overdue one was sent again. It drives nothing: a second
-            # stream beside the first is how the transfer once forked.
+            # Not the reply to the chunk in flight -- the first copy of a chunk
+            # sent again once its connection had ended, say, answered after
+            # all. It drives nothing: a second stream beside the first is how
+            # the transfer once forked.
             return
         state.snapshot_request = 0
 

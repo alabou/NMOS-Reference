@@ -62,6 +62,9 @@ struct Recorder {
     /// link and the colliding append would never arrive.
     forward_gate: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
     seen: Mutex<Vec<String>>,
+    /// The most any snapshot-chunk answer sent to this member said was
+    /// received.
+    chunk_answered: AtomicU64,
 }
 
 impl Recorder {
@@ -149,8 +152,10 @@ impl PeerHandler for Recorder {
     fn on_install_snapshot_reply(
         &self,
         _peer: u64,
-        _message: &InstallSnapshotReply,
+        message: &InstallSnapshotReply,
     ) -> Result<(), PersistentStateError> {
+        self.chunk_answered
+            .fetch_max(message.bytes_received, Ordering::SeqCst);
         Ok(())
     }
 
@@ -1298,6 +1303,113 @@ async fn a_link_that_stops_moving_is_reported_down_within_the_deadline() {
     pair.close().await;
 }
 
+// -- both ends of a connection beat --------------------------------------------
+//
+// A connection carries requests one way and their answers the other, and the
+// dialling end's reads were fed only by answers -- to its requests, and to its
+// own heartbeat -- all of them queued behind whatever it was sending. So a
+// frame taking longer than the deadline to cross, a snapshot chunk over a slow
+// link, left its sender hearing nothing, and the sender closed a connection
+// that was working: measured, a leader dialling a new BULK connection every
+// ~5.1 s while two 16 KiB chunks crawled across at 2 KiB/s, never past the
+// first (part 17 of the fix record). The accepting end now sends a heartbeat of
+// its own, so each end's reads are fed by the other end's timer, whatever the
+// other direction carries. Port of `TestBothEndsOfAConnectionBeat`.
+
+/// What a slowed path holds every piece it relays, both ways: a frame of many
+/// pieces crawls across, its reader seeing bytes well inside the deadline.
+const TRICKLE_MS: u64 = 150;
+
+/// A chunk as a leader sends one; its size is what a test makes slow.
+fn chunk(data: Vec<u8>) -> Message {
+    Message::InstallSnapshot(InstallSnapshot {
+        term: 3,
+        leader: 0,
+        last_index: 9,
+        last_term: 3,
+        offset: 0,
+        data,
+        done: false,
+        ownership: Vec::new(),
+        request_id: 0,
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_accepting_end_of_a_connection_sends_its_own_heartbeat() {
+    let (member, _recorder, address) =
+        lone_member_reading("heartbeat", nowhere(), READ_TIMEOUT_MS).await;
+    let mut socket = as_member_one(address, "heartbeat").await;
+
+    // Admitted -- and now say nothing, and listen.
+    let heard = tokio::time::timeout(
+        std::time::Duration::from_millis(READ_TIMEOUT_MS),
+        read_frame(&mut socket),
+    )
+    .await;
+    match heard {
+        Ok(Ok(frame)) => assert!(
+            frame.message_type == MessageType::Pong && frame.is_reply(),
+            "the accepting end's heartbeat was a {:?}; a Pong nobody asked for draws no answer",
+            frame.message_type,
+        ),
+        Ok(Err(error)) => panic!(
+            "the accepting end of a connection said nothing before it closed it ({error}): the \
+             dialling end's reads are fed only by answers, which queue behind whatever it is \
+             sending"
+        ),
+        Err(_) => panic!(
+            "the accepting end of a connection said nothing for {READ_TIMEOUT_MS} ms, the whole \
+             read deadline: the dialling end's reads are fed only by answers, which queue behind \
+             whatever it is sending"
+        ),
+    }
+    member.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_frame_slower_than_the_read_deadline_is_answered() {
+    // Sent as a leader sends a chunk, and answered as a member answers one: on
+    // the connection it came by, to the sender's handler.
+    let pair = relayed().await;
+    let answered =
+        |bytes: usize| pair.recorders[0].chunk_answered.load(Ordering::SeqCst) >= bytes as u64;
+    // BULK up, and answering, before anything is slowed.
+    let warming = std::time::Instant::now();
+    while !answered(16) {
+        assert!(
+            warming.elapsed() < std::time::Duration::from_secs(5),
+            "BULK never came up"
+        );
+        pair.transports[0].send(1, &chunk(vec![b'x'; 16]), Stream::Bulk);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    // Half a megabyte crawls across in pieces, each held on the way, the member
+    // reading some of it every `TRICKLE_MS` -- inside its deadline -- while
+    // nothing it could answer comes back.
+    pair.relays[0].hold(TRICKLE_MS);
+    let began = std::time::Instant::now();
+    pair.transports[0].send(1, &chunk(vec![0; 512 * 1024]), Stream::Bulk);
+    let limit = std::time::Duration::from_secs(20);
+    while !answered(512 * 1024) && began.elapsed() < limit {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let took = began.elapsed();
+    assert!(
+        answered(512 * 1024),
+        "a frame taking longer than the {READ_TIMEOUT_MS} ms read deadline to cross was never \
+         answered in {took:?}: its sender heard nothing while it crossed, and closed a connection \
+         that was working",
+    );
+    assert!(
+        took > std::time::Duration::from_millis(2 * READ_TIMEOUT_MS),
+        "the frame crossed in {took:?}, inside the deadline: this proves nothing about one that \
+         does not",
+    );
+    pair.close().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_idle_link_stays_up_past_the_read_deadline() {
     // The heartbeat's guard: with nothing to send, a link must still carry
@@ -1348,6 +1460,16 @@ async fn lone_member(
     cluster_id: &str,
     peer: std::net::SocketAddr,
 ) -> (Arc<RaftTransport>, Arc<Recorder>, std::net::SocketAddr) {
+    lone_member_reading(cluster_id, peer, CONN_READ_TIMEOUT_MS).await
+}
+
+/// As [`lone_member`], with every connection's read deadline at
+/// `read_timeout_ms`.
+async fn lone_member_reading(
+    cluster_id: &str,
+    peer: std::net::SocketAddr,
+    read_timeout_ms: u64,
+) -> (Arc<RaftTransport>, Arc<Recorder>, std::net::SocketAddr) {
     let probe = std::net::TcpListener::bind(loopback(0)).expect("a port");
     let address = probe.local_addr().expect("an address");
     drop(probe);
@@ -1362,7 +1484,7 @@ async fn lone_member(
         incarnation: 10,
         tls: None,
         rpc_timeout_ms: 2_000,
-        conn_read_timeout_ms: CONN_READ_TIMEOUT_MS,
+        conn_read_timeout_ms: read_timeout_ms,
     }));
     let recorder = Arc::new(Recorder::default());
     member

@@ -116,11 +116,14 @@ pub const CONN_READ_TIMEOUT_MS: u64 = 5_000;
 /// from write deadlines for the same reason (`rafthttp/util.go:45-52`).
 pub const CONN_WRITE_TIMEOUT_MS: u64 = 5_000;
 
-/// A `Ping` goes out on every outbound link this many times per read timeout.
+/// Each end of every connection says something this many times per read
+/// timeout.
 ///
-/// etcd's stream writer ticks every `ConnReadTimeout / 3` (`stream.go:169`), so
-/// a healthy link whose ends have nothing to say still carries something well
-/// inside the deadline, with room for two to be late.
+/// A `Ping` from the end that dialled (`Inner::beat`), a `Pong` from the end
+/// that accepted (`Inner::beat_back`). etcd's stream writer ticks every
+/// `ConnReadTimeout / 3` (`stream.go:169`), so a healthy link whose ends have
+/// nothing to say still carries something well inside the deadline, with room
+/// for two to be late.
 pub const HEARTBEATS_PER_READ_TIMEOUT: u64 = 3;
 
 /// A countdown armed while an operation waits, and disarmed by any progress.
@@ -418,6 +421,16 @@ pub trait Transport: Send + Sync + 'static {
 
     /// Which peers currently have a control link.
     fn live(&self) -> Vec<u64>;
+
+    /// Which connection `stream` to `peer` is on now; `None` if none is.
+    ///
+    /// An id that changes whenever that connection ends, and is never reused.
+    /// A snapshot transfer rests on it (`RaftNode::send_snapshot`): a chunk and
+    /// its answer travel one connection, and while that connection is in place
+    /// TCP delivers both, in order -- each end's read deadline closes one that
+    /// stops moving -- so a chunk can be lost only with the connection it went
+    /// out on, and its ending is the one reason to send it again.
+    fn connection(&self, peer: u64, stream: Stream) -> Option<u64>;
 }
 
 /// Read one frame from a stream.
@@ -1255,11 +1268,13 @@ impl Inner {
     /// Say something on a link every third of the read timeout.
     ///
     /// A `Ping` keeps the peer's reads inside its deadline, and the `Pong` it
-    /// draws keeps this end's: a connection here carries requests one way and
-    /// their answers the other, so a link with nothing to say would go quiet in
-    /// both directions at once. etcd's streams run one way, so its heartbeat
-    /// needs no answer (`stream.go:183-192`); these need one. Neither reaches
-    /// the node. Sent whatever else is flowing, as etcd's is.
+    /// draws keeps this end's -- when nothing this end is sending is in its way;
+    /// the accepting end's own heartbeat keeps them whatever is (`beat_back`).
+    /// A connection here carries requests one way and their answers the other,
+    /// so a link with nothing to say would go quiet in both directions at once.
+    /// etcd's streams run one way, so its heartbeat needs no answer
+    /// (`stream.go:183-192`). Neither reaches the node. Sent whatever else is
+    /// flowing, as etcd's is.
     async fn beat(self: Arc<Self>, peer: u64, stream: Stream) {
         let Some(link) = self.links.get(&(peer, stream)).cloned() else {
             return;
@@ -1277,6 +1292,54 @@ impl Inner {
                 return;
             }
         }
+    }
+
+    /// The accepting end's heartbeat: a `Pong` every third of the read timeout,
+    /// on the connection it accepted, for as long as that is served.
+    ///
+    /// The dialling end's reads were fed only by answers -- to its requests, and
+    /// to its own `Ping` (`beat`) -- and every one of them waits behind whatever
+    /// that end is sending, the `Ping` in its own queue and the answers until
+    /// what they answer has arrived. So a frame taking longer than the read
+    /// timeout to cross, a snapshot chunk over a slow link, left its sender
+    /// hearing nothing, and the sender closed a connection that was working:
+    /// measured, a leader dialling a new BULK connection every ~5.1 s while two
+    /// 16 KiB chunks crawled across at 2 KiB/s, the transfer never past the
+    /// first. Beating from this end too feeds each end's reads from the other
+    /// end's own timer, whatever the other direction carries -- and a path that
+    /// stops moving still starves both ends, which still close it.
+    ///
+    /// A `Pong` rather than a `Ping`: an answer nobody asked for draws none from
+    /// either transport (`resolve` finds no waiter and no handler for it), so
+    /// the dialling end, whose outbound direction may be the one that is slow,
+    /// is never asked to say anything back. It does not reach the node. etcd's
+    /// streams each carry their own writer's heartbeat (`stream.go:169`).
+    async fn beat_back(
+        self: Arc<Self>,
+        writer: Arc<tokio::sync::Mutex<Box<dyn AsyncWriteUnpinSend>>>,
+        stream: Stream,
+    ) {
+        let interval =
+            Duration::from_millis(self.conn_read_timeout_ms / HEARTBEATS_PER_READ_TIMEOUT);
+        let mut nonce: u64 = 0;
+        loop {
+            tokio::time::sleep(interval).await;
+            nonce = nonce.saturating_add(1);
+            let bytes = frame_for(&Message::Pong(Pong { nonce }), stream, true);
+            if !write_frame(&writer, &bytes).await {
+                return;
+            }
+        }
+    }
+}
+
+/// Aborts its task when dropped: how a task tied to one connection ends with
+/// it, whichever way the code serving that connection returns.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }
 
@@ -1369,6 +1432,12 @@ impl Inner {
         // this two replies could interleave on the wire; the outbound links
         // have had the same lock for the same reason since they were written.
         let writer = Arc::new(tokio::sync::Mutex::new(writer));
+        // This end's own heartbeat, for as long as the connection is served:
+        // see `beat_back`. Ended with it however it ends, or its share of the
+        // writer would hold the connection half open after this returns.
+        let _beat = AbortOnDrop(tokio::spawn(
+            Arc::clone(&self).beat_back(Arc::clone(&writer), hello.stream),
+        ));
         while !self.closing.load(Ordering::SeqCst) {
             let inbound = match read_frame(&mut reader).await {
                 Ok(inbound) => inbound,
@@ -1749,5 +1818,18 @@ impl Transport for RaftTransport {
             .collect();
         live.sort_unstable();
         live
+    }
+
+    fn connection(&self, peer: u64, stream: Stream) -> Option<u64> {
+        let link = self.inner.links.get(&(peer, stream))?;
+        // The generation first. `take_down` clears `connected` and then bumps
+        // the generation, and a reconnect sets `connected` again without
+        // bumping it, so read the other way round this could pair the flag of
+        // the connection that has just ended with the generation of the one
+        // replacing it -- a connection a frame sent now might never reach,
+        // named as the one carrying it. Read this way it can only name an
+        // older one, which costs at most a chunk sent twice.
+        let generation = link.generation.load(Ordering::SeqCst);
+        link.connected.load(Ordering::SeqCst).then_some(generation)
     }
 }

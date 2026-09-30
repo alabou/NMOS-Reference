@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import logging
 import socket
 from collections.abc import Callable
@@ -31,10 +32,26 @@ from typing import Any
 import pytest
 
 from nmos.raft.errors import RaftUnavailable
-from nmos.raft.messages import AppendEntries, AppendEntriesReply, Promote
+from nmos.raft.messages import (
+    AppendEntries,
+    AppendEntriesReply,
+    Hello,
+    InstallSnapshot,
+    InstallSnapshotReply,
+    Promote,
+    decode_message,
+)
 from nmos.raft.tests._proxy import ProxyMesh
 from nmos.raft.transport import RaftTransport
-from nmos.raft.wire import MessageType
+from nmos.raft.wire import (
+    PROTOCOL_MAJOR,
+    PROTOCOL_MINOR,
+    Frame,
+    MessageType,
+    Stream,
+    encode_frame,
+    read_frame,
+)
 
 # Small, so the tests take seconds rather than etcd's 5 s multiples; the
 # mechanism does not depend on the value.
@@ -227,6 +244,150 @@ class TestAConnectionThatStopsMovingIsClosed:
                 assert not downs, (
                     f"member {member} saw an idle, healthy link go down: {downs}"
                 )
+        finally:
+            await pair.close()
+
+
+class _AnswersChunks(_Recorder):
+    """A member that acknowledges every snapshot chunk it is sent, whole."""
+
+    def on_install_snapshot(
+        self, peer: int, message: InstallSnapshot,
+    ) -> InstallSnapshotReply:
+        return InstallSnapshotReply(
+            term=message.term, bytes_received=message.offset + len(message.data),
+            done=message.done, commit_index=0, request_id=message.request_id,
+        )
+
+
+class _SendsChunks(_Recorder):
+    """A member that records what its chunks' answers said was received."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.answered = 0
+
+    def on_install_snapshot_reply(
+        self, peer: int, message: InstallSnapshotReply,
+    ) -> None:
+        self.answered = max(self.answered, message.bytes_received)
+
+
+# A chunk as a leader sends one; its size is what a test makes slow.
+_CHUNK = InstallSnapshot(
+    term=3, leader=0, last_index=9, last_term=3, offset=0, data=b"x" * 16,
+    done=False, ownership=b"", request_id=0,
+)
+
+# What a slowed path holds every piece it relays, both ways: a frame of many
+# pieces crawls across, its reader seeing bytes well inside the deadline.
+_TRICKLE = 0.15
+
+
+class TestBothEndsOfAConnectionBeat:
+    """Each end of a connection says something every third of the deadline.
+
+    A connection carries requests one way and their answers the other, and the
+    dialling end's reads were fed only by answers -- to its requests, and to
+    its own heartbeat -- all of them queued behind whatever it was sending. So a
+    frame taking longer than the deadline to cross, a snapshot chunk over a slow
+    link, left its sender hearing nothing, and the sender closed a connection
+    that was working: measured, a leader closing its BULK link every 5.07 s
+    while one 64 KiB chunk crawled across at 8 KiB/s, never past that chunk
+    (part 17 of the fix record). The accepting end now sends a heartbeat of
+    its own, so each end's reads are fed by the other end's timer, whatever the
+    other direction carries. etcd's streams each carry their own writer's
+    heartbeat (``stream.go:169``), and its one connection that carries a single
+    long message, the snapshot's, has no deadline at its sending end at all
+    (``rafthttp/util.go:45-52``).
+    """
+
+    async def test_the_accepting_end_sends_its_own_heartbeat(self) -> None:
+        held = socket.socket()
+        held.bind(("127.0.0.1", 0))
+        port = int(held.getsockname()[1])
+        nowhere = socket.socket()
+        nowhere.bind(("127.0.0.1", 0))
+        held.close()
+        member = RaftTransport(
+            local=0, peers={1: ("127.0.0.1", int(nowhere.getsockname()[1]))},
+            bind=("127.0.0.1", port), cluster_id="liveness", member_name="m0",
+            incarnation=1, rpc_timeout=1.0, conn_read_timeout=READ_TIMEOUT,
+        )
+        await member.start(_Recorder())
+        writer: asyncio.StreamWriter | None = None
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(encode_frame(Frame(
+                stream=Stream.CONTROL, type=MessageType.HELLO, flags=0,
+                payload=Hello(
+                    major=PROTOCOL_MAJOR, minor=PROTOCOL_MINOR,
+                    cluster_id="liveness", member_name="m1", member_index=1,
+                    incarnation=1, stream=Stream.CONTROL,
+                ).encode(),
+            )))
+            ack = await asyncio.wait_for(read_frame(reader), 2.0)
+            assert ack.type is MessageType.HELLO_ACK
+            assert decode_message(ack.type, ack.payload).accepted
+
+            # Admitted -- and now say nothing, and listen.
+            try:
+                frame = await asyncio.wait_for(read_frame(reader), READ_TIMEOUT)
+            except (
+                asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError,
+            ) as exc:
+                pytest.fail(
+                    f"the accepting end of a connection said nothing for "
+                    f"{READ_TIMEOUT}s, the whole read deadline ({exc!r}): the "
+                    f"dialling end's reads are fed only by answers, which queue "
+                    f"behind whatever it is sending"
+                )
+            assert frame.type is MessageType.PONG and frame.is_reply, (
+                f"the accepting end's heartbeat was a {frame.type.name}; a "
+                f"Pong nobody asked for draws no answer"
+            )
+        finally:
+            if writer is not None:
+                writer.close()
+            nowhere.close()
+            await member.close()
+
+    async def test_a_frame_slower_than_the_read_deadline_is_answered(self) -> None:
+        # Sent as a leader sends a chunk, and answered as a member answers one:
+        # on the connection it came by, to the sender's handler.
+        sender = _SendsChunks()
+        pair = _Pair(recorders=(sender, _AnswersChunks()))
+        await pair.start()
+        try:
+            # BULK up, and answering, before anything is slowed.
+            loop = asyncio.get_running_loop()
+            warming = loop.time()
+            while sender.answered < len(_CHUNK.data):
+                assert loop.time() - warming < 5.0, "BULK never came up"
+                pair.transports[0].send(1, _CHUNK, stream=Stream.BULK)
+                await asyncio.sleep(0.05)
+
+            # Half a megabyte crawls across in pieces, each held on the way,
+            # the member reading some of it every ``_TRICKLE`` -- inside its
+            # deadline -- while nothing it could answer comes back.
+            pair.stall(0, 1, _TRICKLE)
+            chunk = dataclasses.replace(_CHUNK, data=bytes(512 * 1024))
+            began = loop.time()
+            pair.transports[0].send(1, chunk, stream=Stream.BULK)
+            arrived = await _until(
+                lambda: sender.answered >= len(chunk.data), timeout=20.0,
+            )
+            took = loop.time() - began
+            assert arrived, (
+                f"a frame taking longer than the {READ_TIMEOUT}s read deadline "
+                f"to cross was never answered in {took:.1f}s: its sender heard "
+                f"nothing while it crossed, and closed a connection that was "
+                f"working"
+            )
+            assert took > 2 * READ_TIMEOUT, (
+                f"the frame crossed in {took:.2f}s, inside the deadline: this "
+                f"proves nothing about one that does not"
+            )
         finally:
             await pair.close()
 

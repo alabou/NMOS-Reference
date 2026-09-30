@@ -139,6 +139,11 @@ class MemoryNetwork:
         # FIFO: each message leaves no earlier than the one before it.
         self._link_clock: dict[tuple[int, int, int], float] = {}
 
+        # Which connection each directed (source, target, stream) is on. See
+        # ``connection``.
+        self._connections: dict[tuple[int, int, int], int] = {}
+        self._next_connection = 0
+
     # -- membership -----------------------------------------------------
 
     def attach(self, index: int, handler: PeerHandler) -> None:
@@ -209,6 +214,38 @@ class MemoryNetwork:
         self._blocked.clear()
         self._resync()
 
+    # -- connections ------------------------------------------------------
+
+    def connection(self, source: int, target: int, stream: Stream) -> int:
+        """Which connection ``source`` sends ``stream`` to ``target`` on.
+
+        An id, and it changes only when ``drop_connection`` ends that
+        connection. Every other break this network makes -- ``partition``,
+        ``block``, ``stop``, ``lose`` -- ends with an announcement that the link
+        is up again, which a leader takes as a reconnect: it disowns what was in
+        flight and starts a transfer again from zero, whatever connection it was
+        on. The one break no announcement reports is a BULK connection ending
+        while CONTROL stays up, because ``on_peer_state`` follows CONTROL -- and
+        that is the case the id is for.
+        """
+        key = (source, target, int(stream))
+        if key not in self._connections:
+            self._next_connection += 1
+            self._connections[key] = self._next_connection
+        return self._connections[key]
+
+    def drop_connection(self, source: int, target: int, stream: Stream) -> None:
+        """End one connection, telling no one, and lose what it carries.
+
+        Both ways: what ``source`` sent on it, and the answers coming back on
+        it. What a BULK connection dropping on its own is -- the snapshot chunk
+        it carried, or that chunk's answer, gone, and nothing reported, since
+        CONTROL is still up (S6). What is sent afterwards goes out on the
+        connection that replaces it.
+        """
+        self._next_connection += 1
+        self._connections[(source, target, int(stream))] = self._next_connection
+
     def isolate(self, index: int) -> None:
         others = set(self._handlers) - {index}
         self.partition({index}, others)
@@ -260,7 +297,7 @@ class MemoryNetwork:
 
     def deliver(
         self, source: int, target: int, message: Any,
-        *, stream: Stream = Stream.CONTROL,
+        *, stream: Stream = Stream.CONTROL, answer: bool = False,
     ) -> None:
         """Hand a message to its recipient, on a later loop iteration.
 
@@ -273,6 +310,10 @@ class MemoryNetwork:
         release time, which never moves backwards -- so a slow link stays FIFO
         while two *different* streams drift apart, matching two TCP
         connections between the same pair of hosts.
+
+        ``answer`` says the message answers one ``target`` sent, and so travels
+        back on the connection that request came by -- ``target``'s, as in
+        ``transport.py`` -- which is the connection whose ending loses it.
         """
         if not self.reachable(source, target):
             self.dropped += 1
@@ -282,10 +323,14 @@ class MemoryNetwork:
             self.dropped += 1
             return
         self.delivered += 1
+        carrier = (target, source) if answer else (source, target)
+        carried = self.connection(*carrier, stream)
 
         loop = asyncio.get_running_loop()
         if self.rng is None or self.max_delay <= 0.0:
-            loop.call_soon(self._dispatch, source, target, message)
+            loop.call_soon(
+                self._dispatch, source, target, message, stream, carrier, carried,
+            )
             return
 
         key = (source, target, int(stream))
@@ -295,12 +340,20 @@ class MemoryNetwork:
         ) + self.rng.uniform(0.0, self.max_delay)
         self._link_clock[key] = release
         loop.call_later(
-            release - now, self._dispatch, source, target, message,
+            release - now, self._dispatch,
+            source, target, message, stream, carrier, carried,
         )
 
-    def _dispatch(self, source: int, target: int, message: Any) -> None:
+    def _dispatch(
+        self, source: int, target: int, message: Any, stream: Stream,
+        carrier: tuple[int, int], carried: int,
+    ) -> None:
         handler = self._handlers.get(target)
         if handler is None or not self.reachable(source, target):
+            return
+        if self.connection(*carrier, stream) != carried:
+            # Sent on a connection that has ended since: lost with it.
+            self.dropped += 1
             return
 
         kind = message.TYPE
@@ -350,6 +403,7 @@ class MemoryNetwork:
                     Stream.BULK if kind is MessageType.INSTALL_SNAPSHOT
                     else Stream.CONTROL
                 ),
+                answer=True,
             )
 
     async def _propose(self, source: int, target: int, message: Any) -> None:
@@ -363,7 +417,7 @@ class MemoryNetwork:
         if handler is None:
             return
         reply = await handler.on_read_index(source, message)
-        self.deliver(target, source, reply)
+        self.deliver(target, source, reply, answer=True)
 
     async def ask(
         self, source: int, target: int, message: Any, *, timeout: float | None,
@@ -450,6 +504,17 @@ class MemoryTransport:
             if other != self._index
             and self._network.reachable(other, self._index)
         )
+
+    def connection(self, peer: int, stream: Stream) -> int | None:
+        """Which connection ``stream`` to ``peer`` is on (``MemoryNetwork``).
+
+        Never ``None``, deliberately: a member cut off here keeps its
+        connections "in place" until the break is announced, so a test that
+        isolates a leader to hold a transfer's answers itself still has one
+        chunk in flight on one connection -- and ``drop_connection`` is what
+        ends that connection when a test means it to.
+        """
+        return self._network.connection(self._index, peer, stream)
 
 
 class Member:

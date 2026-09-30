@@ -840,9 +840,14 @@ async fn a_recovery_election_is_won_with_every_member_that_remembers() {
 // S9: chunks travel on BULK while a reconnect is reported for CONTROL, so a
 // reconnect reset a transfer whose last chunk was still in flight and still
 // answered, and that answer started a second stream beside the first (seed
-// 60195). Chunks now carry a correlation id fenced by `reply_floor`, and an
-// unanswered one is sent again once overdue -- the backstop a chunk lost with its
-// BULK connection needed (S6).
+// 60195). Chunks now carry a correlation id fenced by `reply_floor`.
+//
+// A chunk lost with its BULK connection draws no answer, and nothing else ever
+// cleared it while CONTROL stayed up (S6). It is sent again once that
+// connection has ended -- and only then: sent again because its answer was
+// late, it stalled every transfer over a link whose round trip outlasts
+// `election_min`, each answer arriving already superseded by the next copy
+// (part 17 of the fix record). Port of `TestATransferIsCorrelated`.
 
 /// What a member that needs a snapshot was sent, in order.
 #[derive(Default)]
@@ -980,8 +985,7 @@ impl nmos_registry_raft::transport::PeerHandler for Holder {
 
 /// A leader transferring a snapshot of several chunks to member 2, a [`Holder`]
 /// whose own answers the fabric drops: the replies a test is about, it hands
-/// over itself. On the paused clock, so the overdue backstop fires only when a
-/// test lets time pass.
+/// over itself. On the paused clock, so time passes only when a test lets it.
 async fn mid_transfer() -> (Cluster, Arc<RaftNode>, u64, Arc<Holder>) {
     let timing = RaftTiming {
         compaction_threshold: 4,
@@ -1006,9 +1010,7 @@ async fn mid_transfer() -> (Cluster, Arc<RaftNode>, u64, Arc<Holder>) {
     let leader = cluster.leaders()[0];
     let node = Arc::clone(&cluster.nodes[leader as usize]);
     // Only until the first chunk goes out: every proposal lets the clock run,
-    // and a chunk left unanswered past `election_min` is -- rightly -- sent
-    // again under a new id, which would leave a test answering one no longer
-    // in flight.
+    // and the tests start from one chunk in flight.
     for sequence in 1..=64u64 {
         if !holder.chunks.lock().is_empty() {
             break;
@@ -1229,43 +1231,97 @@ async fn a_reconnect_does_not_fork_the_transfer() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn an_unanswered_chunk_is_sent_again_once_overdue() {
+async fn a_chunk_lost_with_its_bulk_connection_is_sent_again() {
     use nmos_registry_raft::transport::PeerHandler;
+    use nmos_registry_raft::wire::Stream;
 
     let (cluster, node, peer, holder) = mid_transfer().await;
+    let sent = |holder: &Holder| holder.chunks.lock().len();
+    // The next chunk, sent just now: whatever sends it again within the next
+    // two ticks -- well inside `election_min` -- is its connection ending.
+    let (_, zero_len, zero_id) = in_flight(&holder);
+    let before = sent(&holder);
+    node.on_install_snapshot_reply(peer, &chunk_reply(&node, zero_len, zero_id))
+        .expect("the term and vote were saved");
+    assert!(until(|| sent(&holder) > before).await, "no second chunk");
     let (offset, len, first) = in_flight(&holder);
-    let before = holder.chunks.lock().len();
-    // Its BULK connection dropped with it, and nothing will answer.
+
+    // Its BULK connection ends -- the chunk, or its answer, lost with it -- and
+    // CONTROL stays up, so nothing reports it.
+    let before = sent(&holder);
+    cluster
+        .fabric
+        .drop_connection(node.index(), peer, Stream::Bulk);
+    tokio::time::sleep(Duration::from_millis(2 * quick().heartbeat_ms)).await;
     assert!(
-        until(|| holder.chunks.lock().len() > before).await,
-        "a chunk lost in flight was never sent again: the transfer stalls for as long as \
-         the CONTROL connection stays up",
+        sent(&holder) > before,
+        "a chunk lost with its BULK connection was not sent again on the connection that \
+         replaced it: the transfer stalls for as long as CONTROL stays up",
     );
     let (again_offset, _, again) = in_flight(&holder);
     assert_eq!(again_offset, offset);
     assert_ne!(again, first, "sent again under the same id");
 
-    // Should the first copy's reply turn up after all, it is fenced.
-    let before = holder.chunks.lock().len();
-    node.on_install_snapshot_reply(peer, &chunk_reply(&node, len, first))
+    // Should the first copy's answer turn up after all, it is fenced.
+    let before = sent(&holder);
+    node.on_install_snapshot_reply(peer, &chunk_reply(&node, offset + len, first))
         .expect("the term and vote were saved");
     tokio::time::sleep(Duration::from_millis(2 * quick().heartbeat_ms)).await;
     assert_eq!(
-        holder.chunks.lock().len(),
+        sent(&holder),
         before,
         "the reply to a copy already sent again drove the transfer",
     );
     cluster.close_all().await;
 }
 
-// A chunk the leader sends again must not cost the transfer. The overdue
-// backstop makes a chunk's delivery at-least-once: a chunk that is slow rather
-// than lost arrives, and so does the copy sent after it. The follower threw its
-// whole buffer away on the copy -- its offset no longer matched what it had
-// assembled -- and answered zero, which is the answer to the chunk in flight, so
-// the leader started the transfer again from nothing. Measured in 16 runs of
-// chaos-soak seed 140692: 343 of the 362 follower resets were copies of a chunk
-// already held, and 350 of the 486 restarts followed one.
+#[tokio::test(start_paused = true)]
+async fn a_chunk_slower_than_election_min_is_not_sent_again() {
+    // The stall. Sent again under a new id once its answer was overdue, a chunk
+    // whose round trip outlasted `election_min` had every answer arrive already
+    // superseded -- only the newest copy's drove the transfer -- so the transfer
+    // never passed its first chunk, and every copy queued behind the first.
+    // Measured over real sockets (part 17 of the fix record): 194 copies of
+    // chunk 0 in 30 s at 16 KiB/s with 4 KiB chunks and a 150 ms
+    // `election_min`.
+    use nmos_registry_raft::transport::PeerHandler;
+
+    let (cluster, node, peer, holder) = mid_transfer().await;
+    let (_, len, first) = in_flight(&holder);
+    let before = holder.chunks.lock().len();
+
+    // Slow, not lost: the connection it went out on is still in place, however
+    // long the chunk takes, while ticks come and go.
+    tokio::time::sleep(Duration::from_millis(3 * quick().election_max_ms)).await;
+    let copies = holder.chunks.lock().len() - before;
+    assert_eq!(
+        copies, 0,
+        "a chunk still in flight on its connection was sent {copies} more time(s): only its \
+         connection ending can lose it, and a copy can only queue behind it",
+    );
+
+    // Its answer arrives, late, and drives the transfer on.
+    node.on_install_snapshot_reply(peer, &chunk_reply(&node, len, first))
+        .expect("the term and vote were saved");
+    assert!(
+        until(|| holder.chunks.lock().len() > before).await,
+        "the answer to a chunk slower than election_min did not drive the transfer on",
+    );
+    assert_eq!(in_flight(&holder).0, len);
+    cluster.close_all().await;
+}
+
+// A chunk the leader sends again must not cost the transfer. A chunk's delivery
+// is at-least-once: when its answer is lost with the BULK connection that
+// carried both, the member holds the chunk and the leader cannot know it, so the
+// chunk goes out again on the next connection; and a CONTROL reconnect starts a
+// transfer again while BULK may still carry the old one's chunk. The follower
+// threw its whole buffer away on such a copy -- its offset no longer matched
+// what it had assembled -- and answered zero, which is the answer to the chunk
+// in flight, so the leader started the transfer again from nothing. Measured in
+// 16 runs of chaos-soak seed 140692, when copies came of the overdue re-send
+// since removed (part 17 of the fix record): 343 of the 362 follower resets were
+// copies of a chunk already held, and 350 of the 486 restarts followed one.
 //
 // Member 2 of `mid_transfer` is a `Holder`; the real member it stands in for,
 // never started, is handed the leader's chunks here.
@@ -1330,7 +1386,8 @@ async fn a_copy_of_a_chunk_already_held_is_answered_not_thrown_away() {
     assert_eq!(held, 3 * size as u64);
 
     // The third chunk once more, as the leader sends it when the first copy's
-    // answer is overdue: the first copy arrived, and so does this.
+    // answer was lost with its connection: the first copy arrived, and so does
+    // this.
     let again = member
         .on_install_snapshot(leader, &chunk_of(&first, &payload, size, 2, 99))
         .expect("the term and vote were saved");
@@ -1403,10 +1460,10 @@ async fn a_chunk_that_disagrees_with_what_is_held_still_restarts_the_transfer() 
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_chunk_sent_again_while_its_first_copy_is_slow_does_not_restart_the_transfer() {
-    // End to end: the leader's own backstop, the member's own answers, in the
-    // order one connection delivers them.
+async fn a_chunk_sent_again_after_its_answer_was_lost_does_not_restart_the_transfer() {
+    // End to end: the leader's own resend, and the member's own answers.
     use nmos_registry_raft::transport::PeerHandler;
+    use nmos_registry_raft::wire::Stream;
 
     let (cluster, node, peer, holder) = mid_transfer().await;
     let leader = cluster.leaders()[0];
@@ -1436,34 +1493,34 @@ async fn a_chunk_sent_again_while_its_first_copy_is_slow_does_not_restart_the_tr
             "the transfer did not go on"
         );
     }
-    let slow = latest();
-    // Its answer is overdue -- the chunk is slow, not lost -- so the leader
-    // sends it again.
+    let held = latest();
+    // Delivered, and its answer lost with the BULK connection that carried
+    // both: the member holds the chunk, the leader cannot know it, and it sends
+    // the chunk again on the next connection.
+    let first_answer = member
+        .on_install_snapshot(leader, &held)
+        .expect("the term and vote were saved");
     let before = sent();
+    cluster.fabric.drop_connection(leader, peer, Stream::Bulk);
     assert!(
         until(|| sent() > before).await,
-        "an overdue chunk was never sent again"
+        "a chunk whose answer was lost with its connection was never sent again"
     );
     let again = latest();
-    assert_eq!(again.offset, slow.offset);
-    assert_ne!(again.request_id, slow.request_id);
+    assert_eq!(again.offset, held.offset);
+    assert_ne!(again.request_id, held.request_id);
 
-    let first_answer = member
-        .on_install_snapshot(leader, &slow)
-        .expect("the term and vote were saved");
     let second_answer = member
         .on_install_snapshot(leader, &again)
         .expect("the term and vote were saved");
-    node.on_install_snapshot_reply(peer, &first_answer)
-        .expect("the term and vote were saved");
-    node.on_install_snapshot_reply(peer, &second_answer)
-        .expect("the term and vote were saved");
     assert_eq!(
         second_answer.bytes_received, first_answer.bytes_received,
-        "the copy was answered {} after the first was answered {}: the member threw the \
+        "the copy was answered {} after the chunk was answered {}: the member threw the \
          transfer away, and the leader starts it again from zero",
         second_answer.bytes_received, first_answer.bytes_received,
     );
+    node.on_install_snapshot_reply(peer, &second_answer)
+        .expect("the term and vote were saved");
 
     // Bounded by the snapshot's size: no transfer has more chunks than bytes.
     for _ in 0..payload.len() {

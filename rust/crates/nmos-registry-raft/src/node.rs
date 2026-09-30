@@ -306,12 +306,28 @@ struct PeerState {
     /// stream beside the new one (seed 60195). The id says which reply is
     /// awaited; `reply_floor` fences everything sent before a reset.
     snapshot_request: u64,
-    /// When the chunk in flight was sent.
+    /// The BULK connection the chunk in flight went out on
+    /// (`Transport::connection`).
     ///
-    /// Overdue matters as much as outstanding: a chunk lost with its BULK
-    /// connection draws no answer, and nothing else ever clears it while
-    /// CONTROL stays up. `election_min` is the backstop, as for appends.
-    snapshot_sent_at: Option<Instant>,
+    /// A chunk and its answer travel one connection, and while it is in place
+    /// TCP delivers both, in order -- each end's read deadline closes one that
+    /// stops moving -- so a chunk can be lost only with the connection it went
+    /// out on. That connection ending is what sends it again, and nothing else
+    /// is.
+    ///
+    /// It used to be a timer: a chunk unanswered for `election_min` went out
+    /// again under a new id, the backstop for one lost with its BULK connection
+    /// while CONTROL stayed up, which nothing reports (S6). A timer cannot tell
+    /// a slow chunk from a lost one. Where one chunk's round trip outlasts
+    /// `election_min` every answer arrived already superseded by the next copy,
+    /// only the newest copy's driving the transfer, so the transfer never passed
+    /// its first chunk -- measured over real sockets as 194 copies of chunk 0 in
+    /// 30 s at 16 KiB/s, with 4 KiB chunks and a 150 ms `election_min` -- and
+    /// every copy, a whole chunk, queued behind the first in this member's
+    /// memory. etcd never sends a snapshot again because time has passed
+    /// either: a peer awaiting one is paused until the transport reports the
+    /// transfer failed (`tracker/progress.go:268-269`, `raft.go:1611-1628`).
+    snapshot_carrier: Option<u64>,
     /// The highest append this peer has answered in this leadership.
     ///
     /// What a read waits for (`RaftNode::confirm_reads`): a reply, in this
@@ -365,7 +381,7 @@ impl Default for PeerState {
             snapshot_offset: 0,
             sending: None,
             snapshot_request: 0,
-            snapshot_sent_at: None,
+            snapshot_carrier: None,
             heard_request: 0,
             reply_floor: 0,
             last_heard_at: None,
@@ -2224,24 +2240,30 @@ impl RaftNode {
             self.send_keepalive(state, peer);
             return;
         }
-        let now = Instant::now();
-        let Some(tracked) = state.peers.get(&peer) else {
+        let carrier = self.transport.connection(peer, crate::wire::Stream::Bulk);
+        let Some(tracked) = state.peers.get_mut(&peer) else {
             return;
         };
         if tracked.snapshot_request != 0 {
-            let elapsed = tracked
-                .snapshot_sent_at
-                .map_or(Duration::MAX, |sent| now.saturating_duration_since(sent));
-            if elapsed < Duration::from_millis(self.timing.election_min_ms) {
-                // One chunk at a time. See `PeerState::snapshot_request`. The
-                // chunk is on BULK, which a slow transfer can occupy for a long
-                // time, so the liveness signal goes separately on CONTROL.
+            if carrier.is_some() && carrier == tracked.snapshot_carrier {
+                // One chunk at a time (`PeerState::snapshot_request`), and this
+                // one is still on its way: the connection it went out on is in
+                // place, so it will be answered or that connection will end
+                // (`PeerState::snapshot_carrier`). The chunk is on BULK, which a
+                // slow transfer can occupy for a long time, so the liveness
+                // signal goes separately on CONTROL.
                 self.send_keepalive(state, peer);
                 return;
             }
-            // Overdue: lost with its connection, or its reply was. Sent again
-            // below under a new id, so should the first answer arrive after all
-            // it is not the one awaited. See `PeerState::snapshot_sent_at`.
+            // Its connection has ended, taking the chunk or its answer with it.
+            // Sent again below under a new id, so should the first answer
+            // arrive after all it is not the one awaited.
+            tracked.snapshot_request = 0;
+        }
+        if carrier.is_none() {
+            // No BULK connection to carry a chunk until one is back.
+            self.send_keepalive(state, peer);
+            return;
         }
 
         let current = Arc::clone(&state.snapshot);
@@ -2270,7 +2292,7 @@ impl RaftNode {
         let request_id = state.append_sequence;
         if let Some(tracked) = state.peers.get_mut(&peer) {
             tracked.snapshot_request = request_id;
-            tracked.snapshot_sent_at = Some(now);
+            tracked.snapshot_carrier = carrier;
         }
 
         let message = Message::InstallSnapshot(InstallSnapshot {
@@ -3494,14 +3516,15 @@ impl crate::transport::PeerHandler for RaftNode {
             && holds(&assembly.data, offset, &message.data)
         {
             // A copy of a chunk this member already holds. The leader sends a
-            // chunk again once its answer is overdue, and a chunk that was slow
-            // rather than lost arrives as well as its copy -- first, since one
-            // connection carries both. Answered with what is assembled, which is
-            // where the leader resumes; the copy is the chunk in flight, so its
-            // answer is the one the leader acts on. Treated as a mismatch, as it
-            // once was, it threw the transfer away and the leader began again
-            // from nothing: 343 of 362 follower resets in chaos-soak seed
-            // 140692, whose members needing a snapshot never finished one.
+            // chunk again once the connection it went out on has ended, which
+            // can take the answer and leave the chunk delivered; and a CONTROL
+            // reconnect starts a transfer again while BULK may still carry the
+            // old one's chunk. Answered with what is assembled, which is where
+            // the leader resumes; the copy is the chunk in flight, so its answer
+            // is the one the leader acts on. Treated as a mismatch, as it once
+            // was, it threw the transfer away and the leader began again from
+            // nothing: 343 of 362 follower resets in chaos-soak seed 140692,
+            // whose members needing a snapshot never finished one.
             let assembled = assembly.data.len();
             return Ok(answer(&state, assembled, false));
         }
@@ -3639,9 +3662,10 @@ impl crate::transport::PeerHandler for RaftNode {
         }
 
         if message.request_id != tracked.snapshot_request {
-            // Not the reply to the chunk in flight -- a first copy answered
-            // after an overdue one was sent again. It drives nothing: a second
-            // stream beside the first is how the transfer once forked.
+            // Not the reply to the chunk in flight -- the first copy of a chunk
+            // sent again once its connection had ended, say, answered after
+            // all. It drives nothing: a second stream beside the first is how
+            // the transfer once forked.
             return Ok(());
         }
         tracked.snapshot_request = 0;

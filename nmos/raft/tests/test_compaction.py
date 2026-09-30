@@ -30,6 +30,7 @@ from nmos.raft.node import RaftTiming, Role
 from nmos.raft.snapshot import SnapshotMeta, decode_snapshot
 from nmos.raft.operations import ProposalId, RegisterOp
 from nmos.raft.tests._harness import FAST, Cluster
+from nmos.raft.wire import Stream
 from nmos.registry.tests._fixtures import make_node
 from nmos.registry.types import ResourceType, TaiCursor
 
@@ -530,12 +531,18 @@ class TestWhatASnapshotReplyIsEvidenceOf:
             await cluster.close()
 
 
-async def _mid_transfer(cluster: Cluster) -> tuple[Any, int, Any, list[Any]]:
+async def _mid_transfer(
+    cluster: Cluster, *, keep_quorum: bool = False,
+) -> tuple[Any, int, Any, list[Any]]:
     """A leader holding a snapshot of several chunks, about to transfer it.
 
     Isolated, so nothing it sends arrives and every reply is the test's; the
     peer's view reset as a reconnect resets it; every ``InstallSnapshot`` and
     ``AppendEntries`` to that peer recorded, in order.
+
+    With ``keep_quorum`` only the peer's links are lost -- silently, and both
+    ways -- so the leader keeps its quorum, and a test can let it tick while a
+    chunk is in flight without it standing down.
     """
     leader = await cluster.elect()
     await _fill(cluster, leader, 8)
@@ -555,7 +562,11 @@ async def _mid_transfer(cluster: Cluster) -> tuple[Any, int, Any, list[Any]]:
         real_send(target, message, **kwargs)
 
     node.transport.send = recording  # type: ignore[method-assign, assignment]
-    cluster.network.isolate(leader.index)
+    if keep_quorum:
+        cluster.network.lose(leader.index, peer)
+        cluster.network.lose(peer, leader.index)
+    else:
+        cluster.network.isolate(leader.index)
     node.on_peer_state(peer, up=True, incarnation=2**62)
     return node, peer, node._peers[peer], sent
 
@@ -660,9 +671,14 @@ class TestATransferIsCorrelated:
     one more: two streams, for ever, the follower discarding its buffer at
     every out-of-order chunk (seed 60195: a member stuck 20 entries behind for
     400 x 10 heartbeats). Chunks now carry a correlation id, fenced by the same
-    ``reply_floor`` as appends, and an unanswered one is sent again once
-    overdue -- which is also what a chunk lost with its BULK connection needed,
-    since nothing else ever cleared it (S6).
+    ``reply_floor`` as appends.
+
+    A chunk lost with its BULK connection draws no answer, and nothing else ever
+    cleared it while CONTROL stayed up (S6). It is sent again once that
+    connection has ended -- and only then: sent again because its answer was
+    late, it stalled every transfer over a link whose round trip outlasts
+    ``election_min``, each answer arriving already superseded by the next copy
+    (part 17 of the fix record).
     """
 
     async def test_a_reconnect_does_not_fork_the_transfer(
@@ -705,7 +721,7 @@ class TestATransferIsCorrelated:
         finally:
             await cluster.close()
 
-    async def test_an_unanswered_chunk_is_sent_again_once_overdue(
+    async def test_a_chunk_lost_with_its_bulk_connection_is_sent_again(
         self, tmp_path: Path,
     ) -> None:
         cluster = Cluster(3, tmp_path, timing=EAGER)
@@ -716,24 +732,68 @@ class TestATransferIsCorrelated:
             node._send_snapshot(peer, state)
             assert len(_chunks(sent)) == 1, "a second chunk while one is in flight"
 
-            # Its BULK connection dropped with it, and nothing will answer.
-            state.snapshot_sent_at -= EAGER.election_min
+            # Its BULK connection ends -- the chunk, or its answer, lost with
+            # it -- and CONTROL stays up, so nothing reports it.
+            cluster.network.drop_connection(node.index, peer, Stream.BULK)
             node._send_snapshot(peer, state)
 
             chunks = _chunks(sent)
             assert len(chunks) == 2, (
-                "a chunk lost in flight was never sent again: the transfer "
-                "stalls for as long as the CONTROL connection stays up"
+                "a chunk lost with its BULK connection was not sent again on "
+                "the connection that replaced it: the transfer stalls for as "
+                "long as CONTROL stays up"
             )
             assert chunks[1].offset == chunks[0].offset
             assert chunks[1].request_id != chunks[0].request_id
 
-            # Should the first copy's reply turn up after all, it is fenced.
+            # Should the first copy's answer turn up after all, it is fenced.
             node.on_install_snapshot_reply(peer, InstallSnapshotReply(
                 term=node.term, bytes_received=len(chunks[0].data), done=False,
                 commit_index=0, request_id=chunks[0].request_id,
             ))
             assert len(_chunks(sent)) == 2
+        finally:
+            await cluster.close()
+
+    async def test_a_chunk_slower_than_election_min_is_not_sent_again(
+        self, tmp_path: Path,
+    ) -> None:
+        # The stall. Sent again under a new id once its answer was overdue, a
+        # chunk whose round trip outlasted ``election_min`` had every answer
+        # arrive already superseded -- only the newest copy's drove the
+        # transfer -- so the transfer never passed its first chunk, and every
+        # copy queued behind the first. Measured over real sockets (part 17 of
+        # the fix record): 183 copies of chunk 0 in 30 s at 16 KiB/s with 4 KiB
+        # chunks and a 150 ms ``election_min``.
+        cluster = Cluster(3, tmp_path, timing=EAGER)
+        await cluster.start()
+        try:
+            node, peer, state, sent = await _mid_transfer(cluster, keep_quorum=True)
+            node._send_snapshot(peer, state)
+            first = _chunks(sent)[0]
+
+            # Slow, not lost: the connection it went out on is still in place,
+            # however long the chunk takes, while ticks come and go.
+            await asyncio.sleep(3 * EAGER.election_max)
+            for _ in range(3):
+                node._send_snapshot(peer, state)
+            copies = len(_chunks(sent)) - 1
+            assert copies == 0, (
+                f"a chunk still in flight on its connection was sent {copies} "
+                f"more time(s): only its connection ending can lose it, and a "
+                f"copy can only queue behind it"
+            )
+
+            # Its answer arrives, late, and drives the transfer on.
+            node.on_install_snapshot_reply(peer, InstallSnapshotReply(
+                term=node.term, bytes_received=len(first.data), done=False,
+                commit_index=0, request_id=first.request_id,
+            ))
+            chunks = _chunks(sent)
+            assert len(chunks) == 2 and chunks[1].offset == len(first.data), (
+                "the answer to a chunk slower than election_min did not drive "
+                "the transfer on"
+            )
         finally:
             await cluster.close()
 
@@ -778,15 +838,19 @@ def _chunk_of(
 class TestAChunkSentAgainIsACopy:
     """A chunk the leader sends again must not cost the transfer.
 
-    The overdue backstop (S6) makes a chunk's delivery at-least-once: a chunk
-    that is slow rather than lost arrives, and so does the copy sent after it.
-    The follower threw its whole buffer away on the copy -- its offset no
-    longer matched what it had assembled -- and answered zero, which is the
-    answer to the chunk in flight, so the leader started the transfer again
-    from nothing. Measured in 16 runs of chaos-soak seed 140692: 343 of the 362
-    follower resets were copies of a chunk already held, and 350 of the 486
-    restarts followed one; members needing a snapshot never finished one. A
-    copy is now answered with what is assembled, and the transfer goes on.
+    A chunk's delivery is at-least-once: when its answer is lost with the BULK
+    connection that carried both, the member holds the chunk and the leader
+    cannot know it, so the chunk goes out again on the next connection; and a
+    CONTROL reconnect starts a transfer again while BULK may still carry the
+    old one's chunk. The follower threw its whole buffer away on such a copy --
+    its offset no longer matched what it had assembled -- and answered zero,
+    which is the answer to the chunk in flight, so the leader started the
+    transfer again from nothing. Measured in 16 runs of chaos-soak seed 140692,
+    when copies came of the overdue re-send since removed (part 17 of the fix
+    record): 343 of the 362 follower resets were copies of a chunk already
+    held, and 350 of the 486 restarts followed one; members needing a snapshot
+    never finished one. A copy is now answered with what is assembled, and the
+    transfer goes on.
     """
 
     async def test_a_copy_of_a_chunk_already_held_is_answered_not_thrown_away(
@@ -807,7 +871,8 @@ class TestAChunkSentAgainIsACopy:
             assert held == 3 * EAGER.snapshot_chunk
 
             # The third chunk once more, as the leader sends it when the first
-            # copy's answer is overdue: the first copy arrived, and so does this.
+            # copy's answer was lost with its connection: the first copy
+            # arrived, and so does this.
             again = node.on_install_snapshot(
                 leader.index, _chunk_of(leader, meta, payload, 2, 99),
             )
@@ -861,11 +926,10 @@ class TestAChunkSentAgainIsACopy:
         finally:
             await cluster.close()
 
-    async def test_a_chunk_sent_again_while_its_first_copy_is_slow_does_not_restart(
+    async def test_a_chunk_sent_again_after_its_answer_was_lost_does_not_restart(
         self, tmp_path: Path,
     ) -> None:
-        # End to end: the leader's own backstop, the member's own answers, in
-        # the order one connection delivers them.
+        # End to end: the leader's own resend, and the member's own answers.
         cluster = Cluster(3, tmp_path, timing=EAGER)
         await cluster.start()
         try:
@@ -895,23 +959,23 @@ class TestAChunkSentAgainIsACopy:
             node._send_snapshot(peer, state)
             for _ in range(2):
                 node.on_install_snapshot_reply(peer, deliver(sent[-1]))
-            slow = sent[-1]
-            # Its answer is overdue -- the chunk is slow, not lost -- so the
-            # leader sends it again.
-            state.snapshot_sent_at -= EAGER.election_min
+            held = sent[-1]
+            # Delivered, and its answer lost with the BULK connection that
+            # carried both: the member holds the chunk, the leader cannot know
+            # it, and it sends the chunk again on the next connection.
+            first = deliver(held)
+            cluster.network.drop_connection(leader.index, peer, Stream.BULK)
             node._send_snapshot(peer, state)
             again = sent[-1]
-            assert again.offset == slow.offset and again.request_id != slow.request_id
+            assert again.offset == held.offset and again.request_id != held.request_id
 
-            first, second = deliver(slow), deliver(again)
-            node.on_install_snapshot_reply(peer, first)
-            node.on_install_snapshot_reply(peer, second)
-
+            second = deliver(again)
             assert second.bytes_received == first.bytes_received, (
-                f"the copy was answered {second.bytes_received} after the first "
+                f"the copy was answered {second.bytes_received} after the chunk "
                 f"was answered {first.bytes_received}: the member threw the "
                 f"transfer away, and the leader starts it again from zero"
             )
+            node.on_install_snapshot_reply(peer, second)
             for _ in range(len(payload)):
                 reply = deliver(sent[-1])
                 node.on_install_snapshot_reply(peer, reply)

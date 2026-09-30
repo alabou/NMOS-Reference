@@ -46,7 +46,7 @@ from nmos.raft.ownership import OwnershipTable
 from nmos.raft.persist import TermStore
 from nmos.raft.snapshot import SnapshotStore
 from nmos.raft.tests._proxy import ProxyMesh
-from nmos.raft.transport import RaftTransport
+from nmos.raft.transport import CONN_READ_TIMEOUT, RaftTransport
 from nmos.registry.registry import Registry
 from nmos.registry.store import RegistryStore
 from nmos.registry.subscriptions import SubscriptionManager
@@ -73,6 +73,7 @@ class SocketMember:
         bind_port: int,
         dial: dict[int, tuple[str, int]],
         timing: RaftTiming,
+        conn_read_timeout: float = CONN_READ_TIMEOUT,
     ) -> None:
         self.index = layout.local.index
         self.registry = Registry(RegistryStore(), query_id=f"q{self.index}")
@@ -93,6 +94,7 @@ class SocketMember:
             member_name=layout.local.name,
             incarnation=0,
             rpc_timeout=1.0,
+            conn_read_timeout=conn_read_timeout,
         )
         self.node = RaftNode(
             layout,
@@ -175,9 +177,14 @@ class SocketCluster:
 
     def __init__(
         self, size: int, root: Path, *, timing: RaftTiming | None = None,
+        conn_read_timeout: float = CONN_READ_TIMEOUT,
     ) -> None:
         self.root = root
         self.timing = timing if timing is not None else SOCKET_TIMING
+        # Every member's, as ``RaftTransport`` takes it: tests shorten it so a
+        # deadline's consequences show in seconds rather than etcd's 5 s
+        # multiples.
+        self.conn_read_timeout = conn_read_timeout
         self._held: list[socket.socket] = []
         # Sorted, because ``derive_cluster`` orders members by
         # ``(host, peer_port, client_port)`` and that order *is* the member
@@ -245,6 +252,7 @@ class SocketCluster:
             SocketMember(
                 layout, root=self.root, bind_port=self._ports[index],
                 dial=self._mesh.dial_targets(index), timing=self.timing,
+                conn_read_timeout=self.conn_read_timeout,
             )
             for index, layout in enumerate(self._layouts)
         ]
@@ -275,6 +283,7 @@ class SocketCluster:
             self._layouts[index], root=self.root,
             bind_port=self._ports[index],
             dial=self._mesh.dial_targets(index), timing=self.timing,
+            conn_read_timeout=self.conn_read_timeout,
         )
         self.members[index] = replacement
         await replacement.node.start()

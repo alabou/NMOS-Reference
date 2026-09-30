@@ -120,11 +120,13 @@ never.
 """
 
 HEARTBEATS_PER_READ_TIMEOUT = 3
-"""A ``Ping`` goes out on every outbound link this many times per read timeout.
+"""Each end of every connection says something this many times per read timeout.
 
-etcd's stream writer ticks every ``ConnReadTimeout / 3`` (``stream.go:169``),
-so a healthy link whose ends have nothing to say still carries something well
-inside the deadline, with room for two to be late.
+A ``Ping`` from the end that dialled (``RaftTransport._beat``), a ``Pong`` from
+the end that accepted (``RaftTransport._beat_back``). etcd's stream writer ticks
+every ``ConnReadTimeout / 3`` (``stream.go:169``), so a healthy link whose ends
+have nothing to say still carries something well inside the deadline, with
+room for two to be late.
 """
 
 
@@ -264,6 +266,18 @@ class Transport(Protocol):
         """Peers with a healthy CONTROL link, excluding this member."""
         ...
 
+    def connection(self, peer: int, stream: Stream) -> int | None:
+        """Which connection ``stream`` to ``peer`` is on now; ``None`` if none.
+
+        An id that changes whenever that connection ends, and is never reused.
+        A snapshot transfer rests on it (``RaftNode._send_snapshot``): a chunk
+        and its answer travel one connection, and while that connection is in
+        place TCP delivers both, in order -- each end's read deadline closes one
+        that stops moving -- so a chunk can be lost only with the connection it
+        went out on, and its ending is the one reason to send it again.
+        """
+        ...
+
 
 @dataclass
 class _Link:
@@ -285,6 +299,14 @@ class _Link:
     """
     beat: asyncio.Task[None] | None = None
     """The heartbeat for the current connection (``RaftTransport._beat``)."""
+    generation: int = 0
+    """Which connection is in place: bumped whenever one ends (``_drop``).
+
+    What ``RaftTransport.connection`` reports, and what a frame written into a
+    connection that has since ended is discarded with -- ``_drop`` aborts the
+    buffer -- so a message is never written on one connection and delivered by
+    the next.
+    """
 
 
 APPLICATION_CONCURRENCY = 64
@@ -469,6 +491,12 @@ class RaftTransport:
             if stream is Stream.CONTROL and link.connected
         )
 
+    def connection(self, peer: int, stream: Stream) -> int | None:
+        link = self._links.get((peer, stream))
+        if link is None or link.writer is None or not link.connected:
+            return None
+        return link.generation
+
     def send(
         self, peer: int, message: Any, *, stream: Stream = Stream.CONTROL,
     ) -> None:
@@ -648,12 +676,14 @@ class RaftTransport:
         """Say something on a link every third of the read timeout.
 
         A ``Ping`` keeps the peer's reads inside its deadline, and the ``Pong``
-        it draws keeps this end's: a connection here carries requests one way
-        and their answers the other, so a link with nothing to say would go
-        quiet in both directions at once. etcd's streams run one way, so its
-        heartbeat needs no answer (``stream.go:183-192``); these need one.
-        Neither reaches the node. Sent whatever else is flowing, as etcd's is:
-        a timer that only fired when idle would need to know what idle means.
+        it draws keeps this end's -- when nothing this end is sending is in its
+        way; the accepting end's own heartbeat keeps them whatever is
+        (``_beat_back``). A connection here carries requests one way and their
+        answers the other, so a link with nothing to say would go quiet in both
+        directions at once. etcd's streams run one way, so its heartbeat needs
+        no answer (``stream.go:183-192``). Neither reaches the node. Sent
+        whatever else is flowing, as etcd's is: a timer that only fired when
+        idle would need to know what idle means.
         """
         nonce = 0
         interval = self._read_timeout / HEARTBEATS_PER_READ_TIMEOUT
@@ -664,6 +694,7 @@ class RaftTransport:
 
     def _drop(self, link: _Link, error: BaseException) -> None:
         link.connected = False
+        link.generation += 1
         link.reader = None
         if link.beat is not None:
             link.beat.cancel()
@@ -719,9 +750,16 @@ class RaftTransport:
                 return
 
             peer = hello.member_index
-            while not self._closing:
-                inbound = await read_frame(source)
-                await self._dispatch(peer, inbound, writer)
+            beat = asyncio.create_task(
+                self._beat_back(writer, hello.stream),
+                name=f"raft-beat-back-{self._member_name}-{peer}-{hello.stream.name}",
+            )
+            try:
+                while not self._closing:
+                    inbound = await read_frame(source)
+                    await self._dispatch(peer, inbound, writer)
+            finally:
+                beat.cancel()
         except _Silent as silence:
             log.warning(
                 "raft: connection from member %d went silent: %s; closing it",
@@ -747,6 +785,41 @@ class RaftTransport:
                 writer.close()
             except (OSError, RuntimeError):
                 pass
+
+    async def _beat_back(
+        self, writer: asyncio.StreamWriter, stream: Stream,
+    ) -> None:
+        """The accepting end's heartbeat: a ``Pong`` every third of the read
+        timeout, for as long as the connection is served.
+
+        The dialling end's reads were fed only by answers -- to its requests,
+        and to its own ``Ping`` (``_beat``) -- and every one of them waits
+        behind whatever that end is sending, the ``Ping`` in its own queue and
+        the answers until what they answer has arrived. So a frame taking
+        longer than the read timeout to cross, a snapshot chunk over a slow
+        link, left its sender hearing nothing, and the sender closed a
+        connection that was working: measured, a leader closing its BULK link
+        every 5.07 s while one 64 KiB chunk crawled across at 8 KiB/s, the
+        transfer never past that chunk. Beating from this end too feeds each
+        end's reads from the other end's own timer, whatever the other
+        direction carries -- and a path that stops moving still starves both
+        ends, which still close it.
+
+        A ``Pong`` rather than a ``Ping``: an answer nobody asked for draws none
+        from either transport, so the dialling end, whose outbound direction may
+        be the one that is slow, is never asked to say anything back. It does
+        not reach the node. etcd's streams each carry their own writer's
+        heartbeat (``stream.go:169``).
+        """
+        nonce = 0
+        interval = self._read_timeout / HEARTBEATS_PER_READ_TIMEOUT
+        while not writer.is_closing():
+            await asyncio.sleep(interval)
+            nonce += 1
+            try:
+                writer.write(_frame_for(Pong(nonce=nonce), stream, is_reply=True))
+            except (OSError, RuntimeError):
+                return
 
     def _refuse_certificate(self, writer: asyncio.StreamWriter) -> str | None:
         """Does the connecting member carry the cluster's shared SAN?

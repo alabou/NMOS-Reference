@@ -55,6 +55,16 @@ class LinkProxy:
         self.delay = 0.0
         """Seconds added to each relayed chunk. Order-preserving."""
 
+        self.rate = 0.0
+        """Bytes per second each direction of each connection is held to; zero
+        is no limit.
+
+        A slow link, as ``delay`` is not: ``delay`` holds every piece however
+        small, while here a frame takes as long as its size -- which is what
+        made a snapshot chunk slower than ``election_min``, or than a whole read
+        deadline, while the heartbeats beside it stayed quick.
+        """
+
     # -- lifecycle -------------------------------------------------------
 
     async def start(self) -> int:
@@ -152,11 +162,15 @@ class LinkProxy:
         """
         try:
             while True:
-                chunk = await reader.read(65536)
+                # Small pieces when rate-limited, so bytes flow evenly rather
+                # than in bursts a read deadline could fall between.
+                chunk = await reader.read(1024 if self.rate > 0.0 else 65536)
                 if not chunk or self._cut:
                     return
                 if self.delay > 0.0:
                     await asyncio.sleep(self.delay)
+                if self.rate > 0.0:
+                    await asyncio.sleep(len(chunk) / self.rate)
                 writer.write(chunk)
                 await writer.drain()
         except (asyncio.IncompleteReadError, ConnectionResetError, OSError):

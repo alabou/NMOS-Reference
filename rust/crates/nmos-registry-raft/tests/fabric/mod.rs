@@ -18,11 +18,6 @@
 //! real transport cannot have because a socket is always in between.
 
 #![allow(dead_code)]
-// The stream a message arrived on is only read by the recursive call that sends
-// the reply back -- which is exactly its job: an answer travels on the link its
-// question came in on, so a snapshot's acknowledgement stays off the control
-// link.
-#![allow(clippy::only_used_in_recursion)]
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -77,6 +72,10 @@ pub struct Fabric {
     next_request: AtomicU64,
     /// Consulted before every delivery -- see [`Fabric::intercept`].
     interceptor: Mutex<Option<Interceptor>>,
+    /// Which connection each directed `(from, to, stream)` is on -- see
+    /// [`Fabric::connection`].
+    connections: Mutex<HashMap<(u64, u64, Stream), u64>>,
+    next_connection: AtomicU64,
 }
 
 impl Fabric {
@@ -95,8 +94,12 @@ impl Fabric {
     }
 
     /// Stop delivering from `from` to `to`, in that direction only.
+    ///
+    /// Every connection between the two ends with it: what they carried is
+    /// lost ([`Fabric::connection`]).
     pub fn cut(&self, from: u64, to: u64) {
         self.cut.lock().insert((from, to));
+        self.end_between(from, to);
     }
 
     /// Stop delivering in both directions between `a` and `b`.
@@ -126,8 +129,70 @@ impl Fabric {
     }
 
     /// Restore every link.
+    ///
+    /// On new connections: what was sent while a link was cut is lost, so the
+    /// connections in place across it have ended ([`Fabric::connection`]).
     pub fn heal(&self) {
-        self.cut.lock().clear();
+        let healed: Vec<(u64, u64)> = self.cut.lock().drain().collect();
+        for (from, to) in healed {
+            self.end_between(from, to);
+        }
+    }
+
+    /// Which connection `from` sends `stream` to `to` on: `None` while `from`
+    /// cannot reach `to`, otherwise an id that changes whenever the fabric
+    /// ends that connection.
+    ///
+    /// It ends one whenever it loses what one carried: a cut of either
+    /// direction between the two ends every connection between them, and so
+    /// does its heal ([`Fabric::cut`], [`Fabric::heal`]); a message the
+    /// interceptor refuses ends the connection it was on; so does a handler that
+    /// answers nothing, as the real transport ends the connection such a message
+    /// came by; and [`Fabric::drop_connection`] ends one on purpose. The real
+    /// transport's connections end exactly when what they carry can be lost --
+    /// TCP delivers in order or breaks -- and a leader sends a snapshot chunk
+    /// again only once the connection it went out on has ended. A fabric that
+    /// lost messages on a connection it still reported in place would strand a
+    /// transfer no real link could.
+    #[must_use]
+    pub fn connection(&self, from: u64, to: u64, stream: Stream) -> Option<u64> {
+        if !self.reaches(from, to) {
+            return None;
+        }
+        Some(self.connection_id(from, to, stream))
+    }
+
+    /// End the connection `from` sends `stream` to `to` on, telling no one,
+    /// and lose what it carries both ways: what `from` sent on it, and the
+    /// answers coming back on it. What a BULK connection dropping on its own is
+    /// -- a snapshot chunk, or its answer, gone while CONTROL stays up (S6).
+    pub fn drop_connection(&self, from: u64, to: u64, stream: Stream) {
+        let id = self
+            .next_connection
+            .fetch_add(1, Ordering::Relaxed)
+            .saturating_add(1);
+        self.connections.lock().insert((from, to, stream), id);
+    }
+
+    fn connection_id(&self, from: u64, to: u64, stream: Stream) -> u64 {
+        *self
+            .connections
+            .lock()
+            .entry((from, to, stream))
+            .or_insert_with(|| {
+                self.next_connection
+                    .fetch_add(1, Ordering::Relaxed)
+                    .saturating_add(1)
+            })
+    }
+
+    /// End every connection between `a` and `b`, either way and on both
+    /// streams.
+    fn end_between(&self, a: u64, b: u64) {
+        for stream in [Stream::Control, Stream::Bulk] {
+            self.drop_connection(a, b, stream);
+            self.drop_connection(b, a, stream);
+        }
     }
 
     /// Whether a message from `from` to `to` would be delivered.
@@ -237,6 +302,15 @@ impl Fabric {
             self.dropped.lock().push((from, to, kind_of(&message)));
             return;
         }
+        // The connection that carries it: the sender's own, or -- for an
+        // answer -- the one its request came by, which the member receiving the
+        // answer dialled.
+        let (dialer, acceptor) = if is_answer(&message) {
+            (to, from)
+        } else {
+            (from, to)
+        };
+        let carried = self.connection_id(dialer, acceptor, stream);
         *self.in_flight.lock().entry((from, to)).or_insert(0) += 1;
         let fabric = Arc::clone(self);
         tokio::spawn(async move {
@@ -258,6 +332,11 @@ impl Fabric {
                 fabric.dropped.lock().push((from, to, kind_of(&message)));
                 return;
             }
+            if fabric.connection_id(dialer, acceptor, stream) != carried {
+                // Sent on a connection that has ended since: lost with it.
+                fabric.dropped.lock().push((from, to, kind_of(&message)));
+                return;
+            }
             let Some(handler) = fabric.handler(to) else {
                 return;
             };
@@ -265,16 +344,20 @@ impl Fabric {
             if let Some(decide) = interceptor
                 && !decide(from, to, &message)
             {
+                // Lost, and a message is lost only with its connection.
+                fabric.drop_connection(dialer, acceptor, stream);
                 fabric.dropped.lock().push((from, to, kind_of(&message)));
                 return;
             }
             fabric.count(&message);
             // A handler that could not save what the message required answers
-            // nothing. The real transport also ends the connection the message
-            // came by (`serve`, `pump`); the fabric has no connections, so what
-            // it models is the silence.
+            // nothing, and the real transport ends the connection the message
+            // came by (`serve`, `pump`): so does the fabric.
             let kind = kind_of(&message);
-            let unanswered = || fabric.unanswered.lock().push((from, to, kind));
+            let unanswered = || {
+                fabric.unanswered.lock().push((from, to, kind));
+                fabric.drop_connection(dialer, acceptor, stream);
+            };
             let reply = match message {
                 Message::RequestVote(ref m) => match handler.on_request_vote(from, m) {
                     Ok(reply) => Some(Message::RequestVoteReply(reply)),
@@ -347,6 +430,22 @@ impl Fabric {
             }
         });
     }
+}
+
+/// Whether `message` answers one: it travels back on the connection its request
+/// came by.
+const fn is_answer(message: &Message) -> bool {
+    matches!(
+        *message,
+        Message::HelloAck(_)
+            | Message::RequestVoteReply(_)
+            | Message::AppendEntriesReply(_)
+            | Message::InstallSnapshotReply(_)
+            | Message::ProposeReply(_)
+            | Message::ForwardReply(_)
+            | Message::ReadIndexReply(_)
+            | Message::Pong(_)
+    )
 }
 
 /// A message's type, as [`Fabric::delivered`] and [`Fabric::dropped_from`] name
@@ -491,5 +590,9 @@ impl Transport for FabricTransport {
             .into_iter()
             .filter(|&other| other != self.local && self.fabric.reaches(self.local, other))
             .collect()
+    }
+
+    fn connection(&self, peer: u64, stream: Stream) -> Option<u64> {
+        self.fabric.connection(self.local, peer, stream)
     }
 }
