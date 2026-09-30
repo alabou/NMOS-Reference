@@ -16,7 +16,9 @@ sleeping and hoping, which means in practice they are not reproduced at all.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -34,7 +36,7 @@ from nmos.raft.messages import (
     InstallSnapshot,
     WireEntry,
 )
-from nmos.raft.node import RaftNode, Role, _Assembly, _PeerState
+from nmos.raft.node import RaftNode, RaftTiming, Role, _Assembly, _PeerState
 from nmos.raft.operations import (
     ProposalId,
     RegisterOp,
@@ -42,7 +44,7 @@ from nmos.raft.operations import (
     encode_operation,
 )
 from nmos.raft.persist import PersistentState, PersistentStateError, TermStore
-from nmos.raft.tests._harness import Cluster
+from nmos.raft.tests._harness import FAST, Cluster
 from nmos.registry.tests._fixtures import (
     NODE_ID,
     NODE_ID_2,
@@ -1948,6 +1950,161 @@ class TestADecisionWhoseSaveFailedIsNotSent:
             f"member 0 led on a vote for itself it never saved (now term {term})"
         )
         assert term >= 5, f"member 0 stopped campaigning at term {term}"
+
+
+def _catching_up_timing() -> RaftTiming:
+    """``FAST``, compacting early and sending snapshots in small chunks.
+
+    A member that restarts then needs a snapshot of many chunks, one round trip
+    each, to catch up -- far longer than the tick check-quorum runs on.
+    """
+    return dataclasses.replace(FAST, compaction_threshold=8, snapshot_chunk=64)
+
+
+async def _two_of_three_restart_together(
+    tmp_path: Path,
+) -> tuple[Cluster, Any, list[int]]:
+    """A cluster whose leader and one follower restart together.
+
+    The third member -- the survivor -- is left the only one holding the log,
+    so it is the only member that can lead, and the only one that can bring
+    the other two back to voting.
+    """
+    cluster = Cluster(3, tmp_path, timing=_catching_up_timing())
+    await cluster.start()
+    leader = await cluster.elect(timeout=5.0)
+    await asyncio.gather(*(
+        leader.node.propose(_register(str(uuid.uuid4()), leader.index))
+        for _ in range(40)
+    ))
+    await cluster.settle(10)
+    survivor = cluster[(leader.index + 2) % 3]
+    restarted = [leader.index, (leader.index + 1) % 3]
+    for index in restarted:
+        await cluster.restart(index)
+    return cluster, survivor, restarted
+
+
+class TestAMajorityCatchingUp:
+    """Two of three members restart together: the survivor must lead them back.
+
+    Found on Windows and measured here: the survivor won the election, then
+    stepped down one tick later -- "lost contact with a quorum" -- although both
+    peers were answering, because check-quorum left out members catching up
+    while the quorum stayed two of three. Its campaign check left them out too,
+    so it never campaigned again; the restarted members could not win either,
+    their logs being shorter. No leader, for good.
+
+    A member catching up that answers proves the leader is not cut off, so
+    check-quorum counts it, and so does the campaign check, whose election the
+    round itself then decides; commits, read confirmations and votes still
+    leave it out (``_advance_commit``, ``_confirm_reads``, ``_won``), so
+    nothing that decides safety changes -- only when a leader gives up and
+    when a member tries. etcd leaves learners out of ``QuorumActive`` because
+    they are outside its voter set, and so outside the quorum too. The Rust
+    tests of the same names are these three.
+    """
+
+    async def test_the_survivor_leads_two_restarted_members_back_to_voting(
+        self, tmp_path: Path,
+    ) -> None:
+        cluster, survivor, restarted = await _two_of_three_restart_together(
+            tmp_path,
+        )
+        try:
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 10.0
+            while loop.time() < deadline and not all(
+                cluster[index].node.voting for index in restarted
+            ):
+                await asyncio.sleep(cluster.timing.heartbeat)
+            voting = [cluster[index].node.voting for index in restarted]
+            leaders = [m.index for m in cluster.members if m.node.role is Role.LEADER]
+            assert all(voting), (
+                f"10 s after two of three restarted they are still catching up "
+                f"(voting {voting}), the survivor m{survivor.index} is "
+                f"{survivor.node.role.value}, leaders {leaders}: nothing can "
+                f"be written"
+            )
+            # And the cluster writes again.
+            leader = await cluster.elect(timeout=5.0)
+            await asyncio.wait_for(
+                leader.node.propose(_register(str(uuid.uuid4()), leader.index)),
+                5.0,
+            )
+        finally:
+            await cluster.close()
+
+    async def test_a_leader_whose_peers_answer_as_catching_up_keeps_leading(
+        self, tmp_path: Path,
+    ) -> None:
+        """Check-quorum asks whether this leader is cut off, and it is not.
+
+        Peers that answered within the window are reachable, catching up or
+        not; with a majority of the cluster answering, no other member can
+        gather one, so standing down would only leave nobody to catch them up.
+        """
+        cluster = Cluster(3, tmp_path)
+        try:
+            node = cluster[0].node
+            now = asyncio.get_running_loop().time()
+            for peer in node._peers.values():
+                peer.catching_up = True
+                peer.last_heard_at = now
+
+            assert node._quorum_is_answering(now), (
+                "both peers answered just now, catching up, and this leader "
+                "counts itself cut off: it stands down with nobody else able "
+                "to lead them"
+            )
+        finally:
+            await cluster.close()
+
+    async def test_a_member_whose_reachable_peers_are_catching_up_still_campaigns(
+        self, tmp_path: Path,
+    ) -> None:
+        """Whether an election could be won is for the round to decide.
+
+        The flags are what this member learned leading them -- they outlive the
+        leadership, cleared only by a promotion, a new leadership or a link
+        going down -- and a campaign check that left them out made the member
+        that had to lead them unable ever to try again.
+        """
+        cluster = Cluster(3, tmp_path)
+        try:
+            node = cluster[0].node
+            for peer in node._peers.values():
+                peer.up = True
+                peer.catching_up = True
+            node._deadline = 0.0
+
+            node._tick()
+
+            assert node.role is Role.PRE_CANDIDATE, (
+                f"its election timer ran out with both peers reachable and it "
+                f"stayed a {node.role.value}: a member whose peers are catching "
+                f"up never campaigns"
+            )
+        finally:
+            await cluster.close()
+
+    async def test_a_leader_whose_majority_is_catching_up_reports_no_quorum(
+        self, tmp_path: Path,
+    ) -> None:
+        """Readiness asks whether a write could commit, and it could not."""
+        cluster = Cluster(3, tmp_path)
+        try:
+            node = cluster[0].node
+            for peer in node._peers.values():
+                peer.up = True
+                peer.catching_up = True
+
+            assert not node.has_quorum, (
+                "both peers are catching up, so nothing can commit, yet the "
+                "member reports a quorum -- the backend would call itself READY"
+            )
+        finally:
+            await cluster.close()
 
 
 class TestALeaderReinitialisesWhatItKnowsAboutItsFollowers:

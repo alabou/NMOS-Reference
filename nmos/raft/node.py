@@ -613,14 +613,32 @@ class RaftNode:
     def has_quorum(self) -> bool:
         """Whether enough members are reachable for a write to commit.
 
-        Reachability, not responsiveness -- see ``_quorum_is_answering`` for
-        the stronger question a leader asks of itself. This one is asked by
-        members that are *not* leading, which send nothing and so have no
-        replies to count, and by the backend when reporting readiness.
+        What the backend reports readiness from. Members catching up are left
+        out, as the commit count leaves them out (``_advance_commit``): while a
+        majority of the cluster is catching up nothing can commit, and saying
+        otherwise would report READY in front of writes that cannot land.
+        Reachability, not responsiveness -- ``_quorum_is_answering`` is what a
+        leader asks of itself -- and not whether an election could be won,
+        which is ``_reaches_a_majority``.
         """
         reachable = 1 + sum(
             1 for peer in self._peers.values() if peer.up and not peer.catching_up
         )
+        return reachable >= self._layout.quorum
+
+    @property
+    def _reaches_a_majority(self) -> bool:
+        """Whether a majority of the cluster is reachable, this member included.
+
+        What the tick asks before campaigning: with fewer, no election can be
+        won. Members catching up count. Whether their votes do is for the
+        round's own replies to decide (``_won``), and they decide it exactly
+        when it matters -- a majority having restarted, the one member still
+        holding the log must lead them back. Leaving them out here left that
+        member unable ever to try: measured, two of three restarting together
+        deadlocked the cluster for good.
+        """
+        reachable = 1 + sum(1 for peer in self._peers.values() if peer.up)
         return reachable >= self._layout.quorum
 
     def _quorum_is_answering(self, now: float) -> bool:
@@ -636,14 +654,24 @@ class RaftNode:
         it has a quorum while a majority of the cluster is answering nothing.
         Writes accepted in that state can never commit.
 
-        Members catching up are excluded for the same reason they are excluded
-        from the commit count: their acknowledgements do not establish a
-        quorum. etcd excludes learners from ``QuorumActive`` identically.
+        Members catching up count: the question is whether this leader is cut
+        off, and a member that answered is proof it is not. With a majority of
+        the cluster answering, no other member can gather one -- every member
+        answering refuses other candidates while it hears from this one -- so
+        standing down could only leave nobody to lead them back to voting.
+        etcd leaves learners out of ``QuorumActive`` because they are outside
+        its voter set, and so outside the quorum as well; a member catching up
+        stays inside the quorum here, and leaving it out of the count alone
+        made that quorum unreachable -- measured, the member holding the only
+        copy of the log stood down a tick after winning and the cluster
+        deadlocked. What these answers count toward is only whether to go on
+        leading: commits (``_advance_commit``), read confirmations
+        (``_confirm_reads``) and votes (``_won``) still leave them out.
         """
         window = self._timing.election_max
         answering = 1 + sum(
             1 for peer in self._peers.values()
-            if not peer.catching_up and now - peer.last_heard_at < window
+            if now - peer.last_heard_at < window
         )
         return answering >= self._layout.quorum
 
@@ -729,7 +757,7 @@ class RaftNode:
                 return
             self._replicate()
             return
-        if not self.has_quorum:
+        if not self._reaches_a_majority:
             # Not counting down while an election is impossible. Letting the
             # deadline expire unused means that the moment connectivity
             # returns, this member campaigns *immediately* -- with no fresh

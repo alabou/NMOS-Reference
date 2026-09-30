@@ -1157,19 +1157,46 @@ impl RaftNode {
         self.transport.live()
     }
 
-    /// Whether a majority is reachable, this member included.
+    /// Whether enough members are reachable for a write to commit.
     ///
-    /// Reachability, not responsiveness -- see [`Self::quorum_is_answering`]
-    /// for the stronger question a leader asks of itself. This one is asked by
-    /// members that are *not* leading, which send nothing and so have no
-    /// replies to count, and by the backend when reporting readiness.
+    /// What the backend reports readiness from. Members catching up are left
+    /// out, as the commit count leaves them out: while a majority of the
+    /// cluster is catching up nothing can commit, and saying otherwise would
+    /// report `Ready` in front of writes that cannot land -- which this did,
+    /// counting every live link, until it was made the Python's. Reachability,
+    /// not responsiveness -- [`Self::quorum_is_answering`] is what a leader asks
+    /// of itself -- and not whether an election could be won, which is
+    /// [`Self::reaches_a_majority`].
     #[must_use]
     pub fn has_quorum(&self) -> bool {
-        self.transport
-            .live()
-            .len()
-            .saturating_add(1)
-            .ge(&self.layout.quorum())
+        let live = self.transport.live();
+        let voting = {
+            let state = self.state.lock();
+            live.iter()
+                .filter(|peer| {
+                    state
+                        .peers
+                        .get(peer)
+                        .is_some_and(|tracked| !tracked.catching_up)
+                })
+                .count()
+        };
+        voting.saturating_add(1) >= self.layout.quorum()
+    }
+
+    /// Whether a majority of the cluster is reachable, this member included.
+    ///
+    /// What the tick asks before campaigning: with fewer, no election can be
+    /// won. Members catching up count. Whether their votes do is for the
+    /// round's own replies to decide (`NodeState::won`), and they decide it
+    /// exactly when it matters -- a majority having restarted, the one member
+    /// still holding the log must lead them back. The Python left them out
+    /// here, and that left the member unable ever to try: measured, two of
+    /// three restarting together deadlocked its cluster for good.
+    ///
+    /// Takes no lock, so the tick may ask it while holding the state.
+    fn reaches_a_majority(&self) -> bool {
+        self.transport.live().len().saturating_add(1) >= self.layout.quorum()
     }
 
     /// Have a majority *answered* this leader within an election window?
@@ -1184,19 +1211,27 @@ impl RaftNode {
     /// cluster is answering nothing. Writes accepted in that state can never
     /// commit.
     ///
-    /// Members catching up are excluded for the same reason they are excluded
-    /// from the commit count: their acknowledgements do not establish a quorum.
-    /// etcd excludes learners from `QuorumActive` identically.
+    /// Members catching up count: the question is whether this leader is cut
+    /// off, and a member that answered is proof it is not. With a majority of
+    /// the cluster answering, no other member can gather one -- every member
+    /// answering refuses other candidates while it hears from this one -- so
+    /// standing down could only leave nobody to lead them back to voting. etcd
+    /// leaves learners out of `QuorumActive` because they are outside its voter
+    /// set, and so outside the quorum as well; a member catching up stays inside
+    /// the quorum here, and leaving it out of the count alone made that quorum
+    /// unreachable -- measured, a survivor holding the only copy of the log
+    /// won, stood down a tick later, and won again, each new term throwing away
+    /// the snapshot the last had begun. What these answers count toward is only
+    /// whether to go on leading: commits, read confirmations and votes still
+    /// leave them out.
     fn quorum_is_answering(&self, state: &NodeState, now: Instant) -> bool {
         let window = Duration::from_millis(self.timing.election_max_ms);
         let answering = state
             .peers
             .values()
             .filter(|peer| {
-                !peer.catching_up
-                    && peer
-                        .last_heard_at
-                        .is_some_and(|heard| now.duration_since(heard) < window)
+                peer.last_heard_at
+                    .is_some_and(|heard| now.duration_since(heard) < window)
             })
             .count()
             .saturating_add(1);
@@ -1430,7 +1465,7 @@ impl RaftNode {
                 return;
             }
 
-            if !self.has_quorum() {
+            if !self.reaches_a_majority() {
                 // Not counting down while an election is impossible. Letting
                 // the deadline expire unused means that the moment
                 // connectivity returns, this member campaigns *immediately* --

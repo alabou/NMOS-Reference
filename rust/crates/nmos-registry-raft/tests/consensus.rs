@@ -433,6 +433,8 @@ type Answer = Box<
 struct Scripted {
     pre_vote: Answer,
     vote: Answer,
+    /// What its append replies say of it: `true` for a member catching up.
+    catching_up: bool,
 }
 
 impl Scripted {
@@ -441,6 +443,17 @@ impl Scripted {
         Arc::new(Self {
             pre_vote: Box::new(move |request| grant(request, voting)),
             vote: Box::new(move |request| grant(request, voting)),
+            catching_up: false,
+        })
+    }
+
+    /// A member that has restarted and not been promoted: it grants, saying it
+    /// has forgotten, and answers every append as one catching up.
+    fn restarted() -> Arc<Self> {
+        Arc::new(Self {
+            pre_vote: Box::new(|request| grant(request, false)),
+            vote: Box::new(|request| grant(request, false)),
+            catching_up: true,
         })
     }
 }
@@ -498,7 +511,7 @@ impl nmos_registry_raft::transport::PeerHandler for Scripted {
             match_index: 0,
             conflict_index: 0,
             conflict_term: 0,
-            catching_up: false,
+            catching_up: self.catching_up,
             request_id: message.request_id,
         })
     }
@@ -686,6 +699,7 @@ async fn a_non_voting_grant_does_not_count_toward_an_ordinary_election() {
     let refusing = Arc::new(Scripted {
         pre_vote: Box::new(|request| refuse(request, request.term - 1, true)),
         vote: Box::new(|request| refuse(request, request.term, true)),
+        catching_up: false,
     });
     let (cluster, _held, started_at) =
         scripted(3, false, vec![Scripted::granting(false), refusing]).await;
@@ -715,10 +729,12 @@ async fn a_reply_from_an_earlier_term_proves_nothing() {
     let restarted_between = Arc::new(Scripted {
         pre_vote: Box::new(|request| grant(request, true)),
         vote: Box::new(|request| grant(request, false)),
+        catching_up: false,
     });
     let under_a_lease = Arc::new(Scripted {
         pre_vote: Box::new(|request| refuse(request, request.term - 1, true)),
         vote: Box::new(|request| refuse(request, request.term - 1, false)),
+        catching_up: false,
     });
     let (cluster, _held, started_at) =
         scripted(3, false, vec![restarted_between, under_a_lease]).await;
@@ -766,6 +782,7 @@ async fn a_recovery_election_is_refused_by_a_member_that_remembers() {
     let remembers_more = Arc::new(Scripted {
         pre_vote: Box::new(|request| refuse(request, request.term - 1, true)),
         vote: Box::new(|request| refuse(request, request.term, true)),
+        catching_up: false,
     });
     let (cluster, _held, _) = scripted(
         5,
@@ -2531,6 +2548,216 @@ async fn a_member_that_cannot_save_its_vote_for_itself_never_leads() {
         "member 0 led on a vote for itself it never saved (now term {term})",
     );
     assert!(tried, "member 0 stopped campaigning at term {term}");
+}
+
+// -- a majority catching up ---------------------------------------------------
+//
+// Two of three members restart together: the survivor, the only member holding
+// the log, must lead them back to voting. Found on Windows and measured in the
+// Python: the survivor won, then stood down a tick later ("lost contact with a
+// quorum") although both peers were answering, because check-quorum left out
+// members catching up while the quorum stayed two of three. Here the campaign
+// check counted them, so the survivor won again and again, a tick at a time --
+// and each new term threw away the snapshot the last had begun. A member
+// catching up that answers proves the leader is not cut off, so check-quorum
+// counts it, and so does the campaign check; commits, read confirmations and
+// votes still leave it out. Port of `TestAMajorityCatchingUp`.
+
+/// `quick()`, compacting early and sending snapshots in small chunks: a member
+/// that restarts then needs a snapshot of many chunks, one round trip each, to
+/// catch up -- far longer than the tick check-quorum runs on.
+fn catching_up_timing() -> RaftTiming {
+    RaftTiming {
+        compaction_threshold: 16,
+        snapshot_chunk: 16,
+        ..quick()
+    }
+}
+
+/// Poll `ready` for up to `seconds`: `until`'s two are too few for a catch-up
+/// of a few thousand round trips on a loaded machine.
+async fn within(seconds: u64, mut ready: impl FnMut() -> bool) -> bool {
+    let deadline = std::time::Instant::now() + Duration::from_secs(seconds);
+    while std::time::Instant::now() < deadline {
+        if ready() {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    ready()
+}
+
+/// The one leader, read once: counting leaders and then indexing a second
+/// reading races a leader standing down in between.
+async fn the_leader(cluster: &Cluster) -> Option<usize> {
+    let mut found = None;
+    within(10, || {
+        found = match cluster.leaders()[..] {
+            [leader] => Some(leader as usize),
+            _ => None,
+        };
+        found.is_some()
+    })
+    .await;
+    found
+}
+
+/// Close member `index` and start it again over its own term file, as a
+/// restart leaves it: an empty log, and an incarnation that does not vote until
+/// a leader promotes it.
+async fn restart(cluster: &mut Cluster, index: usize, timing: RaftTiming) {
+    cluster.nodes[index].close().await;
+    let node = RaftNode::new(
+        layout_of(3, index),
+        cluster.fabric.transport(index as u64) as Arc<dyn Transport>,
+        TermStore::new(cluster._scratch.state(index as u64)),
+        StateMachine::new(
+            index as u64,
+            CursorAllocator::new(index as u64).expect("a lane"),
+        ),
+        Arc::new(Registry::new(RegistryStore::new())),
+        timing,
+    )
+    .expect("a term file only this member has written");
+    node.start().await.expect("starts");
+    cluster.nodes[index] = node;
+}
+
+/// A cluster whose leader and one follower restart together, leaving the third
+/// -- the survivor -- the only member holding the log.
+async fn two_of_three_restart_together() -> (Cluster, usize, [usize; 2]) {
+    let timing = catching_up_timing();
+    let mut cluster = Cluster::build(3, timing);
+    cluster.start_all().await;
+    let leader = the_leader(&cluster).await.expect("a leader");
+    let node = Arc::clone(&cluster.nodes[leader]);
+    let proposals = (1..=1500u64).map(|sequence| {
+        let node = Arc::clone(&node);
+        async move { node.propose(claim(leader as u64, sequence)).await }
+    });
+    for outcome in futures_util::future::join_all(proposals).await {
+        outcome.expect("commits");
+    }
+    let committed = node.commit_index();
+    assert!(
+        within(10, || cluster
+            .nodes
+            .iter()
+            .all(|n| n.last_applied() >= committed))
+        .await,
+        "the followers never applied the log",
+    );
+    let survivor = (leader + 2) % 3;
+    let restarted = [leader, (leader + 1) % 3];
+    for index in restarted {
+        restart(&mut cluster, index, timing).await;
+    }
+    (cluster, survivor, restarted)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_survivor_leads_two_restarted_members_back_to_voting() {
+    let (cluster, survivor, restarted) = two_of_three_restart_together().await;
+
+    let promoted = within(20, || restarted.iter().all(|&i| cluster.nodes[i].voting())).await;
+    let voting: Vec<bool> = restarted
+        .iter()
+        .map(|&i| cluster.nodes[i].voting())
+        .collect();
+    assert!(
+        promoted,
+        "20 s after two of three restarted they are still catching up (voting \
+         {voting:?}), the survivor m{survivor} is {:?}, leaders {:?}: nothing can \
+         be written",
+        cluster.nodes[survivor].role(),
+        cluster.leaders(),
+    );
+    // And the cluster writes again.
+    let leader = the_leader(&cluster).await.expect("a leader");
+    cluster.nodes[leader]
+        .propose(claim(leader as u64, 10_000))
+        .await
+        .expect("commits");
+
+    cluster.close_all().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_leader_whose_peers_answer_as_catching_up_keeps_leading() {
+    // Check-quorum asks whether this leader is cut off, and it is not: peers
+    // that answered within the window are reachable, catching up or not, and
+    // with a majority of the cluster answering no other member can gather one.
+    let (cluster, _held, _) =
+        scripted(3, false, vec![Scripted::restarted(), Scripted::restarted()]).await;
+    let node = &cluster.nodes[0];
+    assert!(
+        within(5, || node.role() == Role::Leader).await,
+        "never elected by its restarted peers",
+    );
+    let term = node.term();
+
+    tokio::time::sleep(Duration::from_millis(10 * quick().election_max_ms)).await;
+    assert!(
+        node.role() == Role::Leader && node.term() == term,
+        "elected in term {term}, now {:?} in term {}: it stood down with both \
+         peers answering, and nobody else can lead them",
+        node.role(),
+        node.term(),
+    );
+
+    cluster.close_all().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_member_whose_reachable_peers_are_catching_up_still_campaigns() {
+    // Whether an election could be won is for the round to decide. The flags a
+    // member learned while leading outlive the leadership -- cleared only by a
+    // promotion, a new leadership or a link going down -- and a campaign check
+    // that left them out made the member that had to lead them unable to try.
+    let (cluster, _held, _) =
+        scripted(3, false, vec![Scripted::restarted(), Scripted::restarted()]).await;
+    let node = &cluster.nodes[0];
+    assert!(
+        within(5, || node.role() == Role::Leader).await,
+        "never elected by its restarted peers",
+    );
+
+    // Cut off, nobody answers, and it stands down.
+    cluster.fabric.isolate(0, &[1, 2]);
+    assert!(
+        within(5, || node.role() != Role::Leader).await,
+        "cut off, it never stood down",
+    );
+    cluster.fabric.heal();
+    assert!(
+        within(5, || node.role() == Role::Leader).await,
+        "reachable again, its peers catching up as it last heard, and it never \
+         campaigned",
+    );
+
+    cluster.close_all().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_leader_whose_majority_is_catching_up_reports_no_quorum() {
+    // Readiness asks whether a write could commit, and it could not.
+    let (cluster, _held, _) =
+        scripted(3, false, vec![Scripted::restarted(), Scripted::restarted()]).await;
+    let node = &cluster.nodes[0];
+    assert!(
+        within(5, || node.role() == Role::Leader).await,
+        "never elected by its restarted peers",
+    );
+    // Past the first replies, which is when a new leader learns it.
+    tokio::time::sleep(Duration::from_millis(5 * quick().heartbeat_ms)).await;
+
+    assert!(
+        !node.has_quorum(),
+        "both peers are catching up, so nothing can commit, yet the member \
+         reports a quorum -- the backend would call itself Ready",
+    );
+
+    cluster.close_all().await;
 }
 
 // -- the election restriction ------------------------------------------------
