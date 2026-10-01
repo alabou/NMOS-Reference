@@ -3678,14 +3678,18 @@ async fn an_append_below_the_commit_index_is_answered_with_it() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_snapshot_reply_from_an_earlier_term_is_not_credited() {
     // A completion acknowledged in an earlier term, arriving now.
-    // `InstallSnapshotReply` carries no correlation id, so the `reply_floor`
-    // fence that protects appends cannot protect it -- only its term can.
-    // Believing a stale `done = true` credits the peer with *this* leader's
-    // current snapshot: the chaos soak measured a member credited with index
-    // 504 from a reply sent in term 78 about a snapshot through 500, whose every
-    // genuine rejection afterwards was discarded as stale, so it never caught
-    // up. etcd drops every lower-term message before it reaches the progress
-    // tracker (`raft.go:1133-1186`).
+    // Fenced twice, the term first. The reply carries the id of the chunk it
+    // answers (S9), and one from an earlier term is at or below the
+    // `reply_floor` this leadership raised on beginning; but the term is what
+    // `on_install_snapshot_reply` checks first, as `on_append_entries_reply`
+    // does. When this was written the reply carried no id, and the term was its
+    // only fence. This reply's id is `u64::MAX`, above any floor, so the term
+    // alone stops it here. Believing a stale `done = true` credits the peer with
+    // *this* leader's current snapshot: the chaos soak measured a member
+    // credited with index 504 from a reply sent in term 78 about a snapshot
+    // through 500, whose every genuine rejection afterwards was discarded as
+    // stale, so it never caught up. etcd drops every lower-term message before
+    // it reaches the progress tracker (`raft.go:1133-1186`).
     use nmos_registry_raft::messages::InstallSnapshotReply;
     use nmos_registry_raft::transport::PeerHandler;
 

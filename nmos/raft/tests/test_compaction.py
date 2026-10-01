@@ -487,14 +487,21 @@ class TestWhatASnapshotReplyIsEvidenceOf:
     ) -> None:
         """A completion acknowledged in an earlier term, arriving now.
 
-        ``InstallSnapshotReply`` carries no correlation id, so the
-        ``reply_floor`` fence that protects appends cannot protect it -- only
-        its term can. Believing a stale ``done=True`` credits the peer with
-        *this* leader's current snapshot: measured in the Rust chaos soak as a
-        member credited with index 504 from a reply sent in term 78 about a
-        snapshot through 500, whose every genuine rejection afterwards was then
-        discarded as stale, so it never caught up. etcd drops every lower-term
-        message before it reaches the progress tracker (``raft.go:1133-1186``).
+        Fenced twice, the term first. The reply carries the id of the chunk it
+        answers (S9), and one from an earlier term is at or below the
+        ``reply_floor`` this leadership raised on beginning; but the term is
+        what ``on_install_snapshot_reply`` checks first, as
+        ``on_append_entries_reply`` does. When this was written the reply
+        carried no id, and the term was its only fence. This reply's id is past
+        any floor and its commit index credits something, so the term alone
+        stops it here: the guard this test is about. With an id under the
+        floor, or a commit index of 0, it passed with the term check removed.
+        Believing a stale ``done=True`` credits the peer with *this* leader's
+        current snapshot: measured in the Rust chaos soak as a member credited
+        with index 504 from a reply sent in term 78 about a snapshot through
+        500, whose every genuine rejection afterwards was then discarded as
+        stale, so it never caught up. etcd drops every lower-term message before
+        it reaches the progress tracker (``raft.go:1133-1186``).
         """
         cluster = Cluster(3, tmp_path, timing=EAGER)
         await cluster.start()
@@ -518,6 +525,10 @@ class TestWhatASnapshotReplyIsEvidenceOf:
 
             node.on_install_snapshot_reply(peer, InstallSnapshotReply(
                 term=node.term - 1, bytes_received=0, done=True,
+                # Past any floor -- the largest id the wire carries -- and
+                # crediting something: were the term not checked, nothing else
+                # would stop this reply.
+                commit_index=node._log.last_index, request_id=2**64 - 1,
             ))
 
             assert state.match_index == 0, (

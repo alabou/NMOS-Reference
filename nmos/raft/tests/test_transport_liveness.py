@@ -392,6 +392,48 @@ class TestBothEndsOfAConnectionBeat:
             await pair.close()
 
 
+class TestAChunkCanBeAwaited:
+    """A snapshot chunk can be awaited like any request that carries an id.
+
+    The node sends chunks fire-and-forget and handles their answers itself, but
+    a chunk carries a correlation id, and ``request`` stamps and reads the id of
+    any message with the field (``_with_request_id``, ``_resolve``). The Rust
+    named the messages instead, and its list predated the chunk's id, so it
+    refused to await one -- "carries no request_id and cannot be awaited" --
+    until part 17 of the fix record made it match.
+    """
+
+    async def test_a_snapshot_chunk_can_be_awaited_as_a_correlated_request(
+        self,
+    ) -> None:
+        pair = _Pair(recorders=(_Recorder(), _AnswersChunks()))
+        await pair.start()
+        try:
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 5.0
+            while True:
+                try:
+                    reply = await pair.transports[0].request(
+                        1, _CHUNK, timeout=2.0, stream=Stream.BULK,
+                    )
+                    break
+                except RaftUnavailable as exc:
+                    # BULK connects in its own time; until it has, there is no
+                    # link to ask on.
+                    if not str(exc).startswith("no link") or loop.time() > deadline:
+                        pytest.fail(
+                            f"a snapshot chunk could not be awaited as a request: "
+                            f"{exc}"
+                        )
+                    await asyncio.sleep(0.02)
+
+            assert isinstance(reply, InstallSnapshotReply), reply
+            assert reply.bytes_received == len(_CHUNK.data)
+            assert reply.request_id != 0, "the answer carries no correlation id"
+        finally:
+            await pair.close()
+
+
 class TestAnOrderlyCloseIsNoError:
     """A peer that closes its end cleanly is a link going down, not a failure.
 

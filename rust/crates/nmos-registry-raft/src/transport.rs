@@ -492,6 +492,10 @@ pub fn frame_for(message: &Message, stream: Stream, is_reply: bool) -> Vec<u8> {
 /// [`Promote`], say -- are fire-and-forget by design, and asking for a reply to
 /// one is a programming error rather than a runtime condition. Here that is a
 /// `None` the caller must handle, because this crate has no panic to reach for.
+///
+/// Every message with the field, as the Python's `_with_request_id` takes any:
+/// the snapshot chunk and its answer were missing -- the list predated their
+/// correlation id (S9) -- so `request` refused a chunk the Python awaits.
 #[must_use]
 pub fn with_request_id(message: &Message, request_id: u64) -> Option<Message> {
     Some(match *message {
@@ -503,6 +507,16 @@ pub fn with_request_id(message: &Message, request_id: u64) -> Option<Message> {
             request_id,
             ..m.clone()
         }),
+        Message::InstallSnapshot(ref m) => Message::InstallSnapshot(InstallSnapshot {
+            request_id,
+            ..m.clone()
+        }),
+        Message::InstallSnapshotReply(ref m) => {
+            Message::InstallSnapshotReply(InstallSnapshotReply {
+                request_id,
+                ..m.clone()
+            })
+        }
         Message::Propose(ref m) => Message::Propose(Propose {
             request_id,
             ..m.clone()
@@ -529,11 +543,16 @@ pub fn with_request_id(message: &Message, request_id: u64) -> Option<Message> {
 }
 
 /// The correlation id a reply carries, or zero for the messages without one.
+///
+/// Every message with the field, as the Python's `_resolve` reads any: without
+/// the snapshot chunk's answer here, one could never reach a waiter.
 #[must_use]
 pub fn request_id_of(message: &Message) -> u64 {
     match *message {
         Message::AppendEntries(ref m) => m.request_id,
         Message::AppendEntriesReply(ref m) => m.request_id,
+        Message::InstallSnapshot(ref m) => m.request_id,
+        Message::InstallSnapshotReply(ref m) => m.request_id,
         Message::Propose(ref m) => m.request_id,
         Message::ProposeReply(ref m) => m.request_id,
         Message::Forward(ref m) => m.request_id,

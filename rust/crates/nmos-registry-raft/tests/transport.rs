@@ -504,6 +504,45 @@ async fn a_correlated_request_gets_its_own_reply() {
     b.close().await;
 }
 
+/// A snapshot chunk can be awaited like any request that carries an id.
+///
+/// The node sends chunks fire-and-forget and handles their answers itself, but
+/// a chunk carries a correlation id (S9), and `request` refused one -- "carries
+/// no request_id and cannot be awaited" -- where the Python's awaits it: the
+/// stamping and reading of ids had not been extended to the chunk and its
+/// answer. Found when a test tried to await a chunk (part 17 of the fix
+/// record).
+#[tokio::test]
+async fn a_snapshot_chunk_can_be_awaited_as_a_correlated_request() {
+    let (a, _ra, b, _rb) = pair("nmos-registry-test").await;
+
+    // BULK connects in its own time; until it has, there is no link to ask on.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let reply = loop {
+        match a
+            .request(1, &chunk(vec![b'x'; 16]), Stream::Bulk, Some(2_000))
+            .await
+        {
+            Err(ref error)
+                if error.0.starts_with("no link") && std::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            other => break other,
+        }
+    };
+
+    match reply {
+        Ok(Message::InstallSnapshotReply(ref m)) => {
+            assert_eq!(m.bytes_received, 16);
+            assert_ne!(m.request_id, 0, "the answer carries no correlation id");
+        }
+        other => panic!("a snapshot chunk could not be awaited as a request: {other:?}"),
+    }
+    a.close().await;
+    b.close().await;
+}
+
 #[tokio::test]
 async fn concurrent_requests_do_not_cross() {
     // The property correlation ids exist for. Without them the second reply
@@ -584,31 +623,44 @@ async fn the_bulk_stream_is_separate_from_control() {
     // A snapshot must not head-of-line-block the heartbeat timer, which means
     // it must not share the link with it.
     let (a, _ra, b, _rb) = pair("nmos-registry-test").await;
+    let chunk = Message::InstallSnapshot(InstallSnapshot {
+        term: 2,
+        leader: 0,
+        last_index: 100,
+        last_term: 1,
+        offset: 0,
+        data: vec![1, 2, 3, 4],
+        done: true,
+        ownership: Vec::new(),
+        request_id: 7,
+    });
 
-    let reply = a
-        .request(
-            1,
-            &Message::InstallSnapshot(InstallSnapshot {
-                term: 2,
-                leader: 0,
-                last_index: 100,
-                last_term: 1,
-                offset: 0,
-                data: vec![1, 2, 3, 4],
-                done: true,
-                ownership: Vec::new(),
-                request_id: 7,
-            }),
-            Stream::Bulk,
-            Some(2_000),
-        )
-        .await;
+    // BULK connects in its own time; until it has, there is no link to ask on.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let reply = loop {
+        match a.request(1, &chunk, Stream::Bulk, Some(2_000)).await {
+            Err(ref error)
+                if error.0.starts_with("no link") && std::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            other => break other,
+        }
+    };
 
-    // `InstallSnapshotReply` carries no request id, so this correlates with
-    // nothing and times out -- which is itself the point being made: the reply
-    // reaches the handler, not a waiter. What matters here is that the BULK
-    // link exists and carried the frame.
-    assert!(reply.is_err(), "a snapshot reply carries no correlation id");
+    // Answered, and so carried both ways by the BULK link: an answer is matched
+    // to the waiters of the link it arrived on, and a request on BULK waits on
+    // BULK's. Until part 18 of the fix record this asserted that the request
+    // failed, on the premise that a snapshot's answer carries no correlation id
+    // -- false since S9 -- and passed because this transport refused to stamp a
+    // chunk at all, so the frame was never sent.
+    match reply {
+        Ok(Message::InstallSnapshotReply(ref m)) => assert!(
+            m.done && m.bytes_received == 4,
+            "the chunk was answered as another: {m:?}",
+        ),
+        other => panic!("the BULK link did not carry a chunk and its answer: {other:?}"),
+    }
 
     a.close().await;
     b.close().await;
@@ -938,6 +990,110 @@ fn every_request_knows_the_reply_it_expects() {
         })
         .expected_reply(),
         None,
+    );
+}
+
+/// Every message that carries a correlation id is stamped with one, and has it
+/// read back: the ten both implementations' messages carry it on.
+///
+/// The Python's `_with_request_id` and `_resolve` take the id of any message
+/// with the field; these two name the messages, and named eight until part 17
+/// of the fix record found the snapshot chunk and its answer missing -- so
+/// `request` refused a chunk, and an answer to one could not reach a waiter.
+#[test]
+fn every_message_that_carries_a_request_id_is_stamped_and_read() {
+    use nmos_registry_raft::transport::{request_id_of, with_request_id};
+
+    let carriers = [
+        Message::AppendEntries(AppendEntries {
+            term: 1,
+            leader: 0,
+            prev_log_index: 0,
+            prev_log_term: 0,
+            leader_commit: 0,
+            request_id: 0,
+            entries: Vec::new(),
+        }),
+        Message::AppendEntriesReply(AppendEntriesReply {
+            term: 1,
+            success: true,
+            match_index: 0,
+            conflict_index: 0,
+            conflict_term: 0,
+            catching_up: false,
+            request_id: 0,
+        }),
+        Message::InstallSnapshot(InstallSnapshot {
+            term: 1,
+            leader: 0,
+            last_index: 1,
+            last_term: 1,
+            offset: 0,
+            data: Vec::new(),
+            done: false,
+            ownership: Vec::new(),
+            request_id: 0,
+        }),
+        Message::InstallSnapshotReply(InstallSnapshotReply {
+            term: 1,
+            bytes_received: 0,
+            done: false,
+            commit_index: 0,
+            request_id: 0,
+        }),
+        Message::ReadIndex(ReadIndex { request_id: 0 }),
+        Message::ReadIndexReply(ReadIndexReply {
+            ok: true,
+            index: 0,
+            reason: String::new(),
+            request_id: 0,
+        }),
+        Message::Propose(Propose {
+            proposals: Vec::new(),
+            request_id: 0,
+        }),
+        Message::ProposeReply(ProposeReply {
+            accepted: true,
+            reason: String::new(),
+            term: 1,
+            first_index: 1,
+            request_id: 0,
+            leader: None,
+        }),
+        Message::Forward(Forward {
+            verb: String::new(),
+            resource_type: String::new(),
+            resource_id: String::new(),
+            body_text: String::new(),
+            request_id: 0,
+        }),
+        Message::ForwardReply(ForwardReply {
+            ok: true,
+            created: false,
+            error: String::new(),
+            detail: String::new(),
+            applied_index: 0,
+            not_owner: false,
+            request_id: 0,
+            owner: None,
+        }),
+    ];
+    let losing: Vec<String> = carriers
+        .iter()
+        .filter_map(|message| {
+            let kind = message.message_type();
+            match with_request_id(message, 7) {
+                None => Some(format!("{kind:?} is not stamped")),
+                Some(stamped) if request_id_of(&stamped) != 7 => {
+                    Some(format!("{kind:?} is not read back"))
+                }
+                Some(_) => None,
+            }
+        })
+        .collect();
+    assert!(
+        losing.is_empty(),
+        "messages that carry a request_id and lose it: {losing:?}"
     );
 }
 
