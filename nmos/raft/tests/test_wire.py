@@ -321,7 +321,9 @@ class TestFrameRejections:
             decode_frame(bytes(corrupt))
 
     def test_an_oversized_payload_is_refused_at_encode_time(self) -> None:
-        with pytest.raises(ValueError, match="MAX_FRAME"):
+        # The decoder's class for the mirror condition, and the Rust's: the
+        # transport answers it by not sending that message, loudly.
+        with pytest.raises(RaftProtocolError, match="MAX_FRAME"):
             encode_frame(Frame(
                 stream=Stream.CONTROL, type=MessageType.PING, flags=0,
                 payload=b"\x00" * (MAX_FRAME + 1),

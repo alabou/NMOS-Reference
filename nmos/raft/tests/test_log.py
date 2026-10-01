@@ -108,6 +108,32 @@ class TestReading:
         with pytest.raises(IndexError):
             _log(1).get(5)
 
+    def test_a_window_is_bounded_by_bytes(self) -> None:
+        log: RaftLog[str] = RaftLog()
+        for index in range(1, 5):
+            log.append(1, [(b"x" * 10, f"e{index}")])
+        # 25 bytes: two 10-byte payloads fit, the third would not.
+        assert [e.index for e in log.window(1, 256, 25)] == [1, 2]
+        # The count bound still wins when it is the smaller.
+        assert [e.index for e in log.window(1, 1, 25)] == [1]
+        # From the middle, and clamped to what exists.
+        assert [e.index for e in log.window(3, 256, 100)] == [3, 4]
+        assert log.window(5, 256, 100) == ()
+
+    def test_a_window_always_carries_at_least_one_entry(self) -> None:
+        """An entry larger than the bound travels alone, never not at all."""
+        log: RaftLog[str] = RaftLog()
+        log.append(1, [(b"x" * 100, "e1"), (b"x" * 10, "e2")])
+        assert [e.index for e in log.window(1, 256, 10)] == [1]
+        assert [e.index for e in log.window(2, 256, 10)] == [2]
+        # etcd documents 0 as "one entry per message".
+        assert [e.index for e in log.window(1, 256, 0)] == [1]
+
+    def test_a_window_below_the_snapshot_is_distinguishable(self) -> None:
+        log: RaftLog[str] = RaftLog(snapshot_index=5, snapshot_term=1)
+        with pytest.raises(RaftLogCompacted):
+            log.window(3, 256, 100)
+
 
 class TestReplication:
     def test_matching_entries_are_left_alone(self) -> None:

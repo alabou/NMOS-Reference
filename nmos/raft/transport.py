@@ -66,7 +66,13 @@ import ssl
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
-from nmos.raft.errors import RaftClusterMismatch, RaftProtocolError, RaftUnavailable
+from nmos.raft.errors import (
+    MemberTask,
+    RaftClusterMismatch,
+    RaftProtocolError,
+    RaftUnavailable,
+    RaftUnexpectedError,
+)
 from nmos.raft.messages import (
     EXPECTED_REPLY,
     AppendEntries,
@@ -103,6 +109,25 @@ log = logging.getLogger(__name__)
 
 _RECONNECT_INITIAL = 0.05
 _RECONNECT_MAX = 2.0
+
+DIAL_TIMEOUT = 7.0
+"""Seconds a connection attempt may take, at either end.
+
+At the dialling end, from the start of the attempt through the TCP connect
+*and* the TLS handshake; at the accepting end, the TLS handshake of a
+connection just accepted. The Hello that follows is a request on a connection
+that exists, and is under the read deadline (``CONN_READ_TIMEOUT``) at both
+ends already.
+
+Neither step had a bound. ``open_connection`` waited out the kernel's own SYN
+retransmits -- about 127 s on Linux -- into a path that dropped them, so a
+peer behind a firewall that drops rather than refuses, or a host mid-reboot,
+held its dialler that long per attempt; and a handshake had asyncio's default
+of 60 s. etcd's ``rafthttp`` dials with a ``DialTimeout`` (``transport.go``).
+7 s rather than its 2 s so a lossy path gets three retransmits -- Linux sends
+them at 1, 3 and 7 s -- the same figure as the mutation timeout. Tests shorten
+it; nothing else should.
+"""
 
 CONN_READ_TIMEOUT = 5.0
 """Seconds a connection may carry nothing before it is closed.
@@ -231,6 +256,19 @@ class PeerHandler(Protocol):
         """
         ...
 
+    def on_unexpected_error(self, error: RaftUnexpectedError) -> None:
+        """The transport met an exception nothing in it expected.
+
+        A defect, in a handler it delivered to or in the transport itself; the
+        member stops for it, as it stops for one in its own loops. The
+        failures a link expects -- a peer that drops, a frame that does not
+        parse, a socket or term file that fails, a peer from another cluster
+        -- are handled where they happen and never reach this. The Rust
+        transport has no counterpart because it needs none: the same defect
+        there is a panic, and a panic aborts its process.
+        """
+        ...
+
 
 @runtime_checkable
 class Transport(Protocol):
@@ -342,6 +380,8 @@ class RaftTransport:
         conn_read_timeout: How long a connection may carry nothing before it
             is closed (``CONN_READ_TIMEOUT``, etcd's value). Tests shorten it;
             nothing else should.
+        dial_timeout: How long a connection attempt may take, at either end
+            (``DIAL_TIMEOUT``). Tests shorten it; nothing else should.
     """
 
     def __init__(
@@ -358,6 +398,7 @@ class RaftTransport:
         peer_name: str | None = None,
         rpc_timeout: float = 2.0,
         conn_read_timeout: float = CONN_READ_TIMEOUT,
+        dial_timeout: float = DIAL_TIMEOUT,
     ) -> None:
         self._local = local
         self._peers = peers
@@ -370,6 +411,7 @@ class RaftTransport:
         self._peer_name = peer_name
         self._rpc_timeout = rpc_timeout
         self._read_timeout = conn_read_timeout
+        self._dial_timeout = dial_timeout
 
         self._handler_ref: weakref.ref[PeerHandler] | None = None
         """The node, held **weakly**.
@@ -423,6 +465,13 @@ class RaftTransport:
         self._closing = False
         self._server = await asyncio.start_server(
             self._serve, self._bind[0], self._bind[1], ssl=self._server_ssl,
+            # The accepting end's half of ``DIAL_TIMEOUT``: a caller that
+            # connects and never starts the handshake held a task for
+            # asyncio's 60 s default. Only meaningful with a context, and
+            # refused without one.
+            ssl_handshake_timeout=(
+                self._dial_timeout if self._server_ssl is not None else None
+            ),
         )
         for peer in self._peers:
             for stream in (Stream.CONTROL, Stream.BULK):
@@ -504,7 +553,20 @@ class RaftTransport:
         if link is None or link.writer is None or not link.connected:
             return
         try:
-            link.writer.write(_frame_for(message, stream))
+            frame = _frame_for(message, stream)
+        except RaftProtocolError as exc:
+            # Above the frame cap: nothing was written and the link is as it
+            # was, so it is not dropped -- the message is not sent, and that
+            # is said, since the bound that should have kept it under the cap
+            # (``max_append_bytes``) is what failed. Raised past here it ended
+            # a tick, and with a tick's exceptions a stop, the leader.
+            log.error(
+                "raft: %s to member %d exceeds the frame cap; not sent: %s",
+                type(message).__name__, peer, exc,
+            )
+            return
+        try:
+            link.writer.write(frame)
         except (OSError, RuntimeError):
             # The maintenance task owns reconnection; a failed write here is
             # simply a message that did not go, which replication retries.
@@ -529,6 +591,19 @@ class RaftTransport:
                 f"use send() for it",
             )
 
+        # Encoded before a waiter exists for it: a request above the frame cap
+        # is refused at once, rather than registered and waited out.
+        try:
+            frame = _frame_for(tagged, stream)
+        except RaftProtocolError as exc:
+            log.error(
+                "raft: %s to member %d exceeds the frame cap; not sent: %s",
+                type(message).__name__, peer, exc,
+            )
+            raise RaftUnavailable(
+                f"{message.TYPE.name} to member {peer} exceeds the frame cap",
+            ) from exc
+
         loop = asyncio.get_running_loop()
         future: asyncio.Future[Any] = loop.create_future()
         # The expected reply **kind** is stored with the waiter, not just the
@@ -536,7 +611,7 @@ class RaftTransport:
         # leader's append ids are different spaces that meet in this one map.
         link.pending[request_id] = (expected, future)
         try:
-            link.writer.write(_frame_for(tagged, stream))
+            link.writer.write(frame)
             return await asyncio.wait_for(
                 future, timeout if timeout is not None else self._rpc_timeout,
             )
@@ -592,8 +667,21 @@ class RaftTransport:
                     # cluster otherwise looks like a member that is merely
                     # unreachable.
                     log.error("raft: %s", exc)
-            except Exception:
-                log.exception("raft: link to member %d failed", link.peer)
+                else:
+                    # At debug, as the Rust logs each attempt: a peer that is
+                    # down is ordinary, and a link's whole history is wanted
+                    # only when something else is being traced.
+                    log.debug(
+                        "raft: link to member %d (%s) failed: %s",
+                        link.peer, link.stream.name, exc,
+                    )
+            except Exception as exc:
+                # Not a link failure: those are enumerated above. A handler
+                # this link delivered to, or the link's own code, raised what
+                # nothing expected -- a defect, and the member stops for it
+                # rather than redialling in front of it for ever.
+                self._stop_on(MemberTask.OUTBOUND_LINK, exc)
+                return
             finally:
                 self._drop(link, RaftUnavailable("link dropped"))
             if self._closing:
@@ -603,22 +691,40 @@ class RaftTransport:
 
     async def _connect(self, link: _Link) -> None:
         host, port = self._peers[link.peer]
-        if self._client_ssl is not None and self._peer_name:
-            # Verify the shared cluster SAN, not the address. Members
-            # co-located on one host all answer at 127.0.0.1, so verifying the
-            # address would either fail against every real certificate or have
-            # to be turned off -- and turning it off is what lets any
-            # Product-CA device certificate answer for a member.
-            reader, writer = await asyncio.open_connection(
-                host, port, ssl=self._client_ssl,
-                server_hostname=self._peer_name,
-            )
-        else:
-            # ``server_hostname`` is rejected outright without a context, so
-            # the plaintext transport cannot simply pass None here.
-            reader, writer = await asyncio.open_connection(
-                host, port, ssl=self._client_ssl,
-            )
+        # ``DIAL_TIMEOUT``, around the connect and the handshake together; the
+        # handshake's own bound inside it gives asyncio's precise error for a
+        # handshake that stalls. Dropped at the deadline, the half-made
+        # connection is closed by asyncio with nothing left behind.
+        try:
+            if self._client_ssl is not None and self._peer_name:
+                # Verify the shared cluster SAN, not the address. Members
+                # co-located on one host all answer at 127.0.0.1, so verifying
+                # the address would either fail against every real certificate
+                # or have to be turned off -- and turning it off is what lets
+                # any Product-CA device certificate answer for a member.
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(
+                        host, port, ssl=self._client_ssl,
+                        server_hostname=self._peer_name,
+                        ssl_handshake_timeout=self._dial_timeout,
+                    ),
+                    self._dial_timeout,
+                )
+            else:
+                # ``server_hostname`` and ``ssl_handshake_timeout`` are
+                # rejected outright without a context, so the plaintext
+                # transport cannot simply pass None for them.
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(host, port, ssl=self._client_ssl),
+                    self._dial_timeout,
+                )
+        except asyncio.TimeoutError as exc:
+            # An ``OSError``, as a refused connection is: ``_maintain`` backs
+            # off and dials again.
+            raise TimeoutError(
+                f"member {link.peer} did not accept a connection within "
+                f"{self._dial_timeout:g}s",
+            ) from exc
         link.writer = writer
 
         writer.write(_frame_for(
@@ -716,6 +822,22 @@ class RaftTransport:
         if self._handler is not None and link.stream is Stream.CONTROL:
             self._handler.on_peer_state(link.peer, up=False, incarnation=0)
 
+    def _stop_on(self, task: MemberTask, exc: BaseException) -> None:
+        """Hand a defect to the member (``PeerHandler.on_unexpected_error``).
+
+        Before a handler is attached there is no member to stop, so the defect
+        is logged with its traceback instead; nothing is delivered before
+        ``start`` attaches one, so that branch is a formality.
+        """
+        handler = self._handler
+        if handler is None:
+            log.error(
+                "raft: %s failed before the member was attached", task.value,
+                exc_info=exc,
+            )
+            return
+        handler.on_unexpected_error(RaftUnexpectedError(task, exc))
+
     # -- inbound --------------------------------------------------------
 
     async def _serve(
@@ -777,8 +899,19 @@ class RaftTransport:
             log.warning("raft: dropping a peer connection: %s", exc)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except OSError:
+            # The socket, its TLS, or a term file a handler could not save
+            # (``_dispatch`` lets the ``OSError`` out so a decision resting on
+            # the save is never answered): a link failure, and this connection
+            # ends -- logged, as it always was, so a disk that fails does not
+            # read as a peer that went away.
             log.exception("raft: inbound connection failed")
+        except Exception as exc:
+            # Not a link failure: those are enumerated above. A handler this
+            # connection delivered to raised what nothing expected -- a
+            # defect, and the member stops for it rather than serving the next
+            # connection in front of it.
+            self._stop_on(MemberTask.INBOUND_CONNECTION, exc)
         finally:
             self._inbound.discard(writer)
             try:
@@ -962,13 +1095,23 @@ class RaftTransport:
         self, peer: int, frame: Frame, message: Any,
         writer: asyncio.StreamWriter | None, handler: PeerHandler,
     ) -> None:
-        async with self._application_slots:
-            if frame.type is MessageType.PROPOSE:
-                reply: Any = await handler.on_propose(peer, message)
-            elif frame.type is MessageType.READ_INDEX:
-                reply = await handler.on_read_index(peer, message)
-            else:
-                reply = await handler.on_forward(peer, message)
+        try:
+            async with self._application_slots:
+                if frame.type is MessageType.PROPOSE:
+                    reply: Any = await handler.on_propose(peer, message)
+                elif frame.type is MessageType.READ_INDEX:
+                    reply = await handler.on_read_index(peer, message)
+                else:
+                    reply = await handler.on_forward(peer, message)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # These handlers put every refusal in their reply, so an exception
+            # out of one is a defect. It used to end this task unobserved, the
+            # member serving on; the member stops for it instead, and the
+            # caller's own deadline tells it.
+            self._stop_on(MemberTask.APPLICATION_REQUEST, exc)
+            return
 
         if writer is None or writer.is_closing():
             # The caller is gone; its own deadline has already told it so.

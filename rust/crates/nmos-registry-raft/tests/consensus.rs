@@ -32,6 +32,7 @@ use nmos_registry_core::store::RegistryStore;
 use nmos_registry_raft::cluster::{RAFT_FLAVOUR, RaftLayout, derive_raft_layout};
 use nmos_registry_raft::cursors::CursorAllocator;
 use nmos_registry_raft::machine::StateMachine;
+use nmos_registry_raft::messages::Message;
 use nmos_registry_raft::node::{PROPOSALS_PER_INCARNATION, RaftNode, RaftTiming, Role};
 use nmos_registry_raft::operations::{Operation, OperationKind, ProposalId};
 use nmos_registry_raft::ownership::OwnershipTable;
@@ -211,6 +212,32 @@ async fn until(mut ready: impl FnMut() -> bool) -> bool {
     false
 }
 
+/// The one leader, from a single reading of every member's role: `None` unless
+/// exactly one member leads at that instant.
+///
+/// Read once and used, never counted and then read again. On a multi-threaded
+/// runtime the cluster keeps running between two readings, and on a loaded
+/// machine a leader can stand down in between -- its quorum's answers came too
+/// late, as Raft lets it -- so indexing the second reading found nobody:
+/// "index out of bounds: the len is 0 but the index is 0".
+fn sole_leader(cluster: &Cluster) -> Option<u64> {
+    match cluster.leaders()[..] {
+        [leader] => Some(leader),
+        _ => None,
+    }
+}
+
+/// [`sole_leader`], waited for as [`until`] waits.
+async fn elected(cluster: &Cluster) -> Option<u64> {
+    let mut found = None;
+    until(|| {
+        found = sole_leader(cluster);
+        found.is_some()
+    })
+    .await;
+    found
+}
+
 /// A proposable operation.
 ///
 /// **Not** a no-op. `OperationKind::Noop` produces no outcome by design -- the
@@ -282,9 +309,8 @@ async fn a_member_that_cannot_reach_a_quorum_does_not_campaign() {
     // to step down and causing an election the cluster had no reason to hold.
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
 
-    let leader = cluster.leaders()[0];
+    let leader = elected(&cluster).await.expect("no leader");
     let outcast = (0..3u64).find(|&m| m != leader).expect("a follower");
     cluster.fabric.isolate(outcast, &[0, 1, 2]);
 
@@ -311,9 +337,8 @@ async fn a_follower_being_served_refuses_to_help_depose_its_leader() {
 
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
 
-    let leader = cluster.leaders()[0];
+    let leader = elected(&cluster).await.expect("no leader");
     let follower = (0..3u64).find(|&m| m != leader).expect("a follower");
     let disruptor = (0..3u64)
         .find(|&m| m != leader && m != follower)
@@ -368,9 +393,8 @@ async fn a_pre_vote_changes_nothing_on_the_voter() {
 
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
 
-    let leader = cluster.leaders()[0];
+    let leader = elected(&cluster).await.expect("no leader");
     let voter = (0..3u64).find(|&m| m != leader).expect("a follower");
 
     // Let the lease lapse, so the refusal below is the pre-vote path rather
@@ -1006,8 +1030,7 @@ async fn mid_transfer() -> (Cluster, Arc<RaftNode>, u64, Arc<Holder>) {
     for index in 0..2 {
         cluster.nodes[index].start().await.expect("starts");
     }
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
-    let leader = cluster.leaders()[0];
+    let leader = elected(&cluster).await.expect("no leader");
     let node = Arc::clone(&cluster.nodes[leader as usize]);
     // Only until the first chunk goes out: every proposal lets the clock run,
     // and the tests start from one chunk in flight.
@@ -1058,8 +1081,7 @@ async fn a_follower_answers_a_snapshot_it_already_holds_with_its_commit_index() 
 
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
-    let leader = cluster.leaders()[0];
+    let leader = elected(&cluster).await.expect("no leader");
     let node = Arc::clone(&cluster.nodes[leader as usize]);
     for sequence in 1..=3u64 {
         node.propose(claim(leader, sequence))
@@ -1366,7 +1388,7 @@ async fn a_copy_of_a_chunk_already_held_is_answered_not_thrown_away() {
     use nmos_registry_raft::transport::PeerHandler;
 
     let (cluster, node, peer, holder) = mid_transfer().await;
-    let leader = cluster.leaders()[0];
+    let leader = node.index();
     let member = Arc::clone(&cluster.nodes[peer as usize]);
     let (first, payload) = first_chunk(&node, &holder);
     let size = first.data.len();
@@ -1427,7 +1449,7 @@ async fn a_chunk_that_disagrees_with_what_is_held_still_restarts_the_transfer() 
     use nmos_registry_raft::transport::PeerHandler;
 
     let (cluster, node, peer, holder) = mid_transfer().await;
-    let leader = cluster.leaders()[0];
+    let leader = node.index();
     let member = Arc::clone(&cluster.nodes[peer as usize]);
     let (first, payload) = first_chunk(&node, &holder);
     let size = first.data.len();
@@ -1466,7 +1488,7 @@ async fn a_chunk_sent_again_after_its_answer_was_lost_does_not_restart_the_trans
     use nmos_registry_raft::wire::Stream;
 
     let (cluster, node, peer, holder) = mid_transfer().await;
-    let leader = cluster.leaders()[0];
+    let leader = node.index();
     let member = Arc::clone(&cluster.nodes[peer as usize]);
     let (first, payload) = first_chunk(&node, &holder);
     let latest = || {
@@ -1567,8 +1589,7 @@ async fn a_chunk_sent_again_after_its_answer_was_lost_does_not_restart_the_trans
 async fn a_forwarded_proposal_that_never_arrives_leaves_no_waiter() {
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
-    let leader = cluster.leaders()[0];
+    let leader = elected(&cluster).await.expect("no leader");
     let member = (0..3u64)
         .find(|&member| member != leader)
         .expect("a follower");
@@ -1607,8 +1628,7 @@ async fn a_forwarded_proposal_that_never_arrives_leaves_no_waiter() {
 async fn a_leader_that_loses_its_quorum_does_not_fail_its_callers() {
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
-    let leader = cluster.leaders()[0];
+    let leader = elected(&cluster).await.expect("no leader");
     let node = Arc::clone(&cluster.nodes[leader as usize]);
     let others: Vec<u64> = (0..3u64).filter(|&member| member != leader).collect();
 
@@ -1646,8 +1666,7 @@ async fn a_leader_that_loses_its_quorum_does_not_fail_its_callers() {
 /// The three members of a started cluster: its leader, then the two others --
 /// once both have heard from it.
 async fn led(cluster: &Cluster) -> (u64, u64, u64) {
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
-    let leader = cluster.leaders()[0];
+    let leader = elected(cluster).await.expect("no leader");
     let others: Vec<u64> = (0..3u64).filter(|&member| member != leader).collect();
     assert!(
         until(|| others
@@ -1898,9 +1917,8 @@ async fn a_reply_that_says_catching_up_confirms_no_read() {
 async fn a_proposal_commits_and_applies_on_every_member() {
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
 
-    let leader = cluster.leaders()[0] as usize;
+    let leader = elected(&cluster).await.expect("no leader") as usize;
     cluster.nodes[leader]
         .propose(claim(leader as u64, 1))
         .await
@@ -1925,9 +1943,8 @@ async fn a_proposal_at_a_follower_is_forwarded_to_the_leader() {
     // reach the leader and its outcome has to come back.
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
 
-    let leader = cluster.leaders()[0];
+    let leader = elected(&cluster).await.expect("no leader");
     let follower = (0..3u64).find(|&m| m != leader).expect("a follower") as usize;
 
     // The leader knowing it leads is not the same as the follower knowing it:
@@ -1957,9 +1974,8 @@ async fn a_member_never_applies_past_what_is_committed() {
     // no further replication repairs.
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
 
-    let leader = cluster.leaders()[0] as usize;
+    let leader = elected(&cluster).await.expect("no leader") as usize;
     for sequence in 1..=12u64 {
         cluster.nodes[leader]
             .propose(claim(leader as u64, sequence))
@@ -1986,9 +2002,8 @@ async fn a_member_never_applies_past_what_is_committed() {
 async fn a_cluster_survives_losing_a_minority() {
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
 
-    let leader = cluster.leaders()[0];
+    let leader = elected(&cluster).await.expect("no leader");
     let casualty = (0..3u64).find(|&m| m != leader).expect("a follower");
     cluster.nodes[casualty as usize].close().await;
 
@@ -2007,9 +2022,8 @@ async fn a_leader_that_loses_its_quorum_stops_leading() {
     // writes that can never commit.
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
 
-    let leader = cluster.leaders()[0];
+    let leader = elected(&cluster).await.expect("no leader");
     cluster.fabric.isolate(leader, &[0, 1, 2]);
 
     assert!(
@@ -2024,9 +2038,8 @@ async fn a_leader_that_loses_its_quorum_stops_leading() {
 async fn the_cluster_elects_a_new_leader_after_the_old_one_goes() {
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
 
-    let first = cluster.leaders()[0];
+    let first = elected(&cluster).await.expect("no leader");
     cluster.nodes[first as usize].close().await;
 
     // Among the *survivors*: a closed node keeps whatever role it last held,
@@ -2644,19 +2657,16 @@ async fn within(seconds: u64, mut ready: impl FnMut() -> bool) -> bool {
     ready()
 }
 
-/// The one leader, read once: counting leaders and then indexing a second
-/// reading races a leader standing down in between.
+/// The one leader, read once ([`sole_leader`]), waited for up to 10 s: `until`'s
+/// two are too few on a loaded machine for the restarts of this section.
 async fn the_leader(cluster: &Cluster) -> Option<usize> {
     let mut found = None;
     within(10, || {
-        found = match cluster.leaders()[..] {
-            [leader] => Some(leader as usize),
-            _ => None,
-        };
+        found = sole_leader(cluster);
         found.is_some()
     })
     .await;
-    found
+    found.map(|leader| leader as usize)
 }
 
 /// Close member `index` and start it again over its own term file, as a
@@ -2828,9 +2838,8 @@ async fn a_candidate_with_a_shorter_log_is_refused() {
 
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
 
-    let leader = cluster.leaders()[0] as usize;
+    let leader = elected(&cluster).await.expect("no leader") as usize;
     for sequence in 1..=5u64 {
         cluster.nodes[leader]
             .propose(claim(leader as u64, sequence))
@@ -2896,9 +2905,8 @@ async fn an_isolated_member_does_not_even_pre_campaign() {
     // The gate governs every round after that.
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
 
-    let leader = cluster.leaders()[0];
+    let leader = elected(&cluster).await.expect("no leader");
     let outcast = (0..3u64).find(|&m| m != leader).expect("a follower");
     let others: Vec<u64> = (0..3u64).filter(|&m| m != outcast).collect();
     cluster.fabric.isolate(outcast, &[0, 1, 2]);
@@ -2929,9 +2937,8 @@ async fn a_real_vote_applies_the_election_restriction_too() {
 
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
 
-    let leader = cluster.leaders()[0] as usize;
+    let leader = elected(&cluster).await.expect("no leader") as usize;
     for sequence in 1..=4u64 {
         cluster.nodes[leader]
             .propose(claim(leader as u64, sequence))
@@ -3005,9 +3012,8 @@ async fn a_follower_vouches_only_for_the_window_the_message_covered() {
 
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
 
-    let leader = cluster.leaders()[0] as usize;
+    let leader = elected(&cluster).await.expect("no leader") as usize;
     for sequence in 1..=4u64 {
         cluster.nodes[leader]
             .propose(claim(leader as u64, sequence))
@@ -3037,6 +3043,10 @@ async fn a_follower_vouches_only_for_the_window_the_message_covered() {
     // harnesses, not in what is being asserted.
     let others: Vec<u64> = (0..3u64).filter(|&m| m != follower).collect();
     cluster.fabric.isolate(follower, &others);
+    // And whatever was already past the cut, landed: a delivery underway when
+    // the cut was made moves the commit index under the scenario as surely
+    // (`Fabric::settled`) -- measured as a reply of 5 against a commit of 4.
+    cluster.fabric.settled(follower, &others).await;
     let settled = cluster.nodes[follower as usize].commit_index();
     let settled_term = cluster.nodes[follower as usize]
         .log_term_at(settled)
@@ -3130,9 +3140,8 @@ async fn a_peer_is_never_promoted_below_its_bar() {
     // carries it.
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
 
-    let leader = cluster.leaders()[0] as usize;
+    let leader = elected(&cluster).await.expect("no leader") as usize;
     for sequence in 1..=6u64 {
         cluster.nodes[leader]
             .propose(claim(leader as u64, sequence))
@@ -3174,8 +3183,7 @@ async fn a_member_catching_up_still_counts_against_the_majority() {
 
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
-    let leader = cluster.leaders()[0];
+    let leader = elected(&cluster).await.expect("no leader");
     let node = Arc::clone(&cluster.nodes[leader as usize]);
     for sequence in 1..=3u64 {
         node.propose(claim(leader, sequence))
@@ -3272,8 +3280,7 @@ async fn a_member_catching_up_is_not_promoted_below_the_leaders_last_index() {
 
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
-    let leader = cluster.leaders()[0];
+    let leader = elected(&cluster).await.expect("no leader");
     let node = Arc::clone(&cluster.nodes[leader as usize]);
     node.propose(claim(leader, 1)).await.expect("commits");
     let peers: Vec<u64> = (0..3u64).filter(|&member| member != leader).collect();
@@ -3348,8 +3355,7 @@ async fn a_peer_is_never_recorded_as_holding_less_than_it_did() {
 
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
-    let leader = cluster.leaders()[0] as usize;
+    let leader = elected(&cluster).await.expect("no leader") as usize;
     for sequence in 1..=4u64 {
         cluster.nodes[leader]
             .propose(claim(leader as u64, sequence))
@@ -3436,8 +3442,7 @@ async fn a_refusal_pointing_where_the_leader_is_draws_no_resend() {
 
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
-    let leader = cluster.leaders()[0];
+    let leader = elected(&cluster).await.expect("no leader");
     let node = Arc::clone(&cluster.nodes[leader as usize]);
     node.propose(claim(leader, 1)).await.expect("commits");
     let peer = (0..3u64)
@@ -3630,8 +3635,7 @@ async fn an_append_below_the_commit_index_is_answered_with_it() {
 
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
-    let leader = cluster.leaders()[0] as usize;
+    let leader = elected(&cluster).await.expect("no leader") as usize;
     for sequence in 1..=4u64 {
         cluster.nodes[leader]
             .propose(claim(leader as u64, sequence))
@@ -3644,6 +3648,14 @@ async fn an_append_below_the_commit_index_is_answered_with_it() {
         "the follower committed nothing, so this proves nothing",
     );
 
+    // Off the fabric first, and whatever was already past the cut, landed: the
+    // cluster is live and the runtime multi-threaded, so a real append landing
+    // between reading the commit index and the call below moves the number the
+    // assertion compares against -- measured as an answer of 5 against a commit
+    // of 4 read a moment before (`Fabric::settled`).
+    let others: Vec<u64> = (0..3u64).filter(|&m| m != follower as u64).collect();
+    cluster.fabric.isolate(follower as u64, &others);
+    cluster.fabric.settled(follower as u64, &others).await;
     let committed = cluster.nodes[follower].commit_index();
     let term = cluster.nodes[follower].term();
     let prev_log_term = cluster.nodes[follower]
@@ -3701,8 +3713,7 @@ async fn a_snapshot_reply_from_an_earlier_term_is_not_credited() {
     };
     let cluster = Cluster::build(3, timing);
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
-    let leader = cluster.leaders()[0];
+    let leader = elected(&cluster).await.expect("no leader");
     let node = Arc::clone(&cluster.nodes[leader as usize]);
     for sequence in 1..=8u64 {
         node.propose(claim(leader, sequence))
@@ -3770,8 +3781,7 @@ async fn a_chunk_of_another_snapshot_does_not_continue_a_transfer() {
 
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
-    let leader = cluster.leaders()[0];
+    let leader = elected(&cluster).await.expect("no leader");
     let follower = (0..3u64)
         .find(|&member| member != leader)
         .expect("a follower");
@@ -3842,8 +3852,7 @@ async fn a_snapshot_whose_contents_disagree_with_its_transfer_is_refused() {
 
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
-    let leader = cluster.leaders()[0];
+    let leader = elected(&cluster).await.expect("no leader");
     let follower = (0..3u64)
         .find(|&member| member != leader)
         .expect("a follower");
@@ -3901,8 +3910,7 @@ async fn a_member_caught_up_by_snapshot_holds_one_it_can_serve() {
     };
     let cluster = Cluster::build(3, timing);
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
-    let leader = cluster.leaders()[0];
+    let leader = elected(&cluster).await.expect("no leader");
     let node = Arc::clone(&cluster.nodes[leader as usize]);
     let peers: Vec<u64> = (0..3u64).filter(|&member| member != leader).collect();
     let outcast = peers[0];
@@ -3968,8 +3976,7 @@ async fn an_abandoned_partial_snapshot_does_not_stop_a_campaign() {
 
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
-    let leader = cluster.leaders()[0];
+    let leader = elected(&cluster).await.expect("no leader");
     let follower = (0..3u64)
         .find(|&member| member != leader)
         .expect("a follower");
@@ -4023,8 +4030,7 @@ async fn a_partial_snapshot_is_dropped_when_it_can_no_longer_complete() {
 
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
-    let leader = cluster.leaders()[0];
+    let leader = elected(&cluster).await.expect("no leader");
     let follower = (0..3u64)
         .find(|&member| member != leader)
         .expect("a follower");
@@ -4223,8 +4229,7 @@ async fn a_member_that_breaks_says_why() {
 /// keep it so. (Python: `TestALeaderContradictingACommittedEntryStopsTheFollower`.)
 async fn a_committed_follower(cluster: &Cluster) -> (u64, u64) {
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
-    let leader = cluster.leaders()[0];
+    let leader = elected(cluster).await.expect("no leader");
     let node = &cluster.nodes[leader as usize];
     for sequence in 1..=2 {
         let outcome = tokio::time::timeout(
@@ -4496,8 +4501,7 @@ async fn a_leader_credits_no_follower_past_its_own_log() {
 
     let cluster = Cluster::build(3, quick());
     cluster.start_all().await;
-    assert!(until(|| cluster.leaders().len() == 1).await, "no leader");
-    let leader = cluster.leaders()[0];
+    let leader = elected(&cluster).await.expect("no leader");
     let node = &cluster.nodes[leader as usize];
     let peer = (0..3u64)
         .find(|&member| member != leader)
@@ -4575,5 +4579,185 @@ async fn an_append_a_follower_cannot_take_is_refused_in_its_reply() {
     }
     assert_eq!(member.last_log_index(), last, "something was appended");
     assert_eq!(member.failure(), None);
+    cluster.close_all().await;
+}
+
+// -- what one message carries is bounded by bytes ---------------------------
+//
+// A window of `max_entries_per_append` entries made a frame above `MAX_FRAME`
+// once the entries were large enough -- nine 2 MiB ones -- and a frame above
+// the cap is never sent, so a member behind by that much never caught up
+// (`tests/slow_link.rs`). The leader's window and the follower's `Propose`
+// batch are now bounded by `RaftTiming::max_append_bytes`, an entry larger
+// than the bound travelling alone, as etcd's `MaxSizePerMsg`.
+
+/// A claim whose node id is `bytes` long: an entry's payload, chosen.
+fn sized_claim(member: u64, sequence: u64, bytes: usize) -> Operation {
+    Operation {
+        proposal: ProposalId { member, sequence },
+        kind: OperationKind::ClaimOwnership {
+            node_id: format!("{sequence}:{}", "x".repeat(bytes)),
+            owner: member,
+        },
+    }
+}
+
+#[test]
+fn the_default_append_bound_is_one_mebibyte() {
+    // etcd's default, and the same number the Python uses.
+    assert_eq!(RaftTiming::default().max_append_bytes, 1 << 20);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn no_append_carries_more_than_max_append_bytes_unless_it_is_a_single_entry() {
+    const BOUND: usize = 64 * 1024;
+    let cluster = Cluster::build(
+        3,
+        RaftTiming {
+            max_append_bytes: BOUND,
+            ..quick()
+        },
+    );
+    cluster.start_all().await;
+    let leader = elected(&cluster).await.expect("no leader");
+    let others: Vec<u64> = (0..3u64).filter(|&member| member != leader).collect();
+    let (behind, healthy) = (others[0], others[1]);
+    cluster.fabric.isolate(behind, &[leader, healthy]);
+    let node = Arc::clone(&cluster.nodes[leader as usize]);
+    for sequence in 1..=12u64 {
+        node.propose(sized_claim(leader, sequence, 20 * 1024))
+            .await
+            .expect("commits");
+    }
+    node.propose(sized_claim(leader, 99, 100 * 1024))
+        .await
+        .expect("commits");
+    let target = node.commit_index();
+
+    // Every append with entries the leader sends the member behind, as
+    // (entries, payload bytes).
+    let sent: Arc<std::sync::Mutex<Vec<(usize, usize)>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let record = Arc::clone(&sent);
+    cluster.fabric.intercept(move |from, to, message| {
+        if from == leader
+            && to == behind
+            && let Message::AppendEntries(ref append) = *message
+            && !append.entries.is_empty()
+        {
+            record.lock().unwrap().push((
+                append.entries.len(),
+                append.entries.iter().map(|entry| entry.payload.len()).sum(),
+            ));
+        }
+        true
+    });
+    cluster.fabric.heal();
+    let returning = Arc::clone(&cluster.nodes[behind as usize]);
+    {
+        // A real transport announces the reconnect; the fabric does not.
+        use nmos_registry_raft::transport::PeerHandler;
+        node.on_peer_state(behind, true, returning.incarnation());
+    }
+    assert!(
+        until(|| returning.commit_index() >= target).await,
+        "the member behind never caught up",
+    );
+    let sent = sent.lock().unwrap().clone();
+    assert!(
+        !sent.is_empty(),
+        "no append with entries reached the member behind"
+    );
+    let oversized: Vec<(usize, usize)> = sent
+        .iter()
+        .copied()
+        .filter(|&(entries, bytes)| entries > 1 && bytes > BOUND)
+        .collect();
+    assert!(
+        oversized.is_empty(),
+        "appends above {BOUND} bytes carrying more than one entry: {oversized:?}; the window was \
+         bounded by count alone",
+    );
+    assert!(
+        sent.iter()
+            .any(|&(entries, bytes)| entries == 1 && bytes >= 100 * 1024),
+        "the 100 KiB entry did not travel alone: {sent:?}",
+    );
+    assert!(
+        sent.iter().any(|&(entries, _)| entries > 1),
+        "the rule was never exercised: {sent:?}",
+    );
+    cluster.close_all().await;
+}
+
+#[tokio::test]
+async fn a_follower_splits_its_propose_batch_by_bytes() {
+    const BOUND: usize = 64 * 1024;
+    let cluster = Cluster::build(
+        3,
+        RaftTiming {
+            max_append_bytes: BOUND,
+            ..quick()
+        },
+    );
+    cluster.start_all().await;
+    let leader = elected(&cluster).await.expect("no leader");
+    let proposer = (0..3u64)
+        .find(|&member| member != leader)
+        .expect("a follower");
+    let node = Arc::clone(&cluster.nodes[proposer as usize]);
+    assert!(
+        until(|| node.leader() == Some(leader)).await,
+        "the follower never learnt who leads",
+    );
+
+    // Every `Propose` the follower sends, as (operations, bytes).
+    let sent: Arc<std::sync::Mutex<Vec<(usize, usize)>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let record = Arc::clone(&sent);
+    cluster.fabric.intercept(move |from, _to, message| {
+        if from == proposer
+            && let Message::Propose(ref propose) = *message
+        {
+            record.lock().unwrap().push((
+                propose.proposals.len(),
+                propose.proposals.iter().map(Vec::len).sum(),
+            ));
+        }
+        true
+    });
+    // Ten polled together on one thread, so they form one batch: each
+    // submits before its first await, and the drain runs after all have.
+    let proposals = (1..=10u64).map(|sequence| {
+        let node = Arc::clone(&node);
+        async move {
+            node.propose(sized_claim(proposer, sequence, 20 * 1024))
+                .await
+        }
+    });
+    for outcome in futures_util::future::join_all(proposals).await {
+        outcome.expect("commits");
+    }
+    let sent = sent.lock().unwrap().clone();
+    assert_eq!(
+        sent.iter()
+            .map(|&(operations, _)| operations)
+            .sum::<usize>(),
+        10,
+        "{sent:?}",
+    );
+    assert!(
+        sent.len() >= 2,
+        "ten 20 KiB operations went in one message: {sent:?}",
+    );
+    let oversized: Vec<(usize, usize)> = sent
+        .iter()
+        .copied()
+        .filter(|&(operations, bytes)| operations > 1 && bytes > BOUND)
+        .collect();
+    assert!(
+        oversized.is_empty(),
+        "Propose messages above the bound: {oversized:?}",
+    );
     cluster.close_all().await;
 }

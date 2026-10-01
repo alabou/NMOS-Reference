@@ -26,31 +26,40 @@ import contextlib
 import dataclasses
 import logging
 import socket
+import ssl
+import time
+import uuid
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from nmos.raft.errors import RaftUnavailable
+from nmos.raft.errors import MemberTask, RaftUnavailable, RaftUnexpectedError
 from nmos.raft.messages import (
     AppendEntries,
     AppendEntriesReply,
+    decode_message,
     Hello,
+    HelloAck,
     InstallSnapshot,
     InstallSnapshotReply,
+    Pong,
     Promote,
-    decode_message,
 )
+from nmos.api.tests._tls_helpers import PKI_AVAILABLE, build_server_ssl_context
 from nmos.raft.tests._proxy import ProxyMesh
-from nmos.raft.transport import RaftTransport
+from nmos.raft.transport import DIAL_TIMEOUT, RaftTransport
 from nmos.raft.wire import (
+    encode_frame,
+    FLAG_REPLY,
+    Frame,
+    MAX_FRAME,
+    MessageType,
     PROTOCOL_MAJOR,
     PROTOCOL_MINOR,
-    Frame,
-    MessageType,
-    Stream,
-    encode_frame,
     read_frame,
+    Stream,
 )
 
 # Small, so the tests take seconds rather than etcd's 5 s multiples; the
@@ -63,17 +72,23 @@ HOLD = 2.0
 
 
 class _Recorder:
-    """The two callbacks these tests watch; anything else would be a surprise."""
+    """The callbacks these tests watch; anything else would be a surprise."""
 
     def __init__(self) -> None:
         self.promotes: list[tuple[int, Promote]] = []
         self.states: list[tuple[float, int, bool]] = []
+        # A defect the transport met (``PeerHandler.on_unexpected_error``);
+        # recorded rather than stopping anything, so a test can assert none.
+        self.failures: list[RaftUnexpectedError] = []
 
     def on_promote(self, peer: int, message: Promote) -> None:
         self.promotes.append((peer, message))
 
     def on_peer_state(self, peer: int, *, up: bool, incarnation: int) -> None:
         self.states.append((asyncio.get_running_loop().time(), peer, up))
+
+    def on_unexpected_error(self, error: RaftUnexpectedError) -> None:
+        self.failures.append(error)
 
     def __getattr__(self, name: str) -> Any:
         raise AttributeError(name)
@@ -716,3 +731,344 @@ class TestAnUndecodableFrameIsSkipped:
             assert warnings and "from member 1" in warnings[0], warnings
         finally:
             await pair.close()
+
+
+class TestADefectInAHandlerStopsTheMember:
+    """Over real sockets: the inbound reader is where every consensus handler
+    runs, and what it used to do with a handler that raised was log "inbound
+    connection failed" and let the peer redial -- for ever, in front of a
+    member whose own logic had been caught out. The member stops instead
+    (``PeerHandler.on_unexpected_error``, ``RaftNode._fail``)."""
+
+    async def test_a_handler_that_raises_stops_the_member(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from nmos.raft.log import RaftLog
+        from nmos.raft.tests._sockets import SocketCluster
+        from nmos.raft.tests.test_consensus import _register
+
+        cluster = SocketCluster(3, tmp_path)
+        await cluster.start()
+        try:
+            leader = await cluster.elect(timeout=10.0)
+            broken = next(m for m in cluster.members if m is not leader)
+            original = RaftLog.append_replicated
+
+            def planted(log: Any, entries: Any, *, committed: int) -> None:
+                if log is not broken.node._log:
+                    original(log, entries, committed=committed)
+                    return
+                raise RuntimeError("planted: a handler that raises")
+
+            # On the class: ``RaftLog`` has slots. Only ``broken``'s raises.
+            monkeypatch.setattr(RaftLog, "append_replicated", planted)
+            await asyncio.wait_for(
+                leader.node.propose(_register(str(uuid.uuid4()), leader.index)),
+                10.0,
+            )
+
+            try:
+                failure = await asyncio.wait_for(
+                    broken.node.wait_for_failure(), 5.0,
+                )
+            except asyncio.TimeoutError:
+                pytest.fail(
+                    "a member whose handler raised on the inbound reader went "
+                    "on: the connection was dropped and the leader redialled",
+                )
+            assert isinstance(failure, RaftUnexpectedError), failure
+            assert failure.task is MemberTask.INBOUND_CONNECTION
+            assert "planted: a handler that raises" in repr(failure.__cause__)
+        finally:
+            await cluster.close()
+
+
+def _oversized_chunk() -> InstallSnapshot:
+    """A chunk one byte above the frame cap: what no bound should let through."""
+    return InstallSnapshot(
+        term=1, leader=0, last_index=1, last_term=1, offset=0,
+        data=b"\x00" * (MAX_FRAME + 1), done=False,
+    )
+
+
+class TestAMessageAboveTheFrameCapIsNotSent:
+    """A message above ``MAX_FRAME`` is refused at encode time, loudly, and
+    nothing else happens to the link.
+
+    ``encode_frame`` refused it before too -- and the refusal escaped ``send``
+    into whatever called it: a tick, which ended that tick, or a reply
+    handler, which ended the link. With a tick's exceptions now a stop, the
+    escape stopped the leader. The bound that keeps ordinary messages under the
+    cap is ``RaftTiming.max_append_bytes``; this is the backstop behind it, and
+    a backstop that kills the member is no backstop.
+    """
+
+    async def test_an_oversized_send_is_logged_and_the_link_stays_up(
+        self, caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        pair = _Pair()
+        await pair.start()
+        try:
+            with caplog.at_level(logging.ERROR, logger="nmos.raft.transport"):
+                pair.transports[0].send(1, _oversized_chunk(), stream=Stream.BULK)
+            # Sent after it, on the other stream: the link is as it was.
+            pair.transports[0].send(1, Promote(term=1, leader=0, through_index=1))
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 2.0
+            while loop.time() < deadline and not pair.recorders[1].promotes:
+                await asyncio.sleep(0.01)
+            assert pair.recorders[1].promotes, (
+                "the message after the oversized one never arrived: the link "
+                "was dropped for a frame that was never written"
+            )
+            assert 1 in pair.transports[0].live
+            assert pair.recorders[1].failures == []
+            refusals = [
+                record for record in caplog.records
+                if "exceeds the frame cap" in record.getMessage()
+            ]
+            assert len(refusals) == 1, [r.getMessage() for r in caplog.records]
+            assert "InstallSnapshot to member 1" in refusals[0].getMessage()
+        finally:
+            await pair.close()
+
+    async def test_an_oversized_request_fails_at_once(self) -> None:
+        pair = _Pair()
+        await pair.start()
+        try:
+            loop = asyncio.get_running_loop()
+            began = loop.time()
+            with pytest.raises(RaftUnavailable, match="frame cap"):
+                await pair.transports[0].request(
+                    1, _oversized_chunk(), timeout=2.0, stream=Stream.BULK,
+                )
+            assert loop.time() - began < 0.5, (
+                "a request that could never be sent waited out its deadline"
+            )
+            assert 1 in pair.transports[0].live
+        finally:
+            await pair.close()
+
+
+def _member(
+    peer: tuple[str, int], *, dial_timeout: float, **tls: Any,
+) -> tuple[RaftTransport, int]:
+    """Member 0 on a port of its own, dialling member 1 at ``peer``."""
+    held = socket.socket()
+    held.bind(("127.0.0.1", 0))
+    port = int(held.getsockname()[1])
+    held.close()
+    member = RaftTransport(
+        local=0, peers={1: peer}, bind=("127.0.0.1", port),
+        cluster_id="liveness", member_name="m0", incarnation=1,
+        rpc_timeout=1.0, conn_read_timeout=READ_TIMEOUT,
+        dial_timeout=dial_timeout, **tls,
+    )
+    return member, port
+
+
+async def _admit(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    """Be member 1 for one connection: admit it, then keep it fed.
+
+    A stale connection -- one queued before the hole opened, whose client has
+    gone -- ends at its first read, and that is all it does.
+    """
+    try:
+        frame = await read_frame(reader)
+        if frame.type is not MessageType.HELLO:
+            return
+        hello = decode_message(frame.type, frame.payload)
+        writer.write(encode_frame(Frame(
+            stream=hello.stream, type=MessageType.HELLO_ACK, flags=0,
+            payload=HelloAck(
+                accepted=True, reason="", minor=PROTOCOL_MINOR,
+                member_index=1, incarnation=1,
+            ).encode(),
+        )))
+        nonce = 0
+        while True:
+            # Something every third of the deadline, as the accepting end's
+            # own heartbeat does; the member's pings are read and left.
+            try:
+                await asyncio.wait_for(read_frame(reader), READ_TIMEOUT / 3)
+            except asyncio.TimeoutError:
+                pass
+            nonce += 1
+            writer.write(encode_frame(Frame(
+                stream=hello.stream, type=MessageType.PONG, flags=FLAG_REPLY,
+                payload=Pong(nonce=nonce).encode(),
+            )))
+    except (asyncio.IncompleteReadError, ConnectionError, OSError):
+        return
+    finally:
+        with contextlib.suppress(OSError, RuntimeError):
+            writer.close()
+
+
+class TestADialIsBounded:
+    """A connection attempt ends at ``DIAL_TIMEOUT``, at either end.
+
+    Neither the TCP connect nor the TLS handshake had a bound. Into a path that
+    drops SYNs -- a firewall that drops rather than refuses, a host mid-reboot
+    -- ``open_connection`` waited out the kernel's retransmits, about 127 s on
+    Linux; a handshake had asyncio's 60 s. Each test shortens the deadline to
+    half a second and watches the attempt end at it.
+    """
+
+    async def test_the_deadline_is_seven_seconds(self) -> None:
+        """Three SYN retransmits (1, 3 and 7 s on Linux), and the mutation
+        timeout's figure; the same number the Rust uses."""
+        assert DIAL_TIMEOUT == 7.0
+
+    async def test_a_dial_into_a_black_hole_is_abandoned_at_the_deadline(
+        self, caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # A listener whose accept queue is full drops further SYNs: the
+        # kernel's own black hole, on loopback, with nothing to configure.
+        hole = socket.socket()
+        hole.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        hole.bind(("127.0.0.1", 0))
+        hole.listen(1)
+        port = int(hole.getsockname()[1])
+        # Filled until a connect is dropped. The queue holds backlog + 1, so
+        # two must get in before the third is dropped; fewer means the first
+        # connect was the one that timed out -- a loaded machine, not a full
+        # queue -- and the member's SYN would be taken, which proves nothing.
+        fills: list[socket.socket] = []
+        for _ in range(8):
+            filler = socket.socket()
+            filler.settimeout(2.0)
+            try:
+                filler.connect(("127.0.0.1", port))
+            except OSError:
+                filler.close()
+                break
+            fills.append(filler)
+        else:
+            for filler in fills:
+                filler.close()
+            hole.close()
+            pytest.skip("the accept queue never filled: this kernel takes SYNs past the backlog")
+        if len(fills) < 2:
+            for filler in fills:
+                filler.close()
+            hole.close()
+            pytest.skip(
+                f"only {len(fills)} connection(s) got into the accept queue before one "
+                f"was dropped: the machine is too loaded to fill it",
+            )
+
+        member, _ = _member(("127.0.0.1", port), dial_timeout=0.5)
+        loop = asyncio.get_running_loop()
+        server: asyncio.AbstractServer | None = None
+        caplog.set_level(logging.DEBUG, logger="nmos.raft.transport")
+        wall = time.time()
+        await member.start(_Recorder())
+        try:
+            # The discriminator is the attempt, not the recovery. Without the
+            # deadline one attempt hangs in the kernel's SYN retransmits for
+            # well over a minute, and nothing is given up; with it, every
+            # attempt ends at half a second and the next follows the backoff.
+            # (When the hole opens is not a measure: this kernel retransmits
+            # the first four SYNs a second apart, so an attempt with no
+            # deadline connects within seconds of the opening too.)
+            await asyncio.sleep(3.5)
+            abandoned = [
+                record for record in caplog.records
+                if "did not accept a connection within 0.5s" in record.getMessage()
+            ]
+            assert len(abandoned) >= 2, (
+                f"{len(abandoned)} attempt(s) given up in 3.5s: the dial waited "
+                f"in the kernel's SYN retransmits instead of ending at the deadline"
+            )
+            assert abandoned[0].created - wall < 0.9, (
+                f"the first attempt was abandoned {abandoned[0].created - wall:.2f}s "
+                f"after it began"
+            )
+
+            # And once the hole opens, the link comes up.
+            for filler in fills:
+                filler.close()
+            hole.setblocking(False)
+            server = await asyncio.start_server(_admit, sock=hole)
+            opened = loop.time()
+            while loop.time() - opened < 10.0 and 1 not in member.live:
+                await asyncio.sleep(0.02)
+            assert 1 in member.live, "the link never came up within 10s of the hole opening"
+        finally:
+            await member.close()
+            if server is not None:
+                server.close()
+                await server.wait_closed()
+            else:
+                hole.close()
+
+    async def test_a_tls_handshake_the_acceptor_never_starts_is_abandoned_at_the_deadline(
+        self,
+    ) -> None:
+        loop = asyncio.get_running_loop()
+        seen: list[float] = []
+
+        async def mute(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            began = loop.time()
+            try:
+                await reader.read()
+            finally:
+                seen.append(loop.time() - began)
+                with contextlib.suppress(OSError, RuntimeError):
+                    writer.close()
+
+        server = await asyncio.start_server(mute, "127.0.0.1", 0)
+        port = int(server.sockets[0].getsockname()[1])
+        member, _ = _member(
+            ("127.0.0.1", port), dial_timeout=0.5,
+            client_ssl=ssl.create_default_context(), peer_name="raft",
+        )
+        await member.start(_Recorder())
+        try:
+            deadline = loop.time() + 3.0
+            while loop.time() < deadline and not seen:
+                await asyncio.sleep(0.02)
+            assert seen, (
+                "the dialler never gave up on a TLS handshake the acceptor "
+                "never started: asyncio's own 60s applied"
+            )
+            assert seen[0] < 0.9, f"gave up after {seen[0]:.2f}s"
+        finally:
+            await member.close()
+            server.close()
+            await server.wait_closed()
+
+    @pytest.mark.skipif(not PKI_AVAILABLE, reason="the PKI fixtures are not on disk")
+    async def test_a_client_that_never_starts_the_tls_handshake_is_dropped_at_the_deadline(
+        self,
+    ) -> None:
+        nowhere = socket.socket()
+        nowhere.bind(("127.0.0.1", 0))
+        member, port = _member(
+            ("127.0.0.1", int(nowhere.getsockname()[1])), dial_timeout=0.5,
+            server_ssl=build_server_ssl_context("SNX00000"),
+        )
+        await member.start(_Recorder())
+        loop = asyncio.get_running_loop()
+        writer: asyncio.StreamWriter | None = None
+        try:
+            # Plain TCP to a TLS listener, and then nothing.
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            began = loop.time()
+            try:
+                data = await asyncio.wait_for(reader.read(1), 3.0)
+            except asyncio.TimeoutError:
+                pytest.fail(
+                    "a client that never started the TLS handshake held its "
+                    "connection for 3s: asyncio's own 60s applied",
+                )
+            except ConnectionError:
+                data = b""
+            assert data == b"", f"the member sent {data!r} before any handshake"
+            assert loop.time() - began < 0.9, f"dropped after {loop.time() - began:.2f}s"
+        finally:
+            if writer is not None:
+                writer.close()
+            nowhere.close()
+            await member.close()

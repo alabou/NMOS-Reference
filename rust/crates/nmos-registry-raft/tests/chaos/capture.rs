@@ -113,6 +113,23 @@ impl Capture {
     pub fn dispatch(self: &Arc<Self>) -> Dispatch {
         Dispatch::new(CaptureSubscriber {
             capture: Arc::clone(self),
+            debug: false,
+        })
+    }
+
+    /// As [`Self::dispatch`], hearing DEBUG as well.
+    ///
+    /// For a test that watches what a transport does between the lines it
+    /// says at INFO -- each connection attempt it gives up on, say. The soak
+    /// stays at INFO: DEBUG is a per-message volume it has no use for, which
+    /// is why this is unused in the soak's own binary and used in
+    /// `tests/transport.rs`, which includes this file too.
+    #[allow(dead_code)]
+    #[must_use]
+    pub fn dispatch_with_debug(self: &Arc<Self>) -> Dispatch {
+        Dispatch::new(CaptureSubscriber {
+            capture: Arc::clone(self),
+            debug: true,
         })
     }
 
@@ -199,6 +216,8 @@ impl Capture {
 /// only, and a span id nobody reads is not worth the bookkeeping.
 struct CaptureSubscriber {
     capture: Arc<Capture>,
+    /// Hear DEBUG too (`Capture::dispatch_with_debug`).
+    debug: bool,
 }
 
 impl Subscriber for CaptureSubscriber {
@@ -206,11 +225,19 @@ impl Subscriber for CaptureSubscriber {
         // Spelled out rather than compared: `tracing`'s `Level` orders the
         // verbose levels as the *greater* ones, and a `<=` written from memory
         // is exactly how a filter ends up capturing TRACE and dropping ERROR.
-        matches!(*metadata.level(), Level::ERROR | Level::WARN | Level::INFO)
+        match *metadata.level() {
+            Level::ERROR | Level::WARN | Level::INFO => true,
+            Level::DEBUG => self.debug,
+            Level::TRACE => false,
+        }
     }
 
     fn max_level_hint(&self) -> Option<LevelFilter> {
-        Some(LevelFilter::INFO)
+        Some(if self.debug {
+            LevelFilter::DEBUG
+        } else {
+            LevelFilter::INFO
+        })
     }
 
     fn new_span(&self, _attributes: &Attributes<'_>) -> Id {

@@ -64,9 +64,13 @@ MAGIC = 0x4E4D5241
 HEADER_SIZE = 16
 TRAILER_SIZE = 4
 
-# A snapshot chunk is the largest thing that travels, and 16 MiB is far above
-# any chunk this package sends. The cap exists so a corrupt length field
-# allocates nothing: without it, a mis-parsed u32 asks for four gigabytes.
+# The largest payload a member will allocate for, and refuse to send. The cap
+# exists so a corrupt length field allocates nothing: without it, a mis-parsed
+# u32 asks for four gigabytes. It is a backstop, not a bound: what a message
+# may carry is bounded well below it, by ``snapshot_chunk`` for a chunk and by
+# ``max_append_bytes`` for the entries of an append or the operations of a
+# ``Propose`` (``RaftTiming``), so that no window of ordinary entries can reach
+# it. A message that does anyway is refused at encode time and never sent.
 MAX_FRAME = 16 * 1024 * 1024
 
 
@@ -296,9 +300,18 @@ class Reader:
 # ---------------------------------------------------------------------------
 
 def encode_frame(frame: Frame) -> bytes:
-    """Serialise one frame, checksum included."""
+    """Serialise one frame, checksum included.
+
+    Raises:
+        RaftProtocolError: The payload is above ``MAX_FRAME`` -- the same
+            class the decoder raises for a length above it, and what the Rust
+            ``encode_frame`` returns. The transport answers it by not sending
+            that one message, loudly (``RaftTransport.send``).
+    """
+    from nmos.raft.errors import RaftProtocolError
+
     if len(frame.payload) > MAX_FRAME:
-        raise ValueError(
+        raise RaftProtocolError(
             f"payload of {len(frame.payload)} bytes exceeds MAX_FRAME",
         )
     body = bytearray()

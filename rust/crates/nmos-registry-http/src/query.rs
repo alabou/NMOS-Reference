@@ -29,6 +29,7 @@
 
 use std::sync::Arc;
 
+use axum::extract::rejection::StringRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri};
 use axum::response::Response;
@@ -295,10 +296,15 @@ pub async fn post_subscriptions(
     State(state): State<QueryState>,
     uri: Uri,
     headers: HeaderMap,
-    source: String,
+    source: Result<String, StringRejection>,
 ) -> Response {
     let path = uri.path().to_owned();
     let view = RequestView::new(&path, &headers);
+    let source = match source {
+        Ok(source) => source,
+        // As the Registration API's: see `MAX_BODY_BYTES`.
+        Err(rejection) => return response::body_rejected(&rejection, Some(&view)),
+    };
     let refuse =
         |message: &str| response::error(StatusCode::BAD_REQUEST, message, &[], Some(&view));
 

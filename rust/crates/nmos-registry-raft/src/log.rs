@@ -209,6 +209,39 @@ impl<T> RaftLog<T> {
         Ok(self.entries.get(begin..end).unwrap_or_default())
     }
 
+    /// What one `AppendEntries` may carry from `start`.
+    ///
+    /// The longest prefix of [`Self::slice`]`(start, max_entries)` whose
+    /// payloads together stay within `max_bytes` -- and never fewer than one
+    /// entry when there is one, so an entry larger than the bound still
+    /// travels, alone. etcd's `limitSize` (`util.go`) applies `MaxSizePerMsg`
+    /// the same way, and documents `0` as "one entry per message".
+    ///
+    /// Payload bytes, not framed bytes: the framing adds a few bytes per
+    /// entry, far inside the margin between the bound and the frame cap.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::slice`]: `start` is at or below the snapshot.
+    pub fn window(
+        &self,
+        start: u64,
+        max_entries: usize,
+        max_bytes: usize,
+    ) -> Result<&[Entry<T>], RaftLogCompacted> {
+        let entries = self.slice(start, max_entries)?;
+        let mut taken = 0usize;
+        let mut total = 0usize;
+        for entry in entries {
+            total = total.saturating_add(entry.payload.len());
+            if total > max_bytes && taken > 0 {
+                break;
+            }
+            taken = taken.saturating_add(1);
+        }
+        Ok(entries.get(..taken).unwrap_or_default())
+    }
+
     // -- appending ---------------------------------------------------------
 
     /// Append new entries as leader, returning `(first_index, last_index)`.
@@ -492,6 +525,57 @@ mod tests {
             .expect("contiguous");
         }
         log
+    }
+
+    /// A log whose entry `i` carries `sizes[i - 1]` payload bytes, all term 1.
+    fn sized_log(sizes: &[usize]) -> RaftLog<&'static str> {
+        let mut log = RaftLog::new();
+        for (offset, &size) in sizes.iter().enumerate() {
+            let index = u64::try_from(offset).expect("small").saturating_add(1);
+            log.append_replicated(
+                vec![Entry {
+                    term: 1,
+                    index,
+                    payload: vec![0; size],
+                    value: "e",
+                }],
+                0,
+            )
+            .expect("contiguous");
+        }
+        log
+    }
+
+    fn indices(entries: &[Entry<&'static str>]) -> Vec<u64> {
+        entries.iter().map(|entry| entry.index).collect()
+    }
+
+    #[test]
+    fn a_window_is_bounded_by_bytes() {
+        let log = sized_log(&[10, 10, 10, 10]);
+        // 25 bytes: two 10-byte payloads fit, the third would not.
+        assert_eq!(indices(log.window(1, 256, 25).expect("held")), [1, 2]);
+        // The count bound still wins when it is the smaller.
+        assert_eq!(indices(log.window(1, 1, 25).expect("held")), [1]);
+        // From the middle, and clamped to what exists.
+        assert_eq!(indices(log.window(3, 256, 100).expect("held")), [3, 4]);
+        assert!(log.window(5, 256, 100).expect("held").is_empty());
+    }
+
+    #[test]
+    fn a_window_always_carries_at_least_one_entry() {
+        // An entry larger than the bound travels alone, never not at all.
+        let log = sized_log(&[100, 10]);
+        assert_eq!(indices(log.window(1, 256, 10).expect("held")), [1]);
+        assert_eq!(indices(log.window(2, 256, 10).expect("held")), [2]);
+        // etcd documents 0 as "one entry per message".
+        assert_eq!(indices(log.window(1, 256, 0).expect("held")), [1]);
+    }
+
+    #[test]
+    fn a_window_below_the_snapshot_is_distinguishable() {
+        let log: RaftLog<&'static str> = RaftLog::from_snapshot(5, 1);
+        assert!(log.window(3, 256, 100).is_err());
     }
 
     /// Log Matching says it cannot happen, so it is asserted, not assumed.

@@ -27,7 +27,10 @@ impl std::error::Error for RaftProtocolError {}
 /// Distinct from every other error here, and it is not recoverable: if a
 /// Figure 3 property is violated, this member's state machine may already have
 /// applied something the cluster did not agree on, and carrying on would spread
-/// it. The Python takes it past its own catch-all for the same reason.
+/// it. The Python stops on it for the same reason -- and, since nothing in its
+/// loops catches and continues any more, on any exception nothing expected
+/// (`RaftUnexpectedError`), the twin of a panic here, which aborts the process
+/// (`nmos-registry-bin`'s `panic_policy`).
 ///
 /// One comes from a peer and is no exception to that: a leader contradicting an
 /// entry this member committed (`NodeState::contradicting_committed`). Raft

@@ -37,11 +37,15 @@ pub const HEADER_SIZE: usize = 16;
 /// The CRC-32.
 pub const TRAILER_SIZE: usize = 4;
 
-/// The largest payload this member will allocate for.
+/// The largest payload this member will allocate for, and refuse to send.
 ///
-/// A snapshot chunk is the largest thing that travels and is far below this.
 /// The cap exists so a corrupt length field allocates nothing: without it, a
-/// mis-parsed `u32` asks for four gigabytes.
+/// mis-parsed `u32` asks for four gigabytes. It is a backstop, not a bound:
+/// what a message may carry is bounded well below it, by `snapshot_chunk` for
+/// a chunk and by `max_append_bytes` for the entries of an append or the
+/// operations of a `Propose` (`RaftTiming`), so that no window of ordinary
+/// entries can reach it. A message that does anyway is refused at encode time
+/// and never sent (`transport::frame_for`).
 pub const MAX_FRAME: usize = 16 * 1024 * 1024;
 
 /// Which of a peer's two links a frame belongs to.

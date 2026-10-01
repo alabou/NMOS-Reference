@@ -91,6 +91,24 @@ pub const RECONNECT_MAX_MS: u64 = 2_000;
 /// Default deadline for a correlated request.
 pub const RPC_TIMEOUT_MS: u64 = 2_000;
 
+/// How long a connection attempt may take, at either end.
+///
+/// At the dialling end, from the start of the attempt through the TCP connect
+/// *and* the TLS handshake (`Inner::dial`); at the accepting end, the TLS
+/// handshake of a connection just accepted (`Inner::serve`). The Hello that
+/// follows is a request on a connection that exists, and is under the read
+/// deadline ([`CONN_READ_TIMEOUT_MS`]) at both ends already.
+///
+/// Neither step had a bound. `TcpStream::connect` waited out the kernel's own
+/// SYN retransmits -- about 127 s on Linux -- into a path that dropped them,
+/// so a peer behind a firewall that drops rather than refuses, or a host
+/// mid-reboot, held its dialler that long per attempt; and a handshake with a
+/// peer that never answered it had no end at all. etcd's `rafthttp` dials with
+/// a `DialTimeout` (`transport.go`). 7 s rather than its 2 s so a lossy path
+/// gets three retransmits -- Linux sends them at 1, 3 and 7 s -- the same
+/// figure as the mutation timeout. Tests shorten it; nothing else should.
+pub const DIAL_TIMEOUT_MS: u64 = 7_000;
+
 /// How long a connection may carry nothing before it is closed.
 ///
 /// etcd's `DefaultConnReadTimeout` (`rafthttp/peer.go:40`), applied the way
@@ -474,15 +492,46 @@ fn protocol_io(error: RaftProtocolError) -> std::io::Error {
 }
 
 /// The bytes one message becomes on the wire.
-#[must_use]
-pub fn frame_for(message: &Message, stream: Stream, is_reply: bool) -> Vec<u8> {
+///
+/// # Errors
+///
+/// The message is above [`MAX_FRAME`](crate::wire::MAX_FRAME) -- what the
+/// bounds on a window and a batch (`RaftTiming::max_append_bytes`) exist to
+/// rule out, and what [`encoded`] answers by not sending that one message.
+pub fn frame_for(
+    message: &Message,
+    stream: Stream,
+    is_reply: bool,
+) -> Result<Vec<u8>, RaftProtocolError> {
     let frame = Frame::new(
         stream,
         message.message_type(),
         if is_reply { FLAG_REPLY } else { 0 },
         message.encode(),
     );
-    encode_frame(&frame).unwrap_or_default()
+    encode_frame(&frame)
+}
+
+/// [`frame_for`], or `None` with the refusal on the record.
+///
+/// A message above the frame cap is never written. An empty buffer in its
+/// place, as this once returned without a word, was a message that did not go
+/// and nothing to say why: the leader re-sent the same window for ever
+/// (`tests/slow_link.rs`). Logged at ERROR, since the bound that should have
+/// kept the message under the cap is what failed; the link is as it was.
+fn encoded(message: &Message, stream: Stream, is_reply: bool, peer: u64) -> Option<Vec<u8>> {
+    match frame_for(message, stream, is_reply) {
+        Ok(bytes) => Some(bytes),
+        Err(error) => {
+            tracing::error!(
+                peer,
+                kind = ?message.message_type(),
+                error = %error.0,
+                "raft: message exceeds the frame cap; not sent",
+            );
+            None
+        }
+    }
 }
 
 /// Stamp a correlation id on the messages that carry one.
@@ -796,6 +845,7 @@ struct Inner {
     tls: Option<Arc<PeerTls>>,
     rpc_timeout_ms: u64,
     conn_read_timeout_ms: u64,
+    dial_timeout_ms: u64,
     links: HashMap<(u64, Stream), Arc<Link>>,
     /// The node, held **weakly**.
     ///
@@ -862,6 +912,9 @@ pub struct TransportSettings {
     /// [`CONN_READ_TIMEOUT_MS`], etcd's value. Tests shorten it; nothing else
     /// should.
     pub conn_read_timeout_ms: u64,
+    /// How long a connection attempt may take, at either end:
+    /// [`DIAL_TIMEOUT_MS`]. Tests shorten it; nothing else should.
+    pub dial_timeout_ms: u64,
 }
 
 /// How one member reaches the others, over TCP and optionally TLS.
@@ -889,6 +942,7 @@ impl RaftTransport {
             tls,
             rpc_timeout_ms,
             conn_read_timeout_ms,
+            dial_timeout_ms,
         } = settings;
         let mut links = HashMap::new();
         for &peer in peers.keys() {
@@ -906,6 +960,7 @@ impl RaftTransport {
                 tls,
                 rpc_timeout_ms,
                 conn_read_timeout_ms,
+                dial_timeout_ms,
                 links,
                 handler: Mutex::new(None),
                 closing: AtomicBool::new(false),
@@ -1140,6 +1195,56 @@ impl Inner {
         }
     }
 
+    /// Connect to `host:port` and, with TLS, complete the handshake.
+    ///
+    /// The part of an attempt [`DIAL_TIMEOUT_MS`] bounds (`connect`).
+    async fn dial(
+        &self,
+        host: &str,
+        port: u16,
+    ) -> Result<(Box<dyn AsyncReadUnpinSend>, Box<dyn AsyncWriteUnpinSend>), ConnectFailure> {
+        let socket = tokio::net::TcpStream::connect((host, port))
+            .await
+            .map_err(|e| ConnectFailure::Unavailable(RaftUnavailable(e.to_string())))?;
+        // Consensus is a request/response protocol on a hot path; Nagle would
+        // hold a heartbeat back waiting for more to send.
+        drop(socket.set_nodelay(true));
+
+        match self.tls {
+            None => {
+                let (r, w) = tokio::io::split(socket);
+                Ok((Box::new(r), Box::new(w)))
+            }
+            Some(ref tls) => {
+                // The shared cluster SAN is what is verified, not the
+                // address. Members co-located on one host all answer at
+                // 127.0.0.1, so verifying the address would either fail
+                // against every real certificate or have to be turned off
+                // -- and turning it off is what lets any Product-CA device
+                // certificate answer for a member.
+                let mut ssl = openssl::ssl::Ssl::new(&tls.context)
+                    .map_err(|e| ConnectFailure::Unavailable(RaftUnavailable(e.to_string())))?;
+                // SNI, and -- separately -- the name actually verified.
+                // Setting only the first would send the name and check
+                // nothing, which is the shape of a check that looks present
+                // and is not.
+                ssl.set_hostname(&tls.peer_name)
+                    .map_err(|e| ConnectFailure::Unavailable(RaftUnavailable(e.to_string())))?;
+                ssl.param_mut()
+                    .set_host(&tls.peer_name)
+                    .map_err(|e| ConnectFailure::Unavailable(RaftUnavailable(e.to_string())))?;
+                let mut secured = tokio_openssl::SslStream::new(ssl, socket)
+                    .map_err(|e| ConnectFailure::Unavailable(RaftUnavailable(e.to_string())))?;
+                std::pin::Pin::new(&mut secured)
+                    .connect()
+                    .await
+                    .map_err(|e| ConnectFailure::Unavailable(RaftUnavailable(e.to_string())))?;
+                let (r, w) = tokio::io::split(secured);
+                Ok((Box::new(r), Box::new(w)))
+            }
+        }
+    }
+
     /// Open one link and complete its handshake.
     async fn connect(
         &self,
@@ -1152,47 +1257,19 @@ impl Inner {
             ))));
         };
 
-        let socket = tokio::net::TcpStream::connect((host.as_str(), port))
-            .await
-            .map_err(|e| ConnectFailure::Unavailable(RaftUnavailable(e.to_string())))?;
-        // Consensus is a request/response protocol on a hot path; Nagle would
-        // hold a heartbeat back waiting for more to send.
-        drop(socket.set_nodelay(true));
-
-        let (reader, writer): (Box<dyn AsyncReadUnpinSend>, Box<dyn AsyncWriteUnpinSend>) =
-            match self.tls {
-                None => {
-                    let (r, w) = tokio::io::split(socket);
-                    (Box::new(r), Box::new(w))
-                }
-                Some(ref tls) => {
-                    // The shared cluster SAN is what is verified, not the
-                    // address. Members co-located on one host all answer at
-                    // 127.0.0.1, so verifying the address would either fail
-                    // against every real certificate or have to be turned off
-                    // -- and turning it off is what lets any Product-CA device
-                    // certificate answer for a member.
-                    let mut ssl = openssl::ssl::Ssl::new(&tls.context)
-                        .map_err(|e| ConnectFailure::Unavailable(RaftUnavailable(e.to_string())))?;
-                    // SNI, and -- separately -- the name actually verified.
-                    // Setting only the first would send the name and check
-                    // nothing, which is the shape of a check that looks present
-                    // and is not.
-                    ssl.set_hostname(&tls.peer_name)
-                        .map_err(|e| ConnectFailure::Unavailable(RaftUnavailable(e.to_string())))?;
-                    ssl.param_mut()
-                        .set_host(&tls.peer_name)
-                        .map_err(|e| ConnectFailure::Unavailable(RaftUnavailable(e.to_string())))?;
-                    let mut secured = tokio_openssl::SslStream::new(ssl, socket)
-                        .map_err(|e| ConnectFailure::Unavailable(RaftUnavailable(e.to_string())))?;
-                    std::pin::Pin::new(&mut secured)
-                        .connect()
-                        .await
-                        .map_err(|e| ConnectFailure::Unavailable(RaftUnavailable(e.to_string())))?;
-                    let (r, w) = tokio::io::split(secured);
-                    (Box::new(r), Box::new(w))
-                }
-            };
+        // `DIAL_TIMEOUT_MS`, around the connect and the handshake together.
+        // Dropped at the deadline, the half-made socket closes with nothing
+        // left behind.
+        let dial = Duration::from_millis(self.dial_timeout_ms);
+        let (reader, writer) = match tokio::time::timeout(dial, self.dial(host, port)).await {
+            Ok(dialled) => dialled?,
+            Err(_elapsed) => {
+                return Err(ConnectFailure::Unavailable(RaftUnavailable(format!(
+                    "member {peer} did not accept a connection within {} ms",
+                    self.dial_timeout_ms,
+                ))));
+            }
+        };
         let (reader, writer) = self.guarded(reader, writer);
 
         let Some(link) = self.links.get(&(peer, stream)) else {
@@ -1203,7 +1280,12 @@ impl Inner {
         *link.writer.lock().await = Some(writer);
 
         let mut reader = reader;
-        link.write(&frame_for(&self.hello(stream), stream, false))
+        let Some(hello) = encoded(&self.hello(stream), stream, false, peer) else {
+            return Err(ConnectFailure::Unavailable(RaftUnavailable(
+                "the Hello exceeds the frame cap".to_owned(),
+            )));
+        };
+        link.write(&hello)
             .await
             .map_err(ConnectFailure::Unavailable)?;
 
@@ -1244,18 +1326,23 @@ impl Inner {
             match read_frame(&mut reader).await {
                 Ok(frame) => match self.dispatch(peer, &frame).await {
                     Ok(Some(reply)) => {
-                        if let Some(link) = self.links.get(&(peer, stream)) {
-                            drop(link.write(&frame_for(&reply, frame.stream, true)).await);
+                        if let Some(link) = self.links.get(&(peer, stream))
+                            && let Some(bytes) = encoded(&reply, frame.stream, true, peer)
+                        {
+                            drop(link.write(&bytes).await);
                         }
                     }
                     Ok(None) => {}
                     Err(error) => {
                         // Returning drops the link, and `maintain` dials it
                         // again: what the Python's `_maintain` does with its
-                        // handler's exception. Logged as the Python's `_pump`
-                        // logs it: a failed save is an `OSError` there, which
-                        // `_maintain` would otherwise take for a link going
-                        // down and pass over in silence.
+                        // handler's `OSError`, the one failure a handler
+                        // expects (a save that failed). Logged as the Python's
+                        // `_pump` logs it, since `_maintain` would otherwise
+                        // take it for a link going down and pass over it in
+                        // silence. An exception nothing expected is another
+                        // matter there -- the member stops on it -- and here
+                        // it would be a panic, which aborts the process.
                         tracing::error!(
                             peer,
                             ?stream,
@@ -1305,7 +1392,9 @@ impl Inner {
         loop {
             tokio::time::sleep(interval).await;
             nonce = nonce.saturating_add(1);
-            let bytes = frame_for(&Message::Ping(Ping { nonce }), stream, false);
+            let Some(bytes) = encoded(&Message::Ping(Ping { nonce }), stream, false, peer) else {
+                return;
+            };
             // Ends with its connection: a later one has a heartbeat of its own.
             if !matches!(link.write_queued(generation, &bytes).await, Ok(true)) {
                 return;
@@ -1335,6 +1424,7 @@ impl Inner {
     /// streams each carry their own writer's heartbeat (`stream.go:169`).
     async fn beat_back(
         self: Arc<Self>,
+        peer: u64,
         writer: Arc<tokio::sync::Mutex<Box<dyn AsyncWriteUnpinSend>>>,
         stream: Stream,
     ) {
@@ -1344,7 +1434,9 @@ impl Inner {
         loop {
             tokio::time::sleep(interval).await;
             nonce = nonce.saturating_add(1);
-            let bytes = frame_for(&Message::Pong(Pong { nonce }), stream, true);
+            let Some(bytes) = encoded(&Message::Pong(Pong { nonce }), stream, true, peer) else {
+                return;
+            };
             if !write_frame(&writer, &bytes).await {
                 return;
             }
@@ -1396,8 +1488,20 @@ impl Inner {
                 let Ok(mut secured) = tokio_openssl::SslStream::new(ssl, socket) else {
                     return;
                 };
-                if std::pin::Pin::new(&mut secured).accept().await.is_err() {
-                    return;
+                // The accepting end's half of `DIAL_TIMEOUT_MS`: a caller
+                // that connects and never starts the handshake held this task
+                // for as long as it liked.
+                let dial = Duration::from_millis(self.dial_timeout_ms);
+                match tokio::time::timeout(dial, std::pin::Pin::new(&mut secured).accept()).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(_)) => return,
+                    Err(_elapsed) => {
+                        tracing::debug!(
+                            "raft: a connection's TLS handshake did not complete within the dial \
+                             deadline",
+                        );
+                        return;
+                    }
                 }
                 let names = secured
                     .ssl()
@@ -1432,7 +1536,14 @@ impl Inner {
         }
         .or_else(|| refuse_hello(&hello, self.local, &self.cluster_id, &self.known_peers()));
 
-        let ack = frame_for(&self.ack(refusal.as_deref()), hello.stream, false);
+        let Some(ack) = encoded(
+            &self.ack(refusal.as_deref()),
+            hello.stream,
+            false,
+            hello.member_index,
+        ) else {
+            return;
+        };
         if writer.write_all(&ack).await.is_err() || writer.flush().await.is_err() {
             return;
         }
@@ -1454,9 +1565,11 @@ impl Inner {
         // This end's own heartbeat, for as long as the connection is served:
         // see `beat_back`. Ended with it however it ends, or its share of the
         // writer would hold the connection half open after this returns.
-        let _beat = AbortOnDrop(tokio::spawn(
-            Arc::clone(&self).beat_back(Arc::clone(&writer), hello.stream),
-        ));
+        let _beat = AbortOnDrop(tokio::spawn(Arc::clone(&self).beat_back(
+            hello.member_index,
+            Arc::clone(&writer),
+            hello.stream,
+        )));
         while !self.closing.load(Ordering::SeqCst) {
             let inbound = match read_frame(&mut reader).await {
                 Ok(inbound) => inbound,
@@ -1500,7 +1613,9 @@ impl Inner {
 
             match self.dispatch(peer, &inbound).await {
                 Ok(Some(reply)) => {
-                    let bytes = frame_for(&reply, inbound.stream, true);
+                    let Some(bytes) = encoded(&reply, inbound.stream, true, peer) else {
+                        continue;
+                    };
                     if !write_frame(&writer, &bytes).await {
                         return;
                     }
@@ -1536,8 +1651,9 @@ impl Inner {
                 // a slot would block this reader, which is the whole defect.
                 let refusal = application_refusal(&frame);
                 tokio::spawn(async move {
-                    if let Some(refusal) = refusal {
-                        let bytes = frame_for(&refusal, frame.stream, true);
+                    if let Some(refusal) = refusal
+                        && let Some(bytes) = encoded(&refusal, frame.stream, true, peer)
+                    {
                         // Best effort: a dead connection means the
                         // caller's own deadline has answered it already.
                         let _sent = write_frame(&writer, &bytes).await;
@@ -1564,7 +1680,9 @@ impl Inner {
                 }
                 _ => return,
             };
-            let bytes = frame_for(&reply, frame.stream, true);
+            let Some(bytes) = encoded(&reply, frame.stream, true, peer) else {
+                return;
+            };
             // Best effort, for the same reason as the refusal above.
             let _sent = write_frame(&writer, &bytes).await;
         });
@@ -1740,7 +1858,9 @@ impl Transport for RaftTransport {
         // For this connection only (see `Link::generation`).
         let generation = link.generation.load(Ordering::SeqCst);
         let link = Arc::clone(link);
-        let bytes = frame_for(message, stream, false);
+        let Some(bytes) = encoded(message, stream, false, peer) else {
+            return;
+        };
         // Spawned because `send` is synchronous by design -- the node calls it
         // from inside its own critical section, and an `async fn` there would
         // be the await the whole locking model excludes. A write that fails is
@@ -1788,16 +1908,21 @@ impl Transport for RaftTransport {
                 message.message_type(),
             )));
         };
+        // Encoded before a waiter exists for it: a request above the frame cap
+        // is refused at once, rather than registered and waited out.
+        let Some(bytes) = encoded(&tagged, stream, false, peer) else {
+            return Err(RaftUnavailable(format!(
+                "{:?} to member {peer} exceeds the frame cap",
+                message.message_type(),
+            )));
+        };
         let (sender, receiver) = oneshot::channel();
         link.pending
             .lock()
             .await
             .insert(request_id, (expected, sender));
 
-        match link
-            .write_queued(generation, &frame_for(&tagged, stream, false))
-            .await
-        {
+        match link.write_queued(generation, &bytes).await {
             Ok(true) => {}
             Ok(false) => {
                 link.pending.lock().await.remove(&request_id);

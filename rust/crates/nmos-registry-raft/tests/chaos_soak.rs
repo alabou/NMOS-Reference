@@ -311,6 +311,11 @@ fn plan_for(seed: u64, run: u64, config: &Config) -> Plan {
         election_min_ms,
         election_max_ms,
         max_entries_per_append: *rng.pick(&[1, 2, 4, 16, 64, 256]).unwrap_or(&64),
+        // Down to a few hundred bytes, so the byte bound splits windows and
+        // batches the soak's small operations would otherwise never fill.
+        max_append_bytes: *rng
+            .pick(&[256, 4096, 64 * 1024, 1 << 20])
+            .unwrap_or(&(1 << 20)),
         max_apply_batch: *rng.pick(&[1, 3, 16, 128]).unwrap_or(&16),
         compaction_threshold,
         max_log_entries: compaction_threshold * *rng.pick(&[1, 2, 4, 16]).unwrap_or(&4),

@@ -43,6 +43,13 @@ from typing import Any, Iterator
 
 import pytest
 
+from nmos.registry.tests._implementations import (  # noqa: F401
+    Implementation,
+    implementation,
+    registry_command,
+    registry_environment,
+)
+
 pytestmark = pytest.mark.e2e
 
 REPO = Path(__file__).resolve().parents[3]
@@ -99,10 +106,18 @@ def _wait_node_on(query_port: int, seconds: float) -> float | None:
 
 
 class _Rig:
-    """Two independent registries plus a Node with an embedded Controller."""
+    """Two independent registries plus a Node with an embedded Controller.
 
-    def __init__(self, tmp: Path) -> None:
+    The registries are the Python's or the Rust binary (``implementation``);
+    the Node and its Controller are always the Python's -- there is no Rust
+    Node. What the ``[rust]`` half adds: a Node failing over away from a dying
+    Rust registry and re-registering at another, with the 404 heartbeat probe
+    answered by the Rust.
+    """
+
+    def __init__(self, tmp: Path, implementation: Implementation) -> None:
         self.tmp = tmp
+        self.implementation = implementation
         self.procs: list[subprocess.Popen[bytes]] = []
         self.r1 = {k: _free_port() for k in ("reg", "q", "ws")}
         self.r2 = {k: _free_port() for k in ("reg", "q", "ws")}
@@ -111,13 +126,17 @@ class _Rig:
         self.phantom_port = _free_port()
         self.registry1: subprocess.Popen[bytes] | None = None
 
-    def _spawn(self, cmd: list[str], name: str) -> subprocess.Popen[bytes]:
+    def _spawn(
+        self, cmd: list[str], name: str, env: dict[str, str] | None = None,
+    ) -> subprocess.Popen[bytes]:
         handle = (self.tmp / f"{name}.log").open("wb")
         # Its own session, so the whole tree can be signalled on teardown even
         # if a child spawns further children.
         proc = subprocess.Popen(
             cmd, cwd=str(REPO), stdout=handle, stderr=subprocess.STDOUT,
-            env=dict(os.environ, PYTHONPATH=str(REPO), NMOS_LOG_LEVEL="INFO"),
+            env=env if env is not None else dict(
+                os.environ, PYTHONPATH=str(REPO), NMOS_LOG_LEVEL="INFO",
+            ),
             start_new_session=True,
         )
         self.procs.append(proc)
@@ -126,13 +145,16 @@ class _Rig:
     def start(self) -> None:
         for tag, ports in (("reg1", self.r1), ("reg2", self.r2)):
             proc = self._spawn([
-                sys.executable, "nmos_registry.py",
+                *registry_command(self.implementation),
                 "--registryDisableTLS", "--registryAddr", "127.0.0.1",
                 "--registrationPort", str(ports["reg"]),
                 "--queryPort", str(ports["q"]),
                 "--queryWebSocketPort", str(ports["ws"]),
                 "--logFile", "", "--statusInterval", "0",
-            ], tag)
+            ], tag, env=registry_environment(
+                self.implementation,
+                base=dict(os.environ, NMOS_LOG_LEVEL="INFO"),
+            ))
             if tag == "reg1":
                 self.registry1 = proc
 
@@ -219,8 +241,10 @@ class _Rig:
 
 
 @pytest.fixture(scope="module")
-def rig(tmp_path_factory: pytest.TempPathFactory) -> Iterator[_Rig]:
-    r = _Rig(tmp_path_factory.mktemp("failover"))
+def rig(
+    tmp_path_factory: pytest.TempPathFactory, implementation: Implementation,
+) -> Iterator[_Rig]:
+    r = _Rig(tmp_path_factory.mktemp("failover"), implementation)
     try:
         r.start()
         yield r

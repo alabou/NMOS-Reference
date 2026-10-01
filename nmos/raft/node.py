@@ -51,6 +51,20 @@ is here: apply a bounded run, yield between runs, never inside one. A
 50,000-entry catch-up applied in one block would stall the HTTP server and the
 heartbeat timer -- and a stalled heartbeat timer causes an election, which
 causes more catch-up.
+
+What happens on a defect
+------------------------
+A member that finds its own state impossible (``RaftInvariantViolated``), or
+meets an exception nothing in it expected (``RaftUnexpectedError``) -- in its
+tick, in apply, or in a handler the transport delivered to -- stops: it
+relinquishes, answers every waiting caller "unavailable", closes, and tells its
+owner (``wait_for_failure``), which ends the process with status 1 for a
+service manager to restart. The one failure a tick expects, a term file that
+cannot be saved, is logged and retried at the next timeout. Nothing else is
+served through: a restart brings the member back with nothing, to be caught up
+as a non-voting learner, which is a recovery; a member serving on from a state
+its own logic did not foresee is not. The Rust registry takes the same
+position with a panic, which aborts its process.
 """
 
 from __future__ import annotations
@@ -66,11 +80,14 @@ from nmos.raft.batcher import Pending, ProposalBatcher
 from nmos.raft.cluster import RaftLayout
 from nmos.raft.cursors import CursorAllocator
 from nmos.raft.errors import (
+    MemberFailure,
+    MemberTask,
     RaftCursorReservationFailed,
     RaftInvariantViolated,
     RaftLogCompacted,
     RaftProtocolError,
     RaftUnavailable,
+    RaftUnexpectedError,
 )
 from nmos.raft.log import Entry, RaftLog
 from nmos.raft.machine import Outcome, StateMachine
@@ -99,6 +116,7 @@ from nmos.raft.ownership import OwnershipTable
 from nmos.raft.persist import PersistentState, TermStore
 from nmos.raft.snapshot import (
     SnapshotAbandoned,
+    SnapshotCaptureError,
     SnapshotMeta,
     SnapshotStore,
     decode_snapshot,
@@ -150,6 +168,17 @@ class RaftTiming:
     election_min: float = 0.30
     election_max: float = 0.60
     max_entries_per_append: int = 256
+    """Entries in one ``AppendEntries``, at most."""
+
+    max_append_bytes: int = 1 << 20
+    """Payload bytes of entries in one ``AppendEntries``, and of operations in
+    one ``Propose``, at most; an entry larger than it travels alone. etcd's
+    ``MaxSizePerMsg`` (``raft.go``), 1 MiB there too (``etcdserver/raft.go``),
+    applied as its ``limitSize`` applies it. ``MAX_FRAME`` is the backstop
+    sixteen times above this, refused at encode time, not the bound: a window
+    of 256 entries was bounded by count alone, and a window of nine 2 MiB
+    entries was never sent and retried for ever (part 21 of the fix record)."""
+
     max_apply_batch: int = 128
 
     compaction_threshold: int = 4096
@@ -479,9 +508,9 @@ class RaftNode:
         self._forwarder: Any | None = None
         self._closing = False
         self._leader_changed = asyncio.Event()
-        # The broken invariant this member stopped on, once it has (``_fail``),
-        # and the signal its owner waits on to end the process.
-        self._failure: RaftInvariantViolated | None = None
+        # The defect this member stopped on, once it has (``_fail``), and the
+        # signal its owner waits on to end the process.
+        self._failure: MemberFailure | None = None
         self._failed = asyncio.Event()
         # The one close in progress, which every caller awaits (``close``).
         self._closer: asyncio.Task[None] | None = None
@@ -505,18 +534,19 @@ class RaftNode:
         return self._voting
 
     @property
-    def failure(self) -> RaftInvariantViolated | None:
-        """The broken invariant this member stopped on, or ``None`` (``_fail``)."""
+    def failure(self) -> MemberFailure | None:
+        """The defect this member stopped on, or ``None`` (``_fail``)."""
         return self._failure
 
-    async def wait_for_failure(self) -> RaftInvariantViolated:
-        """Return once this member has stopped itself on a broken invariant.
+    async def wait_for_failure(self) -> MemberFailure:
+        """Return once this member has stopped itself on a defect.
 
-        For the process that owns it, which must then exit: the member takes no
-        further part, and only a restart -- which brings it back with nothing,
-        to be caught up as a non-voting learner -- makes it whole again
-        (``RaftInvariantViolated``). ``nmos_registry.py`` runs this in its task
-        group, so the failure ends the process with status 1.
+        A broken invariant (``RaftInvariantViolated``) or an exception nothing
+        expected (``RaftUnexpectedError``). For the process that owns it, which
+        must then exit: the member takes no further part, and only a restart
+        -- which brings it back with nothing, to be caught up as a non-voting
+        learner -- makes it whole again. ``nmos_registry.py`` runs this in its
+        task group, so the failure ends the process with status 1.
         """
         while self._failure is None:
             await self._failed.wait()
@@ -747,8 +777,20 @@ class RaftNode:
                 self._tick()
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except OSError:
+                # The term file could not be saved (``_persist``): the campaign
+                # or step-down that needed it stopped at the save and sent
+                # nothing, and the next timeout tries again. The one failure a
+                # tick expects, and the one the Rust tick logs the same way.
                 log.exception("raft: tick failed")
+            except Exception as exc:
+                # Anything else is a defect, and a defect is not something to
+                # tick through (``RaftUnexpectedError``). This loop used to log
+                # it and go on, which left a member ticking from a state its
+                # own logic had not foreseen. ``_fail`` cancels this task;
+                # returning at once is what makes that harmless.
+                self._fail(RaftUnexpectedError(MemberTask.TICK, exc))
+                return
 
     def _tick(self) -> None:
         now = asyncio.get_running_loop().time()
@@ -908,12 +950,13 @@ class RaftNode:
             cursor_reservation=self._machine.cursors.reservation,
         ))
 
-    def _fail(self, error: RaftInvariantViolated) -> None:
-        """Stop this member for good: a broken invariant stays broken.
+    def _fail(self, error: MemberFailure) -> None:
+        """Stop this member for good: a defect is not served through.
 
-        Fail-stop, the position ``RaftInvariantViolated`` documents and the one
-        ``go.etcd.io/raft`` takes with ``Panicf``: continuing from a state proven
-        impossible can only spread the damage. So before this returns, every
+        Fail-stop, the position ``RaftInvariantViolated`` and
+        ``RaftUnexpectedError`` document and the one ``go.etcd.io/raft`` takes
+        with ``Panicf``: continuing from a state proven impossible, or from one
+        the code never foresaw, can only spread the damage. So before this returns, every
         part that could spread it has stopped -- leadership, whose heartbeats
         would carry a commit index this member no longer vouches for; elections;
         applying; and every caller waiting on an answer, told "unavailable" (a
@@ -928,18 +971,25 @@ class RaftNode:
         if self._failure is not None:
             return
         self._failure = error
-        log.error(
-            "raft: %s stops: consensus invariant violated: %s",
-            self._layout.local.name, error,
-        )
+        if isinstance(error, RaftUnexpectedError):
+            # With the cause's traceback: the stop is the symptom, and the
+            # line that says where the defect was met is the one that matters.
+            why = str(error)
+            log.error(
+                "raft: %s stops: %s", self._layout.local.name, why,
+                exc_info=error.cause,
+            )
+        else:
+            why = f"consensus invariant violated: {error}"
+            log.error("raft: %s stops: %s", self._layout.local.name, why)
         self._closing = True
         if self._ticker is not None:
             self._ticker.cancel()
-        self._relinquish("consensus invariant violated")
+        self._relinquish(why)
         # Released here, unlike ``_relinquish``, which releases nothing because
         # a later leader may yet commit what a caller waits on: this member will
         # never apply it, whoever commits it.
-        reason = f"member stopped: consensus invariant violated: {error}"
+        reason = f"member stopped: {why}"
         self._batcher.fail_all(RaftUnavailable(reason))
         self._fail_reads(reason)
         for future in self._waiters.values():
@@ -1416,8 +1466,9 @@ class RaftNode:
         previous = state.next_index - 1
         try:
             prev_term = self._log.term_at(previous)
-            entries = self._log.slice(
+            entries = self._log.window(
                 state.next_index, self._timing.max_entries_per_append,
+                self._timing.max_append_bytes,
             )
             if self._carrying_entries_would_repeat_them(state):
                 # An append is already outstanding to this peer. Send the
@@ -2103,11 +2154,9 @@ class RaftNode:
             except asyncio.CancelledError:
                 raise
             except RaftInvariantViolated as exc:
-                # Past the catch-all below, deliberately. That handler exists
-                # so one bad apply cannot kill a member, and it is right for
-                # everything transient -- but an invariant that is broken stays
-                # broken, and logging it once per wake-up would be a silent
-                # failure wearing the costume of a handled one.
+                # An invariant that is broken stays broken, and logging it once
+                # per wake-up would be a silent failure wearing the costume of
+                # a handled one.
                 #
                 # Re-raising it was no better: it ended this task and nothing
                 # else. Nobody awaits the task before ``close``, which gathers
@@ -2117,8 +2166,15 @@ class RaftNode:
                 # with not one line logged. It stops instead (``_fail``).
                 self._fail(exc)
                 return
-            except Exception:
-                log.exception("raft: applying committed entries failed")
+            except Exception as exc:
+                # Nothing on the apply path is expected to raise: compaction's
+                # one expected failure is answered inside ``_maybe_compact``.
+                # Anything that reaches here is a defect, and a member that
+                # went on applying past it -- as this loop once did, logging
+                # it and continuing -- served a store its own logic had not
+                # foreseen (``RaftUnexpectedError``).
+                self._fail(RaftUnexpectedError(MemberTask.APPLY, exc))
+                return
 
     async def _apply_committed(self) -> None:
         """Apply up to the commit index, in bounded runs.
@@ -2393,9 +2449,14 @@ class RaftNode:
             operation = _rebind(item.operation, proposal)
             self._wait_for(proposal, item.future)
             payloads.append(encode_operation(operation))
-        self._transport.send(
-            leader, Propose(proposals=tuple(payloads), request_id=0),
-        )
+        # As few messages as ``max_append_bytes`` allows, in order on one
+        # link, which keeps their order: a tick's batch is bounded by count
+        # (``ProposalBatcher``), and only here, where the operations are
+        # encoded, is their size known.
+        for group in _split_by_bytes(payloads, self._timing.max_append_bytes):
+            self._transport.send(
+                leader, Propose(proposals=group, request_id=0),
+            )
 
     async def on_propose(self, peer: int, message: Propose) -> ProposeReply:
         if self._role is not Role.LEADER:
@@ -2420,6 +2481,16 @@ class RaftNode:
         )
 
     # -- transport callbacks ---------------------------------------------
+
+    def on_unexpected_error(self, error: RaftUnexpectedError) -> None:
+        """The transport met an exception nothing in it expected: stop.
+
+        A defect in a handler it delivered to, or in the transport itself, is
+        a defect in this member; it stops the way its own loops stop on one
+        (``_fail``), rather than serving on behind a link the transport would
+        otherwise just redial.
+        """
+        self._fail(error)
 
     def on_peer_state(self, peer: int, *, up: bool, incarnation: int) -> None:
         state = self._peers.get(peer)
@@ -2578,7 +2649,11 @@ class RaftNode:
                 "was installed", self._layout.local.name, applied,
             )
             return
-        except Exception:
+        except SnapshotCaptureError:
+            # Misuse of the capture, not a defect in what it captured: abandon
+            # it and take the next one at the next threshold, as the Rust
+            # answers its ``CaptureError``. Anything else out of a capture is
+            # a defect, and propagates to ``_apply_forever``'s stop.
             self._snapshots.abandon()
             log.exception("raft: taking a snapshot failed")
             return
@@ -3037,6 +3112,31 @@ class RaftNode:
                 raise RaftUnavailable("no leader was elected within the deadline")
             await asyncio.sleep(min(self._timing.heartbeat, remaining))
         return self._leader
+
+
+def _split_by_bytes(
+    payloads: Sequence[bytes], max_bytes: int,
+) -> list[tuple[bytes, ...]]:
+    """Consecutive groups of ``payloads``, each within ``max_bytes``.
+
+    Order kept, nothing dropped, and never fewer than one payload in a group,
+    so a payload larger than the bound still goes, alone -- the rule
+    ``RaftLog.window`` applies to a leader's entries, for a follower's
+    proposals.
+    """
+    groups: list[tuple[bytes, ...]] = []
+    current: list[bytes] = []
+    total = 0
+    for payload in payloads:
+        if current and total + len(payload) > max_bytes:
+            groups.append(tuple(current))
+            current = []
+            total = 0
+        current.append(payload)
+        total += len(payload)
+    if current:
+        groups.append(tuple(current))
+    return groups
 
 
 def _rebind(

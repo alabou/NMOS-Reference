@@ -39,24 +39,50 @@ Spawned directly rather than through the launcher
 -------------------------------------------------
 ``test_config_c_raft_e2e.py`` covers the launcher, on its fixed ports. This
 needs free ports so it can run beside anything else, and needs to vary the
-member count -- so it invokes ``nmos_registry.py`` itself. The launcher is
-still what an operator types; this is what a fault injector needs.
+member count -- so it invokes the registry itself. The launcher is still what
+an operator types; this is what a fault injector needs.
+
+Either implementation
+---------------------
+A member is the Python registry or the Rust binary (``_implementations.py``),
+chosen per member. The command line is the same for both -- only its first
+element differs -- and so is everything the rig does to a member afterwards:
+the same signals, the same ports, the same state directory, the same term file
+(``raft-state.json``, by design). What differs is the one line this rig reads
+from a member's log, the leader announcement, and ``leader_index`` knows both
+shapes. POSIX only: SIGSTOP and SIGCONT have no Windows form.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import signal
 import socket
 import subprocess
-import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from nmos.registry.tests._implementations import (
+    Implementation,
+    registry_command,
+    registry_environment,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
+
+# A member announcing itself leader, in each implementation's log file. The
+# Python's is one formatted string (``nmos/raft/node.py``); the Rust's is
+# tracing's message followed by its fields, ``term=N`` among them
+# (``rust/crates/nmos-registry-raft/src/node.rs``, rendered by its file sink).
+_LEADER_ANNOUNCEMENTS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"raft: \S+ is leader for term (?P<term>\d+)\b"),
+    re.compile(r"raft: is leader\b.*\bterm=(?P<term>\d+)\b"),
+)
 
 
 def free_pair() -> tuple[int, int]:
@@ -91,9 +117,10 @@ def free_port() -> int:
 class ProcessMember:
     """One registry process and the ports it answers on."""
 
-    def __init__(self, index: int, root: Path) -> None:
+    def __init__(self, index: int, root: Path, implementation: Implementation) -> None:
         self.index = index
         self.root = root
+        self.implementation = implementation
         self.raft_client, self.raft_peer = free_pair()
         self.registration = free_port()
         self.query = free_port()
@@ -107,7 +134,7 @@ class ProcessMember:
 
     def command(self, peers: list[ProcessMember]) -> list[str]:
         argv = [
-            sys.executable, str(REPO_ROOT / "nmos_registry.py"),
+            *registry_command(self.implementation),
             "--registryDisableTLS",
             "--registryAddr", "127.0.0.1",
             "--registrationPort", str(self.registration),
@@ -133,13 +160,30 @@ class ProcessMember:
     def alive(self) -> bool:
         return self.process is not None and self.process.poll() is None
 
+    def log_files(self) -> list[Path]:
+        """The log file and its rotated predecessors, oldest first, that exist.
+
+        Both implementations rotate at 1 MB, three back, and the Rust's file
+        sink is at DEBUG: a long test can turn the file over, and a leader
+        announcement with it.
+        """
+        name = self.log_path.name
+        candidates = [
+            self.log_path.with_name(f"{name}.{back}") for back in (3, 2, 1)
+        ] + [self.log_path]
+        return [path for path in candidates if path.is_file()]
+
 
 class ProcessCluster:
-    """``size`` registry processes that can be killed, frozen and restarted."""
+    """Registry processes, one per entry of ``layout``, that can be killed,
+    frozen and restarted."""
 
-    def __init__(self, size: int, root: Path) -> None:
+    def __init__(self, root: Path, layout: Sequence[Implementation]) -> None:
         self.root = root
-        self.members = [ProcessMember(index, root) for index in range(size)]
+        self.members = [
+            ProcessMember(index, root, implementation)
+            for index, implementation in enumerate(layout)
+        ]
 
     # -- lifecycle -------------------------------------------------------
 
@@ -152,7 +196,12 @@ class ProcessCluster:
         member.process = subprocess.Popen(
             member.command(self.members), cwd=str(REPO_ROOT),
             stdout=handle, stderr=subprocess.STDOUT,
-            env={"PYTHONPATH": str(REPO_ROOT), "PATH": "/usr/bin:/bin"},
+            # Replaced, not extended: a member sees nothing of the test
+            # runner's environment but a minimal PATH and what its
+            # implementation needs.
+            env=registry_environment(
+                member.implementation, base={"PATH": "/usr/bin:/bin"},
+            ),
         )
         member.frozen = False
 
@@ -243,16 +292,44 @@ class ProcessCluster:
         """
         best: tuple[int, int] | None = None
         for member in self.members:
-            try:
-                text = member.log_path.read_text(errors="replace")
-            except OSError:
-                continue
-            for line in text.splitlines():
-                if "is leader for term" in line:
-                    term = int(line.rsplit("term", 1)[1].strip().rstrip("."))
-                    if best is None or term > best[0]:
-                        best = (term, member.index)
+            for path in member.log_files():
+                try:
+                    text = path.read_text(errors="replace")
+                except OSError:
+                    continue
+                for line in text.splitlines():
+                    for announcement in _LEADER_ANNOUNCEMENTS:
+                        found = announcement.search(line)
+                        if found is None:
+                            continue
+                        term = int(found.group("term"))
+                        if best is None or term > best[0]:
+                            best = (term, member.index)
         return None if best is None else best[1]
+
+    def tails(self, out_chars: int = 600, log_chars: int = 4000) -> str:
+        """What each member said, for a report.
+
+        Its console tail, then its log file's, headed by where the whole of
+        both is -- so a failure's output names the directory while pytest
+        still keeps it.
+        """
+        blocks = [f"member logs under {self.root}"]
+        for member in self.members:
+            for label, path, limit in (
+                ("out", member.stdout_path, out_chars),
+                ("log", member.log_path, log_chars),
+            ):
+                try:
+                    text = path.read_text(errors="replace").strip()
+                except OSError:
+                    continue
+                if text:
+                    blocks.append(
+                        f"--- m{member.index}.{label} (last {limit} chars) ---\n"
+                        f"{text[-limit:]}",
+                    )
+        return "\n".join(blocks)
 
     def register(self, index: int, node: dict[str, Any]) -> int:
         member = self.members[index]

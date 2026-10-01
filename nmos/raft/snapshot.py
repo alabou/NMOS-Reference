@@ -48,7 +48,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Iterator
 
-from nmos.raft.errors import RaftProtocolError
+from nmos.raft.errors import RaftError, RaftProtocolError
 from nmos.raft.ownership import OwnershipTable
 from nmos.raft.wire import Reader, Writer
 from nmos.registry.store import RegistryStore
@@ -228,6 +228,19 @@ class SnapshotCapture:
         return len(self._pre)
 
 
+class SnapshotCaptureError(RaftError):
+    """A capture was asked for in a state the store cannot honour.
+
+    Two captures at once, or finishing one that is not the open one. Both are
+    misuse by the compaction that drives them rather than anything the store
+    found wrong with itself, and the compaction answers them the way the Rust
+    answers its ``CaptureError``: abandon, log, and try again at the next
+    threshold. Named so that answer can be given to exactly these and to
+    nothing else -- any other exception out of a capture is a defect, and a
+    defect stops the member (``RaftUnexpectedError``).
+    """
+
+
 class SnapshotAbandoned(Exception):
     """The capture being serialised was abandoned before it was finished.
 
@@ -266,7 +279,7 @@ class SnapshotStore:
         self, *, index: int, term: int, ownership: OwnershipTable,
     ) -> SnapshotCapture:
         if self._capture is not None:
-            raise RuntimeError("a snapshot capture is already open")
+            raise SnapshotCaptureError("a snapshot capture is already open")
         self._capture = SnapshotCapture(
             index=index, term=term, ownership=ownership.encode(),
         )
@@ -284,7 +297,7 @@ class SnapshotStore:
                 because the member installed a later snapshot.
         """
         if capture is not self._capture:
-            raise RuntimeError("that capture is not the open one")
+            raise SnapshotCaptureError("that capture is not the open one")
         try:
             records: list[bytes] = []
             live: set[tuple[ResourceType, str]] = set()

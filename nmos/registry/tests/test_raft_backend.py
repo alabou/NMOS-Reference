@@ -32,7 +32,7 @@ from pathlib import Path
 
 import pytest
 
-from nmos.raft.errors import RaftInvariantViolated
+from nmos.raft.errors import RaftInvariantViolated, RaftUnexpectedError
 from nmos.raft.node import Role
 from nmos.raft.persist import PersistentState, TermStore
 from nmos.raft.tests._harness import Cluster
@@ -486,6 +486,36 @@ class TestState:
             _break(member)
             with pytest.raises(RaftInvariantViolated):
                 await asyncio.wait_for(watching, 5.0)
+        finally:
+            await cluster.close()
+
+    async def test_the_process_ends_when_its_member_stops_on_an_unexpected_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The other way a member stops: an exception nothing in it expected.
+
+        Same exit, same status; the backend reports STOPPING meanwhile so its
+        Registration API answers 503 rather than taking mutations the member
+        can never apply.
+        """
+        from nmos_registry import _exit_when_the_member_stops
+
+        cluster = await _started(tmp_path)
+        try:
+            backend, member = _leader(cluster)
+            watching = asyncio.create_task(
+                _exit_when_the_member_stops(member.node),
+            )
+            await cluster.settle(2)
+            assert not watching.done()
+
+            def planted() -> None:
+                raise RuntimeError("planted: a tick that raises")
+
+            monkeypatch.setattr(member.node, "_tick", planted)
+            with pytest.raises(RaftUnexpectedError):
+                await asyncio.wait_for(watching, 5.0)
+            assert backend.state is BackendState.STOPPING
         finally:
             await cluster.close()
 

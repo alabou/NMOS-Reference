@@ -674,3 +674,19 @@ fn subscriptions_is_not_captured_by_the_collection_route() {
         "the generic collection route captured /subscriptions: {body}",
     );
 }
+
+#[test]
+fn a_subscription_body_above_one_mebibyte_is_413_with_the_nmos_error_body() {
+    // The same limit as the Registration API's, from the same aiohttp default.
+    let rig = Rig::new();
+    let (status, _, body) = rig.post(
+        &format!("{BASE}/subscriptions"),
+        &"x".repeat(1024 * 1024 + 1),
+    );
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        body,
+        "{\n  \"code\": 413,\n  \"error\": \"Request Entity Too Large\",\n  \"debug\": \
+         \"Request Entity Too Large\"\n}",
+    );
+}

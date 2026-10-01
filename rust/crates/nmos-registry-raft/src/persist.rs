@@ -77,6 +77,21 @@
 //! So this module is **not** async, and callers must not make it so. On a
 //! multi-threaded runtime a `spawn_blocking` here would look like an
 //! improvement and would reopen the gap silently.
+//!
+//! # Native Windows: not supported, and this is where it would fail
+//!
+//! `save` fsyncs the state directory after the rename, as POSIX needs. Windows
+//! cannot: `File::open` on a directory fails there (`CreateFileW` refuses a
+//! directory without `FILE_FLAG_BACKUP_SEMANTICS`), and `FlushFileBuffers` is
+//! not defined for one -- so every save would fail, `load` with it (it saves
+//! the bumped incarnation), and [`crate::node::RaftNode::new`] would refuse to
+//! start. The Python takes a write-through `MoveFileExW` instead
+//! (`persist.py`, its `win32` branch), which reaching from here would need the
+//! one `unsafe` FFI call this workspace forbids. The launchers already refuse
+//! `--rust` on native Windows (`start-registry-raft.bat`), so this is recorded
+//! rather than fixed: the decision was deferred on 2026-10-01
+//! (`plans/20261001T041120Z-raft-rust-non-recoverable-risk-assessment.md`
+//! §4.4). A port runs the registry on Windows through WSL.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Write as _;

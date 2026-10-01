@@ -93,6 +93,21 @@
 //! The two handlers that *are* async -- `on_propose` and `on_forward` -- are
 //! not consensus messages. They take the lock, finish with it, and only then
 //! await.
+//!
+//! # What happens on a defect
+//!
+//! A member that finds its own state impossible stops ([`RaftInvariantViolated`]
+//! -> [`RaftNode::fail`]): it relinquishes, answers every waiting caller
+//! "unavailable", closes, and tells its owner ([`RaftNode::wait_for_failure`]),
+//! which ends the process with status 1 for a service manager to restart. A
+//! panic is the other kind of defect, and the process is what answers it: the
+//! binary's panic policy (`nmos-registry-bin`'s `panic_policy`) aborts on any
+//! panic, in the tick, in apply, in a handler the transport delivered to, or
+//! anywhere else -- which is why nothing in this module joins the tasks it
+//! spawns or catches an unwind. The Python member stops the same way on an
+//! exception nothing in it expected (`RaftUnexpectedError`). The one failure a
+//! tick expects, a term file that cannot be saved, is logged and retried at the
+//! next timeout, in both.
 
 #![expect(
     clippy::significant_drop_tightening,
@@ -176,8 +191,18 @@ pub struct RaftTiming {
     pub election_min_ms: u64,
     /// The longest.
     pub election_max_ms: u64,
-    /// Entries in one `AppendEntries`.
+    /// Entries in one `AppendEntries`, at most.
     pub max_entries_per_append: usize,
+    /// Payload bytes of entries in one `AppendEntries`, and of operations in
+    /// one `Propose`, at most; an entry larger than it travels alone.
+    ///
+    /// etcd's `MaxSizePerMsg` (`raft.go`), 1 MiB there too
+    /// (`etcdserver/raft.go`), applied as its `limitSize` applies it.
+    /// [`crate::wire::MAX_FRAME`] is the backstop sixteen times above this,
+    /// refused at encode time, not the bound: a window of 256 entries was
+    /// bounded by count alone, and a window of nine 2 MiB entries was never
+    /// sent and retried for ever (part 21 of the fix record).
+    pub max_append_bytes: usize,
     /// Entries applied in one uninterrupted run.
     pub max_apply_batch: usize,
     /// Applied entries held before a snapshot is taken.
@@ -200,6 +225,7 @@ impl Default for RaftTiming {
             election_min_ms: 300,
             election_max_ms: 600,
             max_entries_per_append: 256,
+            max_append_bytes: 1 << 20,
             max_apply_batch: 128,
             compaction_threshold: 4096,
             max_log_entries: 65536,
@@ -408,6 +434,30 @@ struct Assembly {
 /// Decided by the bytes, not the offset: a copy is the same bytes at the same
 /// place. Anything else at an offset already passed is no copy, and keeping the
 /// buffer for it would be a splice.
+/// Consecutive groups of `payloads`, each within `max_bytes`.
+///
+/// Order kept, nothing dropped, and never fewer than one payload in a group,
+/// so a payload larger than the bound still goes, alone -- the rule
+/// [`RaftLog::window`] applies to a leader's entries, for a follower's
+/// proposals.
+fn split_by_bytes(payloads: Vec<Vec<u8>>, max_bytes: usize) -> Vec<Vec<Vec<u8>>> {
+    let mut groups = Vec::new();
+    let mut current: Vec<Vec<u8>> = Vec::new();
+    let mut total = 0usize;
+    for payload in payloads {
+        if !current.is_empty() && total.saturating_add(payload.len()) > max_bytes {
+            groups.push(std::mem::take(&mut current));
+            total = 0;
+        }
+        total = total.saturating_add(payload.len());
+        current.push(payload);
+    }
+    if !current.is_empty() {
+        groups.push(current);
+    }
+    groups
+}
+
 fn holds(assembled: &[u8], offset: usize, chunk: &[u8]) -> bool {
     offset
         .checked_add(chunk.len())
@@ -1726,10 +1776,11 @@ impl RaftNode {
             // link that has not yet drained the last copy.
             Vec::new()
         } else {
-            match state
-                .log
-                .slice(next_index, self.timing.max_entries_per_append)
-            {
+            match state.log.window(
+                next_index,
+                self.timing.max_entries_per_append,
+                self.timing.max_append_bytes,
+            ) {
                 Ok(entries) => entries
                     .iter()
                     .map(|entry| WireEntry {
@@ -2043,12 +2094,18 @@ impl RaftNode {
                     state.waiters.insert(proposal, item.reply);
                     payloads.push(operation.encode());
                 }
-                let message = Message::Propose(crate::messages::Propose {
-                    proposals: payloads,
-                    request_id: 0,
-                });
-                self.transport
-                    .send(leader, &message, crate::wire::Stream::Control);
+                // As few messages as `max_append_bytes` allows, in order on
+                // one link, which keeps their order: a tick's batch is bounded
+                // by count (`MAX_BATCH`), and only here, where the operations
+                // are encoded, is their size known.
+                for group in split_by_bytes(payloads, self.timing.max_append_bytes) {
+                    let message = Message::Propose(crate::messages::Propose {
+                        proposals: group,
+                        request_id: 0,
+                    });
+                    self.transport
+                        .send(leader, &message, crate::wire::Stream::Control);
+                }
                 return;
             }
         }
@@ -3888,5 +3945,39 @@ impl crate::transport::PeerHandler for RaftNode {
             }
             self.send_append(&mut state, peer);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_by_bytes;
+
+    #[test]
+    fn payloads_are_grouped_by_bytes_in_order() {
+        let payloads: Vec<Vec<u8>> = vec![
+            vec![0; 10],
+            vec![0; 10],
+            vec![0; 10],
+            vec![0; 100],
+            vec![0; 5],
+        ];
+        let groups = split_by_bytes(payloads, 25);
+        let sizes: Vec<Vec<usize>> = groups
+            .iter()
+            .map(|group| group.iter().map(Vec::len).collect())
+            .collect();
+        // Two fit, the third would not; the 100-byte one goes alone; the rest follow.
+        assert_eq!(sizes, vec![vec![10, 10], vec![10], vec![100], vec![5]]);
+    }
+
+    #[test]
+    fn nothing_is_dropped_and_a_bound_of_zero_is_one_per_group() {
+        let payloads: Vec<Vec<u8>> = vec![vec![1], vec![2, 2], vec![3]];
+        assert_eq!(
+            split_by_bytes(payloads.clone(), 0),
+            vec![vec![vec![1]], vec![vec![2, 2]], vec![vec![3]]]
+        );
+        assert!(split_by_bytes(Vec::new(), 0).is_empty());
+        assert_eq!(split_by_bytes(payloads, usize::MAX).len(), 1);
     }
 }

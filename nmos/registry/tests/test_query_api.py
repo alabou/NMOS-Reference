@@ -633,3 +633,21 @@ class TestRegistrationBytesSurviveToQuery:
         # responses should not see spurious reordering.
         served_keys = list((await got.json()).keys())
         assert served_keys == list(node.keys())
+
+
+class TestABodyAboveTheLimit:
+    """The same limit as the Registration API's, from the same aiohttp default
+    (``client_max_size``, 1 MiB): a larger body is 413 with the NMOS error
+    body, and the Rust registry answers it the same way."""
+
+    async def test_a_subscription_body_above_one_mebibyte_is_refused_with_413(self, client) -> None:  # type: ignore[no-untyped-def]
+        response = await client.post(
+            SUBSCRIPTIONS, data=b"x" * (1024 * 1024 + 1),
+            headers={"Content-Type": "application/json"},
+        )
+        assert response.status == 413
+        assert await response.json() == {
+            "code": 413,
+            "error": "Request Entity Too Large",
+            "debug": "Request Entity Too Large",
+        }

@@ -31,7 +31,7 @@ from typing import Any
 from nmos.cluster.layout import MemberSpec, derive_cluster
 from nmos.raft.cluster import RaftLayout, derive_raft_layout
 from nmos.raft.cursors import CursorAllocator
-from nmos.raft.errors import RaftUnavailable
+from nmos.raft.errors import MemberTask, RaftUnavailable, RaftUnexpectedError
 from nmos.raft.machine import StateMachine
 from nmos.raft.node import RaftNode, RaftTiming
 from nmos.raft.ownership import OwnershipTable
@@ -358,21 +358,16 @@ class MemoryNetwork:
 
         kind = message.TYPE
         reply: Any | None = None
-        if kind is MessageType.REQUEST_VOTE:
-            reply = handler.on_request_vote(source, message)
-        elif kind is MessageType.REQUEST_VOTE_REPLY:
-            handler.on_request_vote_reply(source, message)
-        elif kind is MessageType.APPEND_ENTRIES:
-            reply = handler.on_append_entries(source, message)
-        elif kind is MessageType.APPEND_ENTRIES_REPLY:
-            handler.on_append_entries_reply(source, message)
-        elif kind is MessageType.PROMOTE:
-            handler.on_promote(source, message)
-        elif kind is MessageType.INSTALL_SNAPSHOT:
-            reply = handler.on_install_snapshot(source, message)
-        elif kind is MessageType.INSTALL_SNAPSHOT_REPLY:
-            handler.on_install_snapshot_reply(source, message)
-        elif kind is MessageType.PROPOSE:
+        try:
+            reply = self._handle(handler, source, message)
+        except Exception as exc:
+            # As ``transport.py``'s inbound reader does: a handler that raised
+            # what nothing expected is a defect, and the member stops for it.
+            handler.on_unexpected_error(
+                RaftUnexpectedError(MemberTask.INBOUND_CONNECTION, exc),
+            )
+            return
+        if kind is MessageType.PROPOSE:
             # Tracked, not fire-and-forget: an unowned task outlives the test
             # that created it and shows up as unexplained slowness in whatever
             # runs next.
@@ -406,17 +401,48 @@ class MemoryNetwork:
                 answer=True,
             )
 
+    @staticmethod
+    def _handle(handler: PeerHandler, source: int, message: Any) -> Any | None:
+        """Deliver one synchronous message; the reply, if the kind has one."""
+        kind = message.TYPE
+        if kind is MessageType.REQUEST_VOTE:
+            return handler.on_request_vote(source, message)
+        if kind is MessageType.REQUEST_VOTE_REPLY:
+            handler.on_request_vote_reply(source, message)
+        elif kind is MessageType.APPEND_ENTRIES:
+            return handler.on_append_entries(source, message)
+        elif kind is MessageType.APPEND_ENTRIES_REPLY:
+            handler.on_append_entries_reply(source, message)
+        elif kind is MessageType.PROMOTE:
+            handler.on_promote(source, message)
+        elif kind is MessageType.INSTALL_SNAPSHOT:
+            return handler.on_install_snapshot(source, message)
+        elif kind is MessageType.INSTALL_SNAPSHOT_REPLY:
+            handler.on_install_snapshot_reply(source, message)
+        return None
+
     async def _propose(self, source: int, target: int, message: Any) -> None:
         handler = self._handlers.get(target)
         if handler is None:
             return
-        await handler.on_propose(source, message)
+        try:
+            await handler.on_propose(source, message)
+        except Exception as exc:
+            handler.on_unexpected_error(
+                RaftUnexpectedError(MemberTask.APPLICATION_REQUEST, exc),
+            )
 
     async def _read_index(self, source: int, target: int, message: Any) -> None:
         handler = self._handlers.get(target)
         if handler is None:
             return
-        reply = await handler.on_read_index(source, message)
+        try:
+            reply = await handler.on_read_index(source, message)
+        except Exception as exc:
+            handler.on_unexpected_error(
+                RaftUnexpectedError(MemberTask.APPLICATION_REQUEST, exc),
+            )
+            return
         self.deliver(target, source, reply, answer=True)
 
     async def ask(

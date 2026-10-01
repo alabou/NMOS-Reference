@@ -857,9 +857,9 @@ impl ReadIndexReply {
 /// A follower's batch of operations, for the leader to append.
 ///
 /// Batched by construction: the field repeats, and everything a member proposed
-/// within one event-loop tick travels in one message. That is the whole of the
-/// batching design on the wire -- one message per tick per peer, however many
-/// registrations arrived.
+/// within one tick travels in as few messages as `RaftTiming::max_append_bytes`
+/// allows -- one, for any ordinary tick's worth of registrations. That is the
+/// whole of the batching design on the wire.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Propose {
     /// The encoded operations.

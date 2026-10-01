@@ -38,7 +38,8 @@ What this package does differently
   received its registration, so that member's local state is authoritative for
   them and a rejection needs no round trip to be trustworthy.
 * **Batches.** Everything proposed within one event-loop tick commits in a
-  single quorum round, whether that is one registration or five hundred.
+  single quorum round, whether that is one registration or five hundred --
+  carried in as few messages as a bound on their bytes allows.
 
 What a volatile log actually costs, stated precisely
 ----------------------------------------------------

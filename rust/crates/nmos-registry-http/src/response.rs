@@ -43,6 +43,7 @@
 //! exception and does declare `charset=utf-8`, as `text/html` requires.
 
 use axum::body::Body;
+use axum::extract::rejection::StringRejection;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::response::Response;
 
@@ -224,6 +225,32 @@ pub fn error(
         None => text,
     };
     finish(builder, Body::from(body))
+}
+
+/// The largest request body either registry reads.
+///
+/// aiohttp's `client_max_size` default, which the Python registry never
+/// overrides (`web.Application(middlewares=...)`, `nmos/registry/__init__.py`).
+/// axum's own default is 2 MiB, so without this a body the Python refuses with
+/// 413 was read and answered here -- and the entry it became was twice the size
+/// the other implementation would ever produce.
+pub const MAX_BODY_BYTES: usize = 1024 * 1024;
+
+/// The answer to a body axum refused to read ([`MAX_BODY_BYTES`]).
+///
+/// Above the limit: 413 with the NMOS error body, as `cors_middleware` turns
+/// aiohttp's `HTTPRequestEntityTooLarge` into one -- `error` and `debug` both
+/// the status's phrase, because aiohttp's `reason` for it *is* the phrase.
+/// Anything else (a body that is not UTF-8, a read that failed): the
+/// rejection's own status, with its text as `debug`, in the same body shape
+/// rather than axum's plain text.
+#[must_use]
+pub fn body_rejected(rejection: &StringRejection, request: Option<&RequestView<'_>>) -> Response {
+    let status = rejection.status();
+    if status == StatusCode::PAYLOAD_TOO_LARGE {
+        return error(status, reason_phrase(status), &[], request);
+    }
+    error(status, &rejection.body_text(), &[], request)
 }
 
 /// The error body, indented by two the way `dump_any(body, indent=2)` is.

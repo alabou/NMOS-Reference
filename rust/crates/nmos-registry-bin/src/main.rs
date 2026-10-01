@@ -5,7 +5,10 @@
 //!
 //! Counterpart to `nmos_registry.py`: the command line, the TLS configuration
 //! and the wiring that turns them into three listeners and two background
-//! tasks.
+//! tasks. And the one policy that is the process's alone: a panic ends it
+//! (`panic_policy`), as a broken invariant or an unexpected exception ends the
+//! Python process -- a service manager restarts what exits, and never what
+//! serves on in front of a member that takes part in nothing.
 
 #![doc(html_no_source)]
 #![allow(clippy::print_stdout)]
@@ -16,7 +19,7 @@ use std::sync::Arc;
 
 use clap::Parser as _;
 use nmos_registry_bin::listen::{context_for, serve_maybe_tls};
-use nmos_registry_bin::{as_client, cert_check, cli, identity, logging, tls};
+use nmos_registry_bin::{as_client, cert_check, cli, identity, logging, panic_policy, tls};
 
 use nmos_etcd::supervisor::{EtcdSupervisor, SupervisorConfig};
 use nmos_registry::registry::Registry;
@@ -38,6 +41,10 @@ use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
+    // Before anything else, including the parse: a panic anywhere in this
+    // process ends it, on the record (`panic_policy`). Installed before the
+    // logging sinks exist, the chained default hook still reaches stderr.
+    panic_policy::install();
     let args = cli::Args::parse();
 
     // Two sinks at two verbosities, as `setup_logging` configures them: the
@@ -413,7 +420,9 @@ async fn main() -> std::io::Result<()> {
 /// error is what exits the process with status 1 -- the status a service
 /// manager restarts on. Serving on regardless would keep the Registration and
 /// Query APIs up in front of a member that takes part in nothing.
-/// `nmos_registry.py`'s `_exit_when_the_member_stops` is the same.
+/// `nmos_registry.py`'s `_exit_when_the_member_stops` is the same, and so is
+/// what a panic does here (`panic_policy`): the Python member stops on an
+/// exception nothing in it expected, this process aborts on a panic.
 async fn member_stopped(consensus: Option<&Arc<RaftRegistryBackend>>) -> String {
     match consensus {
         Some(backend) => backend.node().wait_for_failure().await,
@@ -607,6 +616,9 @@ fn build_consensus(
             .unwrap_or(u64::MAX),
         // etcd's value, fixed as etcd fixes it: no flag, and none needed.
         conn_read_timeout_ms: nmos_registry_raft::transport::CONN_READ_TIMEOUT_MS,
+        // Likewise fixed: the Python's `DIAL_TIMEOUT`, which it also never
+        // exposes.
+        dial_timeout_ms: nmos_registry_raft::transport::DIAL_TIMEOUT_MS,
     }));
 
     let machine = StateMachine::new(

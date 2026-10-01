@@ -61,10 +61,12 @@ class ProposalBatcher(Generic[T, R]):
         drain: Called with the accumulated batch, synchronously, from the
             event loop. It takes ownership of every future in the batch and
             must eventually resolve or fail each one -- nothing here will.
-        max_batch: Upper bound on one batch. Reached only under sustained
-            load heavier than one quorum round can absorb, where the excess
-            simply forms the next batch; it exists so a single
-            ``AppendEntries`` cannot grow past the frame cap.
+        max_batch: Upper bound on one batch, by count. Reached only under
+            sustained load heavier than one quorum round can absorb, where
+            the excess simply forms the next batch. Bytes are bounded where
+            sizes are known -- the leader's window and the follower's
+            ``Propose`` groups, both under ``RaftTiming.max_append_bytes`` --
+            not here, where an operation has not been encoded yet.
     """
 
     __slots__ = ("_drain", "_max_batch", "_pending", "_scheduled")

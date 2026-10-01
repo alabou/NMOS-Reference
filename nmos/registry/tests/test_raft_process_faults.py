@@ -28,11 +28,23 @@ What is only reachable from here
 * **Genuinely independent scheduling**, since each member has its own
   interpreter and its own event loop.
 
+Both registries
+---------------
+Every test here runs twice, ``[python]`` against ``nmos_registry.py`` and
+``[rust]`` against the Rust binary (``_implementations.py``): the two take the
+same command line, and the faults are the same signals to the same ports. The
+``[rust]`` half skips with the build hint when no binary is built, and
+``NMOS_RUST_REGISTRY`` points it elsewhere. A failure prints every member's
+console and log tails and the directory holding them (the registry
+``conftest.py``), so an intermittent failure is never again lost with its
+logs.
+
 Skips rather than fails when it cannot run, matching the other e2e rigs.
 """
 
 from __future__ import annotations
 
+import sys
 import time
 import uuid
 from collections.abc import Iterator
@@ -41,6 +53,10 @@ from pathlib import Path
 import pytest
 
 from nmos.registry.tests._fixtures import make_node
+from nmos.registry.tests._implementations import (  # noqa: F401
+    Implementation,
+    implementation,
+)
 from nmos.registry.tests._processes import ProcessCluster
 
 pytestmark = pytest.mark.e2e
@@ -51,10 +67,24 @@ READY_TIMEOUT = 90.0
 CONVERGE_TIMEOUT = 60.0
 
 
+@pytest.fixture(scope="module", autouse=True)
+def preconditions() -> None:
+    if sys.platform == "win32":
+        pytest.skip("SIGSTOP and SIGCONT, and a fixed POSIX PATH: this rig has no Windows form")
+
+
 @pytest.fixture
-def cluster(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[ProcessCluster]:
-    size = getattr(request, "param", 3)
-    created = ProcessCluster(size, tmp_path)
+def cluster_size() -> int:
+    """Three members unless a test says otherwise
+    (``@pytest.mark.parametrize("cluster_size", [5])``)."""
+    return 3
+
+
+@pytest.fixture
+def cluster(
+    implementation: Implementation, cluster_size: int, tmp_path: Path,
+) -> Iterator[ProcessCluster]:
+    created = ProcessCluster(tmp_path, [implementation] * cluster_size)
     created.start()
     try:
         if not created.await_writable(0, _node(), timeout=READY_TIMEOUT):
@@ -75,15 +105,7 @@ def _skip_with_output(cluster: ProcessCluster, why: str) -> None:
     dependency, an import error -- behind a message that looks like a
     deliberate exclusion.
     """
-    tails = []
-    for member in cluster.members:
-        try:
-            text = member.stdout_path.read_text(errors="replace")
-        except OSError:
-            continue
-        if text.strip():
-            tails.append(f"m{member.index}: {text.strip()[-600:]}")
-    pytest.skip(f"{why}\n" + "\n".join(tails))
+    pytest.skip(f"{why}\n{cluster.tails()}")
 
 
 def _converged_on(

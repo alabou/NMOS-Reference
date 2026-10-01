@@ -26,18 +26,22 @@ from typing import Any
 import pytest
 
 from nmos.raft.errors import (
+    MemberTask,
     RaftCursorReservationFailed,
     RaftInvariantViolated,
     RaftUnavailable,
+    RaftUnexpectedError,
 )
 from nmos.raft.messages import (
     AppendEntries,
     AppendEntriesReply,
     InstallSnapshot,
+    Propose,
     WireEntry,
 )
 from nmos.raft.node import RaftNode, RaftTiming, Role, _Assembly, _PeerState
 from nmos.raft.operations import (
+    ClaimOwnershipOp,
     ProposalId,
     RegisterOp,
     UnregisterOp,
@@ -3268,6 +3272,251 @@ class TestABrokenInvariantStopsTheMember:
             await cluster.close()
 
 
+class TestAnUnexpectedExceptionStopsTheMember:
+    """An exception nothing expected is a defect, and a defect stops the member.
+
+    ``_tick_forever`` and ``_apply_forever`` used to log one and carry on, and
+    the transport's catch-alls redialled past one for ever -- so a member whose
+    own logic had been caught out went on leading, voting and serving. Now it
+    stops (``RaftUnexpectedError``, ``_fail``), as the Rust registry's process
+    aborts on a panic. The one failure a tick does expect, a term file that
+    cannot be saved, is still logged and retried.
+    """
+
+    _until = staticmethod(TestABrokenInvariantStopsTheMember._until)
+
+    @staticmethod
+    def _plant_in_tick(member: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+        def planted() -> None:
+            raise RuntimeError("planted: a tick that raises")
+
+        monkeypatch.setattr(member.node, "_tick", planted)
+
+    async def test_a_tick_that_raises_stops_the_member(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        cluster = await _cluster(3, tmp_path)
+        try:
+            broken = await cluster.elect()
+            self._plant_in_tick(broken, monkeypatch)
+
+            try:
+                failure = await asyncio.wait_for(
+                    broken.node.wait_for_failure(), 1.0,
+                )
+            except asyncio.TimeoutError:
+                pytest.fail(
+                    "a member whose tick raised went on ticking: the exception "
+                    "was logged and the loop continued",
+                )
+            assert isinstance(failure, RaftUnexpectedError), failure
+            assert failure.task is MemberTask.TICK
+            assert isinstance(failure.__cause__, RuntimeError)
+            assert broken.node.role is not Role.LEADER
+            replaced = await self._until(
+                lambda: [m.index for m in cluster.leaders if m is not broken]
+                != [],
+                seconds=20 * cluster.timing.election_max,
+            )
+            assert replaced, "the others never replaced the stopped leader"
+            assert "stops: unexpected error in tick" in caplog.text
+            # The cause's traceback, not merely its name: the stop is the
+            # symptom, the line that raised is the finding.
+            assert "planted: a tick that raises" in caplog.text
+            assert "Traceback" in caplog.text
+        finally:
+            await cluster.close()
+
+    async def test_a_caller_waiting_on_a_member_whose_tick_raises_is_answered(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        cluster = await _cluster(3, tmp_path)
+        try:
+            broken = await cluster.elect()
+            cluster.network.isolate(broken.index)
+            waiting = broken.node.propose(_register(NODE_ID, broken.index))
+            await asyncio.sleep(cluster.timing.heartbeat)
+            assert not waiting.done()
+
+            self._plant_in_tick(broken, monkeypatch)
+            try:
+                await asyncio.wait_for(waiting, 1.0)
+            except RaftUnavailable:
+                pass
+            except asyncio.TimeoutError:
+                pytest.fail(
+                    "a caller waiting on a member whose tick raised was left "
+                    "waiting for an entry that member will never apply",
+                )
+            else:
+                pytest.fail("a proposal to a stopped member was answered as done")
+        finally:
+            await cluster.close()
+
+    async def test_an_apply_that_raises_stops_the_member(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from nmos.raft.machine import StateMachine
+
+        cluster = await _cluster(3, tmp_path)
+        try:
+            leader = await cluster.elect()
+            broken = next(m for m in cluster.members if m is not leader)
+            original = StateMachine.apply
+
+            def planted(machine: StateMachine, *args: Any, **kwargs: Any) -> Any:
+                if machine is broken.machine:
+                    raise RuntimeError("planted: an apply that raises")
+                return original(machine, *args, **kwargs)
+
+            # On the class: ``StateMachine`` has slots. Only ``broken``'s raises.
+            monkeypatch.setattr(StateMachine, "apply", planted)
+            await asyncio.wait_for(
+                leader.node.propose(_register(NODE_ID, leader.index)), 5.0,
+            )
+
+            try:
+                failure = await asyncio.wait_for(
+                    broken.node.wait_for_failure(), 2.0,
+                )
+            except asyncio.TimeoutError:
+                pytest.fail(
+                    "a member whose apply raised went on: the exception was "
+                    "logged and the loop waited for the next wake-up",
+                )
+            assert isinstance(failure, RaftUnexpectedError), failure
+            assert failure.task is MemberTask.APPLY
+            assert "planted: an apply that raises" in repr(failure.__cause__)
+        finally:
+            await cluster.close()
+
+    async def test_a_snapshot_that_cannot_be_taken_stops_the_member(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from nmos.raft.snapshot import SnapshotStore
+
+        cluster = Cluster(
+            3, tmp_path, timing=dataclasses.replace(FAST, compaction_threshold=2),
+        )
+        await cluster.start()
+        try:
+            leader = await cluster.elect()
+            broken = next(m for m in cluster.members if m is not leader)
+            original = SnapshotStore.finish
+
+            async def planted(snapshots: SnapshotStore, capture: Any) -> bytes:
+                if snapshots is broken.snapshots:
+                    raise RuntimeError("planted: a snapshot that cannot be taken")
+                return await original(snapshots, capture)
+
+            monkeypatch.setattr(SnapshotStore, "finish", planted)
+            for _ in range(3):
+                await asyncio.wait_for(
+                    leader.node.propose(
+                        _register(str(uuid.uuid4()), leader.index),
+                    ),
+                    5.0,
+                )
+
+            try:
+                failure = await asyncio.wait_for(
+                    broken.node.wait_for_failure(), 2.0,
+                )
+            except asyncio.TimeoutError:
+                pytest.fail(
+                    "a member whose snapshot raised what nothing expected went "
+                    "on: it was logged as 'taking a snapshot failed'",
+                )
+            assert isinstance(failure, RaftUnexpectedError), failure
+            assert failure.task is MemberTask.APPLY
+            assert "planted: a snapshot that cannot be taken" in repr(
+                failure.__cause__,
+            )
+        finally:
+            await cluster.close()
+
+    async def test_a_capture_error_is_logged_and_the_member_carries_on(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The one failure compaction expects, answered as the Rust answers
+        its ``CaptureError``: abandon, log, try again at the next threshold."""
+        from nmos.raft.snapshot import SnapshotCaptureError, SnapshotStore
+
+        cluster = Cluster(
+            3, tmp_path, timing=dataclasses.replace(FAST, compaction_threshold=2),
+        )
+        await cluster.start()
+        try:
+            leader = await cluster.elect()
+            broken = next(m for m in cluster.members if m is not leader)
+            original = SnapshotStore.finish
+
+            async def planted(snapshots: SnapshotStore, capture: Any) -> bytes:
+                if snapshots is broken.snapshots:
+                    raise SnapshotCaptureError("planted: not the open one")
+                return await original(snapshots, capture)
+
+            monkeypatch.setattr(SnapshotStore, "finish", planted)
+            for _ in range(3):
+                await asyncio.wait_for(
+                    leader.node.propose(
+                        _register(str(uuid.uuid4()), leader.index),
+                    ),
+                    5.0,
+                )
+            await cluster.settle(10)
+
+            assert broken.node.failure is None
+            assert "taking a snapshot failed" in caplog.text
+            assert broken.snapshots.capture is None, "the capture was not abandoned"
+        finally:
+            await cluster.close()
+
+    async def test_a_handler_that_raises_on_a_message_stops_the_member(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A defect met on the inbound path, where every consensus handler runs."""
+        from nmos.raft.log import RaftLog
+
+        cluster = await _cluster(3, tmp_path)
+        try:
+            leader = await cluster.elect()
+            broken = next(m for m in cluster.members if m is not leader)
+            original = RaftLog.append_replicated
+
+            def planted(log: Any, entries: Any, *, committed: int) -> None:
+                if log is not broken.node._log:
+                    original(log, entries, committed=committed)
+                    return
+                raise RuntimeError("planted: a handler that raises")
+
+            monkeypatch.setattr(RaftLog, "append_replicated", planted)
+            await asyncio.wait_for(
+                leader.node.propose(_register(NODE_ID, leader.index)), 5.0,
+            )
+
+            try:
+                failure = await asyncio.wait_for(
+                    broken.node.wait_for_failure(), 2.0,
+                )
+            except asyncio.TimeoutError:
+                pytest.fail(
+                    "a member whose handler raised went on as if a link had "
+                    "failed",
+                )
+            assert isinstance(failure, RaftUnexpectedError), failure
+            assert failure.task is MemberTask.INBOUND_CONNECTION
+            gone = await self._until(
+                lambda: broken.index not in leader.node._transport.live,
+                seconds=2.0,
+            )
+            assert gone, "the stopped member's peers still see it"
+        finally:
+            await cluster.close()
+
+
 class TestALeaderContradictingACommittedEntryStopsTheFollower:
     """A follower holding a committed entry its leader contradicts stops (L2).
 
@@ -3524,5 +3773,135 @@ class TestAnAppendThatCannotBeTakenIsRefusedInTheReply:
             ))
             assert not reply.success and reply.request_id == 9, reply
             assert node._log.last_index == 0 and node.failure is None
+        finally:
+            await cluster.close()
+
+
+def _sized_claim(owner: int, sequence: int, size: int) -> ClaimOwnershipOp:
+    """A claim whose node id is ``size`` bytes long: an entry's payload, chosen."""
+    return ClaimOwnershipOp(
+        proposal=ProposalId(0, 0),
+        node_id=f"{sequence}:" + "x" * size,
+        owner=owner,
+    )
+
+
+class TestAnAppendIsBoundedByBytes:
+    """What one message carries is bounded by bytes, not by count alone.
+
+    A window of ``max_entries_per_append`` entries made a frame above
+    ``MAX_FRAME`` once the entries were large enough -- nine 2 MiB ones -- and
+    a frame above the cap is never sent, so a member behind by that much never
+    caught up (``test_slow_link.py``). The leader's window and the follower's
+    ``Propose`` batch are now bounded by ``RaftTiming.max_append_bytes``, an
+    entry larger than the bound travelling alone, as etcd's ``MaxSizePerMsg``.
+    """
+
+    _until = staticmethod(TestABrokenInvariantStopsTheMember._until)
+
+    async def test_the_default_bound_is_one_mebibyte(self) -> None:
+        """etcd's default, and the same number the Rust uses."""
+        assert RaftTiming().max_append_bytes == 1 << 20
+
+    async def test_no_append_carries_more_than_max_append_bytes_unless_it_is_a_single_entry(
+        self, tmp_path: Path,
+    ) -> None:
+        bound = 64 * 1024
+        cluster = Cluster(
+            3, tmp_path, timing=dataclasses.replace(FAST, max_append_bytes=bound),
+        )
+        await cluster.start()
+        try:
+            leader = await cluster.elect()
+            others = [m for m in cluster.members if m is not leader]
+            behind, healthy = others[0], others[1]
+            cluster.network.partition({leader.index, healthy.index}, {behind.index})
+            for sequence in range(12):
+                await asyncio.wait_for(
+                    leader.node.propose(_sized_claim(leader.index, sequence, 20 * 1024)),
+                    5.0,
+                )
+            await asyncio.wait_for(
+                leader.node.propose(_sized_claim(leader.index, 99, 100 * 1024)), 5.0,
+            )
+            target = leader.node.commit_index
+
+            # Every append with entries the leader sends the member behind, as
+            # (entries, payload bytes).
+            sent: list[tuple[int, int]] = []
+            real_send = leader.node.transport.send
+
+            def recording(peer: int, message: Any, **kwargs: Any) -> None:
+                if (
+                    peer == behind.index
+                    and isinstance(message, AppendEntries)
+                    and message.entries
+                ):
+                    sent.append((
+                        len(message.entries),
+                        sum(len(e.payload) for e in message.entries),
+                    ))
+                real_send(peer, message, **kwargs)
+
+            leader.node.transport.send = recording  # type: ignore[method-assign]
+            cluster.network.heal()
+            caught_up = await self._until(
+                lambda: behind.node.commit_index >= target, seconds=5.0,
+            )
+            assert caught_up, "the member behind never caught up"
+            assert sent, "no append with entries reached the member behind"
+            oversized = [(n, size) for n, size in sent if n > 1 and size > bound]
+            assert not oversized, (
+                f"appends above {bound} bytes carrying more than one entry: "
+                f"{oversized}; the window was bounded by count alone"
+            )
+            assert any(n == 1 and size >= 100 * 1024 for n, size in sent), (
+                f"the 100 KiB entry did not travel alone: {sent}"
+            )
+            assert any(n > 1 for n, _ in sent), f"the rule was never exercised: {sent}"
+        finally:
+            await cluster.close()
+
+    async def test_a_follower_splits_its_batch_by_bytes(
+        self, tmp_path: Path,
+    ) -> None:
+        bound = 64 * 1024
+        cluster = Cluster(
+            3, tmp_path, timing=dataclasses.replace(FAST, max_append_bytes=bound),
+        )
+        await cluster.start()
+        try:
+            leader = await cluster.elect()
+            proposer = next(m for m in cluster.members if m is not leader)
+            known = await self._until(
+                lambda: proposer.node.leader == leader.index, seconds=5.0,
+            )
+            assert known, "the follower never learnt who leads"
+
+            # Every ``Propose`` the follower sends, as (operations, bytes).
+            sent: list[tuple[int, int]] = []
+            real_send = proposer.node.transport.send
+
+            def recording(peer: int, message: Any, **kwargs: Any) -> None:
+                if isinstance(message, Propose):
+                    sent.append((
+                        len(message.proposals),
+                        sum(len(p) for p in message.proposals),
+                    ))
+                real_send(peer, message, **kwargs)
+
+            proposer.node.transport.send = recording  # type: ignore[method-assign]
+            # Ten at once, so they form one batch: ``propose`` is synchronous
+            # and the batch drains on the next loop iteration.
+            futures = [
+                proposer.node.propose(_sized_claim(proposer.index, i, 20 * 1024))
+                for i in range(10)
+            ]
+            outcomes = await asyncio.wait_for(asyncio.gather(*futures), 5.0)
+            assert len(outcomes) == 10
+            assert sum(n for n, _ in sent) == 10, sent
+            assert len(sent) >= 2, f"ten 20 KiB operations went in one message: {sent}"
+            oversized = [(n, size) for n, size in sent if n > 1 and size > bound]
+            assert not oversized, f"Propose messages above the bound: {oversized}"
         finally:
             await cluster.close()

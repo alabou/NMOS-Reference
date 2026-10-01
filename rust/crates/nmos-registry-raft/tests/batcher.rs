@@ -58,8 +58,8 @@ async fn the_batch_closes_without_waiting_for_more() {
 
 #[tokio::test]
 async fn a_batch_is_capped() {
-    // So a single AppendEntries cannot grow past the frame cap. The excess
-    // simply forms the next batch.
+    // By count; bytes are bounded where the operations are encoded. The
+    // excess simply forms the next batch.
     let (batcher, mut drain) = proposal_channel::<u32, bool>(4);
     for value in 0..10 {
         batcher.submit(value).expect("accepted");

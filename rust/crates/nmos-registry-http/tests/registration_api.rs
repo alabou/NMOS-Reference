@@ -470,3 +470,37 @@ fn the_registration_port_does_not_serve_the_query_ladder() {
     assert_eq!(rig.get("/x-nmos/query/v1.3").0, StatusCode::NOT_FOUND);
     assert_eq!(rig.get("/x-nmos").2, r#"["registration/"]"#);
 }
+
+// -- the body limit ------------------------------------------------------
+//
+// aiohttp reads at most `client_max_size` of a body -- 1 MiB, its default,
+// which the Python registry never overrides -- and answers a larger one with
+// 413, turned into the NMOS error body by `cors_middleware`. Held to here:
+// axum's own default was 2 MiB, and its 413 was plain text.
+
+#[test]
+fn a_body_above_one_mebibyte_is_413_with_the_nmos_error_body() {
+    let rig = Rig::new();
+    let (status, headers, body) =
+        rig.post(&format!("{BASE}/resource"), "x".repeat(1024 * 1024 + 1));
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        Some("application/json"),
+    );
+    assert_eq!(
+        body,
+        "{\n  \"code\": 413,\n  \"error\": \"Request Entity Too Large\",\n  \"debug\": \
+         \"Request Entity Too Large\"\n}",
+    );
+}
+
+#[test]
+fn a_body_of_one_mebibyte_is_read() {
+    // At the limit, not above it: refused for what it says, not its size.
+    let rig = Rig::new();
+    let (status, _, _) = rig.post(&format!("{BASE}/resource"), "x".repeat(1024 * 1024));
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}

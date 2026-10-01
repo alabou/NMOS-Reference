@@ -45,6 +45,11 @@ import pytest
 
 from nmos.cluster.layout import DEFAULT_CERTIFICATE_NAME
 from nmos.registry.tests._fixtures import make_device, make_node
+from nmos.registry.tests._implementations import (  # noqa: F401
+    Implementation,
+    implementation,
+    launcher_flags,
+)
 
 pytestmark = pytest.mark.e2e
 
@@ -113,18 +118,31 @@ def preconditions() -> None:
 
 
 @pytest.fixture(scope="module")
-def secured_cluster(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+def secured_cluster(
+    tmp_path_factory: pytest.TempPathFactory, implementation: Implementation,
+) -> Iterator[None]:
     """Three secured members, started the way an operator starts them.
 
     Started together rather than one at a time: a three-member cluster has no
     quorum until two are up, so a fixture that waited for member 0 to answer
     before launching member 1 would wait for a readiness that cannot arrive.
+
+    Once per implementation: the launcher takes ``--rust`` for the Rust
+    registry and resolves the binary itself (``registry-runtime.sh``), by the
+    same rule the ``implementation`` fixture already checked. Both runs share
+    the launcher's state directories (``.raft/SNX1000n``) and log files, as
+    every run of this file always has: the ``[rust]`` members carry on from
+    the term files the ``[python]`` members left, which is the term-file
+    contract (``term_file.rs``) exercised incidentally.
     """
     processes = [
         # RAP=2: mutual TLS on Registration, which is what makes the negative
         # test below meaningful.
         subprocess.Popen(
-            [str(LAUNCHER), str(index), str(MEMBERS), "2", "--secure"],
+            [
+                str(LAUNCHER), str(index), str(MEMBERS), "2", "--secure",
+                *launcher_flags(implementation),
+            ],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
             cwd=REPO_ROOT,
         )

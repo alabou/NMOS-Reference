@@ -27,4 +27,5 @@ pub mod distributed;
 pub mod identity;
 pub mod listen;
 pub mod logging;
+pub mod panic_policy;
 pub mod tls;

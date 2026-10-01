@@ -53,7 +53,7 @@ use nmos_registry_raft::node::{RaftNode, RaftTiming, Role};
 use nmos_registry_raft::operations::{Operation, OperationKind, ProposalId};
 use nmos_registry_raft::persist::TermStore;
 use nmos_registry_raft::transport::{
-    CONN_READ_TIMEOUT_MS, RaftTransport, Transport, TransportSettings,
+    CONN_READ_TIMEOUT_MS, DIAL_TIMEOUT_MS, RaftTransport, Transport, TransportSettings,
 };
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -113,6 +113,17 @@ fn claim(member: u64, sequence: u64) -> Operation {
         proposal: ProposalId { member, sequence },
         kind: OperationKind::ClaimOwnership {
             node_id: format!("node-{member}-{sequence}"),
+            owner: member,
+        },
+    }
+}
+
+/// A claim whose node id is `bytes` long: an entry's payload, chosen.
+fn sized_claim(member: u64, sequence: u64, bytes: usize) -> Operation {
+    Operation {
+        proposal: ProposalId { member, sequence },
+        kind: OperationKind::ClaimOwnership {
+            node_id: format!("{sequence}:{}", "x".repeat(bytes)),
             owner: member,
         },
     }
@@ -272,6 +283,7 @@ impl Cluster {
             tls: None,
             rpc_timeout_ms: 2_000,
             conn_read_timeout_ms: self.read_timeout_ms,
+            dial_timeout_ms: DIAL_TIMEOUT_MS,
         }));
         let node = RaftNode::new(
             raft,
@@ -408,4 +420,57 @@ async fn chunks_slower_than_the_read_deadline_complete() {
     let failure =
         catch_up_by_snapshot(32 * 1024, 24 * 1024, 5000, Duration::from_secs(25), 500).await;
     assert!(failure.is_none(), "{}", failure.unwrap_or_default());
+}
+
+/// A member behind by more than one frame's worth of entries catches up.
+///
+/// The leader's window was bounded by entry count alone
+/// (`max_entries_per_append`), and a window of nine 2 MiB entries made a frame
+/// above the 16 MiB cap: the frame was never written -- silently, an empty
+/// buffer in its place -- and once the outstanding append's pause expired the
+/// same window was tried again, for ever. A member behind by that much never
+/// caught up, and the chaos soak could not see it, because its network carries
+/// messages without encoding them. Measured over real sockets (part 21 of the
+/// fix record). The window is now bounded by bytes as well
+/// (`max_append_bytes`), an entry larger than the bound travelling alone, as
+/// etcd's `MaxSizePerMsg`.
+///
+/// Real transports on loopback: the leader commits nine 2 MiB claims, then one
+/// member restarts empty and must be caught up by replication -- nothing was
+/// compacted, so no snapshot can stand in for the window.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_member_behind_by_more_than_the_frame_cap_catches_up() {
+    let timing = RaftTiming {
+        heartbeat_ms: 20,
+        election_min_ms: 150,
+        election_max_ms: 300,
+        ..RaftTiming::default()
+    };
+    let mut cluster = Cluster::start(timing, CONN_READ_TIMEOUT_MS).await;
+    let leader = cluster.leader().await;
+    let follower = (leader + 1) % 3;
+    let node = Arc::clone(&cluster.nodes[leader]);
+    // One at a time, as the Python twin: each committed before the next.
+    for sequence in 1..=9u64 {
+        node.propose(sized_claim(leader as u64, sequence, 2 << 20))
+            .await
+            .expect("commits");
+    }
+    let target = node.commit_index();
+
+    cluster.restart(follower).await;
+    let restarted = Arc::clone(&cluster.nodes[follower]);
+    let caught_up = within(Duration::from_secs(20), || {
+        restarted.commit_index() >= target
+    })
+    .await;
+    let report = format!(
+        "20 s after restarting behind {target} entries, nine of them 2 MiB, the member had \
+         committed {} (its log ends at {}); the leader's next_index for it: {:?}",
+        restarted.commit_index(),
+        restarted.last_log_index(),
+        node.peer_next_index(follower as u64),
+    );
+    cluster.close().await;
+    assert!(caught_up, "{report}");
 }

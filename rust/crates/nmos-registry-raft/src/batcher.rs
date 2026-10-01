@@ -106,11 +106,13 @@ pub struct ProposalDrain<T, R> {
     max_batch: usize,
 }
 
-/// Upper bound on one batch.
+/// Upper bound on one batch, by count.
 ///
 /// Reached only under sustained load heavier than one quorum round can absorb,
-/// where the excess simply forms the next batch. It exists so a single
-/// `AppendEntries` cannot grow past the frame cap.
+/// where the excess simply forms the next batch. Bytes are bounded where sizes
+/// are known -- the leader's window and the follower's `Propose` groups, both
+/// under `RaftTiming::max_append_bytes` -- not here, where an operation has not
+/// been encoded yet.
 pub const MAX_BATCH: usize = 1024;
 
 /// A batcher and its drain.

@@ -32,12 +32,17 @@ use nmos_registry_raft::messages::{
 };
 use nmos_registry_raft::persist::PersistentStateError;
 use nmos_registry_raft::transport::{
-    CONN_READ_TIMEOUT_MS, PeerHandler, RaftTransport, Transport, TransportSettings, frame_for,
-    read_frame, refuse_certificate, refuse_hello,
+    CONN_READ_TIMEOUT_MS, DIAL_TIMEOUT_MS, PeerHandler, PeerTls, RaftTransport, Transport,
+    TransportSettings, frame_for, read_frame, refuse_certificate, refuse_hello,
 };
 use nmos_registry_raft::wire::{
-    FLAG_REPLY, Frame, MessageType, PROTOCOL_MAJOR, PROTOCOL_MINOR, Stream, encode_frame,
+    FLAG_REPLY, Frame, MAX_FRAME, MessageType, PROTOCOL_MAJOR, PROTOCOL_MINOR, Stream, encode_frame,
 };
+
+/// The soak's log capture, for asserting what the transport says.
+#[allow(dead_code)]
+#[path = "chaos/capture.rs"]
+mod capture;
 use tokio::io::AsyncWriteExt as _;
 use tokio::sync::Mutex;
 
@@ -265,6 +270,7 @@ async fn pair(
             tls: None,
             rpc_timeout_ms: 2_000,
             conn_read_timeout_ms: CONN_READ_TIMEOUT_MS,
+            dial_timeout_ms: DIAL_TIMEOUT_MS,
         }))
     };
 
@@ -721,6 +727,7 @@ async fn a_member_in_another_cluster_is_refused_and_does_not_link() {
         tls: None,
         rpc_timeout_ms: 500,
         conn_read_timeout_ms: CONN_READ_TIMEOUT_MS,
+        dial_timeout_ms: DIAL_TIMEOUT_MS,
     }));
 
     let mut ours = HashMap::new();
@@ -735,6 +742,7 @@ async fn a_member_in_another_cluster_is_refused_and_does_not_link() {
         tls: None,
         rpc_timeout_ms: 500,
         conn_read_timeout_ms: CONN_READ_TIMEOUT_MS,
+        dial_timeout_ms: DIAL_TIMEOUT_MS,
     }));
 
     let recorder = Arc::new(Recorder::default());
@@ -1125,6 +1133,7 @@ async fn starting_a_transport_takes_no_strong_reference_to_the_handler() {
         tls: None,
         rpc_timeout_ms: 500,
         conn_read_timeout_ms: CONN_READ_TIMEOUT_MS,
+        dial_timeout_ms: DIAL_TIMEOUT_MS,
     }));
 
     let recorder = Arc::new(Recorder::default());
@@ -1381,6 +1390,7 @@ async fn relayed() -> Relayed {
             tls: None,
             rpc_timeout_ms: 2_000,
             conn_read_timeout_ms: READ_TIMEOUT_MS,
+            dial_timeout_ms: DIAL_TIMEOUT_MS,
         }))
     };
     let transports = [make(0), make(1)];
@@ -1626,6 +1636,18 @@ async fn lone_member_reading(
     peer: std::net::SocketAddr,
     read_timeout_ms: u64,
 ) -> (Arc<RaftTransport>, Arc<Recorder>, std::net::SocketAddr) {
+    lone_member_with(cluster_id, peer, read_timeout_ms, DIAL_TIMEOUT_MS, None).await
+}
+
+/// As [`lone_member_reading`], with the dial deadline at `dial_timeout_ms` and,
+/// with `tls`, both ends secured.
+async fn lone_member_with(
+    cluster_id: &str,
+    peer: std::net::SocketAddr,
+    read_timeout_ms: u64,
+    dial_timeout_ms: u64,
+    tls: Option<Arc<PeerTls>>,
+) -> (Arc<RaftTransport>, Arc<Recorder>, std::net::SocketAddr) {
     let probe = std::net::TcpListener::bind(loopback(0)).expect("a port");
     let address = probe.local_addr().expect("an address");
     drop(probe);
@@ -1638,9 +1660,10 @@ async fn lone_member_reading(
         cluster_id: cluster_id.to_owned(),
         member_name: "member-0".to_owned(),
         incarnation: 10,
-        tls: None,
+        tls,
         rpc_timeout_ms: 2_000,
         conn_read_timeout_ms: read_timeout_ms,
+        dial_timeout_ms,
     }));
     let recorder = Arc::new(Recorder::default());
     member
@@ -1671,7 +1694,7 @@ async fn as_member_one(member: std::net::SocketAddr, cluster_id: &str) -> tokio:
         stream: Stream::Control,
     });
     socket
-        .write_all(&frame_for(&hello, Stream::Control, false))
+        .write_all(&frame_for(&hello, Stream::Control, false).expect("encodes"))
         .await
         .expect("the hello goes");
     let ack = read_frame(&mut socket).await.expect("an acknowledgement");
@@ -1705,7 +1728,7 @@ async fn answer_undecodably_then_truly(listener: tokio::net::TcpListener) {
                 incarnation: 11,
             });
             if socket
-                .write_all(&frame_for(&ack, hello.stream, false))
+                .write_all(&frame_for(&ack, hello.stream, false).expect("encodes"))
                 .await
                 .is_err()
             {
@@ -1713,11 +1736,14 @@ async fn answer_undecodably_then_truly(listener: tokio::net::TcpListener) {
             }
             while let Ok(frame) = read_frame(&mut socket).await {
                 let answers = match decode_message(frame.message_type, &frame.payload) {
-                    Ok(Message::Ping(ping)) => vec![frame_for(
-                        &Message::Pong(Pong { nonce: ping.nonce }),
-                        frame.stream,
-                        true,
-                    )],
+                    Ok(Message::Ping(ping)) => vec![
+                        frame_for(
+                            &Message::Pong(Pong { nonce: ping.nonce }),
+                            frame.stream,
+                            true,
+                        )
+                        .expect("encodes"),
+                    ],
                     Ok(Message::AppendEntries(append)) => vec![
                         undecodable(MessageType::AppendEntriesReply, frame.stream, true),
                         frame_for(
@@ -1732,7 +1758,8 @@ async fn answer_undecodably_then_truly(listener: tokio::net::TcpListener) {
                             }),
                             frame.stream,
                             true,
-                        ),
+                        )
+                        .expect("encodes"),
                     ],
                     _ => Vec::new(),
                 };
@@ -1762,7 +1789,7 @@ async fn an_undecodable_request_is_not_answered_and_its_connection_stays() {
     // Behind it on the same connection, and answered: the connection carried
     // on past it, and the answer is this request's, not the other's.
     socket
-        .write_all(&frame_for(&heartbeat(1, 7), Stream::Control, false))
+        .write_all(&frame_for(&heartbeat(1, 7), Stream::Control, false).expect("encodes"))
         .await
         .expect("written");
     let answer = tokio::time::timeout(std::time::Duration::from_secs(5), read_frame(&mut socket))
@@ -1813,4 +1840,314 @@ async fn an_undecodable_reply_leaves_the_link_up() {
 
     member.close().await;
     peer.abort();
+}
+
+// -- a message above the frame cap ---------------------------------------
+//
+// `MAX_FRAME` is a backstop: what a message may carry is bounded well below
+// it (`RaftTiming::max_append_bytes`). A message that reaches it anyway is
+// refused at encode time -- and used to become an empty buffer, written as
+// nothing, without a word: a leader re-sent the same oversized window for
+// ever (`tests/slow_link.rs`). Now the refusal is on the record and the link
+// is as it was.
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_oversized_send_is_logged_not_written_and_the_link_stays_up() {
+    let listener = tokio::net::TcpListener::bind(loopback(0))
+        .await
+        .expect("a port");
+    let fake = listener.local_addr().expect("an address");
+    let (member, recorder, _) = lone_member("frame-cap", fake).await;
+    let peer = tokio::spawn(answer_undecodably_then_truly(listener));
+    assert!(
+        until(|| member.live() == vec![1]).await,
+        "member 0 never linked to member 1",
+    );
+    let downs = recorder.peer_down.load(Ordering::SeqCst);
+
+    // One byte above the cap. `send` encodes before it spawns, so the refusal
+    // is logged on this thread, where the capture listens.
+    let capture = capture::Capture::new();
+    tracing::dispatcher::with_default(&capture.dispatch(), || {
+        member.send(1, &chunk(vec![0; MAX_FRAME + 1]), Stream::Bulk);
+    });
+    // Behind it, on the other stream, and answered: the link is as it was.
+    member.send(1, &heartbeat(0, 0), Stream::Control);
+    assert!(
+        until(|| recorder.append_replies.load(Ordering::SeqCst) == 1).await,
+        "the message after the oversized one was never answered",
+    );
+    assert_eq!(
+        recorder.peer_down.load(Ordering::SeqCst),
+        downs,
+        "the link was dropped for a frame that was never written",
+    );
+    assert_eq!(member.live(), vec![1]);
+    let problems = capture.problems();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        problems[0].to_string().contains("exceeds the frame cap"),
+        "{}",
+        problems[0],
+    );
+
+    member.close().await;
+    peer.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_oversized_request_fails_at_once() {
+    let listener = tokio::net::TcpListener::bind(loopback(0))
+        .await
+        .expect("a port");
+    let fake = listener.local_addr().expect("an address");
+    let (member, _recorder, _) = lone_member("frame-cap-request", fake).await;
+    let peer = tokio::spawn(answer_undecodably_then_truly(listener));
+    assert!(
+        until(|| member.live() == vec![1]).await,
+        "member 0 never linked to member 1",
+    );
+
+    let began = std::time::Instant::now();
+    let outcome = member
+        .request(1, &chunk(vec![0; MAX_FRAME + 1]), Stream::Bulk, Some(2_000))
+        .await;
+    let elapsed = began.elapsed();
+    match outcome {
+        Err(error) => assert!(error.0.contains("exceeds the frame cap"), "{}", error.0),
+        Ok(reply) => panic!("an oversized request was answered: {reply:?}"),
+    }
+    assert!(
+        elapsed < std::time::Duration::from_millis(500),
+        "a request that could never be sent waited {elapsed:?}: it was registered and \
+         waited out its deadline",
+    );
+    assert_eq!(member.live(), vec![1]);
+
+    member.close().await;
+    peer.abort();
+}
+
+// -- a connection attempt is bounded ---------------------------------------
+//
+// Neither the TCP connect nor the TLS handshake had a bound. Into a path that
+// drops SYNs -- a firewall that drops rather than refuses, a host mid-reboot
+// -- `TcpStream::connect` waited out the kernel's retransmits, about 127 s on
+// Linux; a handshake with a peer that never answered it had no end at all.
+// `DIAL_TIMEOUT_MS` bounds both, at both ends. Each test shortens it to half a
+// second and watches the attempt end at it.
+
+#[test]
+fn the_dial_deadline_is_seven_seconds() {
+    // Three SYN retransmits (1, 3 and 7 s on Linux), and the mutation
+    // timeout's figure; the same number the Python uses.
+    assert_eq!(DIAL_TIMEOUT_MS, 7_000);
+}
+
+/// The server identity the PKI fixtures carry, when they are on disk.
+fn server_identity() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)?
+        .join("Certificates/build.0");
+    let chain = root.join("pem/ExampleDeviceServer.ABC.SNX00000.chain.pem");
+    let key = root.join("key/ExampleDeviceServer.ABC.SNX00000.key");
+    (chain.is_file() && key.is_file()).then_some((chain, key))
+}
+
+/// Current-thread, so the capture installed below as this thread's default
+/// dispatcher hears the transport's tasks too.
+#[tokio::test]
+async fn a_dial_into_a_black_hole_is_abandoned_at_the_deadline() {
+    // A listener whose accept queue is full drops further SYNs: the kernel's
+    // own black hole, on loopback, with nothing to configure.
+    let hole = tokio::net::TcpSocket::new_v4().expect("a socket");
+    drop(hole.set_reuseaddr(true));
+    hole.bind(loopback(0)).expect("binds");
+    let listener = hole.listen(1).expect("listens");
+    let port = listener.local_addr().expect("an address").port();
+    // Filled until a connect is dropped. The queue holds `backlog + 1`, so
+    // two must get in before the third is dropped; fewer means the first
+    // connect was the one that timed out -- a loaded machine, not a full
+    // queue -- and the member's SYN would be taken, which proves nothing.
+    let mut fills = Vec::new();
+    for _ in 0..8 {
+        match std::net::TcpStream::connect_timeout(
+            &loopback(port),
+            std::time::Duration::from_millis(2_000),
+        ) {
+            Ok(filler) => fills.push(filler),
+            Err(_) => break,
+        }
+    }
+    if fills.len() == 8 {
+        eprintln!(
+            "skipping: the accept queue never filled; this kernel takes SYNs past the backlog"
+        );
+        return;
+    }
+    if fills.len() < 2 {
+        eprintln!(
+            "skipping: only {} connection(s) got into the accept queue before one was dropped; \
+             the machine is too loaded to fill it",
+            fills.len(),
+        );
+        return;
+    }
+
+    // What the dial says it did: each attempt it gave up on, at DEBUG.
+    let capture = capture::Capture::new();
+    let _listening = tracing::dispatcher::set_default(&capture.dispatch_with_debug());
+    let (member, _recorder, _) = lone_member_with(
+        "black-hole",
+        loopback(port),
+        CONN_READ_TIMEOUT_MS,
+        500,
+        None,
+    )
+    .await;
+
+    // The discriminator is the attempt, not the recovery. Without the deadline
+    // one attempt hangs in the kernel's SYN retransmits for well over a
+    // minute, and nothing is given up; with it, every attempt ends at half a
+    // second and the next follows the backoff. (When the hole opens is not a
+    // measure: this kernel retransmits the first four SYNs a second apart, so
+    // an attempt with no deadline connects within seconds of the opening too.)
+    tokio::time::sleep(std::time::Duration::from_millis(3500)).await;
+    let abandoned = capture
+        .counts()
+        .get("raft: link attempt failed")
+        .copied()
+        .unwrap_or(0);
+    assert!(
+        abandoned >= 2,
+        "{abandoned} attempt(s) given up in 3.5 s: the dial waited in the kernel's SYN \
+         retransmits instead of ending at the deadline",
+    );
+
+    // And once the hole opens, the link comes up.
+    drop(fills);
+    let peer = tokio::spawn(answer_undecodably_then_truly(listener));
+    let opened = std::time::Instant::now();
+    let mut came_up = false;
+    while opened.elapsed() < std::time::Duration::from_secs(10) {
+        if member.live() == vec![1] {
+            came_up = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(
+        came_up,
+        "the link never came up within 10 s of the hole opening"
+    );
+
+    member.close().await;
+    peer.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tls_handshake_the_acceptor_never_starts_is_abandoned_at_the_deadline() {
+    let listener = tokio::net::TcpListener::bind(loopback(0))
+        .await
+        .expect("a port");
+    let fake = listener.local_addr().expect("an address");
+    // An acceptor that takes the connection and says nothing, recording how
+    // long each one is held open.
+    let seen: Arc<std::sync::Mutex<Vec<std::time::Duration>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let record = Arc::clone(&seen);
+    let mute = tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+            let record = Arc::clone(&record);
+            tokio::spawn(async move {
+                let began = std::time::Instant::now();
+                let mut sink = Vec::new();
+                drop(tokio::io::AsyncReadExt::read_to_end(&mut socket, &mut sink).await);
+                record.lock().unwrap().push(began.elapsed());
+            });
+        }
+    });
+    let tls = Arc::new(PeerTls {
+        context: openssl::ssl::SslContext::builder(openssl::ssl::SslMethod::tls())
+            .expect("a context")
+            .build(),
+        peer_name: "raft".to_owned(),
+    });
+    let (member, _recorder, _) =
+        lone_member_with("mute-acceptor", fake, CONN_READ_TIMEOUT_MS, 500, Some(tls)).await;
+
+    assert!(
+        until(|| !seen.lock().unwrap().is_empty()).await,
+        "the dialler never gave up on a TLS handshake the acceptor never started",
+    );
+    let first = seen.lock().unwrap()[0];
+    assert!(
+        first < std::time::Duration::from_millis(900),
+        "gave up after {first:?}",
+    );
+
+    member.close().await;
+    mute.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_client_that_never_starts_the_tls_handshake_is_dropped_at_the_deadline() {
+    let Some((chain, key)) = server_identity() else {
+        eprintln!("skipping: the PKI fixtures are not on disk");
+        return;
+    };
+    let mut builder =
+        openssl::ssl::SslContext::builder(openssl::ssl::SslMethod::tls()).expect("a context");
+    builder
+        .set_certificate_chain_file(&chain)
+        .expect("the chain");
+    builder
+        .set_private_key_file(&key, openssl::ssl::SslFiletype::PEM)
+        .expect("the key");
+    let tls = Arc::new(PeerTls {
+        context: builder.build(),
+        peer_name: "raft".to_owned(),
+    });
+    let (member, _recorder, address) = lone_member_with(
+        "mute-client",
+        nowhere(),
+        CONN_READ_TIMEOUT_MS,
+        500,
+        Some(tls),
+    )
+    .await;
+
+    // Plain TCP to a TLS listener, and then nothing.
+    let mut socket = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("connects");
+    let began = std::time::Instant::now();
+    let mut byte = [0u8; 1];
+    let read = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        tokio::io::AsyncReadExt::read(&mut socket, &mut byte),
+    )
+    .await;
+    let elapsed = began.elapsed();
+    match read {
+        // EOF or a reset: dropped, either way.
+        Ok(Ok(0)) | Ok(Err(_)) => {}
+        Ok(Ok(n)) => {
+            panic!("the member sent {n} byte(s) to a client that never started the handshake")
+        }
+        Err(_) => panic!(
+            "a client that never started the TLS handshake held its connection for 3 s: the \
+             accept had no deadline"
+        ),
+    }
+    assert!(
+        elapsed < std::time::Duration::from_millis(900),
+        "dropped after {elapsed:?}",
+    );
+
+    member.close().await;
 }

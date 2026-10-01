@@ -912,9 +912,10 @@ async def go_registry_authorizations(
 async def _exit_when_the_member_stops(node: Any) -> None:
     """End the process when the consensus member stops itself.
 
-    A member stops on a broken invariant and takes no further part
-    (``RaftNode._fail``); only a restart makes it whole, bringing it back with
-    nothing to be caught up as a non-voting learner. Raising here fails the task
+    A member stops on a defect -- a broken invariant, or an exception nothing
+    in it expected -- and takes no further part (``RaftNode._fail``); only a
+    restart makes it whole, bringing it back with nothing to be caught up as a
+    non-voting learner. Raising here fails the task
     group, which is what makes ``main`` log the cause and exit with status 1 --
     the status a service manager restarts on. Running on regardless would keep
     the Registration and Query APIs up in front of a member that takes part in

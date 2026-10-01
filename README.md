@@ -534,6 +534,27 @@ project asks for something outside the checkout. Nothing else changes: a
 checkout without Rust behaves exactly as before, and every launcher without
 `--rust` runs the Python registry.
 
+**Not on native Windows.** The launchers refuse `--rust` there, and the raft
+member's term file is why: its save fsyncs the state directory, which Windows
+cannot do, so the member would refuse to start (`persist.rs` says where). Run
+the Rust registry on Windows through WSL.
+
+**The process-level tests run against both.** The suites that spawn a registry
+process -- `nmos/registry/tests/test_raft_process_faults.py` (SIGKILL,
+SIGSTOP, rolling restarts), `test_config_c_raft_e2e.py` (the secured launcher
+rig) and `nmos/node/tests/test_registry_failover_e2e.py` (a Node failing over
+between registries) -- are parametrized over the implementation: each test
+runs as `[python]` and as `[rust]`. The `[rust]` half skips, saying how to
+build, when no binary is found at `rust/target/release/nmos-registry` (then
+`debug/`, with a warning), and `NMOS_RUST_REGISTRY` points it elsewhere, as it
+does the launchers. A failure prints every member's log tails and the directory
+holding them.
+
+```bash
+.venv/bin/python -m pytest nmos/registry/tests/test_raft_process_faults.py -m e2e -v
+.venv/bin/python -m pytest nmos/registry/tests/test_raft_process_faults.py -m e2e -k rust
+```
+
 ### Distributed registry (`--distributed`)
 
 One registry is a single point of failure. `--distributed` runs 1, 3 or 5
@@ -1233,6 +1254,9 @@ The test markers are documented in `pyproject.toml`:
 - default gate excludes `e2e` and `slow`
 - `integration` tests run in-process across multiple modules and remain in the default gate
 - `e2e` / `slow` markers cover full-protocol scenarios you can opt in to
+- the process-level e2e suites run each test against the Python registry and
+  the Rust binary (`[python]` / `[rust]`; see "The process-level tests run
+  against both" above)
 
 ---
 

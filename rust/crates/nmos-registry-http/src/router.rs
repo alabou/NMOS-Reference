@@ -152,6 +152,11 @@ pub fn registration(state: RegistrationState, security: InterfaceSecurity) -> Ro
     router
         .fallback(not_found)
         .with_state(state)
+        // What the Python reads of a body, at most (`MAX_BODY_BYTES`); the
+        // handlers answer a larger one with the Python's 413.
+        .layer(axum::extract::DefaultBodyLimit::max(
+            crate::response::MAX_BODY_BYTES,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             security,
             crate::security::client_auth_layer,
@@ -219,6 +224,11 @@ pub fn query(state: QueryState, security: InterfaceSecurity) -> Router {
     router
         .fallback(not_found)
         .with_state(state)
+        // What the Python reads of a body, at most (`MAX_BODY_BYTES`); the
+        // handlers answer a larger one with the Python's 413.
+        .layer(axum::extract::DefaultBodyLimit::max(
+            crate::response::MAX_BODY_BYTES,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             security,
             crate::security::client_auth_layer,

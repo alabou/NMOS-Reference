@@ -192,6 +192,36 @@ class TestPostResource:
 # DELETE and debug GET
 # ---------------------------------------------------------------------------
 
+class TestABodyAboveTheLimit:
+    """aiohttp reads at most ``client_max_size`` bytes of a body -- 1 MiB, its
+    default, which this registry never overrides -- and answers a larger one
+    with 413, which ``cors_middleware`` turns into the NMOS error body. The
+    Rust registry answers the same bytes the same way; this is the contract it
+    is held to.
+    """
+
+    async def test_a_body_above_one_mebibyte_is_refused_with_413(self, client) -> None:  # type: ignore[no-untyped-def]
+        response = await client.post(
+            RESOURCE, data=b"x" * (1024 * 1024 + 1),
+            headers={"Content-Type": "application/json"},
+        )
+        assert response.status == 413
+        assert response.content_type == "application/json"
+        assert await response.json() == {
+            "code": 413,
+            "error": "Request Entity Too Large",
+            "debug": "Request Entity Too Large",
+        }
+
+    async def test_a_body_of_one_mebibyte_is_read(self, client) -> None:  # type: ignore[no-untyped-def]
+        """At the limit, not above it: refused for what it says, not its size."""
+        response = await client.post(
+            RESOURCE, data=b"x" * (1024 * 1024),
+            headers={"Content-Type": "application/json"},
+        )
+        assert response.status == 400
+
+
 class TestDeleteResource:
     async def test_delete_returns_204(self, client) -> None:  # type: ignore[no-untyped-def]
         """RegistrationAPI.raml:91-92 -- 204 No Content."""

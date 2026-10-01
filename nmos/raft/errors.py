@@ -20,9 +20,17 @@ can make three *different* decisions without inspecting a message.
 frame that does not parse is not a network hiccup; it is a peer speaking
 something this member does not understand, and the only safe response is to
 drop the link rather than guess at the bytes.
+
+``RaftInvariantViolated`` and ``RaftUnexpectedError`` force the last decision,
+which is no decision at all: the member stops. One is a state the
+implementation proves impossible, the other an exception nothing in it
+expected; both mean a defect, and a defect is not served through.
 """
 
 from __future__ import annotations
+
+from enum import Enum
+from typing import TypeAlias
 
 
 class RaftError(Exception):
@@ -103,10 +111,13 @@ class RaftInvariantViolated(RaftError):
     whole again.
 
     Distinct from every other error in this module because it must not be
-    swallowed. ``_apply_forever`` catches ``Exception`` and logs it so that one
-    bad apply cannot kill a member; this class is taken past that handler,
-    because an invariant that is broken stays broken and a loop that logs it
-    once per wake-up is a silent failure wearing the costume of a handled one.
+    swallowed, and nothing in the member swallows it: an invariant that is
+    broken stays broken, and a loop that logged it once per wake-up would be a
+    silent failure wearing the costume of a handled one. The member's loops
+    used to catch ``Exception`` around it so that one bad apply could not kill
+    a member; they no longer do -- an exception nothing expected is a defect
+    too (``RaftUnexpectedError``), and a defect is not something to serve
+    through.
 
     **What happens instead is a stop** (``RaftNode._fail``): the member stops
     leading, campaigning and applying at once, answers every waiting caller
@@ -118,6 +129,54 @@ class RaftInvariantViolated(RaftError):
     it and nothing else, and the member served on from a store that no longer
     moved.
     """
+
+
+class MemberTask(Enum):
+    """The parts of a member a defect can surface in, named by the stop.
+
+    One value per place that catches an exception nothing expected and stops
+    the member for it (``RaftUnexpectedError``): the two loops a member runs
+    for itself, and the three places the transport delivers to its handlers.
+    """
+
+    TICK = "tick"
+    APPLY = "apply"
+    OUTBOUND_LINK = "outbound link"
+    INBOUND_CONNECTION = "inbound connection"
+    APPLICATION_REQUEST = "application request"
+
+
+class RaftUnexpectedError(RaftError):
+    """An exception nothing in the consensus layer expected: a defect.
+
+    The same position as ``RaftInvariantViolated``, reached from the other
+    direction. An invariant check finds a state the implementation proves
+    impossible; this is raised where an exception arrives that the code around
+    it never anticipated -- in the tick, in apply, or in a handler the
+    transport delivered to. Either way the member is in a state its own logic
+    did not foresee, and continuing from it can only spread the damage, so the
+    member stops (``RaftNode._fail``) and the process exits with status 1 for
+    a service manager to restart. The Rust registry does the same thing to a
+    panic: it aborts the process (``nmos-registry-bin``'s panic policy).
+
+    What this is **not** for: the failures the code does expect and handles
+    where they happen -- a link that drops, a peer that disagrees about the
+    cluster, a frame that does not parse, a term file that cannot be saved.
+    Those keep their own classes and their own recovery.
+
+    The cause is chained as ``__cause__``, so the log line that announces the
+    stop and the exit that follows carry the original traceback.
+    """
+
+    def __init__(self, task: MemberTask, cause: BaseException) -> None:
+        super().__init__(f"unexpected error in {task.value}: {cause!r}")
+        self.task = task
+        self.cause = cause
+        self.__cause__ = cause
+
+
+MemberFailure: TypeAlias = RaftInvariantViolated | RaftUnexpectedError
+"""What a member stops on, and what its owner is handed (``wait_for_failure``)."""
 
 
 class RaftNotLeader(RaftError):

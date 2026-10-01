@@ -161,6 +161,30 @@ class RaftLog(Generic[T]):
         begin = self._position(start)
         return tuple(self._entries[begin:begin + limit])
 
+    def window(
+        self, start: int, max_entries: int, max_bytes: int,
+    ) -> tuple[Entry[T], ...]:
+        """What one ``AppendEntries`` may carry from ``start``.
+
+        The longest prefix of ``slice(start, max_entries)`` whose payloads
+        together stay within ``max_bytes`` -- and never fewer than one entry
+        when there is one, so an entry larger than the bound still travels,
+        alone. etcd's ``limitSize`` (``util.go``) applies ``MaxSizePerMsg``
+        the same way, and documents ``0`` as "one entry per message".
+
+        Payload bytes, not framed bytes: the framing adds a few bytes per
+        entry, far inside the margin between the bound and ``MAX_FRAME``.
+        """
+        entries = self.slice(start, max_entries)
+        taken = 0
+        total = 0
+        for entry in entries:
+            total += len(entry.payload)
+            if total > max_bytes and taken > 0:
+                break
+            taken += 1
+        return entries[:taken]
+
     # -- appending ------------------------------------------------------
 
     def append(self, term: int, entries: Sequence[tuple[bytes, T]]) -> tuple[int, int]:

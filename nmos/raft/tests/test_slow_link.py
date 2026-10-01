@@ -35,8 +35,13 @@ import asyncio
 import dataclasses
 import uuid
 from pathlib import Path
+from typing import Any
 
+import pytest
+
+from nmos.raft.messages import AppendEntries
 from nmos.raft.node import RaftTiming
+from nmos.raft.operations import ClaimOwnershipOp, ProposalId
 from nmos.raft.tests._sockets import SocketCluster
 from nmos.raft.tests.test_consensus import _register
 from nmos.raft.transport import CONN_READ_TIMEOUT
@@ -118,3 +123,90 @@ class TestASnapshotOverASlowLink:
             within=25.0, conn_read_timeout=0.5,
         )
         assert failure is None, failure
+
+
+def _claim(owner: int, sequence: int, size: int) -> ClaimOwnershipOp:
+    """A claim whose node id is ``size`` bytes long: an entry's payload, chosen."""
+    return ClaimOwnershipOp(
+        proposal=ProposalId(0, 0),
+        node_id=f"{sequence}:" + "x" * size,
+        owner=owner,
+    )
+
+
+class TestAWindowAboveTheFrameCap:
+    """A member behind by more than one frame's worth of entries catches up.
+
+    The leader's window was bounded by entry count alone
+    (``max_entries_per_append``), and a window of nine 2 MiB entries made a
+    frame above the 16 MiB cap: ``encode_frame`` refused it, nothing went, and
+    once the outstanding append's pause expired the same window was tried
+    again -- for ever. A follower behind by that much never caught up, and the
+    chaos soak could not see it, because its network carries messages without
+    encoding them. Measured over real sockets (part 21 of the fix record). The
+    window is now bounded by bytes as well (``max_append_bytes``), an entry
+    larger than the bound travelling alone, as etcd's ``MaxSizePerMsg``.
+
+    Real transports on loopback: one member is cut off while the leader
+    commits nine 2 MiB claims, then let back in.
+    """
+
+    async def test_a_member_behind_by_more_than_the_frame_cap_catches_up(
+        self, tmp_path: Path,
+    ) -> None:
+        cluster = SocketCluster(3, tmp_path)
+        await cluster.start()
+        loop = asyncio.get_running_loop()
+        try:
+            leader = await cluster.elect(timeout=10.0)
+            follower = next(
+                m for m in cluster.members if m.index != leader.index
+            )
+            cluster.network.stop(follower.index)
+            await cluster.settle(10)
+            # One at a time: each committed by the leader and the member still
+            # reachable before the next is proposed. Proposed together they
+            # would travel together, and stall the healthy member too, which
+            # would prove nothing about the one behind.
+            for sequence in range(9):
+                await asyncio.wait_for(
+                    leader.node.propose(
+                        _claim(leader.index, sequence, 2 * 1024 * 1024),
+                    ),
+                    10.0,
+                )
+            target = leader.node.commit_index
+
+            # What the leader sends the returning member: every append that
+            # carries entries, as (prev_log_index, entries).
+            sent: list[tuple[int, int]] = []
+            real_send = leader.node.transport.send
+
+            def recording(peer: int, message: Any, **kwargs: Any) -> None:
+                if (
+                    peer == follower.index
+                    and isinstance(message, AppendEntries)
+                    and message.entries
+                ):
+                    sent.append((message.prev_log_index, len(message.entries)))
+                real_send(peer, message, **kwargs)
+
+            leader.node.transport.send = recording  # type: ignore[method-assign]
+            cluster.network.resume(follower.index)
+
+            began = loop.time()
+            while loop.time() - began < 20.0:
+                if follower.node.commit_index >= target:
+                    return
+                await asyncio.sleep(0.05)
+            pytest.fail(
+                f"20s after rejoining, the member behind had committed "
+                f"{follower.node.commit_index} of {target} (its log ends at "
+                f"{follower.node._log.last_index}); the leader's next_index for "
+                f"it: {leader.node._peers[follower.index].next_index}; appends "
+                f"with entries sent to it: {len(sent)}, the first {sent[:3]}; "
+                f"the leader stopped: {leader.node.failure!r}; the member "
+                f"stopped: {follower.node.failure!r}",
+            )
+        finally:
+            await cluster.close()

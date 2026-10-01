@@ -20,10 +20,11 @@ import pytest
 from nmos.raft.errors import RaftProtocolError
 from nmos.raft.ownership import OwnershipTable
 from nmos.raft.snapshot import (
-    SNAPSHOT_VERSION,
-    SnapshotStore,
     decode_snapshot,
     install,
+    SNAPSHOT_VERSION,
+    SnapshotCaptureError,
+    SnapshotStore,
 )
 from nmos.raft.wire import Writer
 from nmos.registry.registry import Registry
@@ -278,7 +279,7 @@ class TestRejections:
     async def test_two_captures_at_once_are_refused(self) -> None:
         snapshots = _snapshots_of(_seeded())
         snapshots.begin(index=1, term=1, ownership=OwnershipTable())
-        with pytest.raises(RuntimeError, match="already open"):
+        with pytest.raises(SnapshotCaptureError, match="already open"):
             snapshots.begin(index=2, term=1, ownership=OwnershipTable())
 
     async def test_the_capture_is_released_after_finishing(self) -> None:

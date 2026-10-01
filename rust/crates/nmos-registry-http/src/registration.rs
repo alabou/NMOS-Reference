@@ -37,6 +37,7 @@
 
 use std::sync::Arc;
 
+use axum::extract::rejection::StringRejection;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri};
 use axum::response::Response;
@@ -91,10 +92,16 @@ pub async fn post_resource(
     State(state): State<RegistrationState>,
     uri: Uri,
     headers: HeaderMap,
-    source: String,
+    source: Result<String, StringRejection>,
 ) -> Response {
     let path = uri.path().to_owned();
     let view = RequestView::new(&path, &headers);
+    let source = match source {
+        Ok(source) => source,
+        // Not read at all -- above `MAX_BODY_BYTES`, most likely -- and
+        // answered as the Python answers it, not as axum would.
+        Err(rejection) => return response::body_rejected(&rejection, Some(&view)),
+    };
 
     // The TEXT, not a parsed object: `decode_post_envelope` slices the resource
     // body out of it verbatim, so the bytes a Node registers are the bytes a

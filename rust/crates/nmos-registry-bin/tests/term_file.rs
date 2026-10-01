@@ -14,6 +14,11 @@
 //! So this runs **both registries** over a term file, as `config_parity.rs`
 //! runs them over an argv: each must load that very file and carry on from it.
 //! A name that drifts in either implementation fails here.
+//!
+//! Process-level fault injection -- SIGKILL, SIGSTOP, rolling restarts -- is
+//! not duplicated here: the Python rig `nmos/registry/tests/_processes.py`
+//! drives both binaries, each test as `[python]` and `[rust]`, since the two
+//! take the same command line.
 
 #![allow(
     clippy::unwrap_used,

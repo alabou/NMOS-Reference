@@ -131,3 +131,9 @@ arithmetic_side_effects = "warn"
 # nmos-cpp.
 lto = "thin"
 codegen-units = 1
+# A panic ends the process, once the hook in `nmos-registry-bin`'s
+# `panic_policy` has put it on the record. The hook aborts on its own, so a
+# debug build behaves the same; this makes the build agree with it, and keeps
+# an unwinding panic out of the OpenSSL callbacks it would cross. Ignored for
+# test and bench builds, so the chaos soak's `catch_unwind` keeps working.
+panic = "abort"
