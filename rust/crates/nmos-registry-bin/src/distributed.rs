@@ -87,10 +87,12 @@ pub struct RaftConfig {
     /// Where the term/vote file lives.
     ///
     /// **Not a database directory.** The log is in memory; what reaches the
-    /// disk is about 24 bytes written when the election term changes. Deleting
-    /// it is not like deleting an etcd data directory -- it is telling this
-    /// member it has never voted, which is exactly the state election safety
-    /// depends on it not being in.
+    /// disk is the term file -- term, vote, incarnation and cursor reservation,
+    /// well under 100 bytes -- written when the election term changes and about
+    /// once per `RESERVATION_WINDOW_SECONDS` while the member hands out paging
+    /// cursors. Deleting it is not like deleting an etcd data directory -- it
+    /// is telling this member it has never voted, which is exactly the state
+    /// election safety depends on it not being in.
     pub state_dir: PathBuf,
     /// CRL for peer certificates. One, not two: members talk only to each
     /// other, so there is a single relationship to revoke against.

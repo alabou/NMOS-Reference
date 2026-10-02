@@ -131,8 +131,9 @@ SERIAL="SNX1000${INDEX}"
 # The term/vote file. Repo-local and git-ignored, unlike the production default
 # of /var/lib/nmos-registry/raft which needs root and outlives the rig.
 #
-# It is NOT a database -- about 24 bytes, written when the election term
-# changes. Deleting it between runs is safe and is what the rig wants: a member
+# It is NOT a database -- well under 100 bytes, written when the election term
+# changes and at most once a second while the member hands out paging cursors.
+# Deleting it between runs is safe and is what the rig wants: a member
 # that has never voted is a member starting from scratch. Deleting it under a
 # LIVE cluster is the one thing that is not safe, which is why this happens
 # before the registry starts and never while it is running.

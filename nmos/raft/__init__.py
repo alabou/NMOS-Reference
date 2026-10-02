@@ -31,9 +31,11 @@ What this package does differently
   uninterrupted synchronous step. There is no envelope, no key layout, no
   read model catching up to a separate source of truth, and therefore no fence.
 * **Keeps the log in memory.** No write-ahead log, no fsync per entry. The one
-  thing that reaches the disk is ``{term, voted_for, incarnation}`` -- about 24
-  bytes, written when the election term changes, which is rare. See
-  ``persist.py`` for why that much is not optional.
+  thing that reaches the disk is the term file -- ``{term, voted_for,
+  incarnation, cursor_reservation}`` and a version, well under 100 bytes --
+  written when the election term changes, which is rare, and about once per
+  ``RESERVATION_WINDOW_SECONDS`` of paging-cursor progress (``cursors.py``).
+  See ``persist.py`` for why that much is not optional.
 * **Owns Node subtrees.** A Node's resources are owned by the member that
   received its registration, so that member's local state is authoritative for
   them and a rejection needs no round trip to be trustworthy.

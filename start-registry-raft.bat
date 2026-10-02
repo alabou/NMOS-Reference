@@ -143,10 +143,12 @@ set "SERIAL=SNX1000%INDEX%"
 
 REM --- state -----------------------------------------------------------------
 REM
-REM Not a database: about 24 bytes of term and vote, written when the election
-REM term changes. The log is in memory. Repo-local and git-ignored, unlike the
-REM production default under ProgramData. Named by serial, matching the .sh, so
-REM a member started by either script uses the same directory.
+REM Not a database: well under 100 bytes -- term, vote, incarnation and cursor
+REM reservation -- written when the election term changes and at most once a
+REM second while the member hands out paging cursors. The log is in memory.
+REM Repo-local and git-ignored, unlike the production default under
+REM ProgramData. Named by serial, matching the .sh, so a member started by
+REM either script uses the same directory.
 REM
 REM Deleting it between runs is safe and is what the rig wants: a member that
 REM has never voted is a member starting from scratch. Deleting it under a LIVE
@@ -275,6 +277,16 @@ if %MEMBERS% GTR 1 (
 )
 echo.
 
+REM From the checkout, as start-registry-raft.sh runs from it (its `cd` to its
+REM own directory): nmos_registry.py and the log file are relative paths, so a
+REM launcher started anywhere else had Python fail to open the script. Entered
+REM here, after every refusal above, so a refusal leaves the caller's directory
+REM as it was; popd below restores it once the registry exits.
+pushd "%SCRIPT_DIR%" >nul || (
+  echo %ME%: cannot enter "%SCRIPT_DIR%" 1>&2
+  exit /b 1
+)
+
 "%PY%" nmos_registry.py ^
     --registryAddr 127.0.0.1 ^
     --registrationPort %REG_PORT% ^
@@ -288,4 +300,9 @@ echo.
     --registryAdvertisedHost 127.0.0.1:%RAFT_CLIENT_PORT% ^
     !NEIGHBOURS! ^
     --logFile nmos-registry-raft-%INDEX%.log
-endlocal
+
+REM The registry's exit status is the launcher's, as the .sh's `exec` makes it
+REM there. Ending on a bare endlocal reported 0 for a registry that had failed.
+set "EXIT_CODE=%ERRORLEVEL%"
+popd
+endlocal & exit /b %EXIT_CODE%

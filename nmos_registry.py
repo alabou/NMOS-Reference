@@ -217,8 +217,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    default="/var/lib/nmos-registry/raft",
                    help="Where this member's term/vote file lives. NOT a "
                         "database: the raft log is in memory, and what "
-                        "reaches the disk is ~24 bytes written when the "
-                        "election term changes. Deleting it tells this member "
+                        "reaches the disk is well under 100 bytes, written "
+                        "when the election term changes and at most once a "
+                        "second while the member hands out paging cursors. "
+                        "Deleting it tells this member "
                         "it has never voted, which is the one state election "
                         "safety depends on it not being in.")
     g.add_argument("--raftCertificate", default="",

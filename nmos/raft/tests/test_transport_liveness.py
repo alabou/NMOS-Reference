@@ -27,6 +27,7 @@ import dataclasses
 import logging
 import socket
 import ssl
+import sys
 import time
 import uuid
 from collections.abc import Callable
@@ -925,15 +926,20 @@ class TestADialIsBounded:
     ) -> None:
         # A listener whose accept queue is full drops further SYNs: the
         # kernel's own black hole, on loopback, with nothing to configure.
+        backlog = 1
         hole = socket.socket()
         hole.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         hole.bind(("127.0.0.1", 0))
-        hole.listen(1)
+        hole.listen(backlog)
         port = int(hole.getsockname()[1])
-        # Filled until a connect is dropped. The queue holds backlog + 1, so
-        # two must get in before the third is dropped; fewer means the first
+        # Filled until a connect is dropped. Linux's queue holds backlog + 1,
+        # so two must get in before the third is dropped; fewer means the first
         # connect was the one that timed out -- a loaded machine, not a full
         # queue -- and the member's SYN would be taken, which proves nothing.
+        # Windows' holds backlog -- measured, listen(1) admits one and
+        # listen(2) two, the next SYN dropped as on Linux -- so there one gets
+        # in before the second is dropped, and expecting two skipped every run.
+        capacity = backlog if sys.platform == "win32" else backlog + 1
         fills: list[socket.socket] = []
         for _ in range(8):
             filler = socket.socket()
@@ -949,13 +955,13 @@ class TestADialIsBounded:
                 filler.close()
             hole.close()
             pytest.skip("the accept queue never filled: this kernel takes SYNs past the backlog")
-        if len(fills) < 2:
+        if len(fills) < capacity:
             for filler in fills:
                 filler.close()
             hole.close()
             pytest.skip(
-                f"only {len(fills)} connection(s) got into the accept queue before one "
-                f"was dropped: the machine is too loaded to fill it",
+                f"only {len(fills)} of {capacity} connection(s) got into the accept "
+                f"queue before one was dropped: the machine is too loaded to fill it",
             )
 
         member, _ = _member(("127.0.0.1", port), dial_timeout=0.5)

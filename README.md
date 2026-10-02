@@ -594,9 +594,10 @@ different trade-offs, and the choice is one flag.
 The `raft` log is deliberately volatile. IS-04 registry state is *soft*: every
 Node re-registers its resources within the 12 s garbage-collection interval, so
 a cluster that lost everything repopulates itself. What that buys is the removal
-of the fsync and of the read-before-write from the mutation path. Only
-`{term, voted_for, incarnation}` reaches the disk — about 24 bytes, written when
-the election term changes.
+of the fsync and of the read-before-write from the mutation path. Only the term
+file reaches the disk — `{term, voted_for, incarnation, cursor_reservation}`,
+well under 100 bytes, written when the election term changes and at most once a
+second while the member hands out paging cursors.
 
 **Rolling restarts must pause between members.** A restarted member comes back
 having forgotten what it had acknowledged, and it rejoins non-voting until the

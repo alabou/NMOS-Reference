@@ -71,6 +71,33 @@ def _free_port() -> int:
     return port
 
 
+def _kill_tree(pid: int) -> None:
+    """Windows' stand-in for ``os.killpg(pgid, SIGKILL)``: the whole tree, now.
+
+    ``start_new_session`` is POSIX only -- ``subprocess`` ignores it on Windows
+    -- so there is no group to signal, and neither ``os.killpg`` nor
+    ``signal.SIGKILL`` exists there. The tree is what the group stands for: a
+    venv's ``python.exe`` is a launcher that runs the interpreter as its child,
+    so killing the launcher alone would leave the registry running. Every
+    process gets TerminateProcess, which like SIGKILL lets it clean up nothing.
+
+    psutil is the dev extra's, imported here so POSIX never needs it.
+    """
+    import psutil
+
+    try:
+        root = psutil.Process(pid)
+    except psutil.NoSuchProcess:
+        return
+    tree = [*root.children(recursive=True), root]
+    for proc in tree:
+        try:
+            proc.kill()
+        except psutil.NoSuchProcess:
+            pass
+    psutil.wait_procs(tree, timeout=15)
+
+
 def _get(url: str, timeout: float = 2.0) -> Any:
     with urllib.request.urlopen(url, timeout=timeout) as response:
         return json.loads(response.read().decode())
@@ -224,13 +251,24 @@ class _Rig:
 
     def kill_registry1(self) -> None:
         assert self.registry1 is not None
-        os.killpg(os.getpgid(self.registry1.pid), signal.SIGKILL)
+        if sys.platform == "win32":
+            _kill_tree(self.registry1.pid)
+        else:
+            os.killpg(os.getpgid(self.registry1.pid), signal.SIGKILL)
         self.registry1.wait(timeout=15)
 
     def node_log(self) -> str:
         return (self.tmp / "node.log").read_text(errors="replace")
 
     def stop(self) -> None:
+        if sys.platform == "win32":
+            # No SIGTERM to give a console process here, and this teardown
+            # needs no graceful exit: each tree goes at once. The loop below
+            # would raise on ``os.killpg`` and swallow it, leaving every
+            # process running and holding its ports.
+            for proc in self.procs:
+                _kill_tree(proc.pid)
+            return
         for sig in (signal.SIGTERM, signal.SIGKILL):
             for proc in self.procs:
                 try:

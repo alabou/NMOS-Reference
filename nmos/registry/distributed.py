@@ -161,8 +161,10 @@ class RaftConfig(DistributedConfig):
     """Where the term/vote file lives.
 
     Not a database directory. The raft backend keeps its log in memory; what
-    reaches the disk is about 24 bytes of ``{term, voted_for, incarnation}``,
-    written when the election term changes. Deleting it is not equivalent to
+    reaches the disk is the term file -- ``{term, voted_for, incarnation,
+    cursor_reservation}``, well under 100 bytes -- written when the election
+    term changes and about once per ``RESERVATION_WINDOW_SECONDS`` while the
+    member hands out paging cursors. Deleting it is not equivalent to
     deleting an etcd data directory -- it is equivalent to telling this member
     it has never voted, which is exactly the state election safety depends on
     it not being in. See ``nmos/raft/persist.py``.
